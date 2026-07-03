@@ -1,0 +1,11 @@
+# 서브레포(각자 독립 git) — 메타레포는 워크스페이스 오리엔테이션·브레인테스트만 버전관리
+/system/
+/organt/
+/guide/
+/murmur/
+/.venv/
+/organt_sns_state/
+/organt_sns_workspace/
+__pycache__/
+*.pyc
+.pytest_cache/
