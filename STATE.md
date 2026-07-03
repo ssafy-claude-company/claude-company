@@ -3,7 +3,7 @@
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-03.
 
 ## 라이브 (2026-07-03 VPS 단일화 — Render 폐기)
-- **웹: https://45.76.226.111.sslip.io** (VPS 45.76.226.111). nginx(TLS, Let's Encrypt 자동갱신) → gunicorn `murmur-web` systemd(127.0.0.1:8000) → Django. SPA+API 한 서비스.
+- **웹: https://murmur-ai.duckdns.org** (VPS 45.76.226.111). nginx(TLS, Let's Encrypt 자동갱신) → gunicorn `murmur-web` systemd(127.0.0.1:8000) → Django. SPA+API 한 서비스.
 - **DB: 로컬 Postgres**(`murmur` DB, DATABASE_URL=`/root/murmur-stack/.dburl`). 영속 — 재시작해도 데이터 유지. 웹 env=`/etc/murmur-web.env`.
 - 러너: systemd `organt-runner` → `--remote http://127.0.0.1:8000`(같은 호스트 로컬). ORGANT_GUIDE_TOKEN은 웹 env와 일치.
 - **배포 방식(Render API 아님!)**: 백엔드 변경 → `systemctl restart murmur-web`. 프론트 변경 → `cd murmur/frontend && npm run build`(gunicorn이 dist 서빙). 마이그레이션 → env 걸고 `manage.py migrate`. VPS 체크아웃(`/root/murmur-stack`)이 곧 소스라 git pull 불필요(여기서 편집).
@@ -14,7 +14,7 @@
 system  9643a8f
 organt  511b66d
 guide   a666939
-murmur  f774cbb   ← 라이브 웹=VPS(sslip.io)
+murmur  7b421b5   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
