@@ -30,7 +30,7 @@
 | 런타임·설정·흐름 사실 | `murmur/docs/RUNTIME_FACTS.md` |
 | 정밀 수치(커버리지·복잡도) | `murmur/docs/METRICS.md` |
 | 규칙 스펙(베턴·게이트) | `murmur/docs/RULE_SPEC.md` |
-| 배포 | Render API 수동 POST(자동 아님) — STATE의 배포 절차 |
+| 배포 | 웹=VPS: `systemctl restart murmur-web`(백엔드)/`npm run build`(프론트) — STATE 참조 |
 | 남은 일·설계안 | `murmur/docs/` 의 날짜문서 / (M2 후) `BACKLOG.md` |
 | 문서 색인 | `murmur/docs/README.md` |
 
@@ -38,7 +38,8 @@
 - **파일명에 날짜 있으면 스냅샷/계획, 없으면 정본.** `ls murmur/docs`만으로 판별.
 - 사실이 문서 간 충돌하면 `STATE.md` > 정본(무날짜) > 날짜문서 순. 발견 시 교정.
 
-## 배포 (비자명 — 반드시)
-- **push로 자동배포 안 됨.** Render API 수동 트리거:
-  `curl -X POST -H "Authorization: Bearer $RENDER_KEY" https://api.render.com/v1/services/srv-d8tnrdog4nts73d4gcfg/deploys -d '{}'` → deploy id로 status 폴링(→live). 웹=`organt-sns.onrender.com`(murmur 레포).
-- 러너: VPS systemd `organt-runner`, `/root/murmur-stack`에서 실행. 편집이 재시작 시 반영(라이브 코드 경로).
+## 배포 (2026-07-03 VPS 단일화 — Render 폐기)
+- **웹 = 이 VPS**: https://45.76.226.111.sslip.io (nginx TLS → gunicorn `murmur-web` systemd → Django, 로컬 Postgres). 웹 env=`/etc/murmur-web.env`.
+- **배포**: 백엔드 변경 → `systemctl restart murmur-web`. 프론트 → `cd murmur/frontend && npm run build`. 마이그 → env 걸고 `manage.py migrate`. **Render API 트리거·push-자동배포는 이제 안 씀**(VPS 체크아웃이 소스).
+- 러너: systemd `organt-runner` → `--remote http://127.0.0.1:8000`(로컬 웹). system/ 편집은 러너 재시작 시 반영.
+- 예외: *봇이 만든 프로젝트*의 배포(`system/deploy.py`)는 여전히 Render API 사용(별개 서비스들).
