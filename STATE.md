@@ -14,7 +14,7 @@
 system  9643a8f
 organt  511b66d
 guide   a666939
-murmur  7037d78   ← 라이브 웹=VPS(sslip.io), docs 포함
+murmur  f774cbb   ← 라이브 웹=VPS(sslip.io)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
