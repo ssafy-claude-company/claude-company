@@ -35,5 +35,10 @@
 2. 공급 레포에서 그 이름을 노출, 소비 레포들을 **같은 커밋/작업 단위**에서 맞춤.
 3. 이 표도 갱신. `bash verify.sh` 통과 확인.
 
+## 세션 워크플로 (P1 완료 — 격리 검증)
+- **내부 루프(빠름)**: `bash verify.sh --only <system|guide|organt|murmur>` — 자기 레포 소유 테스트 + 계약만(guide 0.5초·organt 0.35초). 다른 세션의 테스트를 안 돌리고 안 깨뜨림.
+- **병합 전(통합 게이트)**: `bash verify.sh` — 전체(sns 228·system 86·pytest 455·계약·빌드). 여기서 green이어야 병합.
+- 소유 분류: guide={channels,guide_queue,names,roster,discord_guide,recovery}, organt={organt,persona}, system=나머지. `test_contracts`는 모든 슬라이스에 포함.
+
 ## 세션 소유권 (P2 예정 — claim 보드)
 같은 파일을 두 세션이 잡는 충돌은 `STATE.md`의 claim 섹션으로 사전 가시화(구현 예정).
