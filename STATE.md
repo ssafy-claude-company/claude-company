@@ -22,7 +22,7 @@ murmur  34c8b2e   ← 라이브 웹=murmur-ai.duckdns.org
 - **LLM-네이티브 재구조화**: **M1~M5 완료.** 오리엔테이션 층·docs 3계급화·모순교정·인수인계 폐지·**M5 단일 진실원(PJT 미러 제거, 441 pytest가 `/root/murmur-stack/tests`에서 실코드 직접 검증)**. 남은 M6~M8(Flow 속성 선언화·게이트 함수화·Sys 3분할)은 BACKLOG A. tests·organt_discord·오리엔테이션 파일은 메타레포(로컬 git)로 버전관리됨 — 원격 push는 disaster-recovery용(BACKLOG).
 
 ## 병렬 세션 (P0~P3 완료 — CONTRACTS.md 참조)
-- 워커 3(S-core=system·S-edge=guide/organt·S-app=murmur) + 통합(관리자, 정본 트리). 스택 `/root/wt/<세션>`, 진입 `MURMUR_ROOT=/root/wt/<세션> bash .../verify.sh --only <레포>`. 계약 17 seam·claim.sh·wt.sh.
+- 워커 4(S-core=system·S-guide=guide·S-organt=organt·S-app=murmur) + 통합(관리자, 정본 트리). 스택 `/root/wt/<세션>`, 진입 `MURMUR_ROOT=/root/wt/<세션> bash .../verify.sh --only <레포>`. 계약 17 seam·claim.sh·wt.sh.
 
 ## 검증 기준선 (verify.sh)
 - sns: **224** OK  ·  system unittest: **86**  ·  PJT pytest: **441**(W4 후; 봇구조 진행에 따라 증가)  ·  프론트 빌드 OK.

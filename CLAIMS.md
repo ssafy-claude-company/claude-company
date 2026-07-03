@@ -10,7 +10,7 @@
 | S-core | system/* | 2026-07-03 23:31 |
 | S-core | system/rule/* | 2026-07-03 23:31 |
 | S-core | system/tests/* | 2026-07-03 23:31 |
-| S-edge | guide/* | 2026-07-03 23:31 |
-| S-edge | organt/* | 2026-07-03 23:31 |
-| S-edge | organt_discord/* | 2026-07-03 23:31 |
 | S-app | murmur/* | 2026-07-03 23:31 |
+| S-guide | guide/* | 2026-07-03 23:41 |
+| S-organt | organt/* | 2026-07-03 23:41 |
+| S-organt | organt_discord/* | 2026-07-03 23:41 |

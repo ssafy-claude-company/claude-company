@@ -41,15 +41,16 @@
 - 소유 분류: guide={channels,guide_queue,names,roster,discord_guide,recovery}, organt={organt,persona}, system=나머지. `test_contracts`는 모든 슬라이스에 포함.
 
 ## 세션 분할 (P3 완료 — worktree 격리)
-Fable 판정: **워커 3 + 통합 1**, 레포축 분할(기능축 기각 — 6 공존파일 충돌).
+레포=세션 1:1 (**워커 4 + 통합 1**, 사용자 확정). 레포축 분할.
 | 세션 | 소유 | 스택 | verify |
 |---|---|---|---|
 | **S-core** | system 전체 | `/root/wt/s-core` | `--only system` |
-| **S-edge** | guide·organt·organt_discord | `/root/wt/s-edge` | `--only guide`·`--only organt` |
+| **S-guide** | guide | `/root/wt/s-guide` | `--only guide` |
+| **S-organt** | organt·organt_discord | `/root/wt/s-organt` | `--only organt` |
 | **S-app** | murmur(backend+frontend) | `/root/wt/s-app` | `--only murmur` |
 | **통합(관리자)** | 계약·verify·claim·wt·STATE·병합·PJT미러 | `/root/murmur-stack`(정본) | 병합 시 풀 verify |
 - 워커 진입: `MURMUR_ROOT=/root/wt/<세션> bash /root/wt/<세션>/verify.sh --only <레포>`. 소유 레포만 브랜치(편집), 나머지 main 고정(오염 차단).
-- **교차 조율 핫스팟 `organt/builder`(96줄)**: 소유=S-edge지만 기능은 지능축(S-core). *스펙은 S-core가, 편집은 S-edge가.* 교차 편집 금지. builder↔system 표면은 이미 위 17개 계약에 포함.
+- `organt/builder`는 S-organt 온전 소유(1:1 분할로 교차조율 불요). builder↔system 표면은 위 17개 계약에 포함돼 자동 검증.
 - **크로스 요구**(내 소유 밖 파일 변경 필요)는 전부 **통합 세션 경유**. 워커끼리 직거래·통합세션의 "한 줄만" 직접편집 금지.
 
 ## 세션 소유권 (P2 완료 — claim 보드)
