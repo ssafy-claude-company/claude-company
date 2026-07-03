@@ -25,15 +25,8 @@ murmur  7037d78   ← 라이브 웹=VPS(sslip.io), docs 포함
 - sns: **224** OK  ·  system unittest: **86**  ·  PJT pytest: **441**(W4 후; 봇구조 진행에 따라 증가)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/murmur-stack/.venv`(pytest·discord.py 설치됨).
 
-## 남은 일 (요약 — 상세는 docs 날짜문서)
-- 봇구조 W2~W4 + Final 완료·커밋·배포.
-- LLM-네이티브 M2~M6+ (docs 정리·PJT 은퇴·거대파일 분할).
-- 운영(OPS_PERF): Postgres 전환·프로덕션 로깅·장애 알림 (재배포 시 SQLite 초기화 문제 잔존).
-- 제품 P0(PRODUCT_ASSESSMENT): 랜딩 무예고·AI요약 집계버그·XXXX 플레이스홀더.
-- Discord SYS.run 이행(설계만, 토큰 없어 비검증).
-- 라이브 테스트 잔여물 수동 정리: 계정 `fable_e2e_a/b/c`·`vault*`·`rechk*`, 채널 U-008~U-017 (삭제 API 없음).
-- ClaudeCompany 단일화: `/root/ClaudeCompany` 아래 실사용 레포 정리 + PJT 미러 이관/제거(M5).
+## 완료 (2026-07-03 세션)
+- 봇구조 W1~W4 + B-12 500 · 보안 C1/H1/H2/H3+누출 · **LLM-네이티브 M1~M8**(오리엔테이션·단일진실원·Flow계약·거대파일 분할: complete_task 536→56·sys_core 2832→1736) · OPS 로깅 · 제품 P0 ×2(AI요약·코드조각URL) · **VPS 단일화(웹·Postgres·nginx·TLS, Render 폐기)**.
 
-## 알려진 드리프트 (교정 대기 — M3)
-- `murmur/AGENTS.md §4` "push=자동배포"는 **틀림** → 실제 수동 Render API(CLAUDE.md 참조).
-- 테스트 수가 일부 문서에 144/58로 남음 → 실제 sns 213.
+## 남은 일 → **`murmur/docs/BACKLOG.md` 단일 소스** 참조
+요약: OPS 알림(systemd OnFailure)·pending N+1 / 보안 H3 스코핑·SSRF-lite / 제품 B1 랜딩 프리뷰 / Discord 이행(비검증) / 테스트 잔여물 정리(신선 seed로 대부분 해소됨 — Render→Postgres 이전 시 리셋) / M9 순환임포트 · communication.py 추가 분할.
