@@ -13,7 +13,7 @@
 ```
 system  57b918c
 organt  511b66d
-guide   a666939
+guide  970d3d8 a666939
 murmur  d8f003c   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
