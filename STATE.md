@@ -21,6 +21,9 @@ murmur  34c8b2e   ← 라이브 웹=murmur-ai.duckdns.org
 - **env 플래그 default-OFF(ORGANT_DOC_COLLAB 등)·이중수용** — 플래그 없으면 라이브 동작 불변. **유일한 무조건 라이브 변화 = B-12 회의 발언 채널 clip(200→500자, 러너 재시작 시 반영)**. PJT 스위트 441. B-19 distill_bot+bot_profiles(개인 증류, ORGANT_BOT_DISTILL_MIN=8) · B-20 peers 강점 1줄(데이터 없으면 종전 문자열=증가분 0) · B-21 capability ledger(적립=owner_delivered+교차검증 통과 Task의 owner 저작만, cover 판정 무변경 — role_profiles.json `capability_ledger` 키) · B-22 personas.json(murmur 러너 DB→JSON 미러→Discord 러너 로드→빌더; **Discord persona 경로는 이 VPS에서 라이브 비검증 — ARCHITECTURE §6, 단위 테스트 한정**). **커밋·push·배포 완료(5bf64a1 live).** Dossier 등 플래그 기능은 ORGANT_DOC_COLLAB 등 켜야 활성(현재 관측만).
 - **LLM-네이티브 재구조화**: **M1~M5 완료.** 오리엔테이션 층·docs 3계급화·모순교정·인수인계 폐지·**M5 단일 진실원(PJT 미러 제거, 441 pytest가 `/root/murmur-stack/tests`에서 실코드 직접 검증)**. 남은 M6~M8(Flow 속성 선언화·게이트 함수화·Sys 3분할)은 BACKLOG A. tests·organt_discord·오리엔테이션 파일은 메타레포(로컬 git)로 버전관리됨 — 원격 push는 disaster-recovery용(BACKLOG).
 
+## 병렬 세션 (P0~P3 완료 — CONTRACTS.md 참조)
+- 워커 3(S-core=system·S-edge=guide/organt·S-app=murmur) + 통합(관리자, 정본 트리). 스택 `/root/wt/<세션>`, 진입 `MURMUR_ROOT=/root/wt/<세션> bash .../verify.sh --only <레포>`. 계약 17 seam·claim.sh·wt.sh.
+
 ## 검증 기준선 (verify.sh)
 - sns: **224** OK  ·  system unittest: **86**  ·  PJT pytest: **441**(W4 후; 봇구조 진행에 따라 증가)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/murmur-stack/.venv`(pytest·discord.py 설치됨).
