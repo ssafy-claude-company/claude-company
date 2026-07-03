@@ -8,10 +8,10 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  6dd0113
+system  9643a8f
 organt  511b66d
 guide   a666939
-murmur  f12f91f   ← 라이브=d75fa7a(docs는 미배포 무방)
+murmur  682f156   ← 라이브=05ef04d(docs 미배포 무방)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
