@@ -40,5 +40,5 @@
 - **병합 전(통합 게이트)**: `bash verify.sh` — 전체(sns 228·system 86·pytest 455·계약·빌드). 여기서 green이어야 병합.
 - 소유 분류: guide={channels,guide_queue,names,roster,discord_guide,recovery}, organt={organt,persona}, system=나머지. `test_contracts`는 모든 슬라이스에 포함.
 
-## 세션 소유권 (P2 예정 — claim 보드)
-같은 파일을 두 세션이 잡는 충돌은 `STATE.md`의 claim 섹션으로 사전 가시화(구현 예정).
+## 세션 소유권 (P2 완료 — claim 보드)
+같은 파일 충돌은 `bash claim.sh`(보드=CLAIMS.md)로 사전 가시화: 시작 시 `add`, 병합 전 `check`, 끝나면 `release`.
