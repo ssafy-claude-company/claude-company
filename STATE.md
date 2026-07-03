@@ -11,7 +11,7 @@
 system  bffed14
 organt  511b66d
 guide   a666939
-murmur  d75fa7a   ← 라이브 배포본(docs M2~4 + OPS 로깅)
+murmur  f12f91f   ← 라이브=d75fa7a(docs는 미배포 무방)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
