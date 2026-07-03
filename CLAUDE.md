@@ -25,6 +25,7 @@
 | 하려는 것 | 위치/명령 |
 |---|---|
 | 현재 상태·진행중·라이브 커밋 | **`STATE.md` 읽기** |
+| 레포 간 공개 계약·병렬 개발 기준 | **`CONTRACTS.md`** (여기 없으면 내부=자유변경, 계약만 조율) |
 | 전체 검증 (테스트+신선도) | `bash verify.sh` |
 | 코드 구조·파일 지도 | `murmur/docs/CODEBASE_MAP.md` |
 | 런타임·설정·흐름 사실 | `murmur/docs/RUNTIME_FACTS.md` |
