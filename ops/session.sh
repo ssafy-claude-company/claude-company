@@ -15,8 +15,10 @@ if [ "$MODE" = bg ]; then
   MURMUR_ROOT="$W" claude --bg $FLAGS "$PROMPT"
   echo "백그라운드 dispatch됨(자동승인) → 'claude agents'로 모니터"
 elif [ "$MODE" = web ]; then
-  echo "웹 제어 세션 — claude.ai/code 링크가 뜨면 브라우저에서 열어 인증:"
-  MURMUR_ROOT="$W" claude remote-control --spawn worktree --permission-mode auto --name "$T"
+  echo "웹 제어 세션 — claude.ai/code 링크가 뜨면 브라우저에서 열어 인증."
+  echo "(웹 접속 후 그 안에서 할 일 지시 + 필요시 /model opus·/effort max)"
+  # worktree는 위에서 이미 생성·cd 완료 → same-dir로 그 스택에 스폰(worktree 중복 생성 방지)
+  MURMUR_ROOT="$W" claude remote-control --spawn same-dir --permission-mode auto --name "$T"
 else
   echo "대화형 진입: cd $W (MURMUR_ROOT=$W). 아래 실행:"
   echo "  MURMUR_ROOT=$W claude $FLAGS"
