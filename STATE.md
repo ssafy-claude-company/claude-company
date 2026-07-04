@@ -14,7 +14,7 @@
 system  57b918c
 organt  511b66d
 guide  970d3d8 a666939
-murmur  34c8b2e   ← 라이브 웹=murmur-ai.duckdns.org
+murmur  a8da6cb   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
