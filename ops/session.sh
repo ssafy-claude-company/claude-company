@@ -9,10 +9,16 @@ W="/root/wt/$T"
 [ -e "$W" ] || bash "$MS/ops/wt.sh" new "$T" system organt guide murmur
 cd "$W"
 PROMPT="너는 task '$T' 담당 세션. 정향: CLAUDE.md→ops/STATE.md. 시작 시 'bash ops/claim.sh add $T <실제만질파일glob>'. 계약(ops/CONTRACTS.md 17seam) 지키며 개발. 착지 전: claim.sh check + ops/STATE.md 갱신 + 'bash ops/verify.sh' green. 라이브 인프라는 사용자 승인 후. 판단은 Fable 에이전트, 집행은 Opus."
+# Opus4.8·max에폭·자동승인(auto=이 세션과 같은 모드: 일반 자동, 위험만 분류기가 잡음)
+FLAGS="--model opus --effort max --permission-mode auto"
 if [ "$MODE" = bg ]; then
-  MURMUR_ROOT="$W" claude --bg --model opus --effort max "$PROMPT"
-  echo "백그라운드 dispatch됨 → 'claude agents'로 모니터"
+  MURMUR_ROOT="$W" claude --bg $FLAGS "$PROMPT"
+  echo "백그라운드 dispatch됨(자동승인) → 'claude agents'로 모니터"
+elif [ "$MODE" = web ]; then
+  echo "웹 제어 세션 — claude.ai/code 링크가 뜨면 브라우저에서 열어 인증:"
+  MURMUR_ROOT="$W" claude remote-control --spawn worktree --permission-mode auto --name "$T"
 else
   echo "대화형 진입: cd $W (MURMUR_ROOT=$W). 아래 실행:"
-  echo "  MURMUR_ROOT=$W claude --model opus --effort max"
+  echo "  MURMUR_ROOT=$W claude $FLAGS"
+  echo "  (웹 제어 원하면 세션 안에서 /remote-control)"
 fi
