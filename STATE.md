@@ -11,10 +11,10 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  57b918c
+system  ee9eebf
 organt  511b66d
-guide  970d3d8 a666939
-murmur  a8da6cb   ← 라이브 웹=murmur-ai.duckdns.org
+guide  e977239 a666939
+murmur  776f369   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
