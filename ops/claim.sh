@@ -8,7 +8,7 @@
 #   claim.sh check <세션>            내 git 변경이 *남의* 점유와 겹치나 확인(겹치면 경고)
 set -uo pipefail
 R="${MURMUR_ROOT:-/root/ClaudeCompany}"
-BOARD="/root/ClaudeCompany/CLAIMS.md"   # 항상 main = 세션(worktree) 간 공유. R은 git 변경 검사용(자기 트리)
+BOARD="/root/ClaudeCompany/ops/CLAIMS.md"   # 항상 main = 세션(worktree) 간 공유. R은 git 변경 검사용(자기 트리)
 CMD="${1:-list}"; SES="${2:-}"
 
 _lines() { grep -E "^\| [^|]+ \| " "$BOARD" 2>/dev/null | grep -v "세션 | 점유"; }

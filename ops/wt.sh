@@ -5,7 +5,7 @@
 #   wt.sh new <세션> <소유레포...>   예: wt.sh new s-edge guide organt
 #   wt.sh rm  <세션>                 워크트리 제거(브랜치는 남김)
 #   wt.sh list
-# 워커는:  MURMUR_ROOT=/root/wt/<세션> bash /root/wt/<세션>/verify.sh --only <레포>
+# 워커는:  MURMUR_ROOT=/root/wt/<세션> bash /root/wt/<세션>/ops/verify.sh --only <레포>
 set -uo pipefail
 MS=/root/ClaudeCompany
 CMD="${1:-list}"; S="${2:-}"
@@ -25,7 +25,7 @@ case "$CMD" in
     ln -s "$MS/.venv" "$W/.venv"
     ln -sfn "$MS/murmur/frontend/node_modules" "$W/murmur/frontend/node_modules" 2>/dev/null || true
     echo "✓ 스택: $W  (소유: ${OWNED:-없음})"
-    echo "  워커 진입:  MURMUR_ROOT=$W bash $W/verify.sh --only <레포>" ;;
+    echo "  워커 진입:  MURMUR_ROOT=$W bash $W/ops/verify.sh --only <레포>" ;;
   rm)
     [ -n "$S" ] || { echo "사용: wt.sh rm <세션>"; exit 2; }
     W="/root/wt/$S"
