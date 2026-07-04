@@ -43,7 +43,8 @@
 **세션 워크플로:**
 1. **시작**: `claim.sh add <task-이름> <실제 만질 파일 glob...>` — 레포 통짜가 아니라 *이 task의 실제 파일 표면*을.
 2. **개발**: 전 트리에서 자유 편집(계약 17 seam만 지키면 됨). 내부 루프 = `verify.sh --only <만진 레포들>`(빠름).
-3. **착지 전**: `claim.sh check <task>` (남과 중첩?) + **full `verify.sh` green**.
+3. **착지 전**: `claim.sh check <task>` (남과 중첩?) + **`ops/STATE.md`(+영향받은 docs) 갱신** + **full `verify.sh` green**.
+   - ⚠ **문서 갱신은 반필수**: 코드만 바꾸고 STATE 안 고치면 `verify.sh` 5단계(신선도)가 **FAIL로 잡는다**. 스탬프·기준선·영향받은 정본(RUNTIME_FACTS 등) 함께 갱신.
 4. **착지**: 통합 세션의 착지 큐로(아래). 끝나면 `claim.sh release <task>`.
 
 - **동시 세션 상한 ≈ 2~3.** full-context에선 claim 중첩 확률이 세션 수로 빠르게 커짐 → 스케일은 세션 증설이 아니라 **task 큐잉**.
