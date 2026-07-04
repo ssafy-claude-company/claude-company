@@ -23,7 +23,7 @@ murmur  29daf90   ← 라이브 웹=murmur-ai.duckdns.org
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
-- 시작 `claim.sh add <task> <파일glob>` → 개발(계약 17seam 준수) → 착지 전 `claim.sh check`+full `verify.sh` → 통합 세션 착지 큐로 병합.
+- 시작 `claim.sh add <task> <파일glob>` → 개발(계약 17seam 준수) → 착지 전 `claim.sh check`+full `verify.sh` → **bash ops/land.sh <세션>**으로 스스로 정본 병합(통합 세션 불필요).
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
