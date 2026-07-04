@@ -10,8 +10,9 @@
 - `system/` — SYS+Rule 추상코어 (sys_core.py·rule/). 의존의 종착점(역참조 0).
 - `organt/` — 봇 런타임(builder·organt).
 - `guide/` — 전송+리스너(murmur_guide=원격HTTP·discord_guide·discord_main).
-- `murmur/` — SNS 플랫폼: Django backend(`murmur/backend`)·API·러너 커맨드·Vue frontend. **Render 배포 대상.**
+- `murmur/` — SNS 플랫폼: Django backend(`murmur/backend`)·API·러너 커맨드·Vue frontend. **VPS 배포 대상**(nginx→gunicorn `murmur-web`).
 - 각 디렉터리가 GitHub `ssafy-claude-company/{system,organt,guide,murmur}` 독립 레포. PYTHONPATH=`/root/ClaudeCompany`로 `from system.X` 해석(pip 패키징 없음).
+- **루트 = 메타레포**(계약 `CONTRACTS.md`·통합테스트 `tests/`·오케스트레이션 `verify/claim/wt.sh` 추적). 4레포 = 그 아래 **중첩 독립 레포**(각자 `.git`·`requirements`·`CLAUDE.md`). 러너가 4패키지를 한 프로세스로 로드하는 **ONE 앱**(마이크로서비스 아님) — venv·런타임상태(`organt_sns_*`)는 단일 공유. **레포 내부 안내는 각 레포 `CLAUDE.md`, 이 카드는 크로스레포 불변식만**(재기술 금지=드리프트 방지).
 
 ## 불변식 (깨면 안 됨)
 1. **매체중립**: SYS는 Guide 구현체를 모른다 — `system/`이 murmur/discord 특정 import 하지 않음.
