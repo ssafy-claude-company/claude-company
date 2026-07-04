@@ -204,7 +204,7 @@ def test_B21_recommend_투영_ledger정합_가산_키없으면_불변():
     두 후보 중 검증된 실적 보유자가 앞선다. 키 없는 후보군은 기존 점수 그대로(회귀 0)."""
     import importlib.util as _ilu
     spec = _ilu.spec_from_file_location(
-        "sns_recommend", "/root/ClaudeCompany/PJT/organt_sns/backend/sns/recommend.py")
+        "sns_recommend", "/root/ClaudeCompany/murmur/backend/sns/recommend.py")   # 라이브(은퇴 PJT 아님)
     rec = _ilu.module_from_spec(spec)
     spec.loader.exec_module(rec)
     base = [{"bot_id": 1, "name": "a", "role": "백엔드", "event_count": 1},
