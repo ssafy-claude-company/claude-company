@@ -3,8 +3,10 @@
 # (last-green 기준 검증 → 남의 WIP 오염 차단·결정성). 오브젝트 공유라 디스크·fetch 비용 낮음.
 #
 #   wt.sh new <세션> <소유레포...>   예: wt.sh new s-edge guide organt
+#   wt.sh new <task> system organt guide murmur   ← full-own(전 트리 편집) 스택
 #   wt.sh rm  <세션>                 워크트리 제거(브랜치는 남김)
 #   wt.sh list
+# [Fable] 기본 협업은 정본 트리 직접 작업(task+claim). worktree는 레포-로컬 대량작업 등 opt-in만.
 # 워커는:  MURMUR_ROOT=/root/wt/<세션> bash /root/wt/<세션>/ops/verify.sh --only <레포>
 set -uo pipefail
 MS=/root/ClaudeCompany
