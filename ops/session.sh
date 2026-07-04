@@ -4,11 +4,11 @@
 #                                          ops/session.sh bot-지능 bg          (백그라운드)
 set -uo pipefail
 MS=/root/ClaudeCompany
-T="${1:?사용: session.sh <task> [bg]}"; MODE="${2:-fg}"
+T="${1:?사용: session.sh <task> [bg|web|fg] [\"할 일 설명\"]}"; MODE="${2:-fg}"; DESC="${3:-}"
 W="/root/wt/$T"
 [ -e "$W" ] || bash "$MS/ops/wt.sh" new "$T" system organt guide murmur
 cd "$W"
-PROMPT="너는 task '$T' 담당 세션. 정향: CLAUDE.md→ops/STATE.md. 시작 시 'bash ops/claim.sh add $T <실제만질파일glob>'. 계약(ops/CONTRACTS.md 17seam) 지키며 개발. 착지 전: claim.sh check + ops/STATE.md 갱신 + 'bash ops/verify.sh' green. 라이브 인프라는 사용자 승인 후. 판단은 Fable 에이전트, 집행은 Opus."
+PROMPT="너는 task '$T' 담당 세션. 정향: CLAUDE.md→ops/STATE.md. 시작 시 'bash ops/claim.sh add $T <실제만질파일glob>'. 계약(ops/CONTRACTS.md 17seam) 지키며 개발. 착지 전: claim.sh check + ops/STATE.md 갱신 + 'bash ops/verify.sh' green. 라이브 인프라는 사용자 승인 후. 판단은 Fable 에이전트, 집행은 Opus. ── 할 일: ${DESC:-(사용자가 곧 지시. 우선 정향+claim만.)}"
 # Opus4.8·max에폭·자동승인(auto=이 세션과 같은 모드: 일반 자동, 위험만 분류기가 잡음)
 FLAGS="--model opus --effort max --permission-mode auto"
 if [ "$MODE" = bg ]; then
