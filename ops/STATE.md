@@ -11,15 +11,23 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  ee9eebf
+system  ca112f5
 organt  511b66d
 guide  e977239
-murmur  b6190b0   ← 라이브 웹=murmur-ai.duckdns.org
+murmur  40efad7   ← 라이브 웹=murmur-ai.duckdns.org
 ```
+(워크트리 s/ClaudeCompany-변도진 기준 — 1층 floor seam 착지 대기. 라이브 main은 system ee9eebf·murmur b6190b0.)
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
 - **env 플래그 default-OFF(ORGANT_DOC_COLLAB 등)·이중수용** — 플래그 없으면 라이브 동작 불변. **유일한 무조건 라이브 변화 = B-12 회의 발언 채널 clip(200→500자, 러너 재시작 시 반영)**. 브레인 스위트 455. B-19 distill_bot+bot_profiles(개인 증류, ORGANT_BOT_DISTILL_MIN=8) · B-20 peers 강점 1줄(데이터 없으면 종전 문자열=증가분 0) · B-21 capability ledger(적립=owner_delivered+교차검증 통과 Task의 owner 저작만, cover 판정 무변경 — role_profiles.json `capability_ledger` 키) · B-22 personas.json(murmur 러너 DB→JSON 미러→Discord 러너 로드→빌더; **Discord persona 경로는 이 VPS에서 라이브 비검증 — ARCHITECTURE §6, 단위 테스트 한정**). **커밋·push·배포 완료(5bf64a1 live).** Dossier 등 플래그 기능은 ORGANT_DOC_COLLAB 등 켜야 활성(현재 관측만).
 - **LLM-네이티브 재구조화**: **M1~M5 완료.** 오리엔테이션 층·docs 3계급화·모순교정·인수인계 폐지·**M5 단일 진실원(PJT 미러 제거, 455 pytest가 `/root/ClaudeCompany/ops/tests`에서 실코드 직접 검증)**. 남은 M6~M8(Flow 속성 선언화·게이트 함수화·Sys 3분할)은 BACKLOG A. tests·organt_discord·오리엔테이션 파일은 메타레포(로컬 git)로 버전관리됨 — 원격 push는 disaster-recovery용(BACKLOG).
+
+## 1층 floor seam — 대화 구조 추상화 + turn-taking (2026-07-04 커밋, 라이브 기본 불변)
+- **발언권 순환(누가 다음에 말하는가)을 교체 가능한 정책으로 추상화** — `system/rule/floor.py`
+  (TurnTakingFloor=Sacks ①지명②자기선택③계속/소진 · RequestResponseFloor=현행 베턴 동치(테스트 결박) ·
+  OrchestratedFloor=사회자). 통합: meet R2+ 발언 순서(기본=종전 라운드 그대로)·리더 세그먼트 경계
+  TRP(기본 no-op). **ORGANT_FLOOR 미설정=라이브 동작 불변** — turn-taking 전환은 러너 env 추가+재시작
+  (사용자 승인). 스펙: `murmur/docs/FLOOR_1F_2026-07-04.md`. 후속(2층·오퍼 배선·CA-Lab 실험)=BACKLOG G.
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
@@ -27,7 +35,7 @@ murmur  b6190b0   ← 라이브 웹=murmur-ai.duckdns.org
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **455**  ·  프론트 빌드 OK.
+- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **475**(+test_floor 20)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)
