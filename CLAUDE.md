@@ -38,7 +38,7 @@
 
 ## 문서 권위 규율
 - **파일명에 날짜 있으면 스냅샷/계획, 없으면 정본.** `ls murmur/docs`만으로 판별.
-- 사실이 문서 간 충돌하면 `STATE.md` > 정본(무날짜) > 날짜문서 순. 발견 시 교정.
+- 사실이 문서 간 충돌하면 `ops/STATE.md` > 정본(무날짜) > 날짜문서 순. 발견 시 교정.
 
 ## 배포 (2026-07-03 VPS 단일화 — Render 폐기)
 - **웹 = 이 VPS**: https://murmur-ai.duckdns.org (nginx TLS → gunicorn `murmur-web` systemd → Django, 로컬 Postgres). 웹 env=`/etc/murmur-web.env`.
