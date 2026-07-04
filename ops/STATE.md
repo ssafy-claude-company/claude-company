@@ -11,10 +11,10 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  ca112f5
+system  0cc431c
 organt  511b66d
 guide  e977239
-murmur  40efad7   ← 라이브 웹=murmur-ai.duckdns.org
+murmur  fa1cac5   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 (워크트리 s/ClaudeCompany-변도진 기준 — 1층 floor seam 착지 대기. 라이브 main은 system ee9eebf·murmur b6190b0.)
 
@@ -24,10 +24,12 @@ murmur  40efad7   ← 라이브 웹=murmur-ai.duckdns.org
 
 ## 1층 floor seam — 대화 구조 추상화 + turn-taking (2026-07-04 커밋, 라이브 기본 불변)
 - **발언권 순환(누가 다음에 말하는가)을 교체 가능한 정책으로 추상화** — `system/rule/floor.py`
-  (TurnTakingFloor=Sacks ①지명②자기선택③계속/소진 · RequestResponseFloor=현행 베턴 동치(테스트 결박) ·
-  OrchestratedFloor=사회자). 통합: meet R2+ 발언 순서(기본=종전 라운드 그대로)·리더 세그먼트 경계
-  TRP(기본 no-op). **ORGANT_FLOOR 미설정=라이브 동작 불변** — turn-taking 전환은 러너 env 추가+재시작
-  (사용자 승인). 스펙: `murmur/docs/FLOOR_1F_2026-07-04.md`. 후속(2층·오퍼 배선·CA-Lab 실험)=BACKLOG G.
+  (TurnTakingFloor=Sacks ①지명 ②자기선택=**후보 봇 병렬 LLM 응찰**([응찰: N] — 최고 응찰 승·동률=침묵순)
+  ③계속/소진 종결 · RequestResponseFloor=현행 베턴 동치(테스트 결박) · OrchestratedFloor=사회자).
+  통합: meet R2+ 발언 순서(기본=종전 라운드 그대로)·리더 세그먼트 경계 TRP(기본 no-op).
+  **ORGANT_FLOOR 미설정=라이브 동작 불변** — turn-taking 전환은 러너 env 추가+재시작(사용자 승인).
+  실 LLM 봇 라이브 실행으로 검증(FLOOR_1F §6). 스펙: `murmur/docs/FLOOR_1F_2026-07-04.md`.
+  후속(2층·위임 경로 응찰 확대·CA-Lab 실험)=BACKLOG G.
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
@@ -35,7 +37,7 @@ murmur  40efad7   ← 라이브 웹=murmur-ai.duckdns.org
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **475**(+test_floor 20)  ·  프론트 빌드 OK.
+- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **477**(+test_floor 22)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)

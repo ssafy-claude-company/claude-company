@@ -3,10 +3,12 @@
 1층의 성공 기준은 인사이트가 아니라 **'교착 없이 돌고 끝나는가'**(ADR-008 — 층의 책임 기능)다.
 여기서 검증하는 것:
   ① 정책 3종(turn-taking·request-response·orchestrated)이 같은 엔진 위에서 교체 가능
-  ② turn-taking = Sacks 3규칙(지명→자기선택→계속/소진 종결)이 기계적으로 성립
+  ② turn-taking = Sacks 3규칙 — 지명 → 자기선택(**후보 봇의 LLM 응찰** — 관련성 판단은 봇,
+     선정 규칙만 정책) → 계속/소진 종결 — 이 기계적으로 성립
   ③ request-response 정책의 배분이 라이브 베턴 엔진(CommunicationManager)과 동형(동치성)
   ④ 종결 보장 — 무작위 대본에서도 항상 끝난다(교착·무한 루프 없음)
   ⑤ 실표면 통합 — meet(회의)·세그먼트 경계 open이 seam 뒤에서 동작(기본=동작 불변)
+(실 LLM 봇으로 돌린 라이브 검증은 FLOOR_1F_2026-07-04.md §6 — 여기는 결정론 대본 검증.)
 """
 import asyncio
 import random
@@ -14,7 +16,7 @@ import random
 import pytest
 
 from system.guide_tools import Flow
-from system.rule.communication import CommunicationManager, _turn_signals
+from system.rule.communication import CommunicationManager, _bid_score, _turn_signals
 from system.rule.floor import (CLOSE, CONTINUE, NOMINATE, OPEN, SELF, FloorState,
                                OrchestratedFloor, RequestResponseFloor, Turn,
                                TurnTakingFloor, floor_mode, make_floor, round_robin,
@@ -41,13 +43,26 @@ def test_TT_규칙2_무지명은_자기선택_open_침묵오래된순():
     assert a.kind == OPEN and a.candidates == (C, B)   # 무발언 C 최우선, 화자 A 제외
 
 
-def test_TT_규칙3_소진시_현재화자_계속_그리고_한계시_종결():
+def test_TT_규칙2_응찰판정_최고가_승리_동률은_침묵순():
+    """②자기선택의 선정 규칙: 관련성 판단(응찰 강도)은 후보 봇의 LLM이 내고, 정책은
+    '최고 응찰 승·동률=침묵 오래된 순'만 정한다 — 선정이 중앙 자의가 아니라 규칙임을 고정."""
+    st = FloorState([A, B, C])
+    st.record(Turn(speaker=B))                         # B 최근 발언 → 동률에서 밀림
+    pol = TurnTakingFloor()
+    a = pol.resolve_open(st, Turn(speaker=A), [(B, 5), (C, 5)])
+    assert a.kind == SELF and a.next == C              # 동률 → 침묵 오래된 C
+    a2 = pol.resolve_open(st, Turn(speaker=A), [(B, 7), (C, 5)])
+    assert a2.kind == SELF and a2.next == B            # 최고 응찰 승
+    assert st.lapses == 0                              # 낙찰 = 소진 아님
+
+
+def test_TT_규칙3_무응찰_소진시_현재화자_계속_그리고_한계시_종결():
     st = FloorState([A, B])
     pol = TurnTakingFloor(lapse_limit=2)
     t = Turn(speaker=A, passed=True)
-    a1 = pol.on_open_exhausted(st, t)                  # 소진 1회 → ③ 현재 화자 계속
+    a1 = pol.resolve_open(st, t, [])                   # 무응찰 1회 → ③ 현재 화자 계속
     assert a1.kind == CONTINUE and a1.next == A and st.lapses == 1
-    a2 = pol.on_open_exhausted(st, t)                  # 소진 2회 연속 → 자연 종결
+    a2 = pol.resolve_open(st, t, [(B, 0)])             # 0점 응찰 = 무응찰 → 소진 2회 → 종결
     assert a2.kind == CLOSE and st.lapses == 2
 
 
@@ -100,7 +115,7 @@ def test_orchestrated_사회자순서_소진시_종결():
     assert a3.kind == CLOSE
 
 
-# ══ 선택·팩토리 — '언제든 교체' 지점 ═══════════════════════════════════════════
+# ══ 선택·팩토리·신호 — '언제든 교체' 지점 ═══════════════════════════════════════
 
 def test_floor_mode_선택규칙(monkeypatch):
     monkeypatch.delenv("ORGANT_FLOOR", raising=False)
@@ -119,6 +134,14 @@ def test_make_floor_orchestrated는_allocator_필수():
     assert make_floor("request-response").name == "request-response"
 
 
+def test_bid_score_응찰_파싱():
+    assert _bid_score("[응찰: 7] 테스트 관점 긴급") == 7
+    assert _bid_score("[패스]") == 0 and _bid_score("") == 0
+    assert _bid_score("패스") == 0
+    # 마커 없는 실질 텍스트 = 약한 응찰 1(관용 — 규약 미준수가 발언 의지를 소멸시키지 않게)
+    assert _bid_score("의견이 있습니다 — 마이그레이션 순서부터 정리해야 합니다.") == 1
+
+
 # ══ 엔진 — 같은 대화, 세 구조 ═════════════════════════════════════════════════
 
 def test_같은대화_세정책_전부완주_배분은_상이():
@@ -132,10 +155,10 @@ def test_같은대화_세정책_전부완주_배분은_상이():
         async def speak(s, alloc):
             return Turn(speaker=s)                     # 무지명 발언(정책이 차이를 만든다)
 
-        async def offer(c):
-            return Turn(speaker=c)                     # 오퍼 오면 즉시 자기선택
+        async def bid(cands):
+            return [(c, 9) for c in cands]             # 전원 강응찰(자기선택 활성)
 
-        turns = asyncio.run(run_conversation(pol, st, Turn(speaker=A), speak, offer=offer,
+        turns = asyncio.run(run_conversation(pol, st, Turn(speaker=A), speak, bid=bid,
                                              max_turns=6, on_alloc=lambda a: trace.append(a.kind)))
         kinds[mode] = tuple(trace)
         assert turns                                   # 반환됨 = 종결됨(교착 없음)
@@ -154,9 +177,9 @@ def test_엔진_speak_None이면_교착대신_종결():
     assert len(turns) == 1                             # opening만 — 즉시 종결
 
 
-def test_엔진_오퍼없는_소비자는_전원패스와_동형():
-    """offer 미배선 소비자(위임 경로 초기 상태)의 TT = open이 곧바로 ③계속/소진 경로 —
-    현행과 동형으로 안전하게 돈다(자기선택은 오퍼를 배선한 표면부터 점진 활성)."""
+def test_엔진_bid_미배선_소비자는_무응찰과_동형():
+    """bid 미배선 소비자(응찰을 아직 안 붙인 표면)의 TT = open이 곧바로 ③계속/소진 경로 —
+    현행과 동형으로 안전하게 돈다(자기선택은 응찰을 배선한 표면부터 점진 활성)."""
     st = FloorState([A, B])
     seq = []
 
@@ -171,7 +194,7 @@ def test_엔진_오퍼없는_소비자는_전원패스와_동형():
 
 
 def test_TT_무작위대본_30회_항상_종결():
-    """교착 없음 속성 검증 — 지명·패스·자기선택이 뒤섞인 무작위 대본 30개가 전부 끝난다."""
+    """교착 없음 속성 검증 — 지명·패스·응찰 강도가 뒤섞인 무작위 대본 30개가 전부 끝난다."""
     async def _one(seed):
         rng = random.Random(seed)
         parts = list(range(1, 2 + rng.randint(1, 4)))
@@ -182,11 +205,11 @@ def test_TT_무작위대본_30회_항상_종결():
             addr = rng.choice([p for p in parts if p != s]) if (r < 0.4 and len(parts) > 1) else None
             return Turn(speaker=s, addressee=addr, passed=(r > 0.8))
 
-        async def offer(c):
-            return Turn(speaker=c, passed=(rng.random() < 0.5))
+        async def bid(cands):
+            return [(c, rng.choice([0, 0, 1, 5, 9])) for c in cands]
 
         turns = await run_conversation(TurnTakingFloor(), st, Turn(speaker=parts[0]),
-                                       speak, offer=offer, max_turns=40)
+                                       speak, bid=bid, max_turns=40)
         assert 1 <= len(turns) <= 41                   # 반환 자체가 종결의 증거
 
     for s in range(30):
@@ -208,17 +231,17 @@ def test_turn_signals_지명과_패스():
 
 # ══ 실표면 통합 ① — meet(회의)가 seam 위에서 돈다 ═══════════════════════════════
 
-def _meet_flow():
+def _meet_flow(bots=None):
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11,
-             bot_info={11: "L", 12: "백엔드", 13: "QA"})
+             bot_info=bots or {11: "L", 12: "백엔드", 13: "QA", 14: "기획"})
     f.start_root("root")
     return g, f
 
 
-def test_meet_TT_지명이_다음_발언자를_정한다():
-    """turn-taking 회의: R1 후 첫 발언권은 자기선택 오퍼(침묵 오래된 순)로 열리고,
-    발언 속 [지명]이 다음 화자를 정한다(Sacks ①) — 사회자 고정 라운드가 아니라."""
+def test_meet_TT_응찰승자가_발언권을_얻고_지명이_다음을_정한다():
+    """turn-taking 회의: R1 후 발언권이 비면 후보 봇들이 **각자 응찰**하고(관련성 판단=LLM),
+    최고 응찰이 발언권을 얻어 정식 발언하며, 그 발언 속 [지명]이 다음 화자를 정한다(Sacks ①②)."""
     g, f = _meet_flow()
     f.floor_mode = "turn-taking"
     seen = []
@@ -227,24 +250,33 @@ def test_meet_TT_지명이_다음_발언자를_정한다():
         seen.append((to, b))
         if "1라운드" in b:
             return f"{to} 독립 의견"
-        if to == 12:
-            return "스키마 먼저 확정해야 합니다. QA 관점 확인 필요.\n[지명: 13]"
-        return "[패스]"
+        if "발언권 응찰" in b:
+            return {12: "[응찰: 3] 스키마 관점 보완 필요",
+                    13: "[응찰: 8] 테스트 선행 이슈 긴급"}.get(to, "[패스]")
+        if "발언권 획득" in b:
+            return "마이그레이션 검증이 선행돼야 합니다 — 백엔드 인덱스 협의가 필요합니다.\n[지명: 12]"
+        return "동의 — 인덱스 전략은 별도 검토로 정리하겠습니다."   # 지명받은 차례
     f.wake = wake
     t = _tools(f, 11, "leader")
-    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    asyncio.run(t["create_task"].handler({"members": "12,13,14"}))
     r = asyncio.run(t["meet"].handler({"topic": "저장 방식", "members": "", "rounds": "2"}))
     txt = r["content"][0]["text"]
     disc = [(to, b) for to, b in seen if "1라운드" not in b]
-    assert disc[0][0] == 12 and "발언권 오퍼" in disc[0][1]      # ② 자기선택 오퍼(침묵 오래된 12 먼저)
-    assert disc[1][0] == 13 and "차례" in disc[1][1]             # ① 지명 이행(13이 다음 화자)
-    assert "[토론]" in txt and "(패스)" in txt                    # 회의록에 토론·패스 기록
-    assert f.comm.alive == 11 and 12 in f.current.participated   # 베턴 리더 복귀·참여 인정
+    probes = [(to, b) for to, b in disc if "발언권 응찰" in b]
+    assert {to for to, _ in probes[:2]} == {12, 13}              # ② 침묵 오래된 후보들에 병렬 응찰
+    won = [(to, b) for to, b in disc if "발언권 획득" in b]
+    assert won and won[0][0] == 13                               # 최고 응찰(8) 승자 = 13
+    nominated = [(to, b) for to, b in disc
+                 if "[회의 토론]" in b and "차례" in b and to == 12]
+    assert nominated                                             # ① 지명 이행(13 → 12)
+    assert "[토론]" in txt and f.comm.alive == 11
+    assert {12, 13} <= f.current.participated                    # 실발언자 참여 인정
 
 
-def test_meet_TT_전원패스면_조기_자연종결():
-    """고정 라운드에선 불가능하던 것: 보탤 말이 없으면 예산을 다 태우지 않고 소진으로 끝난다."""
-    g, f = _meet_flow()
+def test_meet_TT_전원무응찰이면_조기_자연종결():
+    """고정 라운드에선 불가능하던 것: 보탤 말이 없으면(전원 무응찰) 예산을 다 태우지 않고
+    소진으로 회의가 자연히 끝난다."""
+    g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
     seen = []
 
@@ -256,14 +288,14 @@ def test_meet_TT_전원패스면_조기_자연종결():
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3"}))
     disc = [b for b in seen if "1라운드" not in b]
-    assert len(disc) < 4                               # 예산 (3-1)×2=4 미만에서 소진 종결
+    assert len(disc) == 3                              # 응찰1·③계속발언1·응찰1 — 예산 4 미만 소진 종결
     assert f.comm.alive == 11 and "[회의록]" in r["content"][0]["text"]
 
 
 def test_meet_기본은_종전_고정라운드_그대로():
     """ORGANT_FLOOR 미설정 = orchestrated round_robin — 발언 순서·라벨·프롬프트가 종전과 동일
     (동작 불변의 직접 검증; test_sys의 핀 테스트와 이중 안전망)."""
-    g, f = _meet_flow()
+    g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     seen = []
 
     async def wake(to, b, k):
@@ -276,7 +308,7 @@ def test_meet_기본은_종전_고정라운드_그대로():
     disc = [(to, b) for to, b in seen if "라운드] 주제" in b and "1라운드" not in b]
     assert [d[0] for d in disc] == [12, 13, 12, 13]    # 고정 순서 2R→3R
     assert "[회의 2라운드]" in disc[0][1] and "[회의 3라운드]" in disc[2][1]
-    assert all("발언권 규약" not in b for _, b in disc)  # 기본 모드엔 TT 규약 미주입(프롬프트 불변)
+    assert all("발언권" not in b for _, b in disc)      # 기본 모드엔 TT 규약·응찰 미주입(프롬프트 불변)
 
 
 # ══ 실표면 통합 ② — 세그먼트 경계 open(sys_core TRP 훅) ══════════════════════════
@@ -302,7 +334,7 @@ def test_세그먼트open_기본은_noop(tmp_path):
     assert asyncio.run(s._floor_segment_open(f, 11)) == "" and calls == []   # 라이브 불변
 
 
-def test_세그먼트open_TT_패스면_리더계속과_동형(tmp_path):
+def test_세그먼트open_TT_무응찰이면_리더계속과_동형(tmp_path):
     s, f = _seg_setup(tmp_path)
     f.floor_mode = "turn-taking"
     calls = []
@@ -312,17 +344,22 @@ def test_세그먼트open_TT_패스면_리더계속과_동형(tmp_path):
         return "[패스]"
     f.wake = wake
     out = asyncio.run(s._floor_segment_open(f, 11))
-    assert out == "" and [c for c, _ in calls] == [12]           # 오퍼 1회, 기여 없음 → 종전 동형
-    assert "발언권 오퍼" in calls[0][1] and f.comm.alive == 11    # 베턴 리더 복귀(프레임 닫힘)
+    assert out == "" and [c for c, _ in calls] == [12]           # 응찰 1회, 무응찰 → 종전 동형
+    assert "응찰" in calls[0][1] and f.comm.alive == 11           # 응찰 프롬프트·베턴 리더 유지
 
 
-def test_세그먼트open_TT_실발언은_동봉되고_참여인정(tmp_path):
+def test_세그먼트open_TT_응찰승자_발언은_동봉되고_참여인정(tmp_path):
     s, f = _seg_setup(tmp_path)
     f.floor_mode = "turn-taking"
+    calls = []
 
     async def wake(to, b, k):
-        return "관찰: 마이그레이션 순서가 위험합니다 — 먼저 백업 경로를 확정해야 합니다."
+        calls.append((to, b))
+        if "발언권 응찰" in b:
+            return "[응찰: 6] 마이그레이션 순서 위험"
+        return "관찰: 마이그레이션 전에 백업 경로부터 확정해야 합니다 — 지금 순서면 롤백 불가."
     f.wake = wake
     out = asyncio.run(s._floor_segment_open(f, 11))
     assert "자기선택 발언" in out and "백업 경로" in out
+    assert any("발언권 획득" in b for _, b in calls)              # 낙찰자 정식 발언 경로
     assert 12 in f.current.participated and f.comm.alive == 11
