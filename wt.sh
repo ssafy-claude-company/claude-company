@@ -7,7 +7,7 @@
 #   wt.sh list
 # 워커는:  MURMUR_ROOT=/root/wt/<세션> bash /root/wt/<세션>/verify.sh --only <레포>
 set -uo pipefail
-MS=/root/murmur-stack
+MS=/root/ClaudeCompany
 CMD="${1:-list}"; S="${2:-}"
 
 case "$CMD" in

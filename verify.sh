@@ -6,7 +6,7 @@
 #   bash verify.sh --only system|guide|organt|murmur   세션 슬라이스(내부 루프, 빠름)
 # [P1] --only는 그 레포 소유 테스트 + 계약(test_contracts)만 — 세션이 자기 부분만 빠르게 검증.
 set -uo pipefail
-R="${MURMUR_ROOT:-/root/murmur-stack}"
+R="${MURMUR_ROOT:-/root/ClaudeCompany}"
 VENV=$R/.venv/bin
 fail=0
 ONLY=""

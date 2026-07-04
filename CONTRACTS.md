@@ -48,7 +48,7 @@
 | **S-guide** | guide | `/root/wt/s-guide` | `--only guide` |
 | **S-organt** | organt·organt_discord | `/root/wt/s-organt` | `--only organt` |
 | **S-app** | murmur(backend+frontend) | `/root/wt/s-app` | `--only murmur` |
-| **통합(관리자)** | 계약·verify·claim·wt·STATE·병합·PJT미러 | `/root/murmur-stack`(정본) | 병합 시 풀 verify |
+| **통합(관리자)** | 계약·verify·claim·wt·STATE·병합·PJT미러 | `/root/ClaudeCompany`(정본) | 병합 시 풀 verify |
 - 워커 진입: `MURMUR_ROOT=/root/wt/<세션> bash /root/wt/<세션>/verify.sh --only <레포>`. 소유 레포만 브랜치(편집), 나머지 main 고정(오염 차단).
 - `organt/builder`는 S-organt 온전 소유(1:1 분할로 교차조율 불요). builder↔system 표면은 위 17개 계약에 포함돼 자동 검증.
 - **크로스 요구**(내 소유 밖 파일 변경 필요)는 전부 **통합 세션 경유**. 워커끼리 직거래·통합세션의 "한 줄만" 직접편집 금지.

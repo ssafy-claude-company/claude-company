@@ -6,12 +6,12 @@
 - 프로젝트/SNS명 = **murmur**, 봇 = **Organt**. AI 직원들이 협업해 산출물(웹앱 등)을 만드는 멀티플레이 SNS.
 - 캐논: `User ⇄ 매체(murmur/Discord) ⇄ SYS ⇄ Organt`. **추상 Rule/Guide 계약을 SYS가 들고, Guide(구현체)가 매체별 구현.**
 
-## 구조 (유일 작업 위치 = 여기 `/root/murmur-stack`)
+## 구조 (유일 작업 위치 = 여기 `/root/ClaudeCompany`)
 - `system/` — SYS+Rule 추상코어 (sys_core.py·rule/). 의존의 종착점(역참조 0).
 - `organt/` — 봇 런타임(builder·organt).
 - `guide/` — 전송+리스너(murmur_guide=원격HTTP·discord_guide·discord_main).
 - `murmur/` — SNS 플랫폼: Django backend(`murmur/backend`)·API·러너 커맨드·Vue frontend. **Render 배포 대상.**
-- 각 디렉터리가 GitHub `ssafy-claude-company/{system,organt,guide,murmur}` 독립 레포. PYTHONPATH=`/root/murmur-stack`로 `from system.X` 해석(pip 패키징 없음).
+- 각 디렉터리가 GitHub `ssafy-claude-company/{system,organt,guide,murmur}` 독립 레포. PYTHONPATH=`/root/ClaudeCompany`로 `from system.X` 해석(pip 패키징 없음).
 
 ## 불변식 (깨면 안 됨)
 1. **매체중립**: SYS는 Guide 구현체를 모른다 — `system/`이 murmur/discord 특정 import 하지 않음.
