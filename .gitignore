@@ -9,3 +9,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# 러너 런타임 데이터(ops/var로 이전)
+ops/var/
