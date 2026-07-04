@@ -11,11 +11,16 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  ee9eebf
+system  da3d5f5
 organt  511b66d
-guide  e977239
+guide  a8f33a8
 murmur  b6190b0   ← 라이브 웹=murmur-ai.duckdns.org
 ```
+
+## 2026-07-04 착지: 기억 시스템 ①②(증류 라이브화·관련성 주입)
+- **① 축출 차단(러너 재시작 시 라이브)**: 수면 증류(경험→직무·개인 기준 압축)를 `Sys.run`에 배선 — 종전 Discord 진입(`discord_main._sleep_cycle`)에만 있어 라이브(murmur) 러너에선 **안 돌던** 것(W4 B-19가 커밋됐어도 라이브 러너 미배선)을 매체중립 위치로. **`bot_profiles`(개인층)·직군 증류 라이브 첫 가동**. **OOM 근본교정**: 증류 워커에 빈 격리 cwd(`_distill_workspace`) — 종전 빈 흐름이 `cfg.workspace_dir`(수백MB)로 폴백해 CLI 스캔 RSS 수GB OOM 유발하던 것 차단(라이브 웹 공존 VPS라 필수). 경험버퍼 `_EXP_KEEP` 12→40(env `ORGANT_EXP_KEEP`). 조절: `ORGANT_SLEEP_PERIOD`(기본600·0=끄기).
+- **② 관련성 주입(첫 조각·dormant)**: `meet` R2+ 재방송을 현재 발언자 도메인 관련성으로 예산 가중(`_token_overlap_score`=`_body_overlap` 스코어판). **`ORGANT_DOC_COLLAB` 플래그-온 경로 한정** — 플래그 off(라이브)면 미작동. flip은 ① 관측 데이터 후.
+- 검증: 브레인 pytest **455**·system unittest **86**·스모크(격리 cwd 실도달·meet 관련성 가중). 남은 ②: 위임 노트(6000자 flat) 관련성화 — 스펙유실 민감(P-009), first-wake-full 가드로 별도 설계.
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
 - **env 플래그 default-OFF(ORGANT_DOC_COLLAB 등)·이중수용** — 플래그 없으면 라이브 동작 불변. **유일한 무조건 라이브 변화 = B-12 회의 발언 채널 clip(200→500자, 러너 재시작 시 반영)**. 브레인 스위트 455. B-19 distill_bot+bot_profiles(개인 증류, ORGANT_BOT_DISTILL_MIN=8) · B-20 peers 강점 1줄(데이터 없으면 종전 문자열=증가분 0) · B-21 capability ledger(적립=owner_delivered+교차검증 통과 Task의 owner 저작만, cover 판정 무변경 — role_profiles.json `capability_ledger` 키) · B-22 personas.json(murmur 러너 DB→JSON 미러→Discord 러너 로드→빌더; **Discord persona 경로는 이 VPS에서 라이브 비검증 — ARCHITECTURE §6, 단위 테스트 한정**). **커밋·push·배포 완료(5bf64a1 live).** Dossier 등 플래그 기능은 ORGANT_DOC_COLLAB 등 켜야 활성(현재 관측만).

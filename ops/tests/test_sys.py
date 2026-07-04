@@ -3620,12 +3620,13 @@ def test_Skill강화_경험_흡수_주입_상한(tmp_path):
     saved = _json.load(open(tmp_path / "role_profiles.json", encoding="utf-8"))
     assert "1.5초" in saved["experience"]["QA"][0]               # 디스크 영속(공용)
     assert "1.5초" in saved["bot_experience"]["11"][0]           # 디스크 영속(개인)
-    for i in range(20):                                          # 상한(_EXP_KEEP) 유지
+    _n = s._EXP_KEEP + 5                                         # 상한 초과 주입(값 무관 견고) → 절단이 _EXP_KEEP에서 걸리는지
+    for i in range(_n):                                          # 상한(_EXP_KEEP) 유지
         asyncio.run(s._absorb_role_profiles(f"r\n[경험] QA\n교훈{i}\n[/경험]", me=11))
     assert len(s.role_experience["QA"]) == s._EXP_KEEP
     assert len(s.bot_experience[11]) == s._EXP_KEEP             # 개인 풀도 상한
     p = s._prompt("b", Kind.WORK, "member", 11, 11)
-    assert "최근 경험" in p and "교훈19" in p                     # 그 봇 자신 경험이 다음 작업에 주입(개인별)
+    assert "최근 경험" in p and f"교훈{_n - 1}" in p              # 그 봇 자신 최신 경험이 다음 작업에 주입(개인별)
     assert "[경험] QA" in p                                      # 경험 남기기 안내
     s2 = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "QA"},
              session_dir=str(tmp_path))
