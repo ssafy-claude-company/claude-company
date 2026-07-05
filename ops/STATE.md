@@ -11,7 +11,7 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  5385409
+system  ad04e55
 organt  511b66d
 guide  e977239
 murmur  8374dff   ← 라이브 웹=murmur-ai.duckdns.org
