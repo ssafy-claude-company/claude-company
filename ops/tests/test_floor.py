@@ -17,8 +17,8 @@ import pytest
 
 from system.guide_tools import Flow
 from system.rule.communication import CommunicationManager, _bid_score, _turn_signals
-from system.rule.floor import (CLOSE, CONTINUE, NOMINATE, OPEN, SELF, FloorState,
-                               OrchestratedFloor, RequestResponseFloor, Turn,
+from system.rule.floor import (CLOSE, CLOSE_VOTE, CONTINUE, NOMINATE, OPEN, SELF,
+                               FloorState, OrchestratedFloor, RequestResponseFloor, Turn,
                                TurnTakingFloor, floor_mode, make_floor, round_robin,
                                run_conversation)
 from system.sys_core import Sys
@@ -56,14 +56,30 @@ def test_TT_규칙2_응찰판정_최고가_승리_동률은_침묵순():
     assert st.lapses == 0                              # 낙찰 = 소진 아님
 
 
-def test_TT_규칙3_무응찰_소진시_현재화자_계속_그리고_한계시_종결():
+def test_TT_규칙3_무응찰_소진시_현재화자_계속_그리고_한계시_종결확인():
     st = FloorState([A, B])
     pol = TurnTakingFloor(lapse_limit=2)
     t = Turn(speaker=A, passed=True)
     a1 = pol.resolve_open(st, t, [])                   # 무응찰 1회 → ③ 현재 화자 계속
     assert a1.kind == CONTINUE and a1.next == A and st.lapses == 1
-    a2 = pol.resolve_open(st, t, [(B, 0)])             # 0점 응찰 = 무응찰 → 소진 2회 → 종결
-    assert a2.kind == CLOSE and st.lapses == 2
+    a2 = pol.resolve_open(st, t, [(B, 0)])             # 0점 응찰 = 무응찰 → 소진 2회
+    assert a2.kind == CLOSE_VOTE and st.close_voted    # 자동 종료가 아니라 종결 확인 표결(1회)
+    assert pol.resolve_close_vote(st, t, []).kind == CLOSE   # 전원 [종료]/무응답 → 합의 종결
+
+
+def test_TT_종결확인_반대는_발언의무_소생_재침묵은_즉시종결():
+    """[종결 = 합의 성취(pre-closing)] 전원 침묵 → 표결에서 [계속: N] 반대자가 나오면 그가
+    발언권을 받아 직접 말한다(말 없는 연장 불가). 표결은 대화당 1회 — 소생 후 재침묵은 즉시 종결."""
+    st = FloorState([A, B])
+    pol = TurnTakingFloor(lapse_limit=2)
+    t = Turn(speaker=A, passed=True)
+    pol.resolve_open(st, t, [])                        # lapse 1
+    a = pol.resolve_open(st, t, [])                    # lapse 2 → 표결
+    assert a.kind == CLOSE_VOTE and set(a.candidates) == {A, B}   # 현재 화자도 표결 참여
+    r = pol.resolve_close_vote(st, t, [(B, 6), (A, 0)])
+    assert r.kind == SELF and r.next == B and st.lapses == 0      # 반대=발언권 획득(소생)
+    pol.resolve_open(st, t, [])                        # 재침묵 lapse 1
+    assert pol.resolve_open(st, t, []).kind == CLOSE   # lapse 2 — 재표결 없이 합의 종결
 
 
 def test_TT_실발언은_소진카운터_리셋():
@@ -136,8 +152,9 @@ def test_make_floor_orchestrated는_allocator_필수():
 
 def test_bid_score_응찰_파싱():
     assert _bid_score("[응찰: 7] 테스트 관점 긴급") == 7
+    assert _bid_score("[계속: 5] 모바일 레이아웃이 남았습니다") == 5   # 종결 반대 = 동형 강도
     assert _bid_score("[패스]") == 0 and _bid_score("") == 0
-    assert _bid_score("패스") == 0
+    assert _bid_score("패스") == 0 and _bid_score("[종료]") == 0       # 종결 찬성 = 무응찰
     # 마커 없는 실질 텍스트 = 약한 응찰 1(관용 — 규약 미준수가 발언 의지를 소멸시키지 않게)
     assert _bid_score("의견이 있습니다 — 마이그레이션 순서부터 정리해야 합니다.") == 1
 
@@ -155,7 +172,7 @@ def test_같은대화_세정책_전부완주_배분은_상이():
         async def speak(s, alloc):
             return Turn(speaker=s)                     # 무지명 발언(정책이 차이를 만든다)
 
-        async def bid(cands):
+        async def bid(cands, purpose):
             return [(c, 9) for c in cands]             # 전원 강응찰(자기선택 활성)
 
         turns = asyncio.run(run_conversation(pol, st, Turn(speaker=A), speak, bid=bid,
@@ -205,7 +222,7 @@ def test_TT_무작위대본_30회_항상_종결():
             addr = rng.choice([p for p in parts if p != s]) if (r < 0.4 and len(parts) > 1) else None
             return Turn(speaker=s, addressee=addr, passed=(r > 0.8))
 
-        async def bid(cands):
+        async def bid(cands, purpose):
             return [(c, rng.choice([0, 0, 1, 5, 9])) for c in cands]
 
         turns = await run_conversation(TurnTakingFloor(), st, Turn(speaker=parts[0]),
@@ -273,9 +290,9 @@ def test_meet_TT_응찰승자가_발언권을_얻고_지명이_다음을_정한�
     assert {12, 13} <= f.current.participated                    # 실발언자 참여 인정
 
 
-def test_meet_TT_전원무응찰이면_조기_자연종결():
-    """고정 라운드에선 불가능하던 것: 보탤 말이 없으면(전원 무응찰) 예산을 다 태우지 않고
-    소진으로 회의가 자연히 끝난다."""
+def test_meet_TT_전원무응찰이면_종결확인_거쳐_조기종결():
+    """고정 라운드에선 불가능하던 것: 보탤 말이 없으면 예산을 다 태우지 않고 끝난다 — 단
+    자동 타임아웃이 아니라 **종결 확인 표결**(전원 [패스]/[종료])을 거친 합의 종결로."""
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
     seen = []
@@ -288,8 +305,36 @@ def test_meet_TT_전원무응찰이면_조기_자연종결():
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3"}))
     disc = [b for b in seen if "1라운드" not in b]
-    assert len(disc) == 3                              # 응찰1·③계속발언1·응찰1 — 예산 4 미만 소진 종결
+    # 응찰1 · ③계속발언1 · 응찰1 · 종결확인 표결2(전원) — 예산(4발언)보다 적은 wake로 종결
+    assert len(disc) == 5 and sum("종결 확인" in b for b in disc) == 2
     assert f.comm.alive == 11 and "[회의록]" in r["content"][0]["text"]
+
+
+def test_meet_TT_종결반대자는_발언권을_받아_직접_말한다():
+    """종결 확인에서 [계속: N]을 낸 봇이 발언 의무를 지고 발언권을 받는다 — 말 없는 회의
+    연장은 구조적으로 불가. 발언 후 재침묵하면 재표결 없이 닫힌다(표결=대화당 1회)."""
+    g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
+    f.floor_mode = "turn-taking"
+    seen = []
+
+    async def wake(to, b, k):
+        seen.append((to, b))
+        if "1라운드" in b:
+            return f"{to} 독립 의견"
+        if "종결 확인" in b:
+            return "[계속: 6] 롤백 경로 리스크가 아직 안 다뤄졌습니다" if to == 12 else "[종료]"
+        if "발언권 획득" in b:
+            return "롤백 경로: 마이그레이션 실패 시 이전 스키마로 자동 복귀하는 절차가 빠져 있습니다."
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3"}))
+    txt = r["content"][0]["text"]
+    revived = [(to, b) for to, b in seen if "발언권 획득" in b]
+    assert revived and revived[0][0] == 12             # 반대자(백엔드)가 발언권 획득
+    assert "롤백 경로" in txt                           # 소생 발언이 회의록에 실림
+    assert f.comm.alive == 11 and 12 in f.current.participated
 
 
 def test_meet_기본은_종전_고정라운드_그대로():
