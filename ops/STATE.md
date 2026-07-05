@@ -30,7 +30,9 @@ murmur  eee618d   ← 라이브 웹=murmur-ai.duckdns.org
 - **라이브 러너 env `ORGANT_FLOOR=turn-taking` 적용(2026-07-04, 사용자 승인)** — 시스템 작동
   구조=turn-taking. 되돌림=env 값 제거+재시작(한 줄). 코드 폴백=request-response(오배선 안전값 —
   테스트는 두 정책 모두 명시 고정). 스펙: `murmur/docs/FLOOR_1F_2026-07-04.md`.
-  후속(2층·위임 경로 응찰 확대·CA-Lab 실험)=BACKLOG G.
+- **1층 마무리(2026-07-05)**: 실 검증 4회(라이브 E2E U-002·U-003 — 합의 종결 2회 관측) ·
+  CA-Lab 실험 기록 [EXP-001] draft PR(#12, 검수 대기) · system/murmur GitHub push 완료.
+  **2층은 1층 phase 사용자 검수 후**(CA-Lab 규율). 잔여 관측·후속=BACKLOG G.
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
