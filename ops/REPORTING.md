@@ -64,15 +64,39 @@
 4. 이 결과를 무효화할 수 있는 것을 적었는가?
 5. 독자가 내릴 결정(또는 "없음")이 명시돼 있는가?
 
-## 7. 전거 (요지만 — 이름장식 아님)
+## 7. 전거 (2026-07-05 웹 검증 완료 — 서지·원문 인용·1차 출처)
 
-- **Minto, 피라미드 원리**: 지배적 결론 먼저, 근거는 MECE 그룹으로 아래에 — 독자가 내려갈 깊이를 독자가 정한다.
-- **BLUF**(미군 AR 25-50 계열): Bottom Line Up Front — 바쁜 결정권자용 문서의 표준.
-- **Feynman, "Cargo Cult Science"(1974)**: 과학적 정직 = 자기 결과를 의심하게 만들 모든 것을 자발적으로 먼저 보고.
-- **Orwell(1946)·Strunk & White**: 짧은 말·구체어·불필요어 삭제 — 문장의 흐림은 사고의 흐림.
-- **Tufte**: 증거는 가공 수식어가 아니라 원자료(수치·원문)로 — 데이터가 말하게 하라.
-- **SBAR**(의료 인수인계): 상황-배경-평가-**권고** — 고위험 전달엔 권고까지가 보고다.
-- **Toulmin**: 주장은 증거·논거와 물리적으로 붙어 다닌다.
-- **Popper**: 살아남은 반증 시도가 없으면 검증이 아니다.
-- **Grice(1975)**: 양·질·관련·태도 — 대화 기여의 4격률.
-- **Bezos 내러티브 메모**: 산문 작성이 곧 사고 검증 — 보고가 허술하면 일이 허술한 것.
+- **Minto, *The Pyramid Principle: Logic in Writing and Thinking*(1985, 개정 1996).** McKinsey 최초
+  여성 MBA 컨설턴트가 정립 — 지배적 결론 선행, 근거는 MECE 그룹. https://www.barbaraminto.com/
+- **BLUF — 미 육군 AR 25-50 *Preparing and Managing Correspondence*.** "Army correspondence is
+  action-oriented; it lets the reader know the purpose ... in the first sentence or paragraph."
+  'bottom line up front' 문구는 2001 개정판에서 명문화.
+  https://armypubs.army.mil/epubs/DR_pubs/DR_a/ARN42124-AR_25-50-007-WEB-13.pdf
+- **Feynman, "Cargo Cult Science"(Caltech 졸업연설 1974, *Engineering and Science* 게재).** 원문:
+  "report everything that you think might make it invalid — not only what you think is right
+  about it" / "bending over backwards to show how you're maybe wrong."
+  https://calteches.library.caltech.edu/51/2/CargoCult.htm
+- **Orwell, "Politics and the English Language"(*Horizon*, 1946년 4월호).** 6규칙 — 특히
+  "If it is possible to cut a word out, always cut it out."
+  https://en.wikipedia.org/wiki/Politics_and_the_English_Language
+- **Strunk & White, *The Elements of Style*(Strunk 원판 1918).** Rule 17 "Omit needless words" —
+  "Vigorous writing is concise. A sentence should contain no unnecessary words ... but that he
+  make every word tell." https://en.wikipedia.org/wiki/The_Elements_of_Style
+- **Tufte, "The Cognitive Style of PowerPoint"(2003 팸플릿; *Beautiful Evidence*(2006) pp.156-185).**
+  불릿 개요가 사고를 희석하고 증거 제시 품질을 떨어뜨린다(NASA 컬럼비아 사고조사 사례 분석).
+  https://www.edwardtufte.com/book/the-cognitive-style-of-powerpoint-pitching-out-corrupts-within-ebook/
+- **SBAR — Leonard M, Graham S, Bonacum D(2004), "The human factor: the critical importance of
+  effective teamwork and communication in providing safe care", *Quality & Safety in Health Care*
+  13(suppl 1).** 미 해군 전달 기법을 Kaiser Permanente가 의료 인수인계에 이식 — 상황-배경-평가-**권고**.
+  https://www.ihi.org/library/tools/sbar-tool-situation-background-assessment-recommendation
+- **Toulmin, *The Uses of Argument*(1958).** 주장(claim)-자료(data)-논거(warrant): 주장은 근거와
+  물리적으로 붙어 다닌다. https://owl.purdue.edu/owl/general_writing/academic_writing/historical_perspectives_on_argumentation/toulmin_argument.html
+- **Popper, *Logik der Forschung*(1934) / *The Logic of Scientific Discovery*(1959).** 어떤 수의
+  실험도 이론을 증명하지 못하고, 재현 가능한 관측 하나가 반증한다 — 반증 시도의 생존만이 검증.
+  https://plato.stanford.edu/entries/popper/
+- **Grice, "Logic and Conversation", *Syntax and Semantics* vol.3: Speech Acts(1975), pp.41-58.**
+  양(필요한 만큼만)·질(참·근거 있는 것만)·관련·태도(명료·간결·순서) 4범주.
+  https://philpapers.org/rec/GRIISA
+- **Bezos, Amazon 2017 주주서한.** 원문: "We don't do PowerPoint (or any other slide-oriented)
+  presentations at Amazon. Instead, we write narratively structured six-page memos." — 산문이
+  사고를 강제한다. https://www.aboutamazon.com/news/company-news/2017-letter-to-shareholders
