@@ -4,7 +4,7 @@
 여기서 검증하는 것:
   ① 정책 3종(turn-taking·request-response·orchestrated)이 같은 엔진 위에서 교체 가능
   ② turn-taking = Sacks 3규칙 — 지명 → 자기선택(**후보 봇의 LLM 응찰** — 관련성 판단은 봇,
-     선정 규칙만 정책) → 계속/소진 종결 — 이 기계적으로 성립
+     선정 규칙만 정책) → 무응찰 시 종결 확인 표결 — 이 기계적으로 성립
   ③ request-response 정책의 배분이 라이브 베턴 엔진(CommunicationManager)과 동형(동치성)
   ④ 종결 보장 — 무작위 대본에서도 항상 끝난다(교착·무한 루프 없음)
   ⑤ 실표면 통합 — meet(회의)·세그먼트 경계 open이 seam 뒤에서 동작(기본=동작 불변)
@@ -17,8 +17,8 @@ import pytest
 
 from system.guide_tools import Flow
 from system.rule.communication import CommunicationManager, _bid_score, _turn_signals
-from system.rule.floor import (CLOSE, CLOSE_VOTE, CONTINUE, NOMINATE, OPEN, SELF,
-                               FloorState, OrchestratedFloor, RequestResponseFloor, Turn,
+from system.rule.floor import (CLOSE, CLOSE_VOTE, NOMINATE, OPEN, SELF, FloorState,
+                               OrchestratedFloor, RequestResponseFloor, Turn,
                                TurnTakingFloor, floor_mode, make_floor, round_robin,
                                run_conversation)
 from system.sys_core import Sys
@@ -53,41 +53,33 @@ def test_TT_규칙2_응찰판정_최고가_승리_동률은_침묵순():
     assert a.kind == SELF and a.next == C              # 동률 → 침묵 오래된 C
     a2 = pol.resolve_open(st, Turn(speaker=A), [(B, 7), (C, 5)])
     assert a2.kind == SELF and a2.next == B            # 최고 응찰 승
-    assert st.lapses == 0                              # 낙찰 = 소진 아님
 
 
-def test_TT_규칙3_무응찰_소진시_현재화자_계속_그리고_한계시_종결확인():
+def test_TT_규칙3_무응찰이면_즉시_종결확인_표결():
+    """[EXP-002 절제] 무응찰 → (종전 ③현재 화자 계속·lapse 카운터 없이) 곧장 종결 확인 표결.
+    이어가기 채널은 표결의 [계속: N](발언 의무)이 담당한다."""
     st = FloorState([A, B])
-    pol = TurnTakingFloor(lapse_limit=2)
+    pol = TurnTakingFloor()
     t = Turn(speaker=A, passed=True)
-    a1 = pol.resolve_open(st, t, [])                   # 무응찰 1회 → ③ 현재 화자 계속
-    assert a1.kind == CONTINUE and a1.next == A and st.lapses == 1
-    a2 = pol.resolve_open(st, t, [(B, 0)])             # 0점 응찰 = 무응찰 → 소진 2회
-    assert a2.kind == CLOSE_VOTE and st.close_voted    # 자동 종료가 아니라 종결 확인 표결(1회)
+    a = pol.resolve_open(st, t, [(B, 0)])              # 0점 응찰 = 무응찰
+    assert a.kind == CLOSE_VOTE and set(a.candidates) == {A, B}   # 현재 화자도 표결 참여
     assert pol.resolve_close_vote(st, t, []).kind == CLOSE   # 전원 [종료]/무응답 → 합의 종결
 
 
-def test_TT_종결확인_반대는_발언의무_소생_재침묵은_즉시종결():
-    """[종결 = 합의 성취(pre-closing)] 전원 침묵 → 표결에서 [계속: N] 반대자가 나오면 그가
-    발언권을 받아 직접 말한다(말 없는 연장 불가). 표결은 대화당 1회 — 소생 후 재침묵은 즉시 종결."""
-    st = FloorState([A, B])
-    pol = TurnTakingFloor(lapse_limit=2)
-    t = Turn(speaker=A, passed=True)
-    pol.resolve_open(st, t, [])                        # lapse 1
-    a = pol.resolve_open(st, t, [])                    # lapse 2 → 표결
-    assert a.kind == CLOSE_VOTE and set(a.candidates) == {A, B}   # 현재 화자도 표결 참여
-    r = pol.resolve_close_vote(st, t, [(B, 6), (A, 0)])
-    assert r.kind == SELF and r.next == B and st.lapses == 0      # 반대=발언권 획득(소생)
-    pol.resolve_open(st, t, [])                        # 재침묵 lapse 1
-    assert pol.resolve_open(st, t, []).kind == CLOSE   # lapse 2 — 재표결 없이 합의 종결
-
-
-def test_TT_실발언은_소진카운터_리셋():
+def test_TT_종결확인_반대는_발언의무_표결은_무응찰마다():
+    """[종결 = 합의 성취(pre-closing)] 표결에서 [계속: N] 반대자가 나오면 그가 발언권을 받아
+    직접 말한다(말 없는 연장 불가). 표결은 무응찰마다 열린다 — 늦은 대화 유실 없음. 진짜 끝나면
+    전원 [종료]가 닫는다(상한은 엔진 max_turns·소비자 wake_cap)."""
     st = FloorState([A, B])
     pol = TurnTakingFloor()
-    st.lapses = 1
-    pol.next_after(st, Turn(speaker=A))                # 실발언(무지명) → 리셋 후 open
-    assert st.lapses == 0
+    t = Turn(speaker=A, passed=True)
+    a = pol.resolve_open(st, t, [])                    # 무응찰 → 표결 #1
+    assert a.kind == CLOSE_VOTE
+    r = pol.resolve_close_vote(st, t, [(B, 6), (A, 0)])
+    assert r.kind == SELF and r.next == B              # 반대=발언권 획득(소생)
+    a2 = pol.resolve_open(st, t, [])                   # 재무응찰 → 표결 #2 (1회 제한 없음)
+    assert a2.kind == CLOSE_VOTE
+    assert pol.resolve_close_vote(st, t, [(A, 0), (B, 0)]).kind == CLOSE   # 전원 종료 → 닫힘
 
 
 def test_지명이_참여자밖이면_무지명으로_무해화():
@@ -194,20 +186,19 @@ def test_엔진_speak_None이면_교착대신_종결():
     assert len(turns) == 1                             # opening만 — 즉시 종결
 
 
-def test_엔진_bid_미배선_소비자는_무응찰과_동형():
-    """bid 미배선 소비자(응찰을 아직 안 붙인 표면)의 TT = open이 곧바로 ③계속/소진 경로 —
-    현행과 동형으로 안전하게 돈다(자기선택은 응찰을 배선한 표면부터 점진 활성)."""
+def test_엔진_bid_미배선_소비자는_즉시_합의종결():
+    """bid 미배선 소비자(응찰을 아직 안 붙인 표면)의 TT = 응찰 0·표결 무응답과 동형 →
+    무지명 턴 후 곧장 합의 종결로 수렴(교착 없음 — 안전 폴백)."""
     st = FloorState([A, B])
     seq = []
 
     async def speak(s, alloc):
         seq.append(s)
-        return Turn(speaker=s, passed=(len(seq) >= 2))     # 두 번째부터 할 말 없음
+        return Turn(speaker=s)
 
     turns = asyncio.run(run_conversation(TurnTakingFloor(), st, Turn(speaker=A), speak,
                                          max_turns=10))
-    assert seq and all(s == A for s in seq)            # ③ 현재 화자 계속만 발생
-    assert len(turns) <= 4                             # 소진 누적 → 종결(무한 루프 없음)
+    assert seq == [] and len(turns) == 1               # opening 후 open→표결→무응답→즉시 종결
 
 
 def test_TT_무작위대본_30회_항상_종결():
@@ -291,8 +282,9 @@ def test_meet_TT_응찰승자가_발언권을_얻고_지명이_다음을_정한�
 
 
 def test_meet_TT_전원무응찰이면_종결확인_거쳐_조기종결():
-    """고정 라운드에선 불가능하던 것: 보탤 말이 없으면 예산을 다 태우지 않고 끝난다 — 단
-    자동 타임아웃이 아니라 **종결 확인 표결**(전원 [패스]/[종료])을 거친 합의 종결로."""
+    """보탤 말이 없으면 예산을 다 태우지 않고 끝난다 — 자동 타임아웃이 아니라 **종결 확인
+    표결**(전원 [패스]/[종료])을 거친 합의 종결로. [EXP-002 절제 후] ③계속 없이 응찰 1라운드
+    → 곧장 표결이라 wake가 종전(5)보다 준다(3)."""
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
     seen = []
@@ -305,24 +297,28 @@ def test_meet_TT_전원무응찰이면_종결확인_거쳐_조기종결():
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3"}))
     disc = [b for b in seen if "1라운드" not in b]
-    # 응찰1 · ③계속발언1 · 응찰1 · 종결확인 표결2(전원) — 예산(4발언)보다 적은 wake로 종결
-    assert len(disc) == 5 and sum("종결 확인" in b for b in disc) == 2
+    # 응찰1 · 종결확인 표결2(전원) = 3 wake — 종전(③계속 경유 5 wake) 대비 절감
+    assert len(disc) == 3 and sum("종결 확인" in b for b in disc) == 2
     assert f.comm.alive == 11 and "[회의록]" in r["content"][0]["text"]
 
 
 def test_meet_TT_종결반대자는_발언권을_받아_직접_말한다():
     """종결 확인에서 [계속: N]을 낸 봇이 발언 의무를 지고 발언권을 받는다 — 말 없는 회의
-    연장은 구조적으로 불가. 발언 후 재침묵하면 재표결 없이 닫힌다(표결=대화당 1회)."""
+    연장은 구조적으로 불가. 표결은 무응찰마다 열리고, 진짜 끝나면 전원 [종료]가 닫는다."""
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
     seen = []
+    voted = {"n": 0}
 
     async def wake(to, b, k):
         seen.append((to, b))
         if "1라운드" in b:
             return f"{to} 독립 의견"
         if "종결 확인" in b:
-            return "[계속: 6] 롤백 경로 리스크가 아직 안 다뤄졌습니다" if to == 12 else "[종료]"
+            if to == 12 and voted["n"] == 0:
+                voted["n"] = 1
+                return "[계속: 6] 롤백 경로 리스크가 아직 안 다뤄졌습니다"
+            return "[종료]"
         if "발언권 획득" in b:
             return "롤백 경로: 마이그레이션 실패 시 이전 스키마로 자동 복귀하는 절차가 빠져 있습니다."
         return "[패스]"
@@ -334,6 +330,7 @@ def test_meet_TT_종결반대자는_발언권을_받아_직접_말한다():
     revived = [(to, b) for to, b in seen if "발언권 획득" in b]
     assert revived and revived[0][0] == 12             # 반대자(백엔드)가 발언권 획득
     assert "롤백 경로" in txt                           # 소생 발언이 회의록에 실림
+    assert sum("종결 확인" in b for _, b in seen) >= 4  # 표결 2회(각 전원 2명) — 재표결 허용
     assert f.comm.alive == 11 and 12 in f.current.participated
 
 
