@@ -24,8 +24,9 @@ murmur  8374dff   ← 라이브 웹=murmur-ai.duckdns.org
 ## 1층 floor seam — 대화 구조 추상화 + turn-taking (2026-07-04 착지·라이브 적용)
 - **발언권 순환(누가 다음에 말하는가)을 교체 가능한 정책으로 추상화** — `system/rule/floor.py`
   (TurnTakingFloor=Sacks ①지명 ②자기선택=**후보 봇 병렬 LLM 응찰**([응찰: N] — 최고 응찰 승·동률=침묵순)
-  ③계속 · 전원 침묵 시 **종결 확인 표결**([종료]/[계속: N]=발언 의무 반대, 대화당 1회 — 합의 종결,
-  2026-07-05) · RequestResponseFloor=현행 베턴 동치(테스트 결박) · OrchestratedFloor=사회자).
+  ③무응찰=**종결 확인 표결**([종료]/[계속: N]=발언 의무 반대 — 합의 종결. EXP-002 절제: '현재 화자
+  계속'·lapse 제거, 표결은 무응찰마다·상한=wake_cap/max_turns) · RequestResponseFloor=베턴 동치 ·
+  OrchestratedFloor=사회자).
   통합: meet R2+ 발언 순서·리더 세그먼트 경계 TRP. 실 LLM 봇 라이브 실행으로 검증(FLOOR_1F §6-2).
 - **라이브 러너 env `ORGANT_FLOOR=turn-taking` 적용(2026-07-04, 사용자 승인)** — 시스템 작동
   구조=turn-taking. 되돌림=env 값 제거+재시작(한 줄). 코드 폴백=request-response(오배선 안전값 —
@@ -40,7 +41,7 @@ murmur  8374dff   ← 라이브 웹=murmur-ai.duckdns.org
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **479**(+test_floor 24)  ·  프론트 빌드 OK.
+- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **478**(+test_floor 23)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)
