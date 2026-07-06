@@ -47,11 +47,11 @@ if [ -z "$FAST" ]; then
   echo "== 4) 프론트 빌드 =="; ( cd "$R/murmur/frontend" && npm run build 2>&1 | tail -2 ) || fail=1
 fi
 echo "== 5) STATE.md 신선도 (heads 대조) =="
-for r in system organt guide murmur; do
-  actual=$(git -C "$R/$r" rev-parse --short HEAD 2>/dev/null)
-  if grep -qE "^$r[[:space:]]+$actual" "$R/ops/STATE.md"; then echo "  $r $actual  ✓"
-  else echo "  $r $actual  ⚠ STATE.md 갱신 필요"; fail=1; fi
-done
+# 2레포: claude-company(루트=병합, STATE가 이 안에 있어 순환→정보표시) + murmur(별도→강제)
+echo "  claude-company $(git -C "$R" rev-parse --short HEAD 2>/dev/null)  (info — STATE 동거 레포)"
+m=$(git -C "$R/murmur" rev-parse --short HEAD 2>/dev/null)
+if grep -qE "^murmur[[:space:]]+$m" "$R/ops/STATE.md"; then echo "  murmur $m  ✓"
+else echo "  murmur $m  ⚠ STATE.md 갱신 필요"; fail=1; fi
 echo "======================================"
 [ "$fail" = 0 ] && echo "ALL_GREEN" || echo "FAIL — 위 ⚠ 확인"
 exit $fail

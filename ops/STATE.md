@@ -11,9 +11,7 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  5e3bb40
-organt  ac71035
-guide  0cc6ac7
+claude-company  e52f30b   ← 브레인 (system+organt+guide 병합, 러너 배포)
 murmur  05626ff   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
