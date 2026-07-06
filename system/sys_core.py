@@ -104,6 +104,7 @@ class Sys:
         # _ledger_accrue(owner 정당 수임+교차검증 통과 Task의 owner 저작만) — cover 판정 비편입 4용도
         # (peers 강점줄·_free_alternatives 후보 나열·recommend 투영·관측) 전용.
         self.capability_ledger: Dict[int, Dict[str, int]] = {}
+        self.onboarded: set = set()   # [사수 전수] 온보딩(이름·인격) 완료 봇 — 기준은 사수 몫이라 별도 표식(영속)
         self.profiles_path = (os.path.join(session_dir, "role_profiles.json") if session_dir else None)
         self._load_profiles()
         self._proj_n = 0
@@ -571,7 +572,7 @@ class Sys:
     # '채용' 직무 기준도 증류로 성장한다. 안전: '채용' 직군 봇이 있고 정체성 없는 신규 봇이 있을 때만
     # 작동(기존 경험 보유 봇엔 무영향 — pick_onboard_bots가 거른다).
     _ONBOARD_NAME_RE = re.compile(r"\[이름\]\s*(?P<v>[^\n]+)")
-    _ONBOARD_PERSONA_RE = re.compile(r"\[인격\]\s*(?P<v>.*?)(?=\n\[개인기준\]|\Z)", re.S)
+    _ONBOARD_PERSONA_RE = re.compile(r"\[인격\]\s*(?P<v>.*?)(?=\n\[/인격\]|\n\[개인기준\]|\Z)", re.S)
 
     def _pick_recruiter(self):
         """'채용/인사' 직군을 가진 Organt(리크루터). 여러 명이면 첫 번째, 없으면 None(기능 dormant)."""
@@ -581,17 +582,39 @@ class Sys:
         return None
 
     def pick_onboard_bots(self):
-        """정체성 미완 신규 봇 — 직군은 있으나(예비 아님) 경험·개인기준이 아직 0(갓 생성). 기존 봇
-        (경험 보유)은 distill 대상이지 onboard 대상이 아니다(생성 정체성이 학습을 덮어쓰지 않게)."""
+        """정체성(이름·인격) 미완 신규 봇 — 직군은 있으나(예비 아님) 아직 온보딩 안 됨. 기존 봇
+        (경험 보유)은 온보딩 대상이 아니다(생성 정체성이 학습을 덮어쓰지 않게). 온보딩 완료 표식은
+        self.onboarded(영속) — 기준(빈 bot_profiles)은 사수 전수(pick_endow_bots)의 몫이라 별개."""
         out = []
         for mid, label in self.bot_info.items():
             lbl = str(label or "").strip()
             if not lbl or lbl.startswith("예비"):
                 continue
+            if int(mid) in self.onboarded:
+                continue
             if self.bot_experience.get(int(mid)) or self.bot_profiles.get(int(mid)):
                 continue
             out.append(int(mid))
         return out
+
+    def pick_endow_bots(self):
+        """[사수 전수] 직무 '시작 기준'이 없는 봇(직군 있음·예비 제외) — 신규(온보딩 직후)든 기존이든.
+        같은 직군 사수가 전수하고, 사수가 없으면 채용봇이 직군 유산으로 폴백(그마저 없으면 첫 작업
+        때 자기 작성 폴백이 받친다)."""
+        return [int(mid) for mid, label in self.bot_info.items()
+                if str(label or "").strip() and not str(label).strip().startswith("예비")
+                and not self.bot_profiles.get(int(mid))]
+
+    def _pick_mentor(self, job, exclude_mid):
+        """같은 직군에서 개인 기준을 보유한 선배(사수) — 경험 많은 순. 없으면 None(채용봇 폴백)."""
+        cands = []
+        for mid, label in self.bot_info.items():
+            mid = int(mid)
+            if mid == int(exclude_mid) or not self.bot_profiles.get(mid):
+                continue
+            if any(j.strip() == job for j in str(label or "").split("·")):
+                cands.append((len(self.bot_experience.get(mid) or []), mid))
+        return max(cands)[1] if cands else None
 
     async def onboard_bot(self, new_mid, recruiter_mid=None, role=None) -> bool:
         """[채용 제네시스] 신규 봇의 정체성을 리크루터가 생성. distill_bot 동형(engage·격리 세션).
@@ -601,8 +624,8 @@ class Sys:
         role = (role or self.bot_info.get(new_mid) or "").strip()
         if not role or role.startswith("예비"):
             return False
-        if self.bot_experience.get(new_mid) or self.bot_profiles.get(new_mid):
-            return False                                  # 이미 일했거나 온보딩됨
+        if new_mid in self.onboarded or self.bot_experience.get(new_mid) or self.bot_profiles.get(new_mid):
+            return False                                  # 이미 온보딩됐거나 일한 봇(정체성 덮어쓰기 방지)
         recruiter = recruiter_mid if recruiter_mid is not None else self._pick_recruiter()
         if recruiter is None or int(recruiter) == new_mid:
             return False                                  # 리크루터 없음/자기 자신
@@ -626,20 +649,21 @@ class Sys:
             organt = self.organt_builder(recruiter, server, "member", flow, state_tag=f"onboard_{new_mid}")
         except TypeError:
             organt = self.organt_builder(recruiter, server, "member", flow)
-        role_std = self.role_profiles.get(role) or "(이 직군의 회사 기준이 아직 없음 — 좋은 시작 기준을 당신이 잡으세요)"
+        # [역할 분담 정정 2026-07-06] 채용 전문가는 '사람됨'(이름·인격)만 빚는다 — 직무 '시작 기준'은
+        # 채용봇이 아니라 **같은 직군 사수(선배)가 전수**(endow_craft — 사람 회사의 도제 구조). 채용봇이
+        # 기술 기준까지 쓰는 건 어색하다는 지적(사용자)의 반영.
         taken = sorted({(v or "").split("·")[0].strip() for v in self.bot_info.values()
                         if v and not str(v).startswith("예비")})
         prompt = (
             f"[채용 — 신규 직원 온보딩] 당신은 이 회사의 채용 전문가입니다. 도구를 쓰지 말고 텍스트로만 답하세요.\n\n"
             f"새로 합류하는 직원의 직군: {role}\n"
-            f"이 직군의 회사 축적 기준(이 사람이 이어받을 토대):\n{role_std}\n\n"
             f"기존 팀 이름(중복 금지): {', '.join(taken) or '(없음)'}\n\n"
-            f"이 직원을 '한 사람'으로 빚으세요 — 빈 껍데기가 아니라 처음부터 개성과 초기 전문성을 가진 직원으로. "
+            f"이 직원을 '한 사람'으로 빚으세요 — 빈 껍데기가 아니라 처음부터 개성을 가진 직원으로. "
             f"일반론 금지, 이 직군·이 사람 특유의 구체로:\n"
             f"- 이름: 기존과 안 겹치는 고유한 한국식 사람 이름(직군과 무관한 정체성).\n"
             f"- 인격(persona): 이 사람만의 태도·일하는 방식·강점·버릇 3~5줄(직군 전문성을 체화한 구체적 개성).\n"
-            f"- 초기 개인 기준: 위 직군 기준을 '이 사람만의 시작 관점·강점'으로 특화한 3~5줄(이후 실경험으로 발전).\n"
-            f"반드시 아래 형식만으로 답하세요:\n[이름] (고유 이름)\n[인격]\n(여러 줄)\n[개인기준] {role}\n(줄들)\n[/개인기준]"
+            f"(직무 '시작 기준'은 당신 몫이 아닙니다 — 합류 후 같은 직군 사수가 전수합니다.)\n"
+            f"반드시 아래 형식만으로 답하세요:\n[이름] (고유 이름)\n[인격]\n(여러 줄)\n[/인격]"
         )
         try:
             out = await organt.handle(prompt)
@@ -654,17 +678,11 @@ class Sys:
         mp = self._ONBOARD_PERSONA_RE.search(out or "")
         if mp:
             persona = (mp.group("v") or "").strip()[:5000]
-        prof = ""
-        mb = self._BOT_PROFILE_RE.search(out or "")
-        if mb:
-            prof = (mb.group("body") or "").strip()[:600]
-        if not (persona or prof):
+        if not persona:
             self._log("onboard_noop", bot=new_mid)
             return False
-        if prof:
-            self.bot_profiles[new_mid] = prof             # 초기 개인 기준(러너-로컬 영속)
-            self._save_profiles()
-            await self._sync_craft(new_mid)               # [격리] 탄생 기준 → 웹 개인 노하우 표면 동기
+        # 직무 '시작 기준'은 여기서 만들지 않는다 — 같은 직군 사수의 전수(endow_craft)가 다음 수면
+        # 사이클에서 채운다(사수 없으면 채용봇이 직군 유산으로 폴백).
         if self.persist_identity:                         # 이름·persona → 매체 DB(러너 주입 콜백; sync/async 모두 수용)
             try:
                 _r = self.persist_identity(new_mid, name, persona)
@@ -672,10 +690,91 @@ class Sys:
                     await _r
             except Exception as e:
                 self._log("onboard_persist_failed", bot=new_mid, err=str(e)[:80])
+        self.onboarded.add(new_mid)                       # 완료 표식(영속) — 기준 없음으로 재온보딩 방지
+        self._save_profiles()
         self._log("bot_onboarded", bot=new_mid, by=recruiter, named=bool(name), has_persona=bool(persona))
         if self.session_dir:
             try:
                 os.remove(os.path.join(str(self.session_dir), f"organt_state_onboard_{new_mid}.json"))
+            except OSError:
+                pass
+        return True
+
+    async def endow_craft(self, mid) -> bool:
+        """[사수 전수 — 시작 기준] 기준 없는 봇에게 **같은 직군 사수(선배)**가 시작 기준을 전수한다 —
+        사람 회사의 도제: 채용(이름·인격)은 채용봇, 기술 온보딩은 그 직군 선배. 사수가 없으면 채용봇이
+        직군 유산(role_profiles 동결분)으로 폴백. 전수는 탄생 1회 — 이후엔 자기 경험·개인 증류로만
+        발전(격리 유지: 지속 공유가 아니라 의도된 1회 계승)."""
+        mid = int(mid)
+        if self.bot_profiles.get(mid):
+            return False                                  # 이미 기준 보유
+        jobs = [j.strip() for j in str(self.bot_info.get(mid) or "").split("·")
+                if j.strip() and not j.strip().startswith("예비")]
+        if not jobs:
+            return False
+        job = jobs[0]
+        mentor = self._pick_mentor(job, mid)
+        worker = mentor if mentor is not None else self._pick_recruiter()
+        if worker is None or int(worker) == mid:
+            return False                                  # 사수도 채용봇도 없음 → 자기 작성 폴백(첫 작업)
+        worker = int(worker)
+        if self.engaged.holder(worker) is not None:
+            return False                                  # 전수자가 흐름 참여 중 → 이번 주기 스킵
+        self.engaged.engage(worker, "__distill__")
+        try:
+            return await self._endow_inner(mid, job, worker, is_mentor=(mentor is not None))
+        finally:
+            self.engaged.release(worker, "__distill__")
+            item = self._pop_runnable_queued()
+            if item is not None:
+                asyncio.ensure_future(self.handle_user_input(*item))
+
+    async def _endow_inner(self, mid, job, worker, is_mentor) -> bool:
+        flow = Flow(self.guide, 0, self.guild_id, worker, self.bot_info)
+        flow.workspace = self._distill_workspace()
+        server = build_guide_server(flow, worker, "member")
+        try:
+            organt = self.organt_builder(worker, server, "member", flow, state_tag=f"endow_{mid}")
+        except TypeError:
+            organt = self.organt_builder(worker, server, "member", flow)
+        label = str(self.bot_info.get(mid, "")) or f"봇{mid}"
+        heritage = self.role_profiles.get(job) or "(이 직군의 회사 유산이 아직 없음 — 좋은 시작 기준을 빚어주세요)"
+        if is_mentor:
+            my_std = self.bot_profiles.get(worker) or ""
+            head = (f"[사수 온보딩 — 시작 기준 전수] 당신은 '{job}' 선배입니다. 새 동료(직군 {label})가 "
+                    f"합류했습니다. 도구를 쓰지 말고 텍스트로만 답하세요.\n\n"
+                    f"당신 자신의 직무 기준(전수 재료):\n{my_std}\n\n"
+                    f"이 직군의 회사 유산(참고):\n{heritage}\n\n"
+                    f"이 신입이 첫 작업부터 쓸 '시작 기준' 3~5줄을 빚어주세요 — **복사가 아니라 전수**: "
+                    f"당신 기준의 정수를 신입에게 맞게 변형하되, 같은 직군이어도 다른 사람임을 남기세요. "
+                    f"전수는 이번 1회이고 이후 신입은 자기 경험으로만 발전합니다.\n")
+        else:
+            head = (f"[채용 폴백 — 시작 기준] 당신은 채용 전문가입니다. '{job}' 직군에 아직 선배(사수)가 "
+                    f"없어, 회사 유산으로 신규 직원의 시작 기준을 대신 잡습니다. 도구를 쓰지 말고 텍스트로만 답하세요.\n\n"
+                    f"이 직군의 회사 유산(재료):\n{heritage}\n\n"
+                    f"이 직원이 첫 작업부터 쓸 '시작 기준' 3~5줄을 빚어주세요 — 일반론 금지, 이 직군 특유의 "
+                    f"품질·검증 기준으로(이후 본인 경험으로 발전).\n")
+        prompt = head + f"반드시 아래 형식만으로 답하세요:\n[개인기준] {label}\n(줄들)\n[/개인기준]"
+        try:
+            out = await organt.handle(prompt)
+        except Exception as e:
+            self._log("endow_failed", bot=mid, by=worker, err=str(e)[:80])
+            return False
+        m = self._BOT_PROFILE_RE.search(out or "")
+        body = (m.group("body") or "").strip() if m else ""
+        if len(body) > 600:
+            cut = body[:600]
+            body = cut[:cut.rfind("\n")] if "\n" in cut else cut
+        if not body:
+            self._log("endow_noop", bot=mid, by=worker)
+            return False
+        self.bot_profiles[mid] = body
+        self._save_profiles()
+        await self._sync_craft(mid)                       # 웹 개인 노하우 표면 동기
+        self._log("craft_endowed", bot=mid, by=worker, mentor=bool(is_mentor), size=len(body))
+        if self.session_dir:
+            try:
+                os.remove(os.path.join(str(self.session_dir), f"organt_state_endow_{mid}.json"))
             except OSError:
                 pass
         return True
@@ -697,7 +796,7 @@ class Sys:
             return None
 
     async def _distill_cycle_once(self) -> None:
-        """[자기업무 사이클 1회] ⓪ 채용 온보딩(신규·빈 봇 정체성 생성 — 리크루터) + ① 개인 증류 —
+        """[자기업무 사이클 1회] ⓪ 온보딩(이름·인격 — 채용봇) + ① 사수 전수(시작 기준 — 같은 직군 선배) + ② 개인 증류 —
         각 유휴 대상 1건(비용 제어). 배경 자기업무는 '매체'가 아니라 '브레인'의 행위라 여기(Sys)가
         소유한다 — 종전엔 Discord 진입(discord_main._sleep_cycle)에만 있어 라이브(murmur) 러너에선
         안 돌아, 경험이 압축되지 못하고 _EXP_KEEP FIFO로 잘려나가기만 했다(중요한 기억 유실). 실패는
@@ -710,7 +809,13 @@ class Sys:
                     continue
                 if await self.onboard_bot(mid):
                     break
-            # [격리] 직군 증류 폐지 — 수면 = ⓪ 채용 온보딩 + ① 개인 증류만(봇별 완전 격리).
+            # [사수 전수] 기준 없는 봇에게 같은 직군 선배가 시작 기준을 1회 전수(없으면 채용봇 유산 폴백).
+            for mid in self.pick_endow_bots():
+                if self.engaged.holder(mid) is not None:
+                    continue
+                if await self.endow_craft(mid):
+                    break
+            # [격리] 직군 증류 폐지 — 수면 = ⓪ 온보딩(이름·인격) + ① 사수 전수(시작 기준) + ② 개인 증류.
             for mid in self.pick_distill_bots():
                 if self.engaged.holder(mid) is not None:
                     continue                 # 그 봇은 흐름 참여 중 → 다음 후보

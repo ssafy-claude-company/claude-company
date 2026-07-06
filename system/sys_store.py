@@ -473,6 +473,9 @@ def load_profiles(sys):
         sys.bot_profiles.update({int(k): str(v) for k, v in (data.get("bot_profiles") or {}).items() if v})
         sys.capability_ledger.update({int(k): {c: int(n) for c, n in dict(v or {}).items()}
                                       for k, v in (data.get("capability_ledger") or {}).items() if v})
+        # [사수 전수] 온보딩(이름·인격) 완료 표식 — 온보딩이 기준을 더는 안 채우므로(기준=사수 몫)
+        # '기준 없음'으로 재온보딩되지 않게 별도 영속(재시작 무한 재온보딩 방지).
+        sys.onboarded.update(int(k) for k in (data.get("onboarded") or []))
     except Exception:
         pass
 
@@ -486,7 +489,8 @@ def save_profiles(sys):
             json.dump({"profiles": sys.role_profiles, "experience": sys.role_experience,
                        "bot_experience": {str(k): v for k, v in sys.bot_experience.items()},
                        "bot_profiles": {str(k): v for k, v in sys.bot_profiles.items()},         # [B-19]
-                       "capability_ledger": {str(k): v for k, v in sys.capability_ledger.items()}},  # [B-21]
+                       "capability_ledger": {str(k): v for k, v in sys.capability_ledger.items()},  # [B-21]
+                       "onboarded": sorted(str(k) for k in sys.onboarded)},   # [사수 전수] 온보딩 완료 표식
                       f, ensure_ascii=False, indent=2)
             f.flush()
             os.fsync(f.fileno())

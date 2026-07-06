@@ -5402,3 +5402,81 @@ def test_deliver_human_info_노트주입_프롬프트반영_가드_대상라우�
     # 소비-clear(run_turn이 하는 일) 후엔 부재
     f.pending_info.pop(11, None)
     assert "사람이 작업 중 전한 정보" not in s._prompt("x", Kind.WORK, "leader", 11, 11, f)
+
+
+# ───────────────── 사수 전수 — 시작 기준은 채용봇이 아니라 같은 직군 선배가 ─────────────────
+
+
+def test_사수전수_선배가_시작기준을_빚는다(tmp_path):
+    """[사수 전수] 기준 없는 신입에게 **같은 직군 선배(사수)**가 시작 기준을 전수한다 — 채용봇이
+    기술 기준까지 쓰는 어색함 제거(채용=이름·인격, 기술 온보딩=사수). 전수는 1회·이후 자기 발전(격리)."""
+    calls = {}
+
+    class _Mentor:
+        async def handle(self, prompt):
+            calls["prompt"] = prompt
+            return "[개인기준] 백엔드\n- 계약부터, 단 신입답게 작은 슬라이스로 검증\n[/개인기준]"
+
+    def builder(oid, srv, role, flow=None, state_tag=None):
+        calls["worker"] = oid; calls["state_tag"] = state_tag
+        return _Mentor()
+
+    s = Sys(FakeGuide(), guild_id=1, organt_builder=builder,
+            bot_info={11: "백엔드", 22: "백엔드", 90: "채용"}, session_dir=str(tmp_path))
+    s.bot_profiles[11] = "- API 계약부터 합의"          # 선배(사수) — 기준 보유
+    s.bot_experience[11] = ["e1", "e2"]
+    assert 22 in s.pick_endow_bots() and 11 not in s.pick_endow_bots()
+    assert asyncio.run(s.endow_craft(22)) is True
+    assert calls["worker"] == 11                        # ★전수자 = 같은 직군 선배(채용봇 90 아님)
+    assert "사수 온보딩" in calls["prompt"] and "API 계약부터" in calls["prompt"]   # 자기 기준이 재료
+    assert "복사가 아니라 전수" in calls["prompt"]
+    assert "신입답게" in s.bot_profiles[22]              # 신입 것으로 영속(선배 것과 다름)
+    assert s.bot_profiles[11] == "- API 계약부터 합의"    # 선배 기준 불변(오염 없음)
+    assert calls["state_tag"] == "endow_22"
+    assert any(e["event"] == "craft_endowed" and e.get("mentor") for e in s.flow_log)
+
+
+def test_사수전수_선배없으면_채용봇이_유산으로_폴백(tmp_path):
+    """[사수 전수 — 폴백] 그 직군에 기준 보유 선배가 없으면 채용봇이 직군 유산(동결 role_profiles)으로
+    시작 기준을 대신 잡는다 — '증류 안 된 봇'이 구조적으로 없게(신규 직군은 유산 없이도 빚음)."""
+    calls = {}
+
+    class _Recruiter:
+        async def handle(self, prompt):
+            calls["prompt"] = prompt
+            return "[개인기준] 디자인\n- 시선 흐름부터 설계\n[/개인기준]"
+
+    def builder(oid, srv, role, flow=None, state_tag=None):
+        calls["worker"] = oid
+        return _Recruiter()
+
+    s = Sys(FakeGuide(), guild_id=1, organt_builder=builder,
+            bot_info={33: "디자인", 90: "채용"}, session_dir=str(tmp_path))
+    s.role_profiles["디자인"] = "- 접근성 대비 4.5:1"     # 직군 유산(동결)
+    assert asyncio.run(s.endow_craft(33)) is True
+    assert calls["worker"] == 90                         # 선배 없음 → 채용봇 폴백
+    assert "채용 폴백" in calls["prompt"] and "접근성 대비" in calls["prompt"]   # 유산이 재료
+    assert "시선 흐름" in s.bot_profiles[33]
+
+
+def test_온보딩은_이름인격만_기준은_전수몫_재온보딩방지(tmp_path):
+    """[역할 분담] 채용봇 온보딩 = 이름·인격만(기준 생성 제거). 완료 표식(onboarded)이 영속돼
+    '기준 없음'으로 재온보딩되지 않고, 그 봇은 endow(사수 전수) 대상으로 넘어간다."""
+    calls = {"n": 0}
+
+    class _Recruiter:
+        async def handle(self, prompt):
+            calls["n"] += 1
+            assert "개인기준" not in prompt              # 온보딩 프롬프트에서 기준 요청 제거됨
+            return "[이름] 서린\n[인격]\n- 계약 먼저 못박는 사람\n[/인격]"
+
+    s = Sys(FakeGuide(), guild_id=1, organt_builder=lambda *a, **k: _Recruiter(),
+            bot_info={13: "백엔드", 90: "채용"}, session_dir=str(tmp_path))
+    assert asyncio.run(s.onboard_bot(13)) is True
+    assert not s.bot_profiles.get(13)                    # 기준은 안 만듦(사수 몫)
+    assert 13 in s.onboarded and 13 not in s.pick_onboard_bots()   # 재온보딩 방지
+    assert 13 in s.pick_endow_bots()                     # 전수 대상으로 이관
+    assert asyncio.run(s.onboard_bot(13)) is False and calls["n"] == 1   # 멱등
+    s2 = Sys(FakeGuide(), guild_id=1, organt_builder=None,
+             bot_info={13: "백엔드", 90: "채용"}, session_dir=str(tmp_path))
+    assert 13 in s2.onboarded                            # 표식 영속(재시작 무한 재온보딩 방지)
