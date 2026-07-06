@@ -1,0 +1,3 @@
+# guide(전송 구현체) 의존성 — 매체 SDK
+discord.py>=2.3   # DiscordGuide + discord_main(Discord 리스너)
+requests>=2.31    # MurmurGuide(murmur API 클라이언트)

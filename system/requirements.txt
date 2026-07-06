@@ -1,0 +1,4 @@
+# system(SYS) + organt(봇) 런타임 의존성 — 브레인
+claude-agent-sdk>=0.2.0   # Organt(LLM) 지속 세션·커스텀 툴·훅
+anyio>=4.0                # guide_tools 비동기(배포 논블로킹 등)
+python-dotenv>=1.0        # .env 로딩

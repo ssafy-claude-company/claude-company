@@ -17,7 +17,7 @@
 ## 불변식 (깨면 안 됨)
 1. **매체중립**: SYS는 Guide 구현체를 모른다 — `system/`이 murmur/discord 특정 import 하지 않음.
 2. 협업 규칙: **단일 활성 베턴·LIFO·완료 게이트**.
-3. **브레인 검증 = `bash ops/verify.sh`** — `ops/tests/`(441 pytest)가 실 system/guide/organt를 직접 검증(단일 진실원, M5 완료). PJT 미러 폐지 — 두 곳 동기 불필요. (`organt_discord.main`은 `organt_discord/main.py` shim이 실코드로 재수출.)
+3. **브레인 검증 = `bash ops/verify.sh`** — `ops/tests/`(455 pytest)가 실 system/guide/organt를 직접 검증(단일 진실원, M5 완료). PJT 미러 폐지 — 두 곳 동기 불필요. (`organt_discord.main`은 `organt_discord/main.py` shim이 실코드로 재수출.)
 4. 라이브 인프라(systemd `organt-runner`·`/etc`·Render·env파일) **직접 수정·배포·러너 재시작은 사용자 승인 후**.
 5. 문자열 `claude-opus-4-8`을 코드·커밋·문서·주석 어디에도 쓰지 마라.
 6. **판단 주체 = Fable, 집행 = Opus**. (판단·설계·검증은 Fable, 기계적 실행·편집은 Opus로 토큰 절약.)
