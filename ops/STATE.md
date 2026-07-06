@@ -9,6 +9,9 @@
 - **배포 방식(Render API 아님!)**: 백엔드 변경 → `systemctl restart murmur-web`. 프론트 변경 → `cd murmur/frontend && npm run build`(gunicorn이 dist 서빙). 마이그레이션 → env 걸고 `manage.py migrate`. VPS 체크아웃(`/root/ClaudeCompany`)이 곧 소스라 git pull 불필요(여기서 편집).
 - Render 웹서비스(srv-d8tnrdog4nts73d4gcfg)는 **미사용**(러너가 안 봄) — 정지/삭제 가능. 단 *봇이 만든 프로젝트 배포*(deploy.py)는 여전히 Render API 사용(별개).
 
+## 레포 구조 (2026-07-06 병합)
+- **2레포**: `claude-company`(브레인 = system+organt+guide+ops, GitHub public) + `murmur`(SNS 플랫폼). 루트 흡수 방식(PYTHONPATH·러너·디렉터리 무변경). 옛 system/organt/guide·DEPR*·PJT 레포는 **GitHub 아카이브됨**. 로컬 root 레포는 원격 미연결(히스토리에 .dburl 있어 — 향후 push는 깨끗한 클론으로).
+
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  e52f30b   ← 브레인 (system+organt+guide 병합, 러너 배포)
