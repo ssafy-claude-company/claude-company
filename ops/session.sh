@@ -6,7 +6,7 @@ set -uo pipefail
 MS=/root/ClaudeCompany
 T="${1:?사용: session.sh <task> [bg|web|fg] [\"할 일 설명\"]}"; MODE="${2:-fg}"; DESC="${3:-}"
 W="/root/wt/$T"
-[ -e "$W" ] || bash "$MS/ops/wt.sh" new "$T" system organt guide murmur
+[ -e "$W" ] || bash "$MS/ops/wt.sh" new "$T"
 cd "$W"
 PROMPT="너는 task '$T' 담당 세션. 정향: CLAUDE.md→ops/STATE.md. 시작 시 'bash ops/claim.sh add $T <실제만질파일glob>'. 계약(ops/CONTRACTS.md 17seam) 지키며 개발. 각 소유 레포에 커밋(git -C <repo> commit). **착지는 스스로: 'bash ops/land.sh $T'** — 자기 브랜치를 정본에 병합+전체검증(통합 세션 불필요, flock으로 직렬화). 라이브 반영(서비스 재시작)은 사용자 승인 후. 판단은 Fable 에이전트, 집행은 Opus. ── 할 일: ${DESC:-(사용자가 곧 지시. 우선 정향+claim만.)}"
 # Opus4.8·max에폭·자동승인(auto=이 세션과 같은 모드: 일반 자동, 위험만 분류기가 잡음)
