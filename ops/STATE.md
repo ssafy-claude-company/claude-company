@@ -14,7 +14,7 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  f4b11fc   ← 브레인 (system+organt+guide 병합, 러너 배포)
+claude-company  19dcb0a+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환. 격리=19dcb0a)
 murmur  3ade03f   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
