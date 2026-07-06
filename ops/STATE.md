@@ -14,7 +14,7 @@
 system  880a965
 organt  511b66d
 guide  e977239
-murmur  7a07575   ← 라이브 웹=murmur-ai.duckdns.org
+murmur  e634d7d   ← 라이브 웹=murmur-ai.duckdns.org (UX감사 전수수정 배포 2026-07-06)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
@@ -34,6 +34,16 @@ murmur  7a07575   ← 라이브 웹=murmur-ai.duckdns.org
 - **1층 마무리(2026-07-05)**: 실 검증 4회(라이브 E2E U-002·U-003 — 합의 종결 2회 관측) ·
   CA-Lab 실험 기록 [EXP-001] draft PR(#12, 검수 대기) · system/murmur GitHub push 완료.
   **2층은 1층 phase 사용자 검수 후**(CA-Lab 규율). 잔여 관측·후속=BACKLOG G.
+
+## UX감사 전수 수정 — 라이브 배포 완료 (2026-07-06, murmur e634d7d)
+- **감사 발견 35+건 전부 수정·배포**(근본원인 RC-A~D·보안 3·P0 2·P1 9·P2 16·P3 7, 미해결 0).
+  murmur 전용(system/organt/guide 0 변경). 감사문서 `murmur/docs/PRODUCT_UX_AUDIT_2026-07-05.md`
+  상단 "✅ 진행 현황"에 항목별 체크·커밋 매핑. 마이그 0018(channel_seq)·0019(PersonSession) 적용.
+- **라이브 검증(실사이트)**: 정렬 활동순(사용자채널 상단)·이름배정(무명 0)·게스트 site-config 403·
+  세션토큰 다기기·익명 랜딩 쇼케이스(로그인 벽 제거)·베턴 GuideMessage 실시간·회의 전문 모달 확인.
+- 주요: 회의전문 인앱모달·내부로그 scrub·브리핑 진실화·직원해고/계정관리·throttle·다기기세션·랜딩공개.
+- **환경 주의**: 이 워크트리의 system/organt/guide 디렉터리·공유 node_modules가 외부요인으로 소실/손상
+  (내 코드 무관, murmur 온전). 배포는 라이브 체크아웃 `/root/ClaudeCompany`에서 정상 수행됨.
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
