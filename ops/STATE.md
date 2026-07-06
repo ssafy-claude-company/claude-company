@@ -14,7 +14,7 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  e52f30b   ← 브레인 (system+organt+guide 병합, 러너 배포)
+claude-company  f4b11fc   ← 브레인 (system+organt+guide 병합, 러너 배포)
 murmur  3ade03f   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
@@ -40,6 +40,11 @@ murmur  3ade03f   ← 라이브 웹=murmur-ai.duckdns.org
 - **되살리기(반복 주입) 제거 + first_wake 1회 교육**: 정체성·원칙·원문·[경험]·운영은 그 봇 첫 wake에만 주입(`will_resume` 판정), resume는 **동적 task만**. 정적 지식·앵커는 반복이 아니라 **압축에도 살아남는 구조**가 담보 — 단일활성·`.collab/` 어포던스=**persona(system_prompt)**, verify·owner·iface·베턴=**게이트**, 원문·기준·로스터=**디스크(`.collab/ORIGIN.md`·`PLAYBOOK.md`·`TEAM.md`, [경험]=report 툴 필드)**. 동료는 로스터 변경(이벤트) 시에만 주입.
 - **큐레이션 조립기**(assemble_context): 키 dedup·예산·우선순위로 PRINCIPLE 정리. **①증류 라이브화**(distill_role/bot 배선·수면 루프) · **②채용 제네시스 활성**(ensure_recruiter→리크루터 '주시안' role=채용 생성, 신규 봇 persona/이름 온보딩). floor seam과 공존(communication.py는 floor 구조, meet-relevance는 후속 재적용).
 - 수치: 일반 resume 턴 ~269자(옛 매턴 전량 ~2,600 대비), 항해-필수 사실 8/8 내구·최악 재접지 1,338토큰 1회(유계). **순응률(실 pull·grounding)은 flow 로그 관측 대상.** 롤백 SHA: system 880a965·organt 511b66d·guide e977239·murmur 7a07575·meta 2b81da6.
+
+## 봇별 완전 격리 — 직군 공용 학습 폐지 (2026-07-06 커밋 19dcb0a, 러너 재시작 대기)
+- **학습·기억·기준 = 봇 개인 단위만**: [경험]→`bot_experience[me]`, [직무기준]→`bot_profiles[me]`, 주입='자기 개인 기준'뿐(같은 직군 동료 기준도 안 받음 — 오염 차단). 수면 = 온보딩+개인 증류(distill_bot)만(직군 증류 삭제). 검증 루브릭·craft 미러 = 그 직군 보유 봇의 개인 기준(`_job_standard`).
+- **신규·빈 봇 = 기계적 시드 없이 리크루터 온보딩**이 직군 유산(role_profiles, 동결)을 '이 사람의 시작 기준'으로 빚음 — "증류 안 된 봇이 아니라 학습을 거친 봇이 튀어나온다". 기존 빈 봇도 수면 사이클의 `pick_onboard_bots`가 자연 온보딩. role_experience=레거시 동결.
+- 격리 스모크 4/4(같은직군 미주입·자기풀만 영속·제네시스 기준 보유 탄생·봇별 상이) · 브레인 478 · system 86 · sns 256.
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
