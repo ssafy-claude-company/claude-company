@@ -327,7 +327,10 @@ def test_B18_PRINCIPLE_이동과_워커_레이아웃_push_유지():
     # 이동 3블록은 _PRINCIPLE에서 빠지고 1줄 PLAYBOOK 참조로 대체
     for moved in ("[완성도 기준]", "[자원 동원", "[안 닿으면 최선의 차선책"):
         assert moved not in Sys._PRINCIPLE and moved in Sys._PLAYBOOK_PRINCIPLES
-    assert ".collab/PLAYBOOK.md" in Sys._PRINCIPLE
+    # [B-map] .collab/ 어포던스(PLAYBOOK 참조 포함)는 persona(system_prompt·압축 무관)로 내구 이전 —
+    # PRINCIPLE 중복 제거. 봇은 persona로 PLAYBOOK 위치를 안다.
+    from organt.organt import load_persona
+    assert ".collab/PLAYBOOK.md" in load_persona()
     # 레이아웃 관례: 워커(멤버) push 유지, 리더는 PLAYBOOK 참조(A-6 — 리더만 이동)
     member_p = s._prompt("구현", Kind.WORK, "member", 12, 11, None)
     leader_p = s._prompt("게임 만들어줘", Kind.WORK, "leader", 11, 11, None)
