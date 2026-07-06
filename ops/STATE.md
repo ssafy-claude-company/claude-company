@@ -11,28 +11,37 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  da3d5f5
+system  880a965
 organt  511b66d
-guide  a8f33a8
-murmur  b6190b0   ← 라이브 웹=murmur-ai.duckdns.org
+guide  e977239
+murmur  7a07575   ← 라이브 웹=murmur-ai.duckdns.org
 ```
-
-## 2026-07-04 착지: 기억 시스템 ①②(증류 라이브화·관련성 주입)
-- **① 축출 차단(러너 재시작 시 라이브)**: 수면 증류(경험→직무·개인 기준 압축)를 `Sys.run`에 배선 — 종전 Discord 진입(`discord_main._sleep_cycle`)에만 있어 라이브(murmur) 러너에선 **안 돌던** 것(W4 B-19가 커밋됐어도 라이브 러너 미배선)을 매체중립 위치로. **`bot_profiles`(개인층)·직군 증류 라이브 첫 가동**. **OOM 근본교정**: 증류 워커에 빈 격리 cwd(`_distill_workspace`) — 종전 빈 흐름이 `cfg.workspace_dir`(수백MB)로 폴백해 CLI 스캔 RSS 수GB OOM 유발하던 것 차단(라이브 웹 공존 VPS라 필수). 경험버퍼 `_EXP_KEEP` 12→40(env `ORGANT_EXP_KEEP`). 조절: `ORGANT_SLEEP_PERIOD`(기본600·0=끄기).
-- **② 관련성 주입(첫 조각·dormant)**: `meet` R2+ 재방송을 현재 발언자 도메인 관련성으로 예산 가중(`_token_overlap_score`=`_body_overlap` 스코어판). **`ORGANT_DOC_COLLAB` 플래그-온 경로 한정** — 플래그 off(라이브)면 미작동. flip은 ① 관측 데이터 후.
-- 검증: 브레인 pytest **455**·system unittest **86**·스모크(격리 cwd 실도달·meet 관련성 가중). 남은 ②: 위임 노트(6000자 flat) 관련성화 — 스펙유실 민감(P-009), first-wake-full 가드로 별도 설계.
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
 - **env 플래그 default-OFF(ORGANT_DOC_COLLAB 등)·이중수용** — 플래그 없으면 라이브 동작 불변. **유일한 무조건 라이브 변화 = B-12 회의 발언 채널 clip(200→500자, 러너 재시작 시 반영)**. 브레인 스위트 455. B-19 distill_bot+bot_profiles(개인 증류, ORGANT_BOT_DISTILL_MIN=8) · B-20 peers 강점 1줄(데이터 없으면 종전 문자열=증가분 0) · B-21 capability ledger(적립=owner_delivered+교차검증 통과 Task의 owner 저작만, cover 판정 무변경 — role_profiles.json `capability_ledger` 키) · B-22 personas.json(murmur 러너 DB→JSON 미러→Discord 러너 로드→빌더; **Discord persona 경로는 이 VPS에서 라이브 비검증 — ARCHITECTURE §6, 단위 테스트 한정**). **커밋·push·배포 완료(5bf64a1 live).** Dossier 등 플래그 기능은 ORGANT_DOC_COLLAB 등 켜야 활성(현재 관측만).
 - **LLM-네이티브 재구조화**: **M1~M5 완료.** 오리엔테이션 층·docs 3계급화·모순교정·인수인계 폐지·**M5 단일 진실원(PJT 미러 제거, 455 pytest가 `/root/ClaudeCompany/ops/tests`에서 실코드 직접 검증)**. 남은 M6~M8(Flow 속성 선언화·게이트 함수화·Sys 3분할)은 BACKLOG A. tests·organt_discord·오리엔테이션 파일은 메타레포(로컬 git)로 버전관리됨 — 원격 push는 disaster-recovery용(BACKLOG).
 
+## 1층 floor seam — 대화 구조 추상화 + turn-taking (2026-07-04 착지·라이브 적용)
+- **발언권 순환(누가 다음에 말하는가)을 교체 가능한 정책으로 추상화** — `system/rule/floor.py`
+  (TurnTakingFloor=Sacks ①지명 ②자기선택=**후보 봇 병렬 LLM 응찰**([응찰: N] — 최고 응찰 승·동률=침묵순)
+  ③무응찰=**종결 확인 표결**([종료]/[계속: N]=발언 의무 반대 — 합의 종결. EXP-002 절제: '현재 화자
+  계속'·lapse 제거, 표결은 무응찰마다·상한=wake_cap/max_turns) · RequestResponseFloor=베턴 동치 ·
+  OrchestratedFloor=사회자).
+  통합: meet R2+ 발언 순서·리더 세그먼트 경계 TRP. 실 LLM 봇 라이브 실행으로 검증(FLOOR_1F §6-2).
+- **라이브 러너 env `ORGANT_FLOOR=turn-taking` 적용(2026-07-04, 사용자 승인)** — 시스템 작동
+  구조=turn-taking. 되돌림=env 값 제거+재시작(한 줄). 코드 폴백=request-response(오배선 안전값 —
+  테스트는 두 정책 모두 명시 고정). 스펙: `murmur/docs/FLOOR_1F_2026-07-04.md`.
+- **1층 마무리(2026-07-05)**: 실 검증 4회(라이브 E2E U-002·U-003 — 합의 종결 2회 관측) ·
+  CA-Lab 실험 기록 [EXP-001] draft PR(#12, 검수 대기) · system/murmur GitHub push 완료.
+  **2층은 1층 phase 사용자 검수 후**(CA-Lab 규율). 잔여 관측·후속=BACKLOG G.
+
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
-- 시작 `claim.sh add <task> <파일glob>` → 개발(계약 17seam 준수) → 착지 전 `claim.sh check`+full `verify.sh` → 통합 세션 착지 큐로 병합.
+- 시작 `claim.sh add <task> <파일glob>` → 개발(계약 17seam 준수) → 착지 전 `claim.sh check`+full `verify.sh` → **bash ops/land.sh <세션>**으로 스스로 정본 병합(통합 세션 불필요).
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **455**  ·  프론트 빌드 OK.
+- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **478**(+test_floor 23)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)
