@@ -221,7 +221,7 @@ def test_B09_스캐폴드_PLAYBOOK_1회_craft_미러_재작성(tmp_path):
     g = FakeGuide()
     s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "리더", 12: "백엔드"},
             workspace=str(tmp_path))
-    s.role_profiles["백엔드"] = "v1 기준"
+    s.bot_profiles[12] = "v1 기준"          # [격리] 미러 소스 = 그 직군 보유 봇(12)의 개인 기준
     f = _flow3(g, tmp_path)
     s._write_dossier_scaffold(f)
     pb = os.path.join(str(tmp_path), ".collab", "PLAYBOOK.md")
@@ -229,7 +229,7 @@ def test_B09_스캐폴드_PLAYBOOK_1회_craft_미러_재작성(tmp_path):
     assert os.path.exists(pb) and "v1 기준" in open(craft, encoding="utf-8").read()
     # PLAYBOOK은 정적(1회) — 재호출에 덮이지 않음. craft는 증류 반영 위해 재작성.
     open(pb, "a", encoding="utf-8").write("사람 편집 흔적")
-    s.role_profiles["백엔드"] = "v2 증류됨"
+    s.bot_profiles[12] = "v2 증류됨"        # 개인 증류 반영 → 재미러
     s._write_dossier_scaffold(f)
     assert "사람 편집 흔적" in open(pb, encoding="utf-8").read()
     assert "v2 증류됨" in open(craft, encoding="utf-8").read()

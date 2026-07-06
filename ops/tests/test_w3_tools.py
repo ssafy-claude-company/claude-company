@@ -143,7 +143,7 @@ def test_B14_재요청훅_기본off_플래그로만_1회(monkeypatch):
 
 def test_B14_경험_스태시_흡수_regex폴백_존치():
     """run_turn이 report 스태시의 experience/craft_standard를 [경험]/[직무기준] 블록과 같은 경로로
-    흡수한다(개인·직군 풀 영속) — 블록 regex 폴백은 종전 그대로."""
+    흡수한다([격리] 전부 보고 봇 자신의 개인 풀·개인 기준으로 영속) — 블록 regex 폴백은 종전 그대로."""
     g = FakeGuide()
     f = Flow(g, channel_id=1, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드"})
     f.start_root("root")
@@ -164,7 +164,8 @@ def test_B14_경험_스태시_흡수_regex폴백_존치():
         sc.build_guide_server = _orig
     assert out == "본문 보고"                            # Response는 그대로(스태시가 본문을 안 바꿈)
     assert "빌드 캐시는 루트에" in (s.bot_experience.get(12) or [])
-    assert s.role_profiles.get("백엔드") == "기준 v9"
+    assert s.bot_profiles.get(12) == "기준 v9"          # [격리] 자기 개인 기준으로(직군 공용 아님)
+    assert not s.role_profiles.get("백엔드")            # ★직군 공용엔 안 감
     # 소비된 키는 pop — offdomain 등 나머지 필드 소비(_deliver)와 분리
     assert "experience" not in f.report_stash[12]
 

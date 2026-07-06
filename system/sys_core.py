@@ -93,7 +93,7 @@ class Sys:
         # Discord(sys-roles)에 영속돼 이후 모든 작업 프롬프트에 자기검수 기준으로 주입된다.
         # QA·백엔드·프론트·런타임 채용 직군 모두 같은 메커니즘 하나로 '각자의 일'이 고도화된다.
         self.role_profiles: Dict[str, str] = {}
-        self.role_experience: Dict[str, list] = {}   # 직군별 '일하며 쌓인 경험' 풀 — 수면 증류로 직무 기준에 통합(공용 플라이휠)
+        self.role_experience: Dict[str, list] = {}   # [레거시 동결(격리 2026-07-06)] 옛 직군 공용 경험 풀 — 더는 적립·증류·주입 안 함(로드/세이브만 보존)
         self.bot_experience: Dict[int, list] = {}    # [개인별 학습] 봇 자신이 겪은 최근 교훈 — 직군 공용이 아닌 개인 정체성
         # [B-19 — 3층 정체성 ③(BOT_ARCH_REDESIGN 2026-07-03)] 봇id→수면 증류된 '개인 기준'(≤600자).
         # bot_experience(원석)가 8건+ 쌓이면 distill_bot이 압축·영속하고 풀을 비운다 — 직군 공용
@@ -202,7 +202,7 @@ class Sys:
 
     def _write_dossier_scaffold(self, flow) -> None:
         """[B-09 Phase A — Task Dossier 스캐폴드] 흐름 시작(워크스페이스 확정 직후)에 `.collab/`에
-        PLAYBOOK.md(정적 — 없을 때 1회)와 craft/<직군>.md(role_profiles 미러 — 수면 증류가 다음 흐름에
+        PLAYBOOK.md(정적 — 없을 때 1회)와 craft/<직군>.md(그 직군 봇의 개인 기준 미러 — 수면 증류가 다음 흐름에
         반영되도록 흐름 시작마다 재작성)를 둔다. 관측 전용(주입 무변경 — 봇 프롬프트는 아직 이 문서를
         참조하지 않음), 전부 best-effort(실패가 흐름을 못 막음). 신규 흐름 폴더(new-…)는 프로젝트 등록 때
         os.replace로 개명돼도 .collab이 통째로 함께 이동한다(경로는 항상 상대 해석)."""
@@ -238,12 +238,13 @@ class Sys:
                     for j in str(v or "").split("·")
                     if j.strip() and not j.strip().startswith("예비")}
             for j in sorted(jobs):
-                p = self.role_profiles.get(j)
+                # [격리] 미러 소스 = 그 직군 보유 봇의 '개인 기준'(직군 공용 폐지) — 검증 루브릭 가시화용.
+                p = self._job_standard(j)
                 if not p:
                     continue
                 safe = re.sub(r"[\\/\0]", "-", j)[:60]
                 _atomic_write(os.path.join(base, "craft", f"{safe}.md"),
-                              f"# 직무 기준 — {j} (role_profiles 미러 — 수면 증류 시 갱신)\n\n{p}\n")
+                              f"# 직무 기준 — {j} (그 직군 봇의 개인 기준 미러 — 수면 증류 시 갱신)\n\n{p}\n")
             self._write_team_dossier(flow)   # 초기 로스터 디스크화(이후 recruit 변경은 run_turn이 갱신)
         except Exception:
             pass
@@ -345,7 +346,7 @@ class Sys:
 
     def _craft_note(self, me, first_wake=True) -> str:
         """직무 기준·개인 기준·[경험] 요청 노트 — sys_prompt.craft_note로 추출(위임만).
-        first_wake=False(resume)면 전부 생략 — 정체성은 대화 기억+role_profiles, [경험]은 report 툴이 담보."""
+        first_wake=False(resume)면 전부 생략 — 정체성(개인 기준)은 대화 기억이, [경험]은 report 툴이 담보."""
         return sys_prompt.craft_note(self, me, first_wake)
 
     def _portfolio_note(self) -> str:
@@ -400,8 +401,10 @@ class Sys:
     _EXP_KEEP = int(os.environ.get("ORGANT_EXP_KEEP", "40"))
 
     async def _absorb_role_profiles(self, text: str, me=None) -> str:
-        """보고 속 [직무기준]·[경험] 블록을 흡수한다 — 메모리·Discord(sys-roles)에 영속하고 본문에서 제거.
-        직군 기준은 공용 풀(role_*)로, 경험은 공용 풀 + 보고한 봇(me)의 개인 풀(bot_experience) 양쪽에."""
+        """보고 속 [직무기준]·[경험] 블록을 흡수한다 — 메모리에 영속하고 본문에서 제거.
+        [봇별 완전 격리 — 2026-07-06] 학습은 전부 보고한 봇(me) 자신에게만: [직무기준]→bot_profiles[me]
+        (자기 기준), [경험]→bot_experience[me](자기 원석). 직군 공용 풀(role_*) 적립 폐지 — 봇 간 기억
+        오염 차단. 신규/빈 봇의 시작 기준은 채용 제네시스(리크루터)가 빚는다(기계적 시드·상속 아님)."""
         if not text or ("[직무기준]" not in text and "[경험]" not in text):
             return text
         absorbed, learned = [], []
@@ -414,15 +417,15 @@ class Sys:
                 # 훼손하는 역설(절단된 반쪽 원칙이 매 턴 주입됨). 마지막 완전한 줄까지만 남긴다.
                 cut = body[:1500]
                 body = cut[:cut.rfind("\n")] if "\n" in cut else cut
-            if job and body:
-                self.role_profiles[job] = body
+            if job and body and me is not None:
+                self.bot_profiles[int(me)] = body        # 자기 기준으로만(직군 공용 아님)
                 absorbed.append((job, body))
             return ""
 
         def _learn(m):
             job = (m.group("job") or "").strip()
             body = (m.group("body") or "").strip()[:600]
-            if job and body:
+            if job and body and me is not None:
                 # '없음' 류는 버린다 — 의무 섹션의 탈출구이지 경험이 아니다(저장하면 다음 프롬프트
                 # 주입과 증류 원료가 노이즈로 오염된다). 괄호 안내문 재복창도 같은 이유로 컷.
                 lines = [ln.strip() for ln in body.splitlines()
@@ -430,13 +433,9 @@ class Sys:
                          ("없음", "없다", "-", "특이사항 없음", "(교훈 또는 '없음')")]
                 if not lines:
                     return ""
-                cur = self.role_experience.setdefault(job, [])   # 공용 풀 — 수면 증류로 직무 기준에 통합(플라이휠 유지)
-                cur.extend(lines)
-                del cur[:-self._EXP_KEEP]   # 최근 N줄만(압축은 기억 증류의 몫)
-                if me is not None:          # [개인별 학습] 보고한 봇의 개인 경험 풀에도 — 직군 공용과 별개로 자기 정체성
-                    bc = self.bot_experience.setdefault(int(me), [])
-                    bc.extend(lines)
-                    del bc[:-self._EXP_KEEP]
+                bc = self.bot_experience.setdefault(int(me), [])   # 자기 원석 풀만 — distill_bot이 개인 기준으로 압축
+                bc.extend(lines)
+                del bc[:-self._EXP_KEEP]   # 최근 N줄만(압축은 기억 증류의 몫)
                 learned.append((job, len(lines)))
             return ""
 
@@ -445,116 +444,39 @@ class Sys:
         if absorbed or learned:
             self._save_profiles()   # 디스크 영속(사용자 디스코드를 시스템 데이터로 오염시키지 않음)
             for job, body in absorbed:
-                self._log("role_profile_saved", job=job, size=len(body))
+                self._log("bot_profile_saved", bot=int(me), job=job, size=len(body))
             for job, n in learned:
-                self._log("role_experience_saved", job=job, lines=n)
+                self._log("bot_experience_saved", bot=int(me), job=job, lines=n)
         return out or "(직무 기준/경험이 기록되었습니다.)"
 
     _DISTILL_MIN = int(os.environ.get("ORGANT_DISTILL_MIN", "5"))   # 증류 발동 최소 경험 줄 수
 
-    def pick_distill_job(self):
-        """증류가 필요한 직군 하나를 고른다 — 경험이 가장 많이 쌓인 직군부터(없으면 None)."""
-        jobs = self.pick_distill_jobs()
-        return jobs[0] if jobs else None
-
-    # [위생 증류 발동선] 기준이 이 길이를 넘으면 새 경험이 없어도 '정리 전용' 수면 대상 — 기준은
-    # 매 턴 주입되므로 비대=주의 분산이고, 하드캡 절단 사고 전에 전문가 스스로 통합·다이어트하게 한다.
-    _HYGIENE_AT = int(os.environ.get("ORGANT_HYGIENE_AT", "1100"))
-
-    def pick_distill_jobs(self):
-        """증류 후보 직군들 — ① 경험이 쌓인 직군(많은 순) ② 기준이 비대해진 직군(위생 증류,
-        경험 0이어도). [병렬] 일부 전문가가 흐름에 묶여 있어도 가용한 다음 후보가 자기계발한다."""
-        cands = sorted(((len(v), k) for k, v in self.role_experience.items()
-                        if len(v) >= self._DISTILL_MIN), reverse=True)
-        jobs = [k for _, k in cands]
-        for job, prof in self.role_profiles.items():
-            if job not in jobs and len(prof or "") > self._HYGIENE_AT:
-                jobs.append(job)               # 정리 전용 수면 — 쌓기가 아니라 솎아내기
-        return jobs
+    # [봇별 완전 격리 — 직군 증류 폐지(2026-07-06)] distill_role·pick_distill_job(s)·_bot_of_job 제거.
+    # 학습·증류·기억은 봇 개인 단위만(아래 distill_bot) — 직군 공용 풀은 봇 간 기억 오염이라 폐지.
+    # role_profiles는 더 이상 적립·주입되지 않고, 채용 제네시스(_onboard_inner)가 '이어받을 유산'으로만
+    # 읽는다(리크루터가 개인 기준으로 변형 생성 — 기계적 시드 복사 아님). role_experience는 레거시 동결.
 
     # [B-19] 개인 증류 발동선 — 개인 경험(원석)이 이 수 이상 쌓인 봇이 수면(distill_bot) 대상(설계 명세 8).
     _BOT_DISTILL_MIN = int(os.environ.get("ORGANT_BOT_DISTILL_MIN", "8"))
 
     def pick_distill_bots(self):
-        """[B-19] 개인 기준 증류 후보 봇들 — 개인 경험이 임계(8건+) 쌓인 봇, 많은 순.
-        직군 증류(pick_distill_jobs)와 동형의 개인판(수면 사이클이 소비)."""
+        """[B-19] 개인 기준 증류 후보 봇들 — 개인 경험이 임계(8건+) 쌓인 봇, 많은 순(수면 사이클이 소비)."""
         return [m for _, m in sorted(((len(v), m) for m, v in self.bot_experience.items()
                                       if len(v) >= self._BOT_DISTILL_MIN), reverse=True)]
 
-    def _bot_of_job(self, job):
-        """그 직군을 보유한 봇(겸직 포함)을 찾는다 — 증류는 그 직군의 전문가 본인이 한다."""
+    def _job_holder(self, job):
+        """그 직군을 보유한 봇(겸직 포함) — [격리] 직군의 '기준'은 이제 그 보유 봇의 개인 기준이다
+        (검증 루브릭·craft 미러가 job 키로 조회할 때의 해석 지점)."""
         for mid, label in self.bot_info.items():
             if any(j.strip() == job for j in str(label or "").split("·")):
-                return mid
+                return int(mid)
         return None
 
-    async def distill_role(self, job) -> bool:
-        """[수면 — 기억 증류] 직군의 '최근 경험'을 그 전문가 봇이 직무 기준으로 압축한다.
-        시스템은 내용을 정하지 않는다(전문가 자기정의 원칙) — 일반화 가치가 있는 교훈만 기준에
-        흡수시키고, 증류된 경험 로그는 비운다. 증류 대화는 별도 세션(state_tag)이라 작업 기억을
-        오염시키지 않는다. [병렬] '시스템 전체 유휴'가 아니라 **그 전문가 봇이 유휴**일 때 증류한다
-        (회사가 일하는 중에도 한가한 직원은 자기계발 — 전역 점유 장부로 흐름과의 겹침을 차단)."""
-        mid = self._bot_of_job(job)
-        exp = self.role_experience.get(job) or []
-        hygiene = len(self.role_profiles.get(job) or "") > self._HYGIENE_AT   # 정리 전용 수면 자격
-        if mid is None or (len(exp) < self._DISTILL_MIN and not hygiene):
-            return False
-        if self.engaged.holder(mid) is not None:
-            return False                                  # 그 전문가가 흐름 참여 중 → 이번 주기 스킵
-        self.engaged.engage(mid, "__distill__")           # 증류 중 흐름이 이 봇을 집어가지 않게 점유
-        try:
-            return await self._distill_role_inner(job, mid, exp)
-        finally:
-            self.engaged.release(mid, "__distill__")
-            # 증류 점유 때문에 큐로 밀린 요청이 있으면 이어서 처리(흐름 종료 드레인과 같은 판정).
-            item = self._pop_runnable_queued()
-            if item is not None:
-                asyncio.ensure_future(self.handle_user_input(*item))
-
-    async def _distill_role_inner(self, job, mid, exp) -> bool:
-        cur = self.role_profiles.get(job, "(아직 없음)")
-        flow = Flow(self.guide, 0, self.guild_id, mid, self.bot_info)   # 도구 형식용 빈 흐름(깨우기 없음)
-        flow.workspace = self._distill_workspace()   # [OOM 근본교정] 격리 빈 cwd — builder가 cfg.workspace_dir(대형 트리)로 폴백 못 하게
-        server = build_guide_server(flow, mid, "member")
-        try:
-            organt = self.organt_builder(mid, server, "member", flow, state_tag=f"distill_{mid}")
-        except TypeError:
-            organt = self.organt_builder(mid, server, "member", flow)   # 구형 빌더 호환(테스트 등)
-        # [수면의 본질 = 정리(인간 수면의 기억 통합·솎아냄)] 더 많이 아는 게 아니라 더 선명하게.
-        # LLM 특성: 기준은 매 턴 프롬프트에 주입되므로 길이=주의 분산 — 양질 소수 원칙이 효력의 조건.
-        # 구조가 예산(원칙 수·길이)을 강제하고, 무엇을 남길지는 전문가가 정한다(자기정의 보존).
-        raw = ("\n".join(f"- {e}" for e in exp) if exp
-               else "(이번 수면은 새 경험 없음 — **정리 전용**: 기존 기준의 중복을 합치고 군더더기를 빼 더 선명하게)")
-        prompt = (
-            f"[자기계발 시간 — 직무 기준 증류] 당신은 '{job}' 전문가입니다. 도구를 쓰지 말고 텍스트로만 답하세요.\n\n"
-            f"현재 직무 기준:\n{cur}\n\n"
-            f"최근 실작업에서 쌓인 경험(원석):\n{raw}\n\n"
-            f"수면의 본질은 '쌓기'가 아니라 '정리'입니다 — 전문가의 힘은 긴 규칙집이 아니라 소수의 깊은 "
-            f"원칙입니다. 일반화 가치가 있는 교훈만 골라 기준에 녹이되:\n"
-            f"- 새 교훈이 기존 원칙과 겹치면 **별도 추가가 아니라 기존 원칙에 합쳐** 더 일반적인 한 원칙으로.\n"
-            f"- **예산: 원칙 최대 8개, 각 2줄 이내, 전체 1,000자 이내** — 넘치면 가장 덜 일반적인 원칙을 버리세요.\n"
-            f"- 일회성 디테일·특정 프로젝트 한정 사항은 버리세요.\n"
-            f"반드시 아래 형식만으로 답하세요:\n[직무기준] {job}\n(개선된 기준 줄들)\n[/직무기준]"
-        )
-        try:
-            out = await organt.handle(prompt)
-        except Exception as e:
-            self._log("role_distill_failed", job=job, err=str(e)[:80])
-            return False
-        await self._absorb_role_profiles(out, me=mid)    # [직무기준] 블록 흡수(영속 포함)
-        if self.role_profiles.get(job) and self.role_profiles.get(job) != cur:
-            self.role_experience[job] = []               # 증류 완료 — 원석 비움
-            self._save_profiles()
-            self._log("role_distilled", job=job, used=len(exp))
-            # 증류 세션은 일회성 — 다음 증류가 깨끗하게 시작하도록 제거
-            if self.session_dir:
-                try:
-                    os.remove(os.path.join(str(self.session_dir), f"organt_state_distill_{mid}.json"))
-                except OSError:
-                    pass
-            return True
-        self._log("role_distill_noop", job=job)
-        return False
+    def _job_standard(self, job) -> str:
+        """[격리] job → 그 직군 보유 봇의 '개인 기준'(bot_profiles). 직군 공용 기준은 폐지됐고,
+        검증 루브릭·craft 미러는 owner 봇 자신의 기준으로 심사·표시한다(표시용 — 학습 오염 아님)."""
+        mid = self._job_holder(str(job).strip())
+        return (self.bot_profiles.get(mid) or "") if mid is not None else ""
 
     # [B-19] [개인기준] 블록 파서 — distill_role의 [직무기준] 관례 동형(헤더는 봇 라벨, 본문만 소비).
     _BOT_PROFILE_RE = re.compile(r"\[개인기준\]\s*(?P<who>[^\n]*)\n(?P<body>.*?)\n?\[/개인기준\]", re.S)
@@ -594,7 +516,7 @@ class Sys:
             f"[자기계발 시간 — 개인 기준 증류] 당신은 '{label}'입니다. 도구를 쓰지 말고 텍스트로만 답하세요.\n\n"
             f"현재 개인 기준:\n{cur}\n\n"
             f"당신이 최근 실작업에서 직접 얻은 경험(원석):\n{raw}\n\n"
-            f"수면의 본질은 '쌓기'가 아니라 '정리'입니다 — 직군 공용 기준과 겹치는 일반론은 버리고, "
+            f"수면의 본질은 '쌓기'가 아니라 '정리'입니다 — 당연한 일반론은 버리고, "
             f"**당신 자신**의 작업 방식·강점·반복 함정만 남기세요:\n"
             f"- 겹치는 교훈은 별도 추가가 아니라 합쳐 더 일반적인 한 원칙으로.\n"
             f"- **예산: 전체 600자 이내** — 넘치면 가장 덜 중요한 줄을 버리세요.\n"
@@ -757,7 +679,7 @@ class Sys:
             return None
 
     async def _distill_cycle_once(self) -> None:
-        """[자기업무 사이클 1회] ⓪ 채용 온보딩(신규 봇 정체성 생성) + ① 직군 증류 + ② 개인 증류 —
+        """[자기업무 사이클 1회] ⓪ 채용 온보딩(신규·빈 봇 정체성 생성 — 리크루터) + ① 개인 증류 —
         각 유휴 대상 1건(비용 제어). 배경 자기업무는 '매체'가 아니라 '브레인'의 행위라 여기(Sys)가
         소유한다 — 종전엔 Discord 진입(discord_main._sleep_cycle)에만 있어 라이브(murmur) 러너에선
         안 돌아, 경험이 압축되지 못하고 _EXP_KEEP FIFO로 잘려나가기만 했다(중요한 기억 유실). 실패는
@@ -770,12 +692,7 @@ class Sys:
                     continue
                 if await self.onboard_bot(mid):
                     break
-            for job in self.pick_distill_jobs():
-                mid = self._bot_of_job(job)
-                if mid is None or self.engaged.holder(mid) is not None:
-                    continue                 # 그 전문가는 흐름 참여 중 → 다음 후보
-                await self.distill_role(job)
-                break
+            # [격리] 직군 증류 폐지 — 수면 = ⓪ 채용 온보딩 + ① 개인 증류만(봇별 완전 격리).
             for mid in self.pick_distill_bots():
                 if self.engaged.holder(mid) is not None:
                     continue                 # 그 봇은 흐름 참여 중 → 다음 후보
@@ -1439,7 +1356,7 @@ class Sys:
         flow.persist_role = self._persist_job   # 채용한 직군을 메모리+디스크(jobs.json)에 영속(재시작에도 유지)
         flow.persist_capability = self._persist_capability   # [B-21] 품질 게이트 통과 Task의 owner 실적 영속(complete_task→_ledger_accrue가 호출)
         flow.capability_ledger = self.capability_ledger      # [B-21 용도②] _free_alternatives 후보 나열용 장부 읽기 참조(판정 아님)
-        flow.craft_of = lambda job: (self.role_profiles.get(str(job).strip(), "") or "")   # [RFC-008 P0] 직군 직무기준 → 검증 루브릭 조회
+        flow.craft_of = self._job_standard   # [RFC-008 P0→격리] 검증 루브릭 = 그 직군 보유 봇의 '개인 기준'(직군 공용 폐지)
         flow.projects_provider = lambda: list(self.projects.values())   # [B-18③] list_projects pull 도구의 데이터 소스(push 캡 16건의 보강)
         flow.checkpoint_task = lambda: self._checkpoint_open_task(flow)   # Task 전이마다 크래시-세이프 영속
         flow.persist_owner = lambda: self._save_file_owner(flow)          # [소유 경계] 새 파일 귀속 시 영속

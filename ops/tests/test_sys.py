@@ -2336,36 +2336,41 @@ def test_read_thread_시간순과_평문개입_포함():
 
 
 def test_직무기준_주입과_초안요청():
-    """[직군 고도화 — 하드코딩 없음] 직무 기준이 있는 직군은 프롬프트에 자기검수 기준으로 주입되고,
-    없는 직군은 '스스로 작성'을 한 번 요청받는다 — QA·백엔드·런타임 직군 전부 같은 메커니즘."""
+    """[봇별 완전 격리] '직무 기준' = 봇 자신의 개인 기준(bot_profiles)만 주입 — 직군 공용 주입 폐지.
+    같은 직군 동료의 기준도 안 받는다(기억 오염 차단). 기준·경험이 다 빈 봇(온보딩 전)은 '스스로
+    작성'을 한 번 요청받는다(흡수는 자기 것으로 영속 — 자가 재생)."""
     s = Sys(FakeGuide(), guild_id=1, organt_builder=None,
-            bot_info={11: "백엔드", 12: "QA", 13: "백엔드·QA"})
-    s.role_profiles["백엔드"] = "엣지·경계값을 시뮬로 직접 재현해 검증한다"
+            bot_info={11: "백엔드", 12: "QA", 13: "백엔드"})
+    s.bot_profiles[11] = "엣지·경계값을 시뮬로 직접 재현해 검증한다"
     p11 = s._prompt("b", Kind.WORK, "member", 11, 11)
-    assert "엣지·경계값을 시뮬로" in p11                       # 기준 보유 → 주입
+    assert "엣지·경계값을 시뮬로" in p11                       # 자기 개인 기준 → 주입
     p12 = s._prompt("b", Kind.WORK, "member", 12, 11)
-    assert "[직무기준] QA" in p12 and "직무 기준 작성" in p12   # 기준 없음 → 초안 요청
+    assert "[직무기준] QA" in p12 and "직무 기준 작성" in p12   # 빈 봇 → 초안 요청
     p13 = s._prompt("b", Kind.WORK, "member", 13, 11)
-    assert "엣지·경계값을 시뮬로" in p13 and "[직무기준] QA" in p13   # 겸직: 보유분 주입+부족분 요청
+    # ★격리: 같은 직군(백엔드)이어도 남의 기준이 '당신의 직무 기준'으로 주입되지 않는다 — 봇11의
+    # 기준은 '동료 강점 한 줄'(위임 판단용 표시)로만 보일 뿐, 봇13의 자기검수 기준이 아니다.
+    assert "[당신의 직무 기준" not in p13
+    assert "[직무기준] 백엔드" in p13                           # 빈 봇 → 자기 것 작성 요청
 
 
 def test_직무기준_흡수_영속_본문제거(tmp_path):
-    """보고 속 [직무기준] 블록은 SYS가 흡수한다 — 메모리·디스크(role_profiles.json)로 영속하고
-    본문에서는 제거돼 요청자에게 깨끗한 보고만 전달된다(사용자 디스코드를 오염시키지 않음).
-    재기동 시 디스크에서 복원되고, 리클레임으로 잃으면 전문가가 첫 작업 때 다시 쓴다(자가 재생)."""
+    """[격리] 보고 속 [직무기준] 블록은 보고한 봇(me) 자신의 개인 기준(bot_profiles)으로 흡수한다 —
+    직군 공용 아님. 메모리·디스크 영속, 본문에서는 제거돼 깨끗한 보고만 전달. 재기동 시 복원."""
     import json as _json
-    s = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "L"},
+    s = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "QA"},
             session_dir=str(tmp_path))
     out = asyncio.run(s._absorb_role_profiles(
-        "구현·검증 완료 보고입니다.\n[직무기준] QA\n실플레이 시나리오를 끝까지 재현한다\n경계값을 직접 친다\n[/직무기준]"))
+        "구현·검증 완료 보고입니다.\n[직무기준] QA\n실플레이 시나리오를 끝까지 재현한다\n경계값을 직접 친다\n[/직무기준]",
+        me=11))
     assert out == "구현·검증 완료 보고입니다."                  # 본문에서 블록 제거
-    assert "실플레이 시나리오" in s.role_profiles["QA"]         # 메모리 흡수
+    assert "실플레이 시나리오" in s.bot_profiles[11]            # 자기(봇11) 기준으로 흡수
+    assert not s.role_profiles.get("QA")                        # ★격리: 직군 공용엔 안 감
     saved = _json.load(open(tmp_path / "role_profiles.json", encoding="utf-8"))
-    assert "경계값" in saved["profiles"]["QA"]                  # 디스크 영속
-    assert any(e["event"] == "role_profile_saved" for e in s.flow_log)
-    s2 = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "L"},
+    assert "경계값" in saved["bot_profiles"]["11"]              # 디스크 영속(개인)
+    assert any(e["event"] == "bot_profile_saved" for e in s.flow_log)
+    s2 = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "QA"},
              session_dir=str(tmp_path))
-    assert "실플레이 시나리오" in s2.role_profiles["QA"]        # 재기동 복원
+    assert "실플레이 시나리오" in s2.bot_profiles[11]           # 재기동 복원
 
 
 def test_create_project는_id기반_작업공간과_배포슬롯(tmp_path):
@@ -3606,31 +3611,28 @@ def test_세션_스코프분리_프로젝트간_기억오염_구조차단(tmp_pa
 
 
 def test_Skill강화_경험_흡수_주입_상한(tmp_path):
-    """[Skill 강화 v1] 보고의 [경험] 블록을 흡수해 직군별로 누적(상한 유지)·디스크 영속하고,
-    다음 작업 프롬프트에 '최근 경험'으로 주입한다 — '일하며 쌓인 경험'이 다음 작업의
-    '일하기 전 학습'이 되는 순환(압축은 기억 증류 고도화의 몫)."""
+    """[Skill 강화 — 격리] 보고의 [경험] 블록을 보고한 봇 자신의 개인 풀(bot_experience)에만
+    누적(상한 유지)·디스크 영속하고, 다음 작업 프롬프트에 '자기 최근 경험'으로 주입한다 —
+    직군 공용 풀 적립은 폐지(봇 간 기억 오염 차단). 압축은 개인 증류(distill_bot)의 몫."""
     import json as _json
     s = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "QA"},
             session_dir=str(tmp_path))
     out = asyncio.run(s._absorb_role_profiles(
         "검증 완료.\n[경험] QA\n소켓 e2e는 서버 기동 1.5초 대기 후가 안정적\n[/경험]", me=11))
     assert out == "검증 완료."                                   # 본문에서 블록 제거
-    assert "1.5초" in s.role_experience["QA"][0]                 # 공용 풀 누적(증류 원료)
-    assert "1.5초" in s.bot_experience[11][0]                    # [개인별] 봇11 자기 경험에도
+    assert "1.5초" in s.bot_experience[11][0]                    # 자기(봇11) 경험 풀에만
+    assert not s.role_experience.get("QA")                       # ★격리: 직군 공용 풀 적립 폐지
     saved = _json.load(open(tmp_path / "role_profiles.json", encoding="utf-8"))
-    assert "1.5초" in saved["experience"]["QA"][0]               # 디스크 영속(공용)
     assert "1.5초" in saved["bot_experience"]["11"][0]           # 디스크 영속(개인)
     _n = s._EXP_KEEP + 5                                         # 상한 초과 주입(값 무관 견고) → 절단이 _EXP_KEEP에서 걸리는지
     for i in range(_n):                                          # 상한(_EXP_KEEP) 유지
         asyncio.run(s._absorb_role_profiles(f"r\n[경험] QA\n교훈{i}\n[/경험]", me=11))
-    assert len(s.role_experience["QA"]) == s._EXP_KEEP
-    assert len(s.bot_experience[11]) == s._EXP_KEEP             # 개인 풀도 상한
+    assert len(s.bot_experience[11]) == s._EXP_KEEP             # 개인 풀 상한
     p = s._prompt("b", Kind.WORK, "member", 11, 11)
     assert "최근 경험" in p and f"교훈{_n - 1}" in p              # 그 봇 자신 최신 경험이 다음 작업에 주입(개인별)
     assert "[경험] QA" in p                                      # 경험 남기기 안내
     s2 = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "QA"},
              session_dir=str(tmp_path))
-    assert s2.role_experience["QA"]                              # 재기동 복원(공용)
     assert s2.bot_experience[11]                                 # 재기동 복원(개인)
 
 
@@ -3648,16 +3650,16 @@ def test_E_학습은_개인별_같은직군_두봇이_경험을_안섞는다(tmp
 
 
 def test_수면_기억증류_경험이_기준으로_압축(tmp_path):
-    """[수면 — 기억 증류] 유휴 시 경험이 쌓인 직군의 '전문가 본인'이 경험을 일반화해 직무 기준을
-    개선하고, 증류된 경험 로그는 비워진다(자기계발 보강 — Feature.md). 증류는 별도 세션(state_tag)
-    이라 작업 기억을 오염시키지 않는다."""
+    """[수면 — 기억 증류·격리] 유휴 시 경험(원석)이 쌓인 '봇 본인'이 자기 경험을 일반화해 자기
+    개인 기준을 개선하고, 원석 풀은 비워진다 — 전부 봇 개인 단위(직군 공용 증류 폐지). 증류는
+    별도 세션(state_tag)이라 작업 기억을 오염시키지 않는다."""
     g = FakeGuide()
     calls = {}
 
     class _Distiller:
         async def handle(self, prompt):
             calls["prompt"] = prompt
-            return "[직무기준] QA\n개선된 기준: 소켓 e2e는 기동 대기 후 검증한다\n실플레이를 끝까지 재현한다\n[/직무기준]"
+            return "[개인기준] QA\n개선된 기준: 소켓 e2e는 기동 대기 후 검증한다\n실플레이를 끝까지 재현한다\n[/개인기준]"
 
     def builder(oid, srv, role, flow=None, state_tag=None):
         calls["state_tag"] = state_tag
@@ -3665,17 +3667,17 @@ def test_수면_기억증류_경험이_기준으로_압축(tmp_path):
 
     s = Sys(g, guild_id=1, organt_builder=builder, bot_info={11: "백엔드·QA"},
             session_dir=str(tmp_path))
-    s.role_profiles["QA"] = "기존 기준"
-    s.role_experience["QA"] = [f"교훈{i}" for i in range(6)]
-    assert s.pick_distill_job() == "QA"                       # 경험 임계 도달 직군 선정
-    ok = asyncio.run(s.distill_role("QA"))
+    s.bot_profiles[11] = "기존 기준"
+    s.bot_experience[11] = [f"교훈{i}" for i in range(s._BOT_DISTILL_MIN)]
+    assert s.pick_distill_bots() == [11]                      # 원석 임계 도달 봇 선정
+    ok = asyncio.run(s.distill_bot(11))
     assert ok is True
-    assert "소켓 e2e" in s.role_profiles["QA"]                # 기준이 개선본으로 교체
-    assert s.role_experience["QA"] == []                      # 원석 비움
-    assert calls["state_tag"] == "distill_11"                 # 작업 세션과 분리
+    assert "소켓 e2e" in s.bot_profiles[11]                   # 자기 기준이 개선본으로 교체
+    assert s.bot_experience[11] == []                         # 원석 비움
+    assert calls["state_tag"] == "bdistill_11"                # 작업 세션과 분리
     assert "교훈3" in calls["prompt"] and "기존 기준" in calls["prompt"]
-    assert any(e["event"] == "role_distilled" for e in s.flow_log)
-    assert s.pick_distill_job() is None                       # 증류 후 대상 없음
+    assert any(e["event"] == "bot_distilled" for e in s.flow_log)
+    assert s.pick_distill_bots() == []                        # 증류 후 대상 없음
 
 
 def test_vote_표결_집계와_협의인정():
@@ -3920,7 +3922,7 @@ def test_request도구_타흐름점유는_거부아닌_대안안내():
 
 
 def test_수면증류_흐름참여_전문가는_스킵_가용하면_진행(tmp_path):
-    """[병렬×수면] 증류 조건은 '시스템 유휴'가 아니라 '그 전문가 유휴' — 흐름에 묶인 전문가는
+    """[병렬×수면·격리] 개인 증류 조건은 '시스템 유휴'가 아니라 '그 봇 유휴' — 흐름에 묶인 봇은
     스킵하고(전체-유휴 조건이면 장기 프로젝트 중 증류가 영영 굶는다), 한가해지면 진행한다.
     증류가 끝나면 점유도 해제된다."""
     calls = []
@@ -3928,20 +3930,20 @@ def test_수면증류_흐름참여_전문가는_스킵_가용하면_진행(tmp_p
     class FakeOrgant:
         async def handle(self, prompt):
             calls.append(prompt)
-            return "[직무기준] QA\n빠른 재현 → 최소 수정 → 회귀 확인\n[/직무기준]"
+            return "[개인기준] QA\n빠른 재현 → 최소 수정 → 회귀 확인\n[/개인기준]"
 
     def builder(mid, server, role, flow=None, state_tag=None):
         return FakeOrgant()
 
     s = Sys(FakeGuide(), guild_id=1, organt_builder=builder, bot_info={21: "QA"},
             session_dir=str(tmp_path))
-    s.role_experience["QA"] = [f"경험{i}" for i in range(5)]
+    s.bot_experience[21] = [f"경험{i}" for i in range(s._BOT_DISTILL_MIN)]
     f = Flow(FakeGuide(), channel_id=1, guild_id=1, leader_id=21, bot_info={21: "QA"})
     s.active_flows["P-X"] = f                          # 살아있는 흐름이
-    s.engaged.engage(21, "P-X")                        # 그 전문가를 점유 중
-    assert asyncio.run(s.distill_role("QA")) is False and calls == []   # → 스킵
+    s.engaged.engage(21, "P-X")                        # 그 봇을 점유 중
+    assert asyncio.run(s.distill_bot(21)) is False and calls == []   # → 스킵
     s.active_flows.pop("P-X")                          # 흐름 종료(유령 점유는 자가 치유)
-    assert asyncio.run(s.distill_role("QA")) is True and len(calls) == 1  # 유휴 → 증류
+    assert asyncio.run(s.distill_bot(21)) is True and len(calls) == 1  # 유휴 → 증류
     assert s.engaged.holder(21) is None                # 증류 점유도 해제됨
 
 
@@ -4090,10 +4092,10 @@ def test_경험_의무섹션_없음은_흡수에서_버려짐(tmp_path):
             session_dir=str(tmp_path))
     note = s._craft_note(11)
     assert "고정 섹션" in note and "생략 금지" in note and "'없음'" in note   # 의무형 + 탈출구 안내
-    out = asyncio.run(s._absorb_role_profiles("검증 끝.\n[경험] QA\n없음\n[/경험]"))
-    assert out == "검증 끝." and not s.role_experience.get("QA")            # '없음'은 저장 안 됨
-    asyncio.run(s._absorb_role_profiles("[경험] QA\n소켓 e2e는 1.5초 대기 후 안정\n[/경험]"))
-    assert s.role_experience["QA"] == ["소켓 e2e는 1.5초 대기 후 안정"]      # 실교훈만 축적
+    out = asyncio.run(s._absorb_role_profiles("검증 끝.\n[경험] QA\n없음\n[/경험]", me=11))
+    assert out == "검증 끝." and not s.bot_experience.get(11)               # '없음'은 저장 안 됨
+    asyncio.run(s._absorb_role_profiles("[경험] QA\n소켓 e2e는 1.5초 대기 후 안정\n[/경험]", me=11))
+    assert s.bot_experience[11] == ["소켓 e2e는 1.5초 대기 후 안정"]         # 실교훈만 축적(자기 풀)
 
 
 def test_프로젝트_Context가_개입프롬프트에_주입(tmp_path):
@@ -4322,30 +4324,30 @@ def test_이어가기_본문에_팀·소유_시스템사실_재주입(tmp_path):
     assert "[프로젝트 팀 전체]" in cont and "구성원이 아닙니다" in cont
 
 
-def test_수면은_정리자_예산과_통합지시_위생증류(tmp_path):
-    """[수면 = 정리자(인간 수면의 통합·솎아냄)] ① 증류 프롬프트에 구조 예산(원칙 최대 8개·1,000자)과
-    '추가가 아니라 통합' 지시가 들어간다. ② 기준이 비대(>1,100자)하면 새 경험이 없어도 '정리 전용'
-    수면이 발동한다 — 더 많이가 아니라 더 선명하게."""
+def test_수면은_정리자_예산과_통합지시(tmp_path):
+    """[수면 = 정리자(인간 수면의 통합·솎아냄)·격리] 개인 증류 프롬프트에 구조 예산(600자)과
+    '추가가 아니라 통합' 지시가 들어가고, 예산 초과 반환은 줄 단위로 캡된다 — 더 많이가 아니라
+    더 선명하게(개인 기준은 매 첫-wake 주입되므로 길이=주의 분산)."""
     prompts = []
 
     class FakeOrgant:
         async def handle(self, prompt):
             prompts.append(prompt)
-            return "[직무기준] QA\n핵심 원칙으로 통합·정리됨\n[/직무기준]"
+            return "[개인기준] QA\n핵심 원칙으로 통합·정리됨\n[/개인기준]"
 
     def builder(mid, server, role, flow=None, state_tag=None):
         return FakeOrgant()
 
     s = Sys(FakeGuide(), guild_id=1, organt_builder=builder, bot_info={21: "QA"},
             session_dir=str(tmp_path))
-    s.role_profiles["QA"] = "- 비대한 원칙\n" * 140         # 1,260자(>1,100 발동선, 경험은 0)
-    assert "QA" in s.pick_distill_jobs()                     # 위생 증류 후보로 떠오름
-    assert asyncio.run(s.distill_role("QA")) is True         # 경험 0이어도 정리 전용 수면 실행
+    s.bot_profiles[21] = "- 비대한 원칙\n" * 80              # 기존 기준(증류가 정리 대상으로 받음)
+    s.bot_experience[21] = [f"경험{i}" for i in range(s._BOT_DISTILL_MIN)]
+    assert asyncio.run(s.distill_bot(21)) is True
     p = prompts[0]
-    assert "정리 전용" in p                                   # 새 경험 없음 → 다이어트 모드 명시
-    assert "원칙 최대 8개" in p and "1,000자" in p            # 구조 예산
-    assert "기존 원칙에 합쳐" in p                            # 기본 동사 = 통합(추가 아님)
-    assert s.role_profiles["QA"] == "핵심 원칙으로 통합·정리됨"  # 다이어트 반영
+    assert "'쌓기'가 아니라 '정리'" in p                      # 정리자 프레임
+    assert "600자" in p                                       # 구조 예산(개인 기준 캡)
+    assert "합쳐" in p                                        # 기본 동사 = 통합(추가 아님)
+    assert s.bot_profiles[21] == "핵심 원칙으로 통합·정리됨"    # 다이어트 반영
 
 
 def test_기준_하드캡은_줄단위_절단(tmp_path):
@@ -4355,8 +4357,8 @@ def test_기준_하드캡은_줄단위_절단(tmp_path):
             session_dir=str(tmp_path))
     long_line = "- " + "가" * 120
     body = "\n".join(long_line for _ in range(20))           # 2,400자+
-    asyncio.run(s._absorb_role_profiles(f"[직무기준] QA\n{body}\n[/직무기준]"))
-    saved = s.role_profiles["QA"]
+    asyncio.run(s._absorb_role_profiles(f"[직무기준] QA\n{body}\n[/직무기준]", me=11))
+    saved = s.bot_profiles[11]                                # [격리] 흡수처 = 자기 개인 기준
     assert len(saved) <= 1500
     assert saved.endswith(long_line)                          # 마지막이 '완전한 줄'
 

@@ -66,8 +66,8 @@ def test_B19_임계미달·점유중이면_증류안함(tmp_path):
 
 
 def test_B19_개인기준이_원시6줄을_대체주입·자수비증가(tmp_path):
-    """[B-19] _craft_note: 증류된 개인 기준이 있으면 직군 기준 다음에 주입하고 원시 경험 줄들을
-    *대체*한다(≤600자 — 원시 6줄 대비 자수 비증가). 증류 전이면 종전 원시 주입 그대로(회귀 0)."""
+    """[B-19·격리] _craft_note: 증류된 개인 기준이 있으면 '당신의 직무 기준'으로 주입하고 원시 경험
+    줄들을 *대체*한다(≤600자 — 원시 6줄 대비 자수 비증가). 증류 전이면 원시 주입 그대로."""
     s = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "QA"}, session_dir=str(tmp_path))
     long = ["아주 긴 개인 교훈 줄 " * 10 for _ in range(6)]
     s.bot_experience[11] = long
@@ -75,7 +75,7 @@ def test_B19_개인기준이_원시6줄을_대체주입·자수비증가(tmp_pat
     assert "당신의 최근 경험" in before                        # 증류 전 — 원시 주입(종전 동작)
     s.bot_profiles[11] = "핵심 원칙: 실측 우선"
     after = s._craft_note(11)
-    assert "당신의 개인 기준" in after and "실측 우선" in after  # 개인 기준 주입
+    assert "당신의 직무 기준" in after and "실측 우선" in after  # 개인 기준 = 유일한 직무 기준으로 주입
     assert "당신의 최근 경험" not in after                      # 원시 줄 대체(중복 지불 없음)
     assert len(after) <= len(before)                           # 자수 비증가(토큰 중립~순이득)
 
