@@ -5524,3 +5524,38 @@ def test_런타임_로스터합류_신규봇_즉시형성(tmp_path):
     assert 77 in s.onboarded                            # 온보딩 완료(이름·인격)
     assert "엣지부터" in s.bot_profiles.get(77, "")      # 체인 전수까지 — 완성된 채 합류
     assert any(e["event"] == "roster_joined" for e in s.flow_log)
+
+
+def test_리더_recruit_도중채용_첫위임전_형성완료(tmp_path):
+    """[도중 채용 E2E] 리더가 프로젝트 중 recruit로 뽑은 봇(flow-로컬 잠정 직군)은 **첫 위임 직전**
+    첫-사용 훅이 온보딩(리크루터: 이름·인격)→사수 전수(같은 직군: 시작 기준)를 체인으로 끝내고,
+    그제야 첫 턴이 돈다 — 프롬프트에 '자기' 직무 기준이 주입된 채(빈 신입이 일 시작하는 일 없음)."""
+    import system.sys_core as sc
+    log = []
+
+    class _Bot:
+        def __init__(self, oid): self.oid = oid
+        def will_resume(self): return False
+        async def handle(self, prompt):
+            if "사수 온보딩" in prompt:
+                log.append(("endow", self.oid)); return "[개인기준] 백엔드\n- 신입은 슬라이스 검증부터\n[/개인기준]"
+            if "온보딩" in prompt:
+                log.append(("onboard", self.oid)); return "[이름] 백하윤\n[인격]\n- 스키마부터\n[/인격]"
+            log.append(("work", self.oid, prompt)); return "[결과] 완료\n[경험] 백엔드\n없음\n[/경험]"
+
+    _orig = sc.build_guide_server
+    sc.build_guide_server = lambda *a, **k: object()
+    try:
+        s = Sys(FakeGuide(), guild_id=1, organt_builder=lambda oid, srv, role, flow=None, state_tag=None: _Bot(oid),
+                bot_info={11: "백엔드", 90: "채용", 55: "예비"}, session_dir=str(tmp_path))
+        s.bot_profiles[11] = "- API 계약부터"                 # 같은 직군 사수
+        f = Flow(FakeGuide(), channel_id=100, guild_id=1, leader_id=11, bot_info=s.bot_info)
+        f.start_root("root")
+        f.bot_info[55] = "백엔드"                            # recruit 잠정 승격(flow-로컬)
+        asyncio.run(s.run_turn(f, 55, "[위임] Goal: WS 서버", Kind.WORK, "member"))
+    finally:
+        sc.build_guide_server = _orig
+    assert [(e[0], e[1]) for e in log] == [("onboard", 90), ("endow", 11), ("work", 55)]
+    wp = next(e[2] for e in log if e[0] == "work")
+    assert "[당신의 직무 기준" in wp and "슬라이스 검증" in wp   # 첫 턴부터 자기 기준
+    assert 55 in s.onboarded and "슬라이스 검증" in s.bot_profiles[55]
