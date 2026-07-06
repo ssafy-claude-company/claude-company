@@ -14,7 +14,7 @@
 system  880a965
 organt  511b66d
 guide  e977239
-murmur  e634d7d   ← 라이브 웹=murmur-ai.duckdns.org (UX감사 전수수정 배포 2026-07-06)
+murmur  b16b437   ← 라이브 웹=murmur-ai.duckdns.org (피드백 서비스+craft 배포 2026-07-06)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
@@ -35,7 +35,18 @@ murmur  e634d7d   ← 라이브 웹=murmur-ai.duckdns.org (UX감사 전수수정
   CA-Lab 실험 기록 [EXP-001] draft PR(#12, 검수 대기) · system/murmur GitHub push 완료.
   **2층은 1층 phase 사용자 검수 후**(CA-Lab 규율). 잔여 관측·후속=BACKLOG G.
 
-## UX감사 전수 수정 — 라이브 배포 완료 (2026-07-06, murmur e634d7d)
+## 피드백 어노테이션 서비스 — 라이브 배포 완료 (2026-07-06, murmur b16b437)
+- **Figma식 요소 핀 코멘트 → 백로그 → AI 처리 → 확인 루프.** admin(도진·현준) 화면 요소 클릭→핀+코멘트,
+  상호 댓글. AI 소비: `manage.py feedback_backlog`(open 목록)→`feedback_resolve <id> --note`(resolved).
+  사용자 확인: `/feedback` 백로그 [확인](confirmed). **미래 세션 필독**: `docs/FEEDBACK_SERVICE.md`.
+- **이식 설계**: 독립 앱 `backend/feedback/`(호스트 FK 0), 인증 어댑터 `feedback/auth.py resolve_admin` 1함수
+  + URL include 1줄, `service` 슬러그 멀티테넌트. 다른 서비스 이식 = 이 2지점만 교체.
+- **ultracode 적대검증**(4렌즈×반증, 에이전트 18)이 실결함 4건 확정·수정: inf좌표 DoS·타임스탬프·이식성·상태역전이.
+- 동반: **craft**(봇별 개인 증류 — UX감사 RC-D 근본수정, Agent.craft/craft_distills) 정리 커밋+배포.
+- 라이브 검증: admin 핀 생성·상호 가시성·무인증 403·inf 클램프·실브라우저 FAB/모드/팝오버/핀렌더/위치소실.
+  마이그 0020_agent_craft(craft)·0021_person_is_admin·feedback 0001. admin 계정: dojin·hyunjun.
+
+## UX감사 전수 수정 — 라이브 배포 완료 (2026-07-06, murmur e634d7d→b16b437)
 - **감사 발견 35+건 전부 수정·배포**(근본원인 RC-A~D·보안 3·P0 2·P1 9·P2 16·P3 7, 미해결 0).
   murmur 전용(system/organt/guide 0 변경). 감사문서 `murmur/docs/PRODUCT_UX_AUDIT_2026-07-05.md`
   상단 "✅ 진행 현황"에 항목별 체크·커밋 매핑. 마이그 0018(channel_seq)·0019(PersonSession) 적용.
