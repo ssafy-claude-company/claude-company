@@ -41,10 +41,11 @@ murmur  3ade03f   ← 라이브 웹=murmur-ai.duckdns.org
 - **큐레이션 조립기**(assemble_context): 키 dedup·예산·우선순위로 PRINCIPLE 정리. **①증류 라이브화**(distill_role/bot 배선·수면 루프) · **②채용 제네시스 활성**(ensure_recruiter→리크루터 '주시안' role=채용 생성, 신규 봇 persona/이름 온보딩). floor seam과 공존(communication.py는 floor 구조, meet-relevance는 후속 재적용).
 - 수치: 일반 resume 턴 ~269자(옛 매턴 전량 ~2,600 대비), 항해-필수 사실 8/8 내구·최악 재접지 1,338토큰 1회(유계). **순응률(실 pull·grounding)은 flow 로그 관측 대상.** 롤백 SHA: system 880a965·organt 511b66d·guide e977239·murmur 7a07575·meta 2b81da6.
 
-## 봇별 완전 격리 — 직군 공용 학습 폐지 (2026-07-06 커밋 19dcb0a, 러너 재시작 대기)
+## 봇별 완전 격리 — 직군 공용 학습 폐지 (2026-07-06 라이브 적용 — 러너·웹 재시작·migrate 0020 완료)
 - **학습·기억·기준 = 봇 개인 단위만**: [경험]→`bot_experience[me]`, [직무기준]→`bot_profiles[me]`, 주입='자기 개인 기준'뿐(같은 직군 동료 기준도 안 받음 — 오염 차단). 수면 = 온보딩+개인 증류(distill_bot)만(직군 증류 삭제). 검증 루브릭·craft 미러 = 그 직군 보유 봇의 개인 기준(`_job_standard`).
 - **신규·빈 봇 = 기계적 시드 없이 리크루터 온보딩**이 직군 유산(role_profiles, 동결)을 '이 사람의 시작 기준'으로 빚음 — "증류 안 된 봇이 아니라 학습을 거친 봇이 튀어나온다". 기존 빈 봇도 수면 사이클의 `pick_onboard_bots`가 자연 온보딩. role_experience=레거시 동결.
-- 격리 스모크 4/4(같은직군 미주입·자기풀만 영속·제네시스 기준 보유 탄생·봇별 상이) · 브레인 478 · system 86 · sns 256.
+- 격리 스모크 4/4(같은직군 미주입·자기풀만 영속·제네시스 기준 보유 탄생·봇별 상이) · 브레인 478 · system 86 · sns 260.
+- **웹 표면도 개인화(fe3ef5d)**: Agent.craft·craft_distills(마이그 0020) + 러너 persist_craft 동기(흡수·개인증류·온보딩) + AgentDetail '이 직원의 노하우'(직군 RoleProfile 표시 폐기) + 추천 지표 개인화. 기존 증류분 2봇(이서준·장건우) craft 백필 완료 — UI에서 봇별 상이 확인 가능.
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
