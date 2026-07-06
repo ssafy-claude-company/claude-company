@@ -1,6 +1,6 @@
 # STATE — 현재 상태 (살아있는 문서)
 
-> 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-04.
+> 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-06.
 
 ## 라이브 (2026-07-03 VPS 단일화 — Render 폐기)
 - **웹: https://murmur-ai.duckdns.org** (VPS 45.76.226.111). nginx(TLS, Let's Encrypt 자동갱신) → gunicorn `murmur-web` systemd(127.0.0.1:8000) → Django. SPA+API 한 서비스.
@@ -11,10 +11,10 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-system  880a965
-organt  511b66d
-guide  e977239
-murmur  7a07575   ← 라이브 웹=murmur-ai.duckdns.org
+system  5e3bb40
+organt  ac71035
+guide  0cc6ac7
+murmur  05626ff   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
@@ -35,13 +35,18 @@ murmur  7a07575   ← 라이브 웹=murmur-ai.duckdns.org
   CA-Lab 실험 기록 [EXP-001] draft PR(#12, 검수 대기) · system/murmur GitHub push 완료.
   **2층은 1층 phase 사용자 검수 후**(CA-Lab 규율). 잔여 관측·후속=BACKLOG G.
 
+## 컨텍스트 주입 — 내구적 배치 (2026-07-06 착지·라이브 적용)
+- **되살리기(반복 주입) 제거 + first_wake 1회 교육**: 정체성·원칙·원문·[경험]·운영은 그 봇 첫 wake에만 주입(`will_resume` 판정), resume는 **동적 task만**. 정적 지식·앵커는 반복이 아니라 **압축에도 살아남는 구조**가 담보 — 단일활성·`.collab/` 어포던스=**persona(system_prompt)**, verify·owner·iface·베턴=**게이트**, 원문·기준·로스터=**디스크(`.collab/ORIGIN.md`·`PLAYBOOK.md`·`TEAM.md`, [경험]=report 툴 필드)**. 동료는 로스터 변경(이벤트) 시에만 주입.
+- **큐레이션 조립기**(assemble_context): 키 dedup·예산·우선순위로 PRINCIPLE 정리. **①증류 라이브화**(distill_role/bot 배선·수면 루프) · **②채용 제네시스 활성**(ensure_recruiter→리크루터 '주시안' role=채용 생성, 신규 봇 persona/이름 온보딩). floor seam과 공존(communication.py는 floor 구조, meet-relevance는 후속 재적용).
+- 수치: 일반 resume 턴 ~269자(옛 매턴 전량 ~2,600 대비), 항해-필수 사실 8/8 내구·최악 재접지 1,338토큰 1회(유계). **순응률(실 pull·grounding)은 flow 로그 관측 대상.** 롤백 SHA: system 880a965·organt 511b66d·guide e977239·murmur 7a07575·meta 2b81da6.
+
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
 - 시작 `claim.sh add <task> <파일glob>` → 개발(계약 17seam 준수) → 착지 전 `claim.sh check`+full `verify.sh` → **bash ops/land.sh <세션>**으로 스스로 정본 병합(통합 세션 불필요).
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **228** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **478**(+test_floor 23)  ·  프론트 빌드 OK.
+- sns: **232** OK(+4 채용 제네시스)  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **478**(+test_floor 23)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)
