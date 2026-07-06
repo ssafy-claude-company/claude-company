@@ -61,6 +61,7 @@ class Sys:
         self.session_dir = session_dir         # organt_state_*.json 위치(새 요청마다 세션 초기화)
         self.persist_identity = None           # [채용 제네시스] (mid, name, persona)->None: 리크루터가 빚은 이름·인격을 매체 DB에 영속(러너 주입 — 로컬 ORM / 원격 guide_bridge). 미주입이면 bot_profiles만 러너-로컬 영속.
         self.persist_craft = None              # [봇별 격리] (mid, craft, distilled=False)->None: 봇 '개인' 직무 기준을 매체 DB(Agent.craft)로 동기(러너 주입) — UI 개인 노하우 표면. 미주입이면 러너-로컬만.
+        self.refresh_roster = None             # [런타임 합류] async ()->{new_mid: label}: 매체 로스터를 다시 읽어 '신규 봇'을 bot_info에 합류시키고 신규만 반환(러너 주입). run 루프가 주기 호출 — 스튜디오에서 방금 채용한 봇이 재시작 없이 합류·즉시 형성(온보딩+전수)되게.
         # 턴 한도로 미완 시 같은 세션으로 이어가는 최대 횟수(ORGANT_MAX_CONTINUE로 운영 조정 가능).
         self.max_continue = int(os.environ.get("ORGANT_MAX_CONTINUE", max_continue))
         # 워커 턴 '침묵' 타임아웃(초): 도구 활동(last_activity)이 이 시간 동안 '한 번도' 갱신되지 않으면
@@ -832,6 +833,29 @@ class Sys:
         except Exception:
             import traceback
             self._log("distill_cycle_error", err=traceback.format_exc()[:300])
+
+    async def _roster_tick(self) -> None:
+        """[런타임 합류 틱] refresh_roster(러너 주입)로 매체 로스터를 다시 읽어 신규 봇을 합류시키고,
+        생기면 즉시 형성 사이클(온보딩→전수 체인)을 발사한다 — '스튜디오에서 방금 만든 봇이 성격도
+        노하우도 없이 비어 보이는' 갭을 재시작 없이 닫는다. best-effort(실패가 폴 루프를 못 막음)."""
+        if self.refresh_roster is None:
+            return
+        try:
+            new = await self.refresh_roster() or {}
+        except Exception:
+            return
+        if not new:
+            return
+        self._roster_labels.update({int(k): str(v) for k, v in new.items()})   # 원본 라벨 보충(예비 승격 일관)
+        self._log("roster_joined", bots={str(k): str(v) for k, v in new.items()})
+
+        async def _form():
+            for _ in range(len(new)):          # 신규 수만큼 사이클 — 각 사이클이 빈 봇 하나를 완성(체인)
+                try:
+                    await self._distill_cycle_once()
+                except Exception:
+                    pass
+        asyncio.ensure_future(_form())
 
     async def _sleep_loop(self, period: int) -> None:
         """[수면 사이클] period초마다 자기업무(온보딩·전수·개인 증류) 1회. run()이 (once가 아니고
@@ -1986,6 +2010,7 @@ class Sys:
         이 run()만 부르면 됨 — 진입이 얇아진다(폴링·pick 로직은 여기·Guide로 이관)."""
         import traceback
         inflight, seen, cut_resumes, last_beat = {}, set(), {}, 0.0
+        last_roster = 0.0   # [런타임 합류] 로스터 리프레시 throttle(30s) — 신규 채용 봇 즉시 합류·형성
         log.info("요청 폴링 시작(동시 처리 — 상한 %d)", cap)
         # [수면 — 기억 증류 라이브화] 자기증류(경험→직무·개인 기준 압축)를 브레인 실행 루프에 배선한다.
         # 종전엔 Discord 진입에만 있어 라이브(murmur) 러너에선 안 돌던 것을 매체중립 위치(Sys.run)로 —
@@ -2008,6 +2033,10 @@ class Sys:
                     except Exception:
                         pass
                     last_beat = _now
+                # ── 런타임 로스터 합류(30s) — 스튜디오 신규 채용 봇을 재시작 없이 합류·즉시 형성 ──
+                if self.refresh_roster is not None and _now - last_roster > 30:
+                    last_roster = _now
+                    await self._roster_tick()
                 # ── 완료 reap + 정체컷·재개(무진행 기준 슬롯 회수) ──
                 for _mid, _info in list(inflight.items()):
                     if _info["task"].done():

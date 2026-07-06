@@ -5487,3 +5487,40 @@ def test_온보딩_탄생체인_이름인격_직후_기준까지(tmp_path):
     s2 = Sys(FakeGuide(), guild_id=1, organt_builder=None,
              bot_info={13: "백엔드", 90: "채용"}, session_dir=str(tmp_path))
     assert 13 in s2.onboarded and "시작 기준" in s2.bot_profiles[13]   # 표식·기준 영속
+
+
+def test_런타임_로스터합류_신규봇_즉시형성(tmp_path):
+    """[런타임 합류] 스튜디오에서 방금 채용한 봇: refresh_roster(러너 주입)가 신규를 합류시키면
+    _roster_tick이 라벨 보충 + 즉시 형성 사이클(온보딩→전수 체인)을 발사한다 — 재시작·10분 수면을
+    기다리지 않고 '비어 있는 새 봇' 노출을 닫는다. 미주입(None)·신규 0이면 무동작."""
+    formed = []
+
+    class _R:
+        async def handle(self, prompt):
+            formed.append(prompt[:12])
+            if "온보딩" in prompt:
+                return "[이름] 하린\n[인격]\n- 꼼꼼한 사람\n[/인격]"
+            return "[개인기준] QA\n- 엣지부터 재현\n[/개인기준]"
+
+    s = Sys(FakeGuide(), guild_id=1, organt_builder=lambda *a, **k: _R(),
+            bot_info={90: "채용"}, session_dir=str(tmp_path))
+    asyncio.run(s._roster_tick())                       # 미주입 → 무동작(예외 없음)
+
+    async def _refresh():
+        s.bot_info[77] = "QA"                           # 러너가 신규 봇을 bot_info에 합류시키고
+        return {77: "QA"}                               # 신규만 반환
+
+    s.refresh_roster = _refresh
+
+    async def _run():
+        await s._roster_tick()
+        await asyncio.sleep(0)                          # ensure_future(_form) 드레인
+        for _ in range(20):
+            if s.bot_profiles.get(77):
+                break
+            await asyncio.sleep(0.01)
+    asyncio.run(_run())
+    assert s._roster_labels.get(77) == "QA"             # 원본 라벨 보충
+    assert 77 in s.onboarded                            # 온보딩 완료(이름·인격)
+    assert "엣지부터" in s.bot_profiles.get(77, "")      # 체인 전수까지 — 완성된 채 합류
+    assert any(e["event"] == "roster_joined" for e in s.flow_log)
