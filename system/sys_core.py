@@ -62,6 +62,7 @@ class Sys:
         self.persist_identity = None           # [채용 제네시스] (mid, name, persona)->None: 리크루터가 빚은 이름·인격을 매체 DB에 영속(러너 주입 — 로컬 ORM / 원격 guide_bridge). 미주입이면 bot_profiles만 러너-로컬 영속.
         self.persist_craft = None              # [봇별 격리] (mid, craft, distilled=False)->None: 봇 '개인' 직무 기준을 매체 DB(Agent.craft)로 동기(러너 주입) — UI 개인 노하우 표면. 미주입이면 러너-로컬만.
         self.refresh_roster = None             # [런타임 합류] async ()->{new_mid: label}: 매체 로스터를 다시 읽어 '신규 봇'을 bot_info에 합류시키고 신규만 반환(러너 주입). run 루프가 주기 호출 — 스튜디오에서 방금 채용한 봇이 재시작 없이 합류·즉시 형성(온보딩+전수)되게.
+        self.has_persona = None                # [persona 사각 보정] (mid)->bool(러너 주입 — persona_map 기준). 경험·기준은 있는데 인격이 빈 기존 봇도 온보딩 대상이 되게(이름은 persist_identity가 빈 필드만 채워 보존). 미주입이면 종전 판정 그대로.
         # 턴 한도로 미완 시 같은 세션으로 이어가는 최대 횟수(ORGANT_MAX_CONTINUE로 운영 조정 가능).
         self.max_continue = int(os.environ.get("ORGANT_MAX_CONTINUE", max_continue))
         # 워커 턴 '침묵' 타임아웃(초): 도구 활동(last_activity)이 이 시간 동안 '한 번도' 갱신되지 않으면
@@ -594,7 +595,10 @@ class Sys:
             if int(mid) in self.onboarded:
                 continue
             if self.bot_experience.get(int(mid)) or self.bot_profiles.get(int(mid)):
-                continue
+                # [persona 사각 보정] 경험·기준이 있어도 '인격이 빈' 봇(스튜디오에서 persona 없이 채용된
+                # 기존 봇)은 온보딩 대상 — 이름은 persist_identity가 빈 필드만 채워 보존되므로 안전.
+                if self.has_persona is None or self.has_persona(int(mid)):
+                    continue
             out.append(int(mid))
         return out
 
@@ -625,8 +629,12 @@ class Sys:
         role = (role or self.bot_info.get(new_mid) or "").strip()
         if not role or role.startswith("예비"):
             return False
-        if new_mid in self.onboarded or self.bot_experience.get(new_mid) or self.bot_profiles.get(new_mid):
-            return False                                  # 이미 온보딩됐거나 일한 봇(정체성 덮어쓰기 방지)
+        if new_mid in self.onboarded:
+            return False                                  # 이미 온보딩됨
+        if self.bot_experience.get(new_mid) or self.bot_profiles.get(new_mid):
+            # 일한 봇은 정체성 덮어쓰기 방지 — 단 인격이 빈 봇(persona 사각)은 예외로 온보딩(이름 보존됨).
+            if self.has_persona is None or self.has_persona(new_mid):
+                return False
         recruiter = recruiter_mid if recruiter_mid is not None else self._pick_recruiter()
         if recruiter is None or int(recruiter) == new_mid:
             return False                                  # 리크루터 없음/자기 자신
@@ -865,7 +873,10 @@ class Sys:
         await asyncio.sleep(min(15, period))
         await self._distill_cycle_once()
         while True:
-            await asyncio.sleep(period)
+            # [형성 가속] 아직 빈 봇(온보딩·전수 후보)이 남아 있으면 다음 사이클을 60초로 단축 —
+            # 사이클당 1봇(비용 제어)은 유지하되, 다 채워질 때까지 10분씩 기다리지 않는다.
+            _busy = bool(self.pick_onboard_bots() or self.pick_endow_bots())
+            await asyncio.sleep(min(60, period) if _busy else period)
             await self._distill_cycle_once()
 
     async def _drain_inflight(self, flow) -> str:
