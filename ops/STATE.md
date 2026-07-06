@@ -14,7 +14,7 @@
 system  880a965
 organt  511b66d
 guide  e977239
-murmur  85beda8   ← 라이브 웹=murmur-ai.duckdns.org (피드백 라운드1 반영 2026-07-06)
+murmur  2f3bb88   ← 라이브 웹=murmur-ai.duckdns.org (피드백 라운드2: 백로그 5상태·보류 재작업 2026-07-06)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
