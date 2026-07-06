@@ -5459,24 +5459,31 @@ def test_사수전수_선배없으면_채용봇이_유산으로_폴백(tmp_path)
     assert "시선 흐름" in s.bot_profiles[33]
 
 
-def test_온보딩은_이름인격만_기준은_전수몫_재온보딩방지(tmp_path):
-    """[역할 분담] 채용봇 온보딩 = 이름·인격만(기준 생성 제거). 완료 표식(onboarded)이 영속돼
-    '기준 없음'으로 재온보딩되지 않고, 그 봇은 endow(사수 전수) 대상으로 넘어간다."""
-    calls = {"n": 0}
+def test_온보딩_탄생체인_이름인격_직후_기준까지(tmp_path):
+    """[역할 분담 + 탄생 체인] 채용봇 온보딩 프롬프트 = 이름·인격만(기준 요청 제거). 단 성공 직후
+    같은 배경 작업에서 전수(endow)가 이어져 봇은 **이름·인격·시작 기준이 다 갖춰진 채** 태어난다 —
+    '성격도 노하우도 없는 상태로 튀어나옴' 노출 갭 제거. 완료 표식(onboarded)은 영속(재온보딩 방지)."""
+    calls = {"onboard": 0, "endow": 0}
 
     class _Recruiter:
         async def handle(self, prompt):
-            calls["n"] += 1
-            assert "개인기준" not in prompt              # 온보딩 프롬프트에서 기준 요청 제거됨
-            return "[이름] 서린\n[인격]\n- 계약 먼저 못박는 사람\n[/인격]"
+            if "온보딩" in prompt:                       # 채용: 이름·인격만
+                calls["onboard"] += 1
+                assert "개인기준" not in prompt          # 온보딩 프롬프트에서 기준 요청 제거됨
+                return "[이름] 서린\n[인격]\n- 계약 먼저 못박는 사람\n[/인격]"
+            calls["endow"] += 1                          # 전수(사수 없음 → 채용봇 유산 폴백)
+            assert "채용 폴백" in prompt
+            return "[개인기준] 백엔드\n- 유산에서 빚은 시작 기준\n[/개인기준]"
 
     s = Sys(FakeGuide(), guild_id=1, organt_builder=lambda *a, **k: _Recruiter(),
             bot_info={13: "백엔드", 90: "채용"}, session_dir=str(tmp_path))
+    s.role_profiles["백엔드"] = "- 계약부터(유산)"
     assert asyncio.run(s.onboard_bot(13)) is True
-    assert not s.bot_profiles.get(13)                    # 기준은 안 만듦(사수 몫)
+    assert calls["onboard"] == 1 and calls["endow"] == 1          # ★체인: 한 번에 둘 다
+    assert "시작 기준" in s.bot_profiles[13]                       # 태어날 때 기준 보유
     assert 13 in s.onboarded and 13 not in s.pick_onboard_bots()   # 재온보딩 방지
-    assert 13 in s.pick_endow_bots()                     # 전수 대상으로 이관
-    assert asyncio.run(s.onboard_bot(13)) is False and calls["n"] == 1   # 멱등
+    assert 13 not in s.pick_endow_bots()                           # 전수도 완료
+    assert asyncio.run(s.onboard_bot(13)) is False and calls["onboard"] == 1   # 멱등
     s2 = Sys(FakeGuide(), guild_id=1, organt_builder=None,
              bot_info={13: "백엔드", 90: "채용"}, session_dir=str(tmp_path))
-    assert 13 in s2.onboarded                            # 표식 영속(재시작 무한 재온보딩 방지)
+    assert 13 in s2.onboarded and "시작 기준" in s2.bot_profiles[13]   # 표식·기준 영속

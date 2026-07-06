@@ -634,12 +634,20 @@ class Sys:
             return False                                  # 리크루터 흐름 참여 중 → 이번 주기 스킵
         self.engaged.engage(recruiter, "__distill__")     # 배경 자기업무 점유(distill과 동형 always-live)
         try:
-            return await self._onboard_inner(new_mid, role, recruiter)
+            ok = await self._onboard_inner(new_mid, role, recruiter)
         finally:
             self.engaged.release(recruiter, "__distill__")
             item = self._pop_runnable_queued()
             if item is not None:
                 asyncio.ensure_future(self.handle_user_input(*item))
+        if ok:
+            # [탄생 체인] 이름·인격 직후 같은 배경 작업에서 시작 기준(사수 전수·유산 폴백)까지 이어서 —
+            # '성격도 노하우도 없이 튀어나오는' 노출 갭 제거(전수를 다음 수면 사이클로 미루지 않는다).
+            try:
+                await self.endow_craft(new_mid)
+            except Exception:
+                pass
+        return ok
 
     async def _onboard_inner(self, new_mid, role, recruiter) -> bool:
         flow = Flow(self.guide, 0, self.guild_id, recruiter, self.bot_info)   # 도구 형식용 빈 흐름
@@ -826,8 +834,12 @@ class Sys:
             self._log("distill_cycle_error", err=traceback.format_exc()[:300])
 
     async def _sleep_loop(self, period: int) -> None:
-        """[수면 사이클] period초마다 증류 1회. run()이 (once가 아니고 period>0·session_dir 있을 때만)
-        백그라운드로 스폰한다. 프로세스 수명과 함께 살고 종료 시 함께 정리된다(forever 러너 관례)."""
+        """[수면 사이클] period초마다 자기업무(온보딩·전수·개인 증류) 1회. run()이 (once가 아니고
+        period>0·session_dir 있을 때만) 백그라운드로 스폰. 프로세스 수명과 함께 살고 종료 시 정리.
+        부팅 직후 짧은 유예 후 1회 즉시 실행 — 재시작·신규 합류 봇이 첫 period(기본 10분)를 빈
+        정체성으로 기다리지 않게(형성은 탄생 시점에 가깝게)."""
+        await asyncio.sleep(min(15, period))
+        await self._distill_cycle_once()
         while True:
             await asyncio.sleep(period)
             await self._distill_cycle_once()
@@ -1206,13 +1218,22 @@ class Sys:
         # 정체성 있는 봇은 _pick_recruiter 전에 단락 — 핫패스 비용은 dict 조회뿐.
         _rl = (getattr(flow, "bot_info", None) or {}).get(organt_id) or self.bot_info.get(organt_id)
         if (_rl and not str(_rl).startswith("예비")
+                and organt_id not in self.onboarded
                 and not self.bot_experience.get(organt_id) and not self.bot_profiles.get(organt_id)
                 and self._pick_recruiter() not in (None, organt_id)):
             try:
-                await self.onboard_bot(organt_id, role=str(_rl))
+                await self.onboard_bot(organt_id, role=str(_rl))   # 성공 시 내부 탄생 체인이 전수까지
             except Exception:
                 pass
             flow.last_activity = time.monotonic()   # 온보딩 소요를 무진행으로 오인 안 하게 진행 신호 갱신
+        # [사수 전수 — 첫-사용 게이트] 온보딩은 됐지만(또는 기존 봇) 시작 기준이 아직 없으면 일 투입
+        # 직전에 전수 — '기준 없이 일 시작'을 막는다(사수/채용봇 가용 없으면 첫 작업 자기 작성 폴백).
+        if (_rl and not str(_rl).startswith("예비") and not self.bot_profiles.get(organt_id)):
+            try:
+                if await self.endow_craft(organt_id):
+                    flow.last_activity = time.monotonic()
+            except Exception:
+                pass
         last = ""
         # [G3 — 캐주얼 도구 미장착(B-06)] 좁은 캐주얼 판정(캐주얼 신호+빌드동사 없음, 리더 턴)이면 협업·제작
         # 도구를 아예 장착하지 않는다(mode="casual": run만) — "도구 쓰지 마세요" 프롬프트 의존(재발점 ③)을
