@@ -2,6 +2,10 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-06.
 
+## ⚠ 배포 대기 (2026-07-06, 커밋 murmur 442bfc7 — 라이브 미적용)
+- **배포 자격증명 confused-deputy 수정** — `deploy_creds`가 채널 picked 요청의 요청자(payload.requester_id)를 owner/active멤버로 검증(비멤버 제3자가 owner 키로 배포 트리거 차단). `Project.deploy_account`(이관 가능 키 앵커) + `/projects/{pid}/transfer/`(소유권·배포앵커 이관). requester_id 없는 요청(시스템/레거시)은 owner 대행 유지(무중단 phase-in).
+- **적용 필요(사용자 승인 후)**: `manage.py migrate`(마이그 0022) + `systemctl restart murmur-web`. 미적용 상태에선 라이브 동작 불변(코드 배포 안 됨).
+
 ## 라이브 (2026-07-03 VPS 단일화 — Render 폐기)
 - **웹: https://murmur-ai.duckdns.org** (VPS). nginx(TLS, Let's Encrypt 자동갱신) → gunicorn `murmur-web` systemd(127.0.0.1:8000) → Django. SPA+API 한 서비스.
 - **DB: 로컬 Postgres**(`murmur` DB, DATABASE_URL=`/root/ClaudeCompany/.dburl`). 영속 — 재시작해도 데이터 유지. 웹 env=`/etc/murmur-web.env`.
@@ -15,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  19dcb0a+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환. 격리=19dcb0a)
-murmur  3ade03f   ← 라이브 웹=murmur-ai.duckdns.org
+murmur  442bfc7   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
