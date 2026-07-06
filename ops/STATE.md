@@ -12,7 +12,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  e52f30b   ← 브레인 (system+organt+guide 병합, 러너 배포)
-murmur  05626ff   ← 라이브 웹=murmur-ai.duckdns.org
+murmur  3ade03f   ← 라이브 웹=murmur-ai.duckdns.org
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
