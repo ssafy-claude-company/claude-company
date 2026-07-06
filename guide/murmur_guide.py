@@ -261,6 +261,15 @@ class MurmurGuide:
         except Exception:
             pass
 
+    async def set_craft(self, bot_id, craft, distilled=False):
+        """[봇별 완전 격리] 이 봇 '개인'의 직무 기준을 웹(Agent.craft)에 동기 — UI가 직군 공용 대신
+        개인 노하우를 보이게. 시스템 소유 필드라 항상 덮어씀. 실패해도 흐름 무해(표시용 미러)."""
+        try:
+            await self._post("/api/guide/agent_craft/",
+                             {"bot_id": int(bot_id), "craft": craft or "", "distilled": bool(distilled)})
+        except Exception:
+            pass
+
     @staticmethod
     def invite_url(app_id, perms=None):
         return f"(SNS 봇 #{app_id} — 초대 불필요)"

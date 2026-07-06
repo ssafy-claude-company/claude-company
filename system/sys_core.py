@@ -60,6 +60,7 @@ class Sys:
         self.workspace = workspace             # run 툴 cwd(작업공간 경로)
         self.session_dir = session_dir         # organt_state_*.json 위치(새 요청마다 세션 초기화)
         self.persist_identity = None           # [채용 제네시스] (mid, name, persona)->None: 리크루터가 빚은 이름·인격을 매체 DB에 영속(러너 주입 — 로컬 ORM / 원격 guide_bridge). 미주입이면 bot_profiles만 러너-로컬 영속.
+        self.persist_craft = None              # [봇별 격리] (mid, craft, distilled=False)->None: 봇 '개인' 직무 기준을 매체 DB(Agent.craft)로 동기(러너 주입) — UI 개인 노하우 표면. 미주입이면 러너-로컬만.
         # 턴 한도로 미완 시 같은 세션으로 이어가는 최대 횟수(ORGANT_MAX_CONTINUE로 운영 조정 가능).
         self.max_continue = int(os.environ.get("ORGANT_MAX_CONTINUE", max_continue))
         # 워커 턴 '침묵' 타임아웃(초): 도구 활동(last_activity)이 이 시간 동안 '한 번도' 갱신되지 않으면
@@ -447,6 +448,8 @@ class Sys:
                 self._log("bot_profile_saved", bot=int(me), job=job, size=len(body))
             for job, n in learned:
                 self._log("bot_experience_saved", bot=int(me), job=job, lines=n)
+            if absorbed:
+                await self._sync_craft(int(me))   # [격리] 자기 기준 갱신 → 웹 개인 노하우 표면 동기
         return out or "(직무 기준/경험이 기록되었습니다.)"
 
     _DISTILL_MIN = int(os.environ.get("ORGANT_DISTILL_MIN", "5"))   # 증류 발동 최소 경험 줄 수
@@ -477,6 +480,19 @@ class Sys:
         검증 루브릭·craft 미러는 owner 봇 자신의 기준으로 심사·표시한다(표시용 — 학습 오염 아님)."""
         mid = self._job_holder(str(job).strip())
         return (self.bot_profiles.get(mid) or "") if mid is not None else ""
+
+    async def _sync_craft(self, mid, distilled=False):
+        """[격리 — 웹 표면 동기] 이 봇 개인 기준(bot_profiles[mid])이 바뀐 순간 매체 DB(Agent.craft)로
+        민다 — UI가 직군 공용(RoleProfile) 대신 '이 직원의 노하우'를 보이게. best-effort(표시 미러 —
+        실패가 흐름·학습을 못 막음). 호출처: 흡수([직무기준])·개인 증류 성공·온보딩 기준 생성."""
+        if self.persist_craft is None:
+            return
+        try:
+            _r = self.persist_craft(int(mid), self.bot_profiles.get(int(mid)) or "", distilled)
+            if asyncio.iscoroutine(_r):
+                await _r
+        except Exception:
+            pass
 
     # [B-19] [개인기준] 블록 파서 — distill_role의 [직무기준] 관례 동형(헤더는 봇 라벨, 본문만 소비).
     _BOT_PROFILE_RE = re.compile(r"\[개인기준\]\s*(?P<who>[^\n]*)\n(?P<body>.*?)\n?\[/개인기준\]", re.S)
@@ -539,6 +555,7 @@ class Sys:
             self.bot_experience[mid] = []                 # 증류 완료 — 원석 비움
             self._save_profiles()
             self._log("bot_distilled", bot=mid, used=len(exp))
+            await self._sync_craft(mid, distilled=True)   # [격리] 개인 증류 → 웹 표면 동기(+증류 카운트)
             if self.session_dir:                          # 증류 세션은 일회성 — 다음 증류가 깨끗하게 시작
                 try:
                     os.remove(os.path.join(str(self.session_dir), f"organt_state_bdistill_{mid}.json"))
@@ -647,6 +664,7 @@ class Sys:
         if prof:
             self.bot_profiles[new_mid] = prof             # 초기 개인 기준(러너-로컬 영속)
             self._save_profiles()
+            await self._sync_craft(new_mid)               # [격리] 탄생 기준 → 웹 개인 노하우 표면 동기
         if self.persist_identity:                         # 이름·persona → 매체 DB(러너 주입 콜백; sync/async 모두 수용)
             try:
                 _r = self.persist_identity(new_mid, name, persona)
