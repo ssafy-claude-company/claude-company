@@ -1897,11 +1897,14 @@ class Sys:
         except Exception as e:
             self._log("ensure_deploy_failed", err=str(e)[:80])
         # 리더의 반환값 = 사용자에게 가는 Response(=보고). origin 프레임을 닫아 시작점 복귀.
-        try:
-            await self.guide.post(flow.user_channel, lead, format_response(result),
-                                  reply_to=flow.root_id)
-        except Exception as e:
-            self._log("final_post_failed", err=str(e)[:80])
+        # [사용자 중지는 피드에 평문 안 남김] 취소는 상태(live_status '중지됨')로 보이니 별도 알림 메시지를
+        # 채널에 안 올린다 — 종전엔 "(사용자가 작업을 중지했습니다…)"가 봇 평문으로 떠 피드가 지저분했다.
+        if not getattr(flow, "cancelled", False):
+            try:
+                await self.guide.post(flow.user_channel, lead, format_response(result),
+                                      reply_to=flow.root_id)
+            except Exception as e:
+                self._log("final_post_failed", err=str(e)[:80])
         self._close_flow(flow, lead, result)
         flow.done, flow.final = True, result
         # [Rule/Status] 종결 확정 — 마지막 수정으로 ✅/⏸를 박고 갱신을 멈춘다(이후 불변).
