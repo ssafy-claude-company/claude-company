@@ -5113,6 +5113,31 @@ def test_완료검증사실_영속_owner_delivered_cross_checks_work_delegated()
     assert f2.current.owner_incomplete is False
 
 
+def test_재배정시_소유권_리더로_화해_정상흐름은_무영향():
+    """[순환대기 데드락 근본] 리더십이 재배정되면(proj.pending_owner_reconcile=새 리더) 재개 시 Task
+    소유권을 새 리더로 넘긴다 — 안 그러면 스테일 owner(예: 디자이너)가 새 리더(백엔드)의 남은 도메인
+    쓰기를 게이트#4로 막아, 봇끼리 소유권 이전만 LIFO 베턴에 반복 거부되는 순환대기 데드락(라이브 P-005).
+    **재배정 신호가 있을 때만** 발동 — 정상 인도 흐름(신호 없음, leader≠owner가 정상)은 owner 그대로."""
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "디자이너", 13: "백엔드"})
+    f = _flow(g, leader=11)
+    t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
+    asyncio.run(t["create_project"].handler({"name": "p", "team": "12,13"}))
+    asyncio.run(t["create_task"].handler({"purpose": "배포", "members": "12,13"}))
+    f.current.owner = 12                       # 디자이너가 owner
+    f.current.owner_delivered = True
+    snap = s._task_snapshot(f, f.current)
+    # (A) 재배정 신호 있음 → 소유권이 새 리더(13/백엔드)로 화해, owner_delivered 리셋, 신호 소거
+    f2 = _flow(g, leader=13); f2.pool = [11, 12, 13]
+    asyncio.run(s._restore_open_task(f2, {"id": "P-1", "open_task": snap, "pending_owner_reconcile": 13}))
+    assert f2.current.owner == 13                       # 소유권이 새 리더로
+    assert f2.current.owner_delivered is False          # 새 owner는 잔여 실작업 후 인도(허위완료 방지)
+    # (B) 재배정 신호 없음(정상 인도) → owner·owner_delivered 그대로(무회귀)
+    f3 = _flow(g, leader=11); f3.pool = [11, 12, 13]
+    asyncio.run(s._restore_open_task(f3, {"id": "P-2", "open_task": snap}))
+    assert f3.current.owner == 12 and f3.current.owner_delivered is True
+
+
 def test_수렴사실_포괄영속_act_by_contrib_deploy_복구왕복():
     """[수렴 사실 포괄 영속(2026-06-23, 사용자: '메모리 안정적으로 — field별 땜질 말고')] 게이트가 읽는
     진행 사실(act_by·contrib_checked·cross_check_offdomain·run_count·deploy_count)이 복구 너머 영속해야

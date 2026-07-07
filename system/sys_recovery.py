@@ -209,6 +209,23 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     # 다시 요구해 마감이 안 닫히던 진짜 원인 차단(verified는 종전대로 0 — 재개 때 1회 재실행).
     ref.owner_delivered = bool(snap.get("owner_delivered", False))
     ref.cross_checks = int(snap.get("cross_checks", 0) or 0)
+    # [소유권-리더십 화해 — 재배정 신호로만] 리더십이 재배정됐으면(proj.pending_owner_reconcile=새 리더)
+    # Task 소유권을 새 리더로 넘긴다. 안 그러면 스테일 owner(예: 디자이너)가 새 리더(백엔드)의 남은 도메인
+    # 쓰기를 게이트#4로 막아, 봇끼리 소유권 이전만 LIFO 베턴에 반복 거부되는 순환대기 데드락(라이브 P-005).
+    # 리더=owner가 되면 게이트가 안 걸리고 이전 시도 자체가 불필요 → 데드락이 형성되지 않는다. **재배정
+    # 신호가 있을 때만** 발동 — 정상 인도 흐름('owner 인도+리더 검증', leader≠owner가 정상)은 안 건드림.
+    # 넘긴 뒤 owner_delivered=False(새 owner는 잔여 실작업 후 인도=허위완료 방지). 신호는 1회성(소거).
+    _rec = proj.get("pending_owner_reconcile") if isinstance(proj, dict) else None
+    if _rec and ref.owner and int(ref.owner) != int(_rec):
+        ref.owner = int(_rec)
+        ref.status.owner = flow._info(int(_rec)) or ref.status.owner
+        ref.owner_delivered = False
+        sys._log("owner_reconciled_to_leader", task=ref.task_id, new_owner=int(_rec))
+    if isinstance(proj, dict) and proj.pop("pending_owner_reconcile", None) is not None:
+        try:
+            sys._save_projects()
+        except Exception:
+            pass
     # [수렴 사실 포괄 복원(2026-06-23, 사용자: '메모리 안정적으로')] 게이트가 읽는 진행 사실 전부 복원 —
     # act_by(누가 Write/Edit/run 했나)는 contrib 게이트의 idle 판정 입력이라, 이걸 안 되살리면 복구마다
     # '전원 idle'로 마감이 막힌다(사용자가 짚은 act_by 리셋). deploy_count는 배포 런어웨이 캡이 재시작 너머

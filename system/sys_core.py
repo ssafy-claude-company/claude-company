@@ -1488,6 +1488,10 @@ class Sys:
         if proj and leader_id and leader_id != proj.get("leader") and leader_id in self.bot_info:
             self._log("leader_reassigned", project=proj["id"], old=proj.get("leader"), new=leader_id)
             proj["leader"] = leader_id
+            # [소유권-리더십 화해 — 데드락 근본] 재배정 신호를 심는다: 재개(restore_open_task) 때 현재 Task
+            # 소유권을 새 리더로 넘겨, 스테일 owner가 새 리더 쓰기를 막아 소유권 이전만 반복 거부되는 순환대기
+            # 데드락을 애초에 차단(신호가 있을 때만 화해 → 정상 인도 흐름 무영향). restore가 1회 쓰고 소거.
+            proj["pending_owner_reconcile"] = int(leader_id)
             self._save_projects()
             self._sync_topic(channel_id)   # 토픽(서버 영속)에도 반영 — 리클레임 후 시드로 원복되지 않게
         lead = self._valid_leader(proj) if proj else leader_id
