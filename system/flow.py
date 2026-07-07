@@ -172,7 +172,7 @@ class Flow:
             lst[-1] = (t, time.monotonic())      # 같은 활동 반복 — 시각만 갱신(스팸 방지)
         else:
             lst.append((t, time.monotonic()))
-            del lst[:-8]                          # 최근 8개만(롤링 창)
+            del lst[:-30]                         # 최근 30개(롤링 — '자세히' 펼치면 이만큼 보임)
 
     def _info(self, oid):
         return self.bot_info.get(oid, "")

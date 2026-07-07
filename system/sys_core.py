@@ -2016,15 +2016,13 @@ class Sys:
         return None
 
     def _flow_activity(self, channel_id):
-        """[진행 가시성] 이 채널 흐름에서 '지금 일하는 봇의 최근 활동 여러 줄'(최신 순 아님 — 오래된→최신)
-        — 하트비트가 매체로 실어 live_status에 붙는다. 최신이 신선(≤30s)할 때만 목록을, 아니면 [].
-        한 줄만이 아니라 최근 진행을 보여줘 '전체적으로' 파악되게."""
+        """[진행 가시성] 이 채널 흐름에서 '일하는 봇의 최근 활동 목록'(오래된→최신, 최근 30). 신선도로
+        비우지 않는다 — 비우면 payload가 지워져 '보이다 없어지다' 깜빡였다(사용자 관측). 최신이 오래됐는지
+        (정체)는 별도 idle_s(quiet 라벨)가 표시한다. 목록이 있으면 그대로, 없으면 []."""
         for f in list(self.active_flows.values()):
             if getattr(f, "user_channel", None) == int(channel_id) and not getattr(f, "done", False):
                 lst = (getattr(f, "live_activity", None) or {}).get(getattr(getattr(f, "comm", None), "alive", None)) or []
-                if lst and (time.monotonic() - lst[-1][1]) < 30:
-                    return [x[0] for x in lst[-5:]]     # 최근 5줄(오래된→최신)
-                return []
+                return [x[0] for x in lst[-30:]]        # 최근 30줄(신선도 무관 — 안 비움)
         return []
 
     async def run(self, guide, leader, cap=4, poll=3.0, stall_timeout=900, max_age=7200, once=False):
@@ -2053,8 +2051,10 @@ class Sys:
                         await guide.heartbeat()
                         for _mid in list(inflight):
                             _idle = self._flow_idle(inflight[_mid]["ch"])
+                            _act = self._flow_activity(inflight[_mid]["ch"])
+                            # 비었으면 None으로 — payload의 마지막 활동을 유지(재시작·소강에 안 지워져 깜빡임 방지).
                             await guide.pick(_mid, touch=True, idle=int(_idle) if _idle is not None else 0,
-                                             activity=self._flow_activity(inflight[_mid]["ch"]))
+                                             activity=(_act or None))
                     except Exception:
                         pass
                     last_beat = _now
