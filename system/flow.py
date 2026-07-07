@@ -24,6 +24,7 @@ class Flow:
         # 펼쳐 스크롤한다('작업중'만 뜨던 답답함 해소). 흐름 단위 flat 목록(봇 바뀌어도 시간순 누적).
         # 임의 상한 없음 — 표시는 UI 고정높이+스크롤이 맡는다. 폭주 가드(_ACT_GUARD)만 최후로.
         self.activity_log = []   # [(text, mono_ts), …]
+        self._suppress_activity = False   # floor 프로브·발언 중 activity 억제(응찰 추론은 진행표시 아님)
         self.comm = CommunicationManager(ORIGIN)
         self.pool = list((bot_info or {}).keys()) or [leader_id]   # 채용 가능 전체(로스터)
         if leader_id not in self.pool:
@@ -167,6 +168,8 @@ class Flow:
         """[진행 가시성] 이 흐름의 활동(도구·추론 스니펫)을 시간순 전체 기록에 append. 직전과 같으면
         ts만 갱신(중복 억제). 임의 상한 없음 — 표시 길이는 UI(고정높이+스크롤)가 맡고, 여긴 폭주 가드만.
         best-effort(관측용 — 실패가 흐름을 못 막음)."""
+        if getattr(self, "_suppress_activity", False):
+            return                                    # [응찰≠생각] floor 프로브·발언 중엔 activity 억제
         t = " ".join(str(text or "").split())[:120]
         if not t:
             return

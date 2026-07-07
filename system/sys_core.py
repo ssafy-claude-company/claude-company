@@ -1140,46 +1140,53 @@ class Sys:
             return ("[발언권 응찰 — 자기선택] 진행 중인 작업 상황에 **지금** 보태야 할 관찰·우려·"
                     "제안이 있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 "
                     "요지만, 없으면 `[패스]`만 답하세요.")
+        # [응찰≠작업생각] 프로브·발언 동안 activity log(💭)를 억제한다 — 응찰 추론("배포 논의에 …응찰합니다")은
+        # 봇의 실작업 생각이 아니라 턴테이킹 메커니즘이라 진행표시에 남기면 안 된다(사용자: "왜 응찰이 중간에
+        # 저렇게 남아"). 대신 낙찰 '발언'은 채널에만 남긴다(가시화). finally로 반드시 해제.
         bids = []
-        for m, res, _note in await _fork_collect(flow, lead, cands, _probe_body):
-            s = 0 if res is None else _bid_score(res)
-            bids.append((int(m), s))
-            self._log("floor_bid", surface="segment", who=int(m), score=s)
-        pos = sorted((b for b in bids if b[1] > 0), key=lambda b: -b[1])   # 동률=회전 순(stable)
-        if not pos:
-            self._log("floor_alloc", surface="segment", policy="turn-taking", kind="continue", nxt=int(lead))
-            return ""                                # ③ 무응찰 → 리더 계속(종전과 동형)
-        w = pos[0][0]
+        flow._suppress_activity = True
         try:
-            flow.comm.request(lead, w, "floor-open", Kind.INFO)
-        except (BusyInOtherFlow, CommError):
-            return ""                                # 낙찰자 점유 경합 등 — 이번 경계는 그냥 리더 계속
-        self._log("floor_alloc", surface="segment", policy="turn-taking", kind="self",
-                  nxt=int(w), reason=f"응찰 {pos[0][1]}")
-        try:
-            res = await flow.wake(
-                w, "[발언권 획득 — 응찰 선정] 방금 응찰한 관찰·우려·제안을 3~7줄로 발언하세요"
-                   "(구체적으로 — 무엇이, 왜, 어떻게 하자는 것인지).", Kind.INFO)
-        except Exception as e:
-            res = f"(발언 실패: {e})"
-        try:
-            flow.comm.respond(w, "accept", res or "")
-        except CommError:
-            pass
-        _, passed = _turn_signals(flow, res, team)
-        if passed or not (res or "").strip():
-            return ""                                # 낙찰 후 변심([패스]) — 리더 계속
-        if w in flow.current.team and w != flow.leader:
-            flow.current.participated.add(w)         # 자기선택 발언 = 실질 협의 인정(meet와 동형)
-        # [봇 대화 가시화] 낙찰자 발언을 **채널에 올린다** — 종전엔 리더 컨텍스트로만 가고 채널엔 안 남아
-        # 사용자에게 '리더 혼자' 보였다(사용자: "봇들간의 대화도 안남고"). 발언자 명의로 채팅에 남긴다.
-        try:
-            await self.guide.post(flow.user_channel, w, _sc(res, 1800))
-        except Exception:
-            pass                                     # 채널 순단이 흐름을 못 막게(best-effort)
-        return ("\n\n[1층 발언권 open — 세그먼트 경계에서 팀원이 응찰로 발언권을 얻어 발언했습니다"
-                "(통합·판정은 당신 몫)]\n"
-                f"[자기선택 발언 — {flow._info(w) or w}] {_sc(res, 2000)}")
+            for m, res, _note in await _fork_collect(flow, lead, cands, _probe_body):
+                s = 0 if res is None else _bid_score(res)
+                bids.append((int(m), s))
+                self._log("floor_bid", surface="segment", who=int(m), score=s)
+            pos = sorted((b for b in bids if b[1] > 0), key=lambda b: -b[1])   # 동률=회전 순(stable)
+            if not pos:
+                self._log("floor_alloc", surface="segment", policy="turn-taking", kind="continue", nxt=int(lead))
+                return ""                                # ③ 무응찰 → 리더 계속(종전과 동형)
+            w = pos[0][0]
+            try:
+                flow.comm.request(lead, w, "floor-open", Kind.INFO)
+            except (BusyInOtherFlow, CommError):
+                return ""                                # 낙찰자 점유 경합 등 — 이번 경계는 그냥 리더 계속
+            self._log("floor_alloc", surface="segment", policy="turn-taking", kind="self",
+                      nxt=int(w), reason=f"응찰 {pos[0][1]}")
+            try:
+                res = await flow.wake(
+                    w, "[발언권 획득 — 응찰 선정] 방금 응찰한 관찰·우려·제안을 3~7줄로 발언하세요"
+                       "(구체적으로 — 무엇이, 왜, 어떻게 하자는 것인지).", Kind.INFO)
+            except Exception as e:
+                res = f"(발언 실패: {e})"
+            try:
+                flow.comm.respond(w, "accept", res or "")
+            except CommError:
+                pass
+            _, passed = _turn_signals(flow, res, team)
+            if passed or not (res or "").strip():
+                return ""                                # 낙찰 후 변심([패스]) — 리더 계속
+            if w in flow.current.team and w != flow.leader:
+                flow.current.participated.add(w)         # 자기선택 발언 = 실질 협의 인정(meet와 동형)
+            # [봇 대화 가시화] 낙찰자 발언을 **채널에 올린다** — 종전엔 리더 컨텍스트로만 가고 채널엔 안 남아
+            # 사용자에게 '리더 혼자' 보였다(사용자: "봇들간의 대화도 안남고"). 발언자 명의로 채팅에 남긴다.
+            try:
+                await self.guide.post(flow.user_channel, w, _sc(res, 1800))
+            except Exception:
+                pass                                     # 채널 순단이 흐름을 못 막게(best-effort)
+            return ("\n\n[1층 발언권 open — 세그먼트 경계에서 팀원이 응찰로 발언권을 얻어 발언했습니다"
+                    "(통합·판정은 당신 몫)]\n"
+                    f"[자기선택 발언 — {flow._info(w) or w}] {_sc(res, 2000)}")
+        finally:
+            flow._suppress_activity = False
 
     async def _hard_block_probe(self, flow, lead) -> bool:
         """[G4 — 연속 실패 하드블록 자기치유(B-03)] '연속 무응답' 하드블록만 대상: 백오프 뒤 SYS 프로브
