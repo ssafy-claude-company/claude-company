@@ -51,6 +51,14 @@ class MurmurGuide:
     def _new_id(self):
         return next(self._ids)
 
+    async def set_leader(self, channel_id, bot_id):
+        """[리더십 안정] 흐름 리더를 원격 DB Project.leader에 반영 — _route_to bouncing 차단. best-effort."""
+        try:
+            await self._post("/api/guide/ingest/", {"op": "set_leader",
+                                                     "channel_id": int(channel_id), "bot_id": int(bot_id)})
+        except Exception:
+            pass
+
     def set_origin(self, channel_id):
         """[배달 계약] 이 요청의 origin 채널을 task-로컬로 — 뒤이어 create_task되는 흐름이 이 채널로 라우팅(동시 안전)."""
         ORIGIN_CHANNEL.set(int(channel_id))

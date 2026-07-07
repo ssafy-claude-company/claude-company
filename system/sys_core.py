@@ -1495,6 +1495,17 @@ class Sys:
             self._save_projects()
             self._sync_topic(channel_id)   # 토픽(서버 영속)에도 반영 — 리클레임 후 시드로 원복되지 않게
         lead = self._valid_leader(proj) if proj else leader_id
+        # [리더십 안정 — bouncing 차단] 결정된 리더를 DB Project.leader에 sync한다. 종전엔 런타임 리더가
+        # DB에 안 반영돼 Project.leader=None → 매체의 _route_to가 'to_id 없는 요청'을 **최근 활동 봇**으로
+        # 폴백 → 봇들이 발화할 때마다 리더가 튀고(라이브 P-005: 배승우→서도훈→이서준), 그게 매번 '리더
+        # 재지정'으로 오인돼 흐름이 요동쳤다. 리더를 DB에 박아 _route_to가 이 리더를 쓰게 하면 안정된다.
+        if proj and lead:
+            try:
+                _sl = getattr(self.guide, "set_leader", None)
+                if _sl:
+                    await _sl(channel_id, lead)
+            except Exception:
+                pass
         flow = Flow(self.guide, channel_id, self.guild_id, lead, self.bot_info)
         flow._handoff = True   # [논블로킹 핸드오프] 프로덕션은 위임을 즉시-반환 핸드오프로(75초 detach·비동기 churn
                                #   차단). 동료 작업은 SYS가 호출 밖에서 직렬 완주시켜 결과로 잇는다. (테스트는 기본 동기.)
