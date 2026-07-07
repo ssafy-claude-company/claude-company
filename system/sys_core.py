@@ -2015,6 +2015,18 @@ class Sys:
                 return None if la is None else max(0.0, time.monotonic() - la)
         return None
 
+    def _flow_activity(self, channel_id):
+        """[진행 가시성] 이 채널 흐름에서 '지금 일하는 봇의 최신 활동' 한 줄 — 하트비트가 매체로 실어
+        보내 live_status에 붙는다('작업중'만 뜨던 답답함 해소). 신선(≤30s)한 것만, 없으면 ''."""
+        for f in list(self.active_flows.values()):
+            if getattr(f, "user_channel", None) == int(channel_id) and not getattr(f, "done", False):
+                alive = getattr(getattr(f, "comm", None), "alive", None)
+                la = (getattr(f, "live_activity", None) or {}).get(alive)
+                if la and (time.monotonic() - la[1]) < 30:
+                    return la[0]
+                return ""
+        return ""
+
     async def run(self, guide, leader, cap=4, poll=3.0, stall_timeout=900, max_age=7200, once=False):
         """[매체 무관 실행 루프] Guide 배달계약(get_pending·pick·heartbeat·all_stops·check_interject·
         check_stop·set_origin)으로 요청을 받아 동시 흐름으로 처리한다. 하트비트·정체컷·재개는 SYS가
@@ -2041,7 +2053,8 @@ class Sys:
                         await guide.heartbeat()
                         for _mid in list(inflight):
                             _idle = self._flow_idle(inflight[_mid]["ch"])
-                            await guide.pick(_mid, touch=True, idle=int(_idle) if _idle is not None else 0)
+                            await guide.pick(_mid, touch=True, idle=int(_idle) if _idle is not None else 0,
+                                             activity=self._flow_activity(inflight[_mid]["ch"]))
                     except Exception:
                         pass
                     last_beat = _now
