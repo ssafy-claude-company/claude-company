@@ -225,14 +225,16 @@ class MurmurGuide:
         data = await self._get("/api/guide/pending/")
         return data.get("pending", [])
 
-    async def pick(self, msg_id, done=False, touch=False, unpick=False, idle=None, activity=None):
+    async def pick(self, msg_id, done=False, touch=False, unpick=False, idle=None, activity=None, actor=None):
         """요청 claim/진행표시(touch)/완료(done)/재개(unpick). claim 패배 시 False.
-        activity: '지금 하는 일' 최근 줄 목록(진행 가시성) — payload에 실려 live_status에 붙는다."""
+        activity: '지금 하는 일' 최근 줄 목록. actor: 지금 베턴 쥔 봇 id — live_status.actor를 현재 일꾼으로."""
         body = {"msg_id": msg_id, "done": done, "touch": touch, "unpick": unpick}
         if idle is not None:
             body["idle"] = int(idle)
         if activity is not None:
             body["activity"] = [str(x)[:120] for x in activity][-2000:] if isinstance(activity, (list, tuple)) else [str(activity)[:120]]
+        if actor is not None:
+            body["actor"] = int(actor)
         res = await self._post("/api/guide/pick/", body)
         return (res or {}).get("claimed", True)
 

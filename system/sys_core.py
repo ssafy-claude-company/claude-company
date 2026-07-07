@@ -1171,6 +1171,12 @@ class Sys:
             return ""                                # 낙찰 후 변심([패스]) — 리더 계속
         if w in flow.current.team and w != flow.leader:
             flow.current.participated.add(w)         # 자기선택 발언 = 실질 협의 인정(meet와 동형)
+        # [봇 대화 가시화] 낙찰자 발언을 **채널에 올린다** — 종전엔 리더 컨텍스트로만 가고 채널엔 안 남아
+        # 사용자에게 '리더 혼자' 보였다(사용자: "봇들간의 대화도 안남고"). 발언자 명의로 채팅에 남긴다.
+        try:
+            await self.guide.post(flow.user_channel, w, _sc(res, 1800))
+        except Exception:
+            pass                                     # 채널 순단이 흐름을 못 막게(best-effort)
         return ("\n\n[1층 발언권 open — 세그먼트 경계에서 팀원이 응찰로 발언권을 얻어 발언했습니다"
                 "(통합·판정은 당신 몫)]\n"
                 f"[자기선택 발언 — {flow._info(w) or w}] {_sc(res, 2000)}")
@@ -2037,6 +2043,17 @@ class Sys:
                 return [x[0] for x in (getattr(f, "activity_log", None) or [])]
         return []
 
+    def _flow_actor(self, channel_id):
+        """[진행 가시성] 이 채널 흐름에서 '지금 실제 베턴을 쥔 봇'(comm.alive) — 하트비트가 매체로 실어
+        live_status.actor를 현재 일꾼으로 갱신한다(사용자: "작업 중 사람 바뀌는지"). 종전 to_id 고정은
+        위임 넘어가도 안 바뀌어 '리더 혼자'로 보였다. alive는 러너가 쥔 실 상태라 추론 오판(라벨 스왑)이 없다.
+        없으면 None(views가 to_id·리더로 폴백)."""
+        for f in list(self.active_flows.values()):
+            if getattr(f, "user_channel", None) == int(channel_id) and not getattr(f, "done", False):
+                a = getattr(getattr(f, "comm", None), "alive", None)
+                return int(a) if a else None
+        return None
+
     async def run(self, guide, leader, cap=4, poll=3.0, stall_timeout=900, max_age=7200, once=False):
         """[매체 무관 실행 루프] Guide 배달계약(get_pending·pick·heartbeat·all_stops·check_interject·
         check_stop·set_origin)으로 요청을 받아 동시 흐름으로 처리한다. 하트비트·정체컷·재개는 SYS가
@@ -2073,7 +2090,7 @@ class Sys:
                             if _send_act is not None:
                                 inflight[_mid]["act_n"] = len(_act)
                             await guide.pick(_mid, touch=True, idle=int(_idle) if _idle is not None else 0,
-                                             activity=_send_act)
+                                             activity=_send_act, actor=self._flow_actor(inflight[_mid]["ch"]))
                     except Exception:
                         pass
                     last_beat = _now
