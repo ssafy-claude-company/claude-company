@@ -1177,9 +1177,10 @@ class Sys:
             if w in flow.current.team and w != flow.leader:
                 flow.current.participated.add(w)         # 자기선택 발언 = 실질 협의 인정(meet와 동형)
             # [봇 대화 가시화] 낙찰자 발언을 **채널에 올린다** — 종전엔 리더 컨텍스트로만 가고 채널엔 안 남아
-            # 사용자에게 '리더 혼자' 보였다(사용자: "봇들간의 대화도 안남고"). 발언자 명의로 채팅에 남긴다.
+            # 사용자에게 '리더 혼자' 보였다(사용자: "봇들간의 대화도 안남고"). 발언자 명의로, `[의견]` 마커로
+            # 남겨 SNS가 '의견' badge로 이쁘게 렌더한다(collab_kind='floor' — 회의처럼 종류로 표현).
             try:
-                await self.guide.post(flow.user_channel, w, _sc(res, 1800))
+                await self.guide.post(flow.user_channel, w, f"[의견] {_sc(res, 1800)}")
             except Exception:
                 pass                                     # 채널 순단이 흐름을 못 막게(best-effort)
             return ("\n\n[1층 발언권 open — 세그먼트 경계에서 팀원이 응찰로 발언권을 얻어 발언했습니다"
