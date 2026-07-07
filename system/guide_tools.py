@@ -189,6 +189,17 @@ from .rule.project import send_file as _rule_send_file  # noqa: F401
 
 
 
+def _holds_completion(flow, me_id, role) -> bool:
+    """[완료 권한 = 검수(QA) 역할 + 리더(사용자 2026-07)] '완성품 전체 최종 인수'는 QA(검증 기능)의 일이다 —
+    시스템은 이미 검증 게이트에서 최종 인수를 QA로 *라우팅*하는데(test_QA역할은_최종인수: 'QA 우대'), 종전엔
+    마감 도구(complete_task)를 리더가 독점해 QA가 '인수 PASS'로 판정해도 닫을 수단이 없었다 — 그래서 QA는
+    검수만 무한 반복하고 리더는 검증자가 아닌데 마감권만 쥐고 계속 위임하는 루프였다(라이브 P-005: QA 오은우·
+    PM 유찬영이 인수 PASS 선언했는데 complete_task 0회·162턴). 검증 기능 역할(_is_verifier)에게도 마감권을 줘
+    *자기 인수 결과로 직접 닫게* 한다(리더 독점 해소 — 탈중앙). 리더도 유지(조율·폴백·기존 설계 보존)."""
+    from .rule.task import _is_verifier
+    return _is_verifier(role) or role == "leader"
+
+
 def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     # [G3 — 캐주얼 도구 미장착(B-06)] mode="casual"이면 협업·제작 도구(request·recruit·리더도구)를 아예
     # 장착하지 않고 run만 준다(일상 대화 턴의 오발 프로젝트를 프롬프트가 아니라 구조로 차단 — 스키마 토큰도
@@ -419,19 +430,6 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return await _rule_set_goal(flow, me_id, role, args)
         tools.append(set_goal)
 
-        @tool("complete_task",
-              "현재 Task의 목표가 충족되면 상태블록을 완료로 마감(result 기록). 마감 전 acceptance의 **'존재이유 "
-              "테스트'를 최종 사용자처럼 end-to-end로 실제 실행**해 통과 증거를 result에 남겨라 — 부품이 *있는지*가 "
-              "아니라 *전체가 목적을 달성하는지*(부정형 테스트가 실제로 실패를 막는지)를 본다. 다음 Task는 create_task로. "
-              "게이트 회계/면제 인자(종전 result 마커와 동등): percept_na(지각차원 없음 사유)·visual_evidence(시각 "
-              "검증 — 무엇이 보였나)·data_source(데이터 출처/불가 사유)·acceptance_check(수용기준 항목별 회계)·"
-              "standard_check(최대성 항목별 회계)·contrib_waiver(기여 불필요 이유).",
-              {"result": str, "percept_na": str, "visual_evidence": str, "data_source": str,
-               "acceptance_check": str, "standard_check": str, "contrib_waiver": str})
-        async def complete_task(args):
-            return await _rule_complete_task(flow, role, args)
-        tools.append(complete_task)
-
         @tool("vote",
               "팀 표결(구조적 합의): 선택지를 두고 멤버 전원의 선택+근거를 **동시에**(독립·앵커링 방지) "
               "수집·집계한다. question=안건, options='선택지1;선택지2;...', members=쉼표구분(비우면 현재 "
@@ -503,6 +501,26 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         async def send_file(args):
             return await _rule_send_file(flow, me_id, args)
         tools.append(send_file)
+
+    # [완료 권한 = 검수 역할(사용자 2026-07)] acceptance/'done' 판정은 QA의 일 — 종전엔 리더가 독점(complete_task
+    # 리더 전용)했다. 리더의 역할은 기획·위임·조율이지 검수가 아니라, QA/PM이 '인수 PASS'로 판정해도 닫을 권한이
+    # 없어 계속 검사만 하고 리더는 닫을 권한이 있는데 검증자가 아니라 계속 위임만 하는 무한 루프였다(라이브
+    # P-005: QA 오은우·PM 유찬영이 인수 PASS 선언했는데 complete_task 0회, 162턴 무한). 완료 권한을 검수 역할
+    # (QA)로 이관 — 검수자가 자기 검수 결과로 직접 마감(리더 독점도 SYS 강제도 아닌 탈중앙). 팀에 QA 없으면
+    # 리더 폴백(옵션2, 마감 불능 방지). role별 세션이라, 이 봇이 마감권 보유자면 도구 장착.
+    if _holds_completion(flow, me_id, role):
+        @tool("complete_task",
+              "현재 Task의 목표가 충족되면 상태블록을 완료로 마감(result 기록). 마감 전 acceptance의 **'존재이유 "
+              "테스트'를 최종 사용자처럼 end-to-end로 실제 실행**해 통과 증거를 result에 남겨라 — 부품이 *있는지*가 "
+              "아니라 *전체가 목적을 달성하는지*(부정형 테스트가 실제로 실패를 막는지)를 본다. 다음 Task는 create_task로. "
+              "게이트 회계/면제 인자(종전 result 마커와 동등): percept_na(지각차원 없음 사유)·visual_evidence(시각 "
+              "검증 — 무엇이 보였나)·data_source(데이터 출처/불가 사유)·acceptance_check(수용기준 항목별 회계)·"
+              "standard_check(최대성 항목별 회계)·contrib_waiver(기여 불필요 이유).",
+              {"result": str, "percept_na": str, "visual_evidence": str, "data_source": str,
+               "acceptance_check": str, "standard_check": str, "contrib_waiver": str})
+        async def complete_task(args):
+            return await _rule_complete_task(flow, role, args)
+        tools.append(complete_task)
 
     return tools
 

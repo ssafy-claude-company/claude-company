@@ -2528,6 +2528,21 @@ def test_교차검증_같은직군은_에코_다른도메인_독립검증_요구
     assert f.current is None                                                   # 독립 검증 후 마감
 
 
+def test_완료권_QA검증역할도_보유_비검증멤버는_불가():
+    """[완료 권한 = 검수 역할(사용자)] complete_task(최종 인수·마감)를 QA(검증 기능)도 쥔다 — 종전엔 리더
+    독점이라 QA가 '인수 PASS' 판정해도 닫을 수단이 없어, QA는 검수만 무한 반복하고 리더는 검증자가 아닌데
+    마감권만 쥐고 위임만 하는 루프였다(라이브 P-005: QA·PM 인수 PASS인데 complete_task 0·162턴). 검증 기능
+    역할(_is_verifier)은 자기 인수 결과로 직접 마감 가능(탈중앙). 비검증 멤버는 불가(마감=검수의 일). 리더 유지."""
+    g = FakeGuide()
+    f = _flow(g)
+    names = lambda mid, role: {t.name for t in make_guide_tools(f, mid, role)}
+    assert "complete_task" in names(15, "QA")                # QA = 검증 역할 → 마감권 보유
+    assert "complete_task" in names(15, "품질 엔지니어")       # 능력 식별(타이틀 하드코딩 아님)
+    assert "complete_task" not in names(12, "백엔드")          # 비검증 멤버 → 마감 불가
+    assert "complete_task" not in names(14, "프론트엔드")      # 비검증 멤버 → 마감 불가
+    assert "complete_task" in names(11, "leader")             # 리더 유지(조율·폴백)
+
+
 def test_QA역할은_최종인수_우선라우팅():
     """[사용자 설계: QA=최종 검증 역할] 검증 게이트가 발동할 때 팀에 '검증/품질(QA)' 기능 역할이 있으면,
     메시지가 그 역할에게 '전체·사용자관점 최종 인수'를 우선 맡기라 명시한다 — 기능으로 식별(타이틀
