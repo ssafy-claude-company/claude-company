@@ -78,6 +78,14 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                     flow.note_activity(organt_id, "💭 " + t)
                 except Exception:
                     pass
+        on_turn = None
+        if flow is not None:
+            def on_turn(rec):   # [관측 v1] wake 결산 → flow.log(=Sys._log, trace_id·seq 자동 부여)로 방출
+                try:
+                    if getattr(flow, "log", None):
+                        flow.log("turn_done", bot=organt_id, role=label, **rec)
+                except Exception:
+                    pass
         # organt의 파일 도구(cwd)는 '현재 흐름의 작업공간'을 따른다 — 프로젝트별 폴더 분리와 정합
         # (cwd가 base 고정이면 run은 프로젝트 폴더, Write는 base로 가는 분열이 생긴다).
         cwd = str(getattr(flow, "workspace", None) or cfg.workspace_dir)
@@ -105,5 +113,5 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                                        + "\n\n[이 직원만의 개성·지침 — 스튜디오에서 사용자가 지정한 정체성]\n"
                                        + _pp)
         return Organt(cfg, build_options(cfg, **_bopts),
-                      state_path=str(state_path), on_activity=heartbeat, narrate=narrate)
+                      state_path=str(state_path), on_activity=heartbeat, narrate=narrate, on_turn=on_turn)
     return organt_builder

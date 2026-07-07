@@ -11,6 +11,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -124,11 +125,14 @@ class Organt:
     """파일시스템에 접근하고, 세션 resume로 State를 보존하는 Organt(LLM) 본체."""
 
     def __init__(self, config: Config, options: Optional[ClaudeAgentOptions] = None,
-                 state_path=None, narrate=None, on_activity=None):
+                 state_path=None, narrate=None, on_activity=None, on_turn=None):
         self.config = config
         self.options = options or build_options(config)
         self.narrate = narrate   # (text)->None: 매 발화(추론) 기록 콜백(관측). 없으면 미기록.
         self.on_activity = on_activity   # ()->None: 메시지 수신마다 호출 — 침묵 워치독 하트비트.
+        # [관측 v1 — 2026-07-07] (dict)->None: wake 1회 결산 콜백(비용·지연·토큰·재시도). SDK
+        # ResultMessage의 usage/cost/duration을 종전엔 버렸음(max_turns 판정만). 이제 관측에 실린다.
+        self.on_turn = on_turn
         # State(작업 맥락)는 세션 ID로 보존한다. 재시작(새 인스턴스) 시 파일에서 복원.
         self.state_path = (Path(state_path) if state_path is not None
                            else config.audit_log_path.parent / "organt_state.json")
@@ -270,10 +274,21 @@ class Organt:
                                     self.narrate(t)
                                 except Exception:
                                     pass
-                    elif isinstance(msg, ResultMessage):   # 턴 한도 등으로 끊겼는지
+                    elif isinstance(msg, ResultMessage):   # 턴 한도 등으로 끊겼는지 + [관측 v1] 결산 포집
                         st = (getattr(msg, "subtype", "") or "") + (getattr(msg, "stop_reason", "") or "")
                         if "max_turns" in st.lower():
                             truncated = True
+                        # SDK 결산(모델·SDK 버전마다 필드명 상이 — 방어적으로). 종전엔 전량 폐기.
+                        _u = getattr(msg, "usage", None) or {}
+                        if not isinstance(_u, dict):
+                            _u = getattr(_u, "__dict__", {}) or {}
+                        self._last_result = {
+                            "cost_usd": getattr(msg, "total_cost_usd", None),
+                            "duration_ms": getattr(msg, "duration_ms", None),
+                            "num_turns": getattr(msg, "num_turns", None),
+                            "tokens_in": _u.get("input_tokens") or _u.get("prompt_tokens"),
+                            "tokens_out": _u.get("output_tokens") or _u.get("completion_tokens"),
+                        }
         except asyncio.CancelledError:
             raise                                    # 워치독 취소는 의미 보존(감싸지 않음)
         except Exception as e:
@@ -298,11 +313,18 @@ class Organt:
         if self.session_id and not self._session_in_store():
             self._reset_session()
         final_text = ""
+        self._last_result = {}
+        _t0 = time.monotonic()
+        _retries = 0
+        _err = None
         for attempt in range(_MAX_API_RETRY):
             try:
                 final_text, captured_sid = await self._run_once(prompt)
             except Exception as e:                       # 전송/스트림 예외도 일시오류로 간주해 재시도
                 final_text, captured_sid = f"API Error: {e}", None
+                _err = str(e)[:150]
+            if attempt > 0:
+                _retries = attempt
             if captured_sid:
                 self._save_session_id(captured_sid)
             # 마커 감지(이중 안전망): 사전 점검이 레이아웃 변화로 못 거른 변종이 stderr 꼬리로 잡히면
@@ -317,4 +339,16 @@ class Organt:
                 break
             if attempt < _MAX_API_RETRY - 1:
                 await asyncio.sleep(2 * (attempt + 1))   # 2s, 4s 백오프
+        # [관측 v1] wake 결산 방출 — 비용·지연·토큰·재시도. 실제 소요는 monotonic로(SDK duration 결측 대비).
+        if self.on_turn:
+            _ok = bool(final_text.strip()) and not final_text.startswith("API Error:") \
+                and not _is_transient_api_error(final_text)
+            try:
+                self.on_turn({**(self._last_result or {}),
+                              "model": getattr(self.config, "model", "") or "",
+                              "duration_ms": (self._last_result or {}).get("duration_ms")
+                              or int((time.monotonic() - _t0) * 1000),
+                              "retries": _retries, "ok": _ok, "error": _err})
+            except Exception:
+                pass
         return _strip_decoration(final_text)
