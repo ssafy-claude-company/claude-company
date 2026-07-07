@@ -1905,6 +1905,27 @@ class Sys:
                               "남은 미완이 있으면 그것만 한 번에 끝내고 바로 complete_task 하세요.\n\n") if _goal_met else ""
                 result = await self.run_turn(flow, lead, _goal_body + _CONTINUE_BODY + team_note + drained,
                                              Kind.WORK, "leader")
+                # [검증된 목표 = 시스템 집행 마감(사용자 2026-07)] 목표가 객관적으로 실증(_deploy_live)됐는데도
+                # 리더가 스스로 안 닫으면(조언 주입에도 완벽주의 QA를 계속 *위임* — 라이브 P-005 실측: 재개
+                # 후에도 워커가 스크롤·a11y QA 무한, complete_task 0), 리더 열린판단 의존이 무한루프의 뿌리이니
+                # 시스템이 직접 complete_task를 호출해 마감한다. '검증 가능한 목표가 검증됐다'가 done의 집행
+                # 근거 — 단 *정상 게이트를 그대로 태워* 품질검증은 유지한다(게이트가 진짜 막으면 그 사유가
+                # 로그에 드러나고, 실작업이 다 된 이 케이스에선 통과해 마감된다). 리더에 2세그 자율 기회 후 집행.
+                if _goal_met and flow.current is not None:
+                    flow._goal_met_segs = getattr(flow, "_goal_met_segs", 0) + 1
+                    if flow._goal_met_segs >= 2:
+                        try:
+                            _lt = {t.name: t for t in make_guide_tools(flow, lead, "leader")}
+                            if "complete_task" in _lt:
+                                _cr = await _lt["complete_task"].handler(
+                                    {"result": "배포 목표 달성 — 라이브(HTTP 200 + 산출물 바이트 일치) 검증됨. "
+                                               "추가 polish는 별도 요청. SYS 집행 마감."})
+                                _ctext = (_cr.get("content") or [{}])[0].get("text", "")
+                                self._log("deploy_goal_sys_complete",
+                                          task=(flow.current.task_id if flow.current else None),
+                                          closed=(flow.current is None), detail=_ctext[:150])
+                        except Exception as _e:
+                            self._log("deploy_goal_sys_complete_err", err=str(_e)[:120])
             # 이어가기 한도 소진/마감 후에도 완주 중인 위임이 있으면 그 결과까지 받아 보고에 붙인다
             # (작업 유실 방지 — 마지막 위임이 마감 직전에 끝나는 경우).
             drained = await self._drain_inflight(flow)
