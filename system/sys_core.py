@@ -932,8 +932,21 @@ class Sys:
         # 작업*을 잘랐음 — P-010류, 목표=최대 품질과 모순). 무진행이면 아래 break가 즉시 잡으므로, 이 수는
         # '진행 중인 정당한 사슬'을 자르지 않는 넉넉한 한도로 둔다.
         n = int(os.environ.get("ORGANT_AUTO_CONTINUE", "100")) if limit is None else limit
+        # [배포 목표 달성 = 완료 인식(사용자 2026-07)] 배포가 *라이브로 실증*되면(deploy_sync가 'HTTP 200 +
+        # 산출물 바이트 일치'까지 확인한 "배포 성공") 배포-목표 Task의 목표는 달성된 것 — SYS가 미완 QA를 무한
+        # 이어가지 않는다. 종전엔 라이브 배포 후에도 봇들이 라이브를 계속 뜯어보며 새 트집→owner_incomplete→
+        # continue_incomplete를 40분+ 루프해 *스스로 안 닫혔다*(라이브 P-005: 사용자 수동 마감). '실증된 목표'가
+        # 곧 done 기준 — 이어가기를 마무리 검증 소수로만 제한하고 리더에게 complete_task 마감을 명시한다.
+        _deploy_live = isinstance(getattr(flow, "deployed", None), str) and flow.deployed.startswith("배포 성공")
+        if _deploy_live:
+            n = min(n, 2)
         _orig = (getattr(flow.current, "last_work_body", "") or "").strip() if flow.current else ""
-        if _orig:
+        if _deploy_live:
+            body = ("[SYS — 배포 목표 달성(라이브로 실증됨)] 이 Task의 배포가 라이브 검증(HTTP 200 + 산출물 "
+                    "바이트 일치)을 통과했습니다 — 목표 달성입니다. 진행 중이던 *구체* 작업만 마저 끝내고, "
+                    "**추가 QA·polish를 새로 시작하지 말고 complete_task로 마감하세요**(라이브의 추가 개선은 "
+                    "별도 요청 — 무한 재검증·재배포는 진행이 아닙니다).")
+        elif _orig:
             # [정밀 복구 — 드리프트 차단] 리더가 재작문한 위임이 아니라 *원래 보냈던 위임 원문* 그대로 이어 보낸다
             # (부팅 복구 5:13≠5:47 드리프트 차단). owner는 원래 받았던 그 지시로 정확히 재개한다.
             body = ("[SYS 자동 이어가기 — 처음부터 다시 하지 말 것] 직전에 이 작업으로 위임받았습니다(원문 그대로):\n"

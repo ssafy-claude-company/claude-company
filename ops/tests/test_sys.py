@@ -2208,6 +2208,35 @@ def test_SYS_자동이어가기_미완위임을_시스템이_완주시킴():
     assert "완료" in out and st["n"] == 2
 
 
+def test_배포_라이브면_자동이어가기_소수제한_후_마감유도():
+    """[배포 목표 달성 = 완료 인식(사용자)] 배포가 라이브로 실증되면(flow.deployed '배포 성공') SYS는 미완
+    QA를 무한 이어가지 않는다 — 이어가기를 소수(≤2)로 제한하고 리더에게 complete_task 마감을 명시(라이브
+    P-005: 배포 라이브 후에도 continue_incomplete 40분+ 루프로 스스로 안 닫히던 것 차단). 배포 없으면
+    종전대로 넉넉히 이어간다(진행 중인 정당한 사슬은 안 자름)."""
+    g = FakeGuide()
+    f = _flow(g)
+    f.deployed = "배포 성공 ✅ 라이브(HTTP 200 + 산출물 바이트 일치): https://organt-p-005.onrender.com"
+    st = {"n": 0, "bodies": []}
+
+    async def wake(to, b, k):
+        st["n"] += 1
+        st["bodies"].append(b)
+        f.act_count += 1                                                  # 진행은 함(무진행 break 회피)
+        return "라이브 재확인 중 (⚠ 턴 한도 도달 — 작업이 미완일 수 있음)"    # 계속 미완(perfectionist QA)
+
+    f.wake = wake
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "M"})
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.participated.add(12)
+    asyncio.run(t["set_goal"].handler({"goal": "g"}))
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "구현"}))
+    assert f.current.owner_incomplete is True
+    asyncio.run(s._auto_continue_owner(f, 11))
+    assert st["n"] <= 2, f"배포 라이브면 이어가기 소수 제한이어야(무한 100 아님): {st['n']}"
+    assert any("배포 목표 달성" in b and "complete_task" in b for b in st["bodies"]), st["bodies"]
+
+
 def test_SYS_자동이어가기_무진행이면_중단():
     """자동 이어가기는 '진행이 전혀 없는데 미완 유지'(환경 문제·크래시 반복)면 같은 호출을 반복해
     박지 않는다 — 무한 재시도 대신 리더/사용자 보고 경로로 넘긴다."""
