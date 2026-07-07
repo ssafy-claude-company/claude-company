@@ -108,8 +108,12 @@ def _http(method, url, token, data=None, retries=5):
 
 
 def _git(args, cwd):
-    cmd = ["git", "-c", "commit.gpgsign=false", "-c", "user.email=deploy@organt.local",
-           "-c", "user.name=Organt Deploy", *args]
+    # [dubious ownership 차단] 작업공간 repo는 run 툴이 샌드박스 실행용으로 비특권 유저(nobody)에게
+    # chown한다(_chown_tree) — 그럼 배포 git(러너=root/다른 유저)이 'detected dubious ownership'로
+    # 거부해 push가 안 된다(라이브 P-005: 봇이 'git 인프라 hiccup'으로 오인해 무한 재배포). safe.directory=*
+    # 로 소유자 불일치와 무관하게 이 트리를 신뢰(배포는 우리 인프라의 작업공간이라 안전).
+    cmd = ["git", "-c", "safe.directory=*", "-c", "commit.gpgsign=false",
+           "-c", "user.email=deploy@organt.local", "-c", "user.name=Organt Deploy", *args]
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     return p.returncode, (p.stdout + p.stderr)
 
