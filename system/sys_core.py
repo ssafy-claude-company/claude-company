@@ -2016,16 +2016,16 @@ class Sys:
         return None
 
     def _flow_activity(self, channel_id):
-        """[진행 가시성] 이 채널 흐름에서 '지금 일하는 봇의 최신 활동' 한 줄 — 하트비트가 매체로 실어
-        보내 live_status에 붙는다('작업중'만 뜨던 답답함 해소). 신선(≤30s)한 것만, 없으면 ''."""
+        """[진행 가시성] 이 채널 흐름에서 '지금 일하는 봇의 최근 활동 여러 줄'(최신 순 아님 — 오래된→최신)
+        — 하트비트가 매체로 실어 live_status에 붙는다. 최신이 신선(≤30s)할 때만 목록을, 아니면 [].
+        한 줄만이 아니라 최근 진행을 보여줘 '전체적으로' 파악되게."""
         for f in list(self.active_flows.values()):
             if getattr(f, "user_channel", None) == int(channel_id) and not getattr(f, "done", False):
-                alive = getattr(getattr(f, "comm", None), "alive", None)
-                la = (getattr(f, "live_activity", None) or {}).get(alive)
-                if la and (time.monotonic() - la[1]) < 30:
-                    return la[0]
-                return ""
-        return ""
+                lst = (getattr(f, "live_activity", None) or {}).get(getattr(getattr(f, "comm", None), "alive", None)) or []
+                if lst and (time.monotonic() - lst[-1][1]) < 30:
+                    return [x[0] for x in lst[-5:]]     # 최근 5줄(오래된→최신)
+                return []
+        return []
 
     async def run(self, guide, leader, cap=4, poll=3.0, stall_timeout=900, max_age=7200, once=False):
         """[매체 무관 실행 루프] Guide 배달계약(get_pending·pick·heartbeat·all_stops·check_interject·

@@ -238,14 +238,13 @@ def status_text(sys, flow, t0, final=None) -> str:
     who = flow._info(alive) or ("담당자" if alive == flow.leader else f"<@{alive}>")
     done = sum(1 for h in flow.comm.history if h[0] == "respond")
     last_ts = int(now_w - max(0, now_m - (flow.last_activity or t0)))
-    # [진행 가시성] '작업중'만 뜨던 답답함 해소 — 지금 일하는 봇의 최신 활동(도구·추론)을 한 줄로.
-    # 훅·narrate가 flow.note_activity로 남긴 걸 읽는다(신선한 것만 — 30초 지나면 '작성 중…' 폴백).
+    # [진행 가시성] '작업중'만 뜨던 답답함 해소 — 지금 일하는 봇의 최근 활동(도구·추론)을 보인다.
+    # 훅·narrate가 flow.note_activity로 남긴 롤링 목록의 최신(신선한 것만 — 30초 지나면 '이어서' 폴백).
     act = ""
-    _la = (getattr(flow, "live_activity", None) or {}).get(alive)
-    if _la and (now_m - _la[1]) < 30:
-        act = f"\n지금 하는 일: {_la[0]}"
-    elif _la:
-        act = f"\n지금 하는 일: {_la[0]} (이어서 작업 중…)"
+    _lst = (getattr(flow, "live_activity", None) or {}).get(alive) or []
+    if _lst:
+        _fresh = (now_m - _lst[-1][1]) < 30
+        act = f"\n지금 하는 일: {_lst[-1][0]}" + ("" if _fresh else " (이어서 작업 중…)")
     return (f"● 작업 중(시작 <t:{start_ts}:R>) — “{req}”\n"
             f"담당: {who} · 위임 {done}건 완주 · 세그먼트 {max(1, flow.leader_segment)}{act}\n"
             f"마지막 활동: <t:{last_ts}:R>")

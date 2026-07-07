@@ -87,12 +87,15 @@ def _describe_tool(tool, ti) -> str:
     def _b(s, n=60): return " ".join(str(s or "").split())[:n]
     t = str(tool or "")
     base = t.split("__")[-1]                       # mcp__guide__meet → meet
-    if base in ("Write", "Edit", "MultiEdit"):
+    if base in ("Write", "Edit", "MultiEdit", "Read"):
         import os as _os
-        return f"✏️ 파일 작성: {_os.path.basename(_b(ti.get('file_path'), 80)) or '파일'}"
-    if base == "Read":
-        import os as _os
-        return f"📖 확인: {_os.path.basename(_b(ti.get('file_path'), 80)) or '파일'}"
+        fp = _b(ti.get("file_path"), 90)
+        name = _os.path.basename(fp.rstrip("/")) or fp or "파일"
+        # [.collab 협업 문서 인식] 잘린 '.coll' 대신 무슨 문서인지 사람말로.
+        _DOSS = {"ORIGIN.md": "협업 문서(원문)", "GOAL.md": "협업 문서(목표)", "MINUTES.md": "협업 문서(회의록)",
+                 "REPORTS.md": "협업 문서(동료 보고)", "PLAYBOOK.md": "협업 문서(작업 기준)", "TEAM.md": "협업 문서(팀)"}
+        label = _DOSS.get(name) or (".collab 폴더" if name.startswith(".collab") else name)
+        return (f"✏️ 파일 작성: {label}" if base != "Read" else f"📖 확인: {label}")
     if base in ("Bash", "run"):
         return f"▶ 실행: {_b(ti.get('command'), 70)}"
     if base in ("WebSearch",):

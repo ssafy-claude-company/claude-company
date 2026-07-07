@@ -161,11 +161,18 @@ class Flow:
             await self.guide.update_status(self.project_channel, t.block_id, t.status)
 
     def note_activity(self, bot, text):
-        """[진행 가시성] 봇의 '지금 하는 일' 한 줄 기록(도구 활동·추론 스니펫). 최신만 유지 —
-        상태블록 갱신이 이걸 읽어 사용자에게 보인다. best-effort(관측용 — 실패가 흐름을 못 막음)."""
+        """[진행 가시성] 봇의 활동(도구·추론 스니펫)을 최근 순 롤링 리스트로 — 한 줄만이 아니라 최근
+        진행 여러 줄을 보여준다('전체적으로'). 직전과 같으면 ts만 갱신(중복 억제), 최근 8개만 유지.
+        best-effort(관측용 — 실패가 흐름을 못 막음)."""
         t = " ".join(str(text or "").split())[:110]
-        if t:
-            self.live_activity[int(bot)] = (t, time.monotonic())
+        if not t:
+            return
+        lst = self.live_activity.setdefault(int(bot), [])
+        if lst and lst[-1][0] == t:
+            lst[-1] = (t, time.monotonic())      # 같은 활동 반복 — 시각만 갱신(스팸 방지)
+        else:
+            lst.append((t, time.monotonic()))
+            del lst[:-8]                          # 최근 8개만(롤링 창)
 
     def _info(self, oid):
         return self.bot_info.get(oid, "")

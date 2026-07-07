@@ -70,8 +70,12 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
             def narrate(text):   # [진행 가시성] 봇 추론(발화) 스니펫을 '지금 생각 중' 활동으로 — 상태블록이 보인다
                 try:
                     t = " ".join(str(text or "").split())
-                    if t:
-                        flow.note_activity(organt_id, "💭 " + t[:100])
+                    if not t:
+                        return
+                    if len(t) > 96:                  # [단어경계 컷] '.coll' 같은 중간 절단 방지 — 마지막 공백까지만
+                        cut = t[:96]
+                        t = (cut[:cut.rfind(" ")] if " " in cut[40:] else cut) + "…"
+                    flow.note_activity(organt_id, "💭 " + t)
                 except Exception:
                     pass
         # organt의 파일 도구(cwd)는 '현재 흐름의 작업공간'을 따른다 — 프로젝트별 폴더 분리와 정합
