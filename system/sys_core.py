@@ -1018,11 +1018,18 @@ class Sys:
         flow._qa_accept_routed = True
         self._log("qa_acceptance_routed", qa=qa, task=ref.task_id)
         tools = {t.name: t for t in make_guide_tools(flow, lead, "leader")}
-        body = (f"[SYS — 최종 인수 라우팅] owner가 산출물을 인도했습니다. 당신({flow._info(qa)})은 이 팀의 검증 "
-                f"기능 역할이니 **완성품 전체를 사용자 관점 end-to-end로 최종 인수**하세요 — acceptance 기준을 "
-                f"검증해 충족되면 **당신의 complete_task로 이 Task를 마감**하세요(마감권 보유). acceptance 기준 "
-                f"*밖*의 새 개선점은 이 Task를 막지 말고 별도 Task로 두세요(완벽주의 무한검증 금지 — 실증된 "
-                f"목표가 done). 정말 기준 미충족이면 그 항목만 구체적으로 보고하세요.")
+        _goal_note = ""
+        if getattr(flow, "_deploy_live", False):
+            _goal_note = ("이 Task의 *목표(배포)*는 **객관적으로 실증**됐습니다 — 라이브 검증(HTTP 200 + 산출물 "
+                          "바이트 일치) 통과. **목표 달성입니다.** ")
+        body = (f"[SYS — 최종 인수 라우팅] {_goal_note}owner가 산출물을 인도했습니다. 당신({flow._info(qa)})은 이 "
+                f"팀의 검증 기능 역할이니 **완성품을 사용자 관점 end-to-end로 최종 인수**하세요 — 이 Task의 "
+                f"*목표(agreed acceptance)*가 충족되면 **당신의 complete_task로 마감**하세요(마감권 보유).\n"
+                f"[중요 — 진짜 문제 처리] 검증 중 발견한 *목표 밖* 실제 품질 이슈(추가 개선·회귀 등)는 **버리거나 "
+                f"미루는 게 아니라**, 이 Task를 막지 말고 **result에 '후속 필요: …'로 명시**하세요 — 그건 **별도 "
+                f"집중 Task**로 (반쪽 수정이 아니라 상충 요구를 회귀 스위트로 함께 검증하며) 제대로 고칩니다. 한 "
+                f"Task 안에서 반쪽씩 고치다 서로 깨는 무한 회귀를 끊는 게 핵심입니다. 정말 *목표 자체*가 미충족이면 "
+                f"(라이브가 안 뜨는 등) 그 항목만 구체 보고하세요.")
         flow._sys_dispatch = True   # [SYS 라우팅] owner-protect(미완 owner 보호)·선분배 게이트 우회 — QA 인수
                                     # 라우팅은 시스템이 올바른 역할에게 발사하는 것이라 그 게이트에 걸리면 안 됨
                                     # (_auto_coordinate 동형, finally 복원).
