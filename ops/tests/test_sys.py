@@ -163,6 +163,20 @@ def test_run_파일작성_백도어_차단():
     assert "거부" not in ok and "built" in ok
 
 
+def test_run_기동증명_백그라운드_시작만_코칭():
+    """[기동증명 코칭] 끝의 단일 `&`로 서버를 띄우고만 끝내면(다음 run에서 curl하려는 실수) run 종료 시
+    그룹째 reap돼 서버가 죽는다 — run이 그 자리에서 '한 run 안에 start→대기→점검 묶기'를 처방한다(라이브
+    P-005: 백엔드가 server.js를 별도 run으로 띄웠다 죽은 서버에 curl→무한 재시도). 점검이 뒤따르는 올바른
+    패턴(끝이 `&` 아님)엔 코칭이 안 붙는다."""
+    f = _flow(FakeGuide())
+    f.workspace = "/tmp"
+    rt = {t.name: t for t in make_guide_tools(f, 12, "member")}["run"]
+    out = asyncio.run(rt.handler({"command": "sleep 5 &"}))["content"][0]["text"]
+    assert "한 run" in out and "정리" in out, out                       # 백그라운드 시작만 → 코칭 처방
+    ok = asyncio.run(rt.handler({"command": "sleep 1 & sleep 0; echo checked"}))["content"][0]["text"]
+    assert "한 run 안에" not in ok                                      # 점검이 뒤따르면 코칭 없음
+
+
 def test_run_셸은_배포비밀을_못_읽는다(tmp_path, monkeypatch):
     """[봇 비밀 유출 차단 — 다층] run 셸은 배포·인증 비밀을 못 읽는다.
     ① env-scrub: env에 키가 있어도 `echo $RENDER_KEY`로 안 샌다(자기 env에서 제거).

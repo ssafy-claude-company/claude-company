@@ -312,7 +312,19 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             # 시스템이 직접 캡처한 영수증(에이전트 말이 아니라 실제 출력). 완료 보고에 떼어낼 수 없게 묶인다.
             errtail = ("\n[stderr] " + err[-200:]) if (err or "").strip() else ""
             flow.current.evidence = f"exit={rc} `{cmd[:50]}`\n{(out or '')[-400:]}{errtail}"
-        return _ok(f"[exit {rc}] (작업공간)\n[stdout]\n{out[-1500:]}\n[stderr]\n{err[-600:]}")
+        # [기동증명 코칭 — 백그라운드 시작만 하고 끝내는 실수 감지(라이브 P-005: 백엔드가 server.js를 다음 run에서
+        # curl하려고 별도 run에 `node server.js … &`로 띄웠다 reap돼 죽은 서버에 curl→무한 헤맴)] 명령이 *끝의
+        # 단일 `&`로 백그라운드 시작*이면(뒤에 점검 없음), 이 프로세스는 run 종료 시 그룹째 정리돼 다음 run엔
+        # 없다 → 그 자리에서 올바른 '한 run 묶기' 패턴을 처방한다(추측·재시도 루프 차단).
+        _c = cmd.strip()
+        _bg_only = _c.endswith("&") and not _c.endswith("&&")
+        _hint = ""
+        if _bg_only:
+            _hint = ("\n\n⚠ 끝의 `&`로 띄운 백그라운드 프로세스(서버 등)는 **이 run이 끝나며 그룹째 정리**됐습니다 "
+                     "— 다음 run엔 살아있지 않습니다(run 간 포트충돌 방지 설계). 서버 **기동증명은 반드시 한 run "
+                     "안에** start→대기→점검을 묶으세요: `node server.js & sleep 1; curl -s 127.0.0.1:$PORT/헬스경로 "
+                     "&& curl -s -X POST 127.0.0.1:$PORT/api/…` (별도 run으로 나누면 서버가 죽어 curl이 붙지 못합니다).")
+        return _ok(f"[exit {rc}] (작업공간)\n[stdout]\n{out[-1500:]}\n[stderr]\n{err[-600:]}{_hint}")
 
     tools.append(run)
 
