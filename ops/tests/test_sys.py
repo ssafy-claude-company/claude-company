@@ -2240,6 +2240,43 @@ def test_배포_목표달성이면_owner완료로_인정_무한QA차단():
     assert "목표 달성" in out and "complete_task" in out
 
 
+def test_owner인도후_QA에게_최종인수_라우팅():
+    """[완료 수렴 — QA 최종 인수 라우팅(사용자)] owner가 인도했는데 Task가 안 닫히고 팀에 검증 역할(QA)이
+    있으면 SYS가 그 QA에게 '최종 인수'를 라우팅한다 — QA가 자기 완료권으로 마감(라이브 P-005: QA 인수 PASS
+    인데 완료권 없어·인수 turn 못 얻어 못 닫던 무한 루프의 마지막 고리). 인도당 1회(재라우팅 방지)."""
+    g = FakeGuide()
+    f = _flow(g)
+    f.bot_info[13] = "QA"; f.project_team.append(13)
+    st = {"to": None, "body": None}
+
+    async def wake(to, b, k):
+        st["to"], st["body"] = to, b
+        return "최종 인수 완료 — acceptance 충족, complete_task로 마감함"
+
+    f.wake = wake
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "M", 13: "QA"})
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "g"                                        # Goal 확정(선분배 게이트 회피 — 라이브선 set_goal로 확정됨)
+    f.current.owner, f.current.owner_delivered = 12, True
+    asyncio.run(s._auto_acceptance(f, 11))
+    assert st["to"] == 13 and "최종 인수" in (st["body"] or "")         # 검증 역할(QA 13)에게 최종 인수 라우팅
+    assert f._qa_accept_routed is True                                 # 인도당 1회 라우팅 플래그
+    st["to"] = None
+    asyncio.run(s._auto_acceptance(f, 11))                             # 재호출 = no-op(재라우팅 방지)
+    assert st["to"] is None
+    # 팀에 QA 없으면 no-op(리더 폴백)
+    g2 = FakeGuide(); f2 = _flow(g2); f2.wake = wake
+    s2 = Sys(g2, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "M"})
+    t2 = {x.name: x for x in make_guide_tools(f2, 11, "leader")}
+    asyncio.run(t2["create_task"].handler({"members": "12"}))
+    f2.current.status.goal = "g"
+    f2.current.owner, f2.current.owner_delivered = 12, True
+    st["to"] = None
+    asyncio.run(s2._auto_acceptance(f2, 11))
+    assert st["to"] is None                                            # QA 없음 → 라우팅 안 함(리더가 마감)
+
+
 def test_SYS_자동이어가기_무진행이면_중단():
     """자동 이어가기는 '진행이 전혀 없는데 미완 유지'(환경 문제·크래시 반복)면 같은 호출을 반복해
     박지 않는다 — 무한 재시도 대신 리더/사용자 보고 경로로 넘긴다."""

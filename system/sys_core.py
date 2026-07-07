@@ -997,6 +997,49 @@ class Sys:
                     + "\n".join(out))
         return ""
 
+    async def _auto_acceptance(self, flow, lead) -> str:
+        """[완료 수렴 — QA 최종 인수 라우팅(사용자 2026-07)] owner가 인도(work delivered)했는데 Task가 안 닫히고
+        팀에 검증 기능 역할(QA)이 있으면, SYS가 그 QA에게 '최종 인수'를 라우팅한다 — QA는 검증 후 *자기 완료권*
+        으로 직접 complete_task 마감한다. 근본: 완료='done인가' 판정=QA의 일인데, QA가 인수 turn을 못 얻어(free-
+        for-all에서 워커가 흐름 점유) 검증만 반복하고 못 닫던 무한 루프(라이브 P-005: QA 인수 PASS인데
+        complete_task 0·162턴). _auto_continue_owner(owner 이어가기)·_auto_coordinate(전문가 라우팅)와 동형의
+        구조적 라우팅 — outcome을 강제하지 않고(QA가 검증·판정) '올바른 역할이 자기 일 할 turn'을 보장할 뿐.
+        인도당 1회(무한 재라우팅 방지). 팀에 QA 없으면 no-op(리더가 마감 — 폴백)."""
+        ref = flow.current
+        if (ref is None or flow.comm.done or flow.comm.alive != lead
+                or not getattr(ref, "owner_delivered", False)
+                or getattr(flow, "_qa_accept_routed", False)):
+            return ""
+        from .rule.task import _is_verifier
+        qa = next((m for m in getattr(ref, "team", [])
+                   if m != lead and _is_verifier(flow._info(m) or "")), None)
+        if not qa:
+            return ""
+        flow._qa_accept_routed = True
+        self._log("qa_acceptance_routed", qa=qa, task=ref.task_id)
+        tools = {t.name: t for t in make_guide_tools(flow, lead, "leader")}
+        body = (f"[SYS — 최종 인수 라우팅] owner가 산출물을 인도했습니다. 당신({flow._info(qa)})은 이 팀의 검증 "
+                f"기능 역할이니 **완성품 전체를 사용자 관점 end-to-end로 최종 인수**하세요 — acceptance 기준을 "
+                f"검증해 충족되면 **당신의 complete_task로 이 Task를 마감**하세요(마감권 보유). acceptance 기준 "
+                f"*밖*의 새 개선점은 이 Task를 막지 말고 별도 Task로 두세요(완벽주의 무한검증 금지 — 실증된 "
+                f"목표가 done). 정말 기준 미충족이면 그 항목만 구체적으로 보고하세요.")
+        flow._sys_dispatch = True   # [SYS 라우팅] owner-protect(미완 owner 보호)·선분배 게이트 우회 — QA 인수
+                                    # 라우팅은 시스템이 올바른 역할에게 발사하는 것이라 그 게이트에 걸리면 안 됨
+                                    # (_auto_coordinate 동형, finally 복원).
+        try:
+            res = await tools["request"].handler({"to_id": str(qa), "kind": "Work", "body": body})
+            txt = (res.get("content") or [{}])[0].get("text", "")
+            if "[위임됨" in (txt or ""):
+                _d = await self._drain_inflight(flow)
+                if _d:
+                    txt = _d
+        except Exception:
+            return ""
+        finally:
+            flow._sys_dispatch = False
+        from .guide_tools import _speech_clip as _sc
+        return "\n\n[SYS 최종 인수 — 검증 역할(QA)에게 라우팅해 받은 결과]\n" + _sc(txt, 4000)
+
     async def _resume_precise_chain(self, flow, frames) -> str:
         """[정밀 복구 재개(2026-06-23, 사용자)] 끊긴 깊은 위임 체인을 *채팅 재발행/평탄화 없이* 복원·재개한다.
 
@@ -1846,6 +1889,10 @@ class Sys:
                 # 무시하던 것(라이브 P-030/P-031: owner에만 재위임, 프론트·데이터·AI needs 방치 → 정지)을 SYS가
                 # 직접 그 전문가에게 위임해 메운다(프롬프트 의존 제거). 결과는 drained로 리더에 전달(판정만).
                 drained += await self._auto_coordinate(flow, lead)
+                # [완료 수렴 — owner 인도 후 QA 최종 인수 라우팅] owner가 인도했는데 Task가 안 닫히면, free-for-all
+                # 검증 루프(누구나 QA·블로커 헌팅) 대신 검증 역할(QA)에게 '최종 인수'를 라우팅한다 — QA가 자기
+                # 완료권으로 마감(라이브 P-005: QA 인수 PASS인데 완료권 없어 못 닫던 무한 루프의 마지막 고리).
+                drained += await self._auto_acceptance(flow, lead)
                 # [활동 기반 예산 — "작업 중이면 얼마가 걸리든 안 끊는다"(확립 원칙)의 세그먼트 적용]
                 # 직전 세그먼트에 실작업(act_count 증가)이나 위임 완주 도착(drained)이 있었으면 예산을
                 # 소모하지 않는다 — 예산의 목적은 '무진행 루프 차단'이지 '대형 작업 총량 제한'이 아니다.
