@@ -202,15 +202,9 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
         #    거부(전문가 도메인 대리구현=독점, 그리고 owner가 일하는 중 리더가 앞질러 만들고 허위완료하는 패턴
         #    차단). owner가 늦거나 막히면 직접 떠안지 말고 request(Work) 재위임으로 기다리거나 recruit/재배정.
         #    리더가 위임 없이 자기 도메인을 직접 하는 Task는 owner==0이라 막지 않는다(리더도 한 직원).
-        #    [owner 인도완료 시 해제 — 데드락 근본] owner_delivered면 이 게이트의 취지(owner 일하는 중 리더가
-        #    앞질러 가로채기·허위완료 차단)가 무의미하다 — owner는 이미 자기 몫을 냈다. 이때까지 막으면,
-        #    리더십이 다른 도메인 전문가에게 재배정된 뒤(라이브: 백엔드 서도훈이 리더) 그 리더가 남은 자기 도메인
-        #    일(server.js)을 하려는데 '스테일 owner(디자이너)'가 막아 소유권 이전만 반복 거부되는 순환대기 데드락이
-        #    생긴다. 인도 후엔 리더가 통합·잔여 구현을 진행하게 푼다(허위완료는 complete_task 게이트가 따로 막음).
         if (tool in ("Write", "Edit") and flow is not None and actor is not None
                 and getattr(flow, "current", None) is not None
                 and flow.current.owner and flow.current.owner != actor
-                and not getattr(flow.current, "owner_delivered", False)
                 and actor == getattr(flow, "leader", None)):
             audit.record("tool_denied", actor=actor, role=role, tool=tool,
                          reason="위임된 owner 도메인 대리구현", tool_use_id=tool_use_id)

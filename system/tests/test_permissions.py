@@ -45,10 +45,9 @@ def _comm_with(*reqs):
 
 
 class _FakeTask:
-    """Fix B용 최소 Task: owner·status.owner(표시용)·status.goal(개입 게이트용)·owner_delivered(인도완료)."""
-    def __init__(self, owner, owner_label="프A", goal="", owner_delivered=False):
+    """Fix B용 최소 Task: owner·status.owner(표시용)·status.goal(개입 게이트용)."""
+    def __init__(self, owner, owner_label="프A", goal=""):
         self.owner = owner
-        self.owner_delivered = owner_delivered
         self.status = type("S", (), {"owner": owner_label, "goal": goal})()
 
 
@@ -136,24 +135,6 @@ class PreToolUseHookTest(unittest.TestCase):
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert a.records[-1][1]["reason"] == "위임된 owner 도메인 대리구현"
         assert flow.act_count == 0   # 거부됐으니 작업 집계 안 됨
-
-    def test_owner_인도완료면_리더_잔여도메인_구현_허용(self):
-        """[데드락 근본 해소] owner(12)가 자기 몫을 인도완료(owner_delivered)했으면, 리더(11)의 Write는
-        허용된다 — 게이트 취지(owner 일하는 중 앞질러 가로채기·허위완료 차단)가 인도 후엔 무의미. 라이브:
-        리더십이 백엔드 전문가에게 재배정됐는데 스테일 owner(디자이너)가 남은 백엔드 일(server.js)을 막아
-        소유권 이전만 반복 거부되던 순환대기 데드락 → 인도완료 시 리더가 잔여·통합을 진행하게 푼다."""
-        a = FakeAudit()
-        flow = _FakeFlow2(_comm_with((0, 11, Kind.WORK)),
-                          current=_FakeTask(owner=12, owner_delivered=True), leader=11)
-        hook = make_pre_tool_use_hook(a, ALLOWED, actor=11, flow=flow)
-        assert _run(hook, "Write", {"file_path": "server.js"}) == {}   # 허용
-        assert flow.act_count == 1                                     # 실작업 집계됨
-        # 인도 전(owner_delivered=False)엔 여전히 막힘(회귀 방지)
-        a2 = FakeAudit()
-        flow2 = _FakeFlow2(_comm_with((0, 11, Kind.WORK)),
-                           current=_FakeTask(owner=12, owner_delivered=False), leader=11)
-        out = _run(make_pre_tool_use_hook(a2, ALLOWED, actor=11, flow=flow2), "Write", {"file_path": "server.js"})
-        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_owner본인_구현은_허용되고_act집계(self):
         """owner(12) 본인이 자기 Task 산출물을 Write하는 건 허용되고 act_count가 +1."""
