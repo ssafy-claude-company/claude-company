@@ -192,11 +192,26 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
             woke_info = ((fk is not None and not _is_work_kind(fk))
                          or (fk is None and top is not None and top.to_id == actor
                              and not _is_work_kind(top.kind)))
+            # [자기 도메인 파일은 협의 맥락에서도 구현 허용 — 능력기반(사용자)] 이 파일을 내 직군이 소유하면
+            # (직접 만들었거나 '[직군밖]' P2P handoff로 내 직군에 넘어옴) 그건 내 정당한 도메인 작업이지
+            # '선구현'이 아니다 → Info 맥락에서도 통과. 미소유·타 도메인 파일만 순차(협의→Work→구현)를 강제.
+            # 이게 없으면 파일 handoff(#9 해소) 후에도 #3이 이중으로 막아 실작업이 안 됨(라이브 server.js).
+            _mine3 = False
             if woke_info:
+                _fp3 = tool_input.get("file_path") or tool_input.get("path")
+                if _fp3 and getattr(flow, "file_owner", None) and callable(getattr(flow, "_info", None)):
+                    _cwd3 = data.get("cwd") or os.getcwd()
+                    _rp3 = os.path.realpath(_fp3 if os.path.isabs(_fp3) else os.path.join(_cwd3, _fp3))
+                    _od3 = flow.file_owner.get(_rp3)
+                    if _od3:
+                        from .guide_tools import _jobs_of as _j3, _norm_job as _n3
+                        _mine3 = _od3 in {_n3(j) for j in _j3(flow._info(actor) or "") if j.strip()}
+            if woke_info and not _mine3:
                 audit.record("tool_denied", actor=actor, role=role, tool=tool,
                              reason="협의(Info) 중 선구현", tool_use_id=tool_use_id)
                 return _deny("협의(Info) 단계에서는 구현(파일 작성)을 할 수 없습니다 — 제안은 "
-                             "Response(말)로 하고, Goal 합의 후 Work로 위임받은 owner만 구현하세요.")
+                             "Response(말)로 하고, Goal 합의 후 Work로 위임받은 owner만 구현하세요. "
+                             "(단 당신 직군이 소유한 파일은 협의 맥락에서도 구현 가능합니다.)")
 
         # 4) 이미 owner에게 Work로 위임된 Task의 산출물은 그 owner가 구현한다 — '리더'가 대신 Write/Edit하면
         #    거부(전문가 도메인 대리구현=독점, 그리고 owner가 일하는 중 리더가 앞질러 만들고 허위완료하는 패턴

@@ -940,18 +940,22 @@ async def request(flow, me_id, role, args):
             flow.current.status.owner = ""
             flow.current.owner_incomplete = False
             _ckpt(flow)
-        # [파일 P2P 이전 — 전문가 이전(사용자)] '[직군밖]' 반려는 '이 산출물은 내 도메인 아님'의 P2P 선언이다.
-        # 반려한 봇 도메인이 쥔 **파일 lock(file_owner)도 해제**한다 → 올바른 도메인 전문가가 리더 위임 없이
-        # (탈중앙) 이어받아 편집하고, 다음 Write에서 그 직군으로 자연 재귀속. 종전엔 task 소유만 풀고 파일 lock은
-        # 남아, 스캐폴드를 만든 직군(예: 프론트 server.js)이 파일을 영구 lock → 올바른 도메인(백엔드)이 못 고쳐
-        # '내용을 텍스트로 넘김→file_owner가 [직군밖] 거절'하는 데드락(라이브 관측). 과잉해제는 자기교정 —
-        # 그 도메인이 자기 파일을 다시 쓰면 재귀속되므로 안전(lock은 '경계 표시'지 '삭제'가 아님).
+        # [파일 P2P 이전 — 전문가 이전(사용자)] '[직군밖] X' 반려는 '이 산출물은 X 도메인'이라는 P2P 선언이다.
+        # 반려한 봇이 쥔 **파일 lock(file_owner)을 지목 직군 X로 이전**한다 → X 전문가가 리더 위임 없이(탈중앙)
+        # 그 파일을 소유·편집(게이트#9 통과 + #3의 '자기 도메인 파일' 면제 통과). 종전엔 task 소유만 풀고 파일
+        # lock은 남아, 스캐폴드를 만든 직군(프론트 server.js)이 영구 lock → 올바른 도메인(백엔드)이 못 고쳐
+        # '내용을 텍스트로 넘김→[직군밖] 거절' 데드락(라이브). X 미지목이면 해제(다음 편집자 재귀속).
         if refused and getattr(flow, "file_owner", None):
             _refdoms = {_norm_job(j) for j in _jobs_of(flow._info(to) or "") if j.strip()} - {""}
-            _rel = [p for p, d in list(flow.file_owner.items()) if d in _refdoms]
-            for _p in _rel:
-                del flow.file_owner[_p]
-            if _rel and getattr(flow, "persist_owner", None):
+            _need = (refused_m.group(1).strip() if refused_m else "") or _off_arg
+            _target = _norm_job(_need) if _need else ""
+            _touched = [p for p, d in list(flow.file_owner.items()) if d in _refdoms]
+            for _p in _touched:
+                if _target and not _target.startswith("예비"):
+                    flow.file_owner[_p] = _target        # 지목 직군 X로 P2P 이전 → X가 소유·구현
+                else:
+                    del flow.file_owner[_p]               # 미지목 → 해제(다음 편집자 재귀속)
+            if _touched and getattr(flow, "persist_owner", None):
                 try:
                     flow.persist_owner()
                 except Exception:

@@ -4570,9 +4570,10 @@ def test_직군밖_반려는_파일소유도_해제_전문가P2P이전():
     asyncio.run(t["create_task"].handler({"members": "12"}))
     f.current.status.goal = "server.js 하드닝"
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "server.js 하드닝해줘"}))
-    # 반려한 프론트엔드의 파일 lock이 전부 해제 → 백엔드가 이어받아 편집·소유 가능(미소유=자유)
-    assert _os.path.realpath("/ws/server.js") not in f.file_owner
-    assert _os.path.realpath("/ws/app.js") not in f.file_owner
+    # 반려('[직군밖] 백엔드')한 프론트의 파일 lock이 **지목 직군(백엔드)으로 이전** → 백엔드가 소유·구현
+    from system.rule.comm_helpers import _norm_job
+    assert f.file_owner[_os.path.realpath("/ws/server.js")] == _norm_job("백엔드")
+    assert f.file_owner[_os.path.realpath("/ws/app.js")] == _norm_job("백엔드")
     assert f.current.owner == 0                                   # task 소유도 해제(기존)
 
 

@@ -106,6 +106,23 @@ class PreToolUseHookTest(unittest.TestCase):
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert a.records[-1][1]["reason"] == "협의(Info) 중 선구현"
 
+    def test_협의Info중이라도_자기도메인_소유파일은_구현허용(self):
+        """[능력기반 면제 — 사용자] Info로 깨워졌어도 이 파일이 *내 직군 소유*(P2P handoff로 넘어왔거나
+        직접 만듦)면 구현 통과 — 내 도메인 작업은 '선구현'이 아니다. 파일 handoff(#9 해소) 후 #3 이중차단
+        방지(라이브 server.js). 타 도메인 파일은 여전히 차단."""
+        a = FakeAudit()
+        flow = _FakeFlow(_comm_with((0, 11, Kind.WORK), (11, 12, Kind.INFO)))   # 12가 Info로 깨워짐
+        flow._info = lambda i: {12: "백엔드"}.get(i, "")
+        flow.file_owner = {os.path.realpath("/ws/server.js"): "백엔드"}          # server.js는 백엔드 소유(P2P handoff 후)
+        hook = make_pre_tool_use_hook(a, ALLOWED, actor=12, flow=flow)
+        assert _run(hook, "Edit", {"file_path": "server.js"}) == {}             # 자기 도메인 파일 → Info라도 허용
+        # 타 도메인 파일(프론트 소유)은 Info 맥락에서 여전히 차단
+        a2 = FakeAudit()
+        flow.file_owner = {os.path.realpath("/ws/app.js"): "프론트엔드"}
+        out = _run(make_pre_tool_use_hook(a2, ALLOWED, actor=12, flow=flow), "Edit", {"file_path": "app.js"})
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert a2.records[-1][1]["reason"] == "협의(Info) 중 선구현"
+
     def test_Work위임받은_owner_구현_허용(self):
         """Work로 깨워진 owner의 Write는 허용된다(구현은 위임 맥락에서)."""
         a = FakeAudit()
