@@ -41,6 +41,12 @@ class FakeGuide:
         self.calls.append(("file", channel_id, path, sender_id, caption))
         return "fileid"
 
+    async def create_agent(self, channel_id, role):
+        # [예비 폐지 → recruit genesis] 새 직군 전문가 생성 흉내 — 고유 bot_id 반환(합류 검증용).
+        self.calls.append(("create_agent", channel_id, role))
+        self._genesis = getattr(self, "_genesis", 9500) + 1
+        return self._genesis
+
 
 def _flow(g, leader=11):
     f = Flow(g, channel_id=500, guild_id=1, leader_id=leader, bot_info={11: "L", 12: "M"})
@@ -291,10 +297,15 @@ def test_예비인력_새직군_런타임채용_말로만배정차단():
     r2 = asyncio.run(t["recruit"].handler({"member": str(hired), "role": "레벨 디자이너"}))
     assert "거부" in r2["content"][0]["text"] and "1봇 1직업" in r2["content"][0]["text"]
     assert f.bot_info[hired] == "게임 기획자"
-    # 남은 예비를 'UX 디자이너'로, 그 뒤 예비 소진 → 채용 불가 안내
+    # 남은 예비를 'UX 디자이너'로 채용(예비 소진)
     asyncio.run(t["recruit"].handler({"role": "UX 디자이너", "reason": "UX"}))
+    # [예비 폐지 → genesis(사용자 설계)] 예비 소진 뒤 새 직군 필요 → dead-end('못 찾음') 대신 그 직군
+    # 전문가를 즉석 생성(create_agent)해 팀에 합류시킨다(리더가 넘길 전문가 없어 교착하던 것 해소).
     r3 = asyncio.run(t["recruit"].handler({"role": "사운드", "reason": "x"}))
-    assert "못 찾음" in r3["content"][0]["text"]
+    assert "합류" in r3["content"][0]["text"] and "사운드" in r3["content"][0]["text"]
+    assert ("create_agent", 500, "사운드") in g.calls          # user_channel(500)로 프로젝트 소유자 찾아 생성
+    gen = next(i for i in f.current.team if f.bot_info.get(i) == "사운드")
+    assert gen >= 9501 and f.bot_info[gen] == "사운드"          # 생성 봇이 그 직군으로 합류
 
 
 def test_일로직업획득_채용은잠정_첫실작업에_영속승격():

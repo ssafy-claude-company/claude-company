@@ -59,6 +59,16 @@ class MurmurGuide:
         except Exception:
             pass
 
+    async def create_agent(self, channel_id, role):
+        """[예비 폐지 → recruit genesis] 새 직군 전문가를 원격 생성(예비 dead-end 대체 — 리더가 넘길
+        전문가가 없어 교착하던 것 해소). 신규 bot_id 반환(실패 None)."""
+        try:
+            r = await self._post("/api/guide/ingest/", {"op": "create_agent",
+                                                        "channel_id": int(channel_id), "role": str(role)})
+            return (r or {}).get("bot_id")
+        except Exception:
+            return None
+
     def set_origin(self, channel_id):
         """[배달 계약] 이 요청의 origin 채널을 task-로컬로 — 뒤이어 create_task되는 흐름이 이 채널로 라우팅(동시 안전)."""
         ORIGIN_CHANNEL.set(int(channel_id))

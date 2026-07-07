@@ -359,13 +359,37 @@ async def recruit(flow, me_id, role, args):
                    f"다시 요청해 한 명이라도 응답이 오면 그때 충원하거나, 계속 안 되면 사용자에게 보고하고 멈추세요.")
     cand = _resolve_members(spec, flow, flow.pool) if spec else []
     if not cand:
-        # member 미지정(또는 못 찾음): 직군 채용이면 '예비' 인력에서 자동 선발(아직 프로젝트팀에 없는 예비)
+        # member 미지정(또는 못 찾음): 직군 채용이면 자동 선발.
         spares = [m for m in flow.pool if _is_spare(flow, m) and m not in flow.project_team]
         if role_name and spares:
             cand = [spares[0]]
+        elif role_name:
+            # [예비 폐지 → genesis(사용자 설계 2026-07)] '예비 풀'은 폐지된 개념이다 — 뽑을 사람이 없다고
+            # 실패("예비 0명")하는 게 아니라, 그 직군 전문가를 **즉석 생성**한다(리크루터 genesis). 생성 봇은
+            # 이 recruit에서 바로 쓰게 pool·bot_info에 합류시키고, 인격·craft(온보딩·전수)는 sleep-loop
+            # 형성 사이클이 채운다(스튜디오 채용과 동형). 종전 dead-end는 리더가 넘길 전문가를 못 구해
+            # 교착시켰다(라이브 P-005: '예비 인력 0명이라 recruit 불가'로 배포 owner를 못 세워 무한 순환).
+            _mk = getattr(g, "create_agent", None)
+            _new = None
+            if _mk and getattr(flow, "user_channel", None):
+                try:
+                    _new = await _mk(flow.user_channel, role_name)   # user_channel=프로젝트 id(set_leader와 동일)
+                except Exception:
+                    _new = None
+            if _new:
+                _nid = int(_new)
+                if _nid not in flow.pool:
+                    flow.pool.append(_nid)
+                flow.bot_info[_nid] = role_name            # 생성 즉시 그 직군 전문가로 합류(DB도 role 보유)
+                cand = [_nid]
+                if flow.log:
+                    flow.log("recruit_genesis", role=role_name, new=_nid)
+            else:
+                return (f"채용 실패: '{role_name}' 전문가를 새로 생성하지 못했습니다(일시 오류) — 잠시 뒤 "
+                           f"다시 시도하거나 member로 기존 동료에게 맡기세요.")
         else:
-            return (f"채용할 인력을 못 찾음 — member로 기존 동료(id/역할)를 지정하거나, role로 새 직군을 "
-                       f"적어 '예비'를 채용하세요. 남은 예비: {len(spares)}명 / 현재 풀: {flow._names(flow.pool)}")
+            return (f"채용할 인력을 못 찾음 — member로 기존 동료(id/역할)를 지정하거나 role로 직군을 "
+                       f"적으세요. 현재 풀: {flow._names(flow.pool)}")
     mid = cand[0]
     # 예비(직군 미배정)는 'role=직군'을 줘야만 채용된다 — 말로만 배정 차단(직군은 구조적으로 부여).
     if _is_spare(flow, mid) and not role_name:
