@@ -1,0 +1,11 @@
+# organt-runner에 OnFailure 거는 드롭인 **예시** — 러너 유닛이 실패로 죽는 즉시 알림 스캔 1회.
+# (Restart=always라 최종 failed는 드물지만, start-limit 소진 등 진짜 죽음을 즉시 잡는다.
+#  heartbeat 기반 5분 폴링과 별개의 즉발 경로.)
+#
+# 설치(운영자, 사용자 승인 후):
+#   mkdir -p /etc/systemd/system/organt-runner.service.d
+#   cp /root/murmur-stack/ops/systemd/organt-runner-onfailure.conf.example \
+#      /etc/systemd/system/organt-runner.service.d/onfailure.conf
+#   systemctl daemon-reload
+[Unit]
+OnFailure=monitor-alerts.service

@@ -1,0 +1,11 @@
+# log-rotate.timer — 매시 log-rotate.service 기동(크기 미달이면 스크립트가 no-op). 설치는 운영자.
+[Unit]
+Description=Hourly organt log rotation check
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

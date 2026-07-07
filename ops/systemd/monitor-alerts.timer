@@ -1,0 +1,12 @@
+# monitor-alerts.timer — 5분마다 monitor-alerts.service 기동. 설치는 운영자(README 참조).
+[Unit]
+Description=Run organt monitor alerts every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20
+AccuracySec=30
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,18 @@
+# monitor-alerts.service — organt 알림 스캔 1회(oneshot). monitor-alerts.timer가 5분마다 기동.
+# 설치는 운영자(사용자 승인) — ops/systemd/README.md 참조. 이 레포에서는 파일 제공만.
+[Unit]
+Description=Organt monitor alerts (runner death, stall, convergence, denied surge)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/murmur-stack/murmur/backend
+Environment=DJANGO_SETTINGS_MODULE=config.settings
+Environment=PYTHONPATH=/root/murmur-stack
+Environment=ORGANT_PJT=/root/murmur-stack
+# DATABASE_URL(라이브 Postgres·heartbeat) — 웹과 같은 env 재사용.
+EnvironmentFile=/etc/murmur-web.env
+# 알림 전용 설정(선택) — ORGANT_ALERT_WEBHOOK / ORGANT_ALERT_CHANNEL 를 여기 두면 깔끔("-"=없어도 통과).
+EnvironmentFile=-/etc/organt-monitor.env
+ExecStart=/root/murmur-stack/.venv/bin/python manage.py monitor_alerts

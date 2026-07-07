@@ -1,0 +1,25 @@
+# organt-logs.logrotate — flow/audit JSONL 회전용 logrotate 설정 (ops/log_rotate.sh의 대안)
+#
+# 설치(운영자, 사용자 승인 후 — 둘 중 하나):
+#   ln -s /root/murmur-stack/ops/organt-logs.logrotate /etc/logrotate.d/organt-logs
+#   cp    /root/murmur-stack/ops/organt-logs.logrotate /etc/logrotate.d/organt-logs
+# (symlink가 무시되면 — logrotate는 소유권/권한이 어긋난 설정을 건너뛴다 — cp 사용.)
+# ※ ops/systemd/log-rotate.timer(자체 스크립트)와 이 설정 중 **하나만** 활성화할 것(중복 회전 방지).
+#
+# copytruncate 채택 이유: logrotate는 러너에 재-open 신호(postrotate kill -HUP류)를 줄 수 없고,
+# copytruncate는 기록자가 fd를 계속 들고 있어도 안전하다. 대가로 '복사~truncate 사이' append가
+# 유실될 수 있는 짧은 창이 있다(현재 기록자는 append마다 open/close라 실위험 극소 —
+# system/sys_core.py:347·system/audit.py:81). 무손실이 중요하면 ops/log_rotate.sh(rename) 쪽을 쓸 것.
+
+/root/murmur-stack/ops/var/organt_sns_state/flow.jsonl
+/root/murmur-stack/ops/var/organt_sns_state/audit.jsonl
+{
+    size 5M
+    rotate 5
+    copytruncate
+    missingok
+    notifempty
+    compress
+    delaycompress
+    # delaycompress: .1은 비압축 유지 — monitor_alerts의 회전 직후 .1 폴백 파싱이 계속 동작.
+}

@@ -1,0 +1,10 @@
+# log-rotate.service — flow/audit JSONL 크기 회전 1회(oneshot). log-rotate.timer가 매시 기동.
+# ops/organt-logs.logrotate(/etc/logrotate.d 방식)와 **하나만** 쓸 것 — 중복 회전 방지.
+[Unit]
+Description=Organt flow/audit JSONL size-based rotation
+
+[Service]
+Type=oneshot
+Environment=ORGANT_PJT=/root/murmur-stack
+# 임계·보존 개수 조정 시: Environment=MAX_BYTES=5242880 KEEP=5
+ExecStart=/root/murmur-stack/ops/log_rotate.sh
