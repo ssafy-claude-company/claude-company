@@ -80,6 +80,34 @@ _FILE_CAP_KW = {
 }
 
 
+def _describe_tool(tool, ti) -> str:
+    """[진행 가시성] 도구 호출을 사람이 읽을 한 줄로 — '지금 무엇을 하는지'. 값이 아니라 '무슨 행동'만
+    (긴 내용·비밀 노출 금지: 경로·명령 앞부분·질의어만). 상태블록 활동 라인용."""
+    ti = ti if isinstance(ti, dict) else {}
+    def _b(s, n=60): return " ".join(str(s or "").split())[:n]
+    t = str(tool or "")
+    base = t.split("__")[-1]                       # mcp__guide__meet → meet
+    if base in ("Write", "Edit", "MultiEdit"):
+        import os as _os
+        return f"✏️ 파일 작성: {_os.path.basename(_b(ti.get('file_path'), 80)) or '파일'}"
+    if base == "Read":
+        import os as _os
+        return f"📖 확인: {_os.path.basename(_b(ti.get('file_path'), 80)) or '파일'}"
+    if base in ("Bash", "run"):
+        return f"▶ 실행: {_b(ti.get('command'), 70)}"
+    if base in ("WebSearch",):
+        return f"🔍 조사: {_b(ti.get('query'), 60)}"
+    if base in ("WebFetch",):
+        return f"🌐 자료 받기: {_b(ti.get('url'), 60)}"
+    if base in ("Glob", "Grep"):
+        return f"🔎 탐색: {_b(ti.get('pattern'), 50)}"
+    _KO = {"request": "📨 동료에게 요청", "meet": "💬 회의 진행", "set_goal": "🎯 목표 확정",
+           "vote": "🗳 표결", "complete_task": "✅ 마감 처리", "recruit": "🧑‍💼 충원",
+           "deploy": "🚀 배포", "create_project": "📁 프로젝트 열기", "create_task": "🧩 작업 분해",
+           "report": "📝 보고 작성"}
+    return _KO.get(base, f"🔧 {base}")
+
+
 def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
     """허용 도구만 통과시키고, 파일 쓰기는 작업공간 안으로 제한하는 PreToolUse 훅.
 
@@ -96,6 +124,9 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
         if flow is not None:
             try:
                 flow.last_activity = time.monotonic()
+                # [진행 가시성] '지금 무엇을 하는지'를 사람이 읽을 한 줄로 기록 — 상태블록이 보인다.
+                if actor is not None:
+                    flow.note_activity(actor, _describe_tool(tool, tool_input))
             except Exception:
                 pass
 

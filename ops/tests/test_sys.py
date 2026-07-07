@@ -4257,9 +4257,14 @@ def test_상태텍스트_살아있음_신호_구성():
     f = Flow(FakeGuide(), channel_id=1, guild_id=1, leader_id=11, bot_info={11: "기획", 12: "백엔드"})
     f.start_root("r")
     f.status_req = "온라인 세포 키우기 게임"
+    f.comm.alive = 11
     f.last_activity = _t.monotonic() - 14
     txt = s._status_text(f, _t.monotonic() - 23 * 60)
-    assert "● 작업 중" in txt and "온라인 세포" in txt and "지금: 기획" in txt
+    assert "● 작업 중" in txt and "온라인 세포" in txt and "담당: 기획" in txt
+    # [진행 가시성] 봇이 활동을 남기면 '지금 하는 일' 라인이 붙는다(라이브 진행표시)
+    f.note_activity(11, "✏️ 파일 작성: cell.js")
+    txt2 = s._status_text(f, _t.monotonic() - 23 * 60)
+    assert "지금 하는 일: ✏️ 파일 작성: cell.js" in txt2
     stamps = [int(x) for x in _re.findall(r"<t:(\d+):R>", txt)]
     assert len(stamps) == 2, f"시작·마지막활동 동적 타임스탬프 2개여야 함: {txt}"
     now = _t.time()

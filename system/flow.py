@@ -20,6 +20,9 @@ class Flow:
         self.bot_info = bot_info or {}
         # [변경주입 상태] 동료 로스터는 바뀔 때만 재주입(이벤트 기반) — 안 바뀌면 대화 기억에 있음.
         self.seen_roster = {}   # {bot: 마지막으로 본 동료 로스터 문자열}
+        # [진행 가시성] 봇이 '지금 무엇을 하는지'(도구 활동·추론 스니펫) — 훅·narrate가 기록, 상태블록이
+        # 주기 갱신 때 읽어 사용자에게 보인다('작업중'만 몇십분 뜨던 답답함 해소). {bot: (text, mono_ts)}.
+        self.live_activity = {}
         self.comm = CommunicationManager(ORIGIN)
         self.pool = list((bot_info or {}).keys()) or [leader_id]   # 채용 가능 전체(로스터)
         if leader_id not in self.pool:
@@ -156,6 +159,13 @@ class Flow:
         t = task or self.current
         if t and self.project_channel and t.block_id:
             await self.guide.update_status(self.project_channel, t.block_id, t.status)
+
+    def note_activity(self, bot, text):
+        """[진행 가시성] 봇의 '지금 하는 일' 한 줄 기록(도구 활동·추론 스니펫). 최신만 유지 —
+        상태블록 갱신이 이걸 읽어 사용자에게 보인다. best-effort(관측용 — 실패가 흐름을 못 막음)."""
+        t = " ".join(str(text or "").split())[:110]
+        if t:
+            self.live_activity[int(bot)] = (t, time.monotonic())
 
     def _info(self, oid):
         return self.bot_info.get(oid, "")

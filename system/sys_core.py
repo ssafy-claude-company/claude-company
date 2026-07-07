@@ -1714,7 +1714,8 @@ class Sys:
                     status_mid = None
             if status_mid:
                 async def _status_updates():
-                    period = int(os.environ.get("ORGANT_STATUS_PERIOD", "60"))
+                    # [진행 가시성] 20초 갱신 — '지금 하는 일' 라인이 라이브로 보이게(60s는 너무 느림).
+                    period = int(os.environ.get("ORGANT_STATUS_PERIOD", "20"))
                     while not flow.done:
                         await asyncio.sleep(period)
                         if flow.done:

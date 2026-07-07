@@ -59,10 +59,19 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         # request(동료 위임)는 동료의 중첩 작업 동안 수십 분 블록되는 게 정상 설계라 사실상 해제해 둔다.
         server = {**server, "timeout": int(os.environ.get("MCP_TOOL_TIMEOUT", "14400000"))}
         heartbeat = None
+        narrate = None
         if flow is not None:
             def heartbeat():   # 메시지 수신 단위 하트비트 — 도구 훅 사이 사각(긴 단일 생성)을 메움
                 try:
                     flow.last_activity = time.monotonic()
+                except Exception:
+                    pass
+
+            def narrate(text):   # [진행 가시성] 봇 추론(발화) 스니펫을 '지금 생각 중' 활동으로 — 상태블록이 보인다
+                try:
+                    t = " ".join(str(text or "").split())
+                    if t:
+                        flow.note_activity(organt_id, "💭 " + t[:100])
                 except Exception:
                     pass
         # organt의 파일 도구(cwd)는 '현재 흐름의 작업공간'을 따른다 — 프로젝트별 폴더 분리와 정합
@@ -92,5 +101,5 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                                        + "\n\n[이 직원만의 개성·지침 — 스튜디오에서 사용자가 지정한 정체성]\n"
                                        + _pp)
         return Organt(cfg, build_options(cfg, **_bopts),
-                      state_path=str(state_path), on_activity=heartbeat)
+                      state_path=str(state_path), on_activity=heartbeat, narrate=narrate)
     return organt_builder
