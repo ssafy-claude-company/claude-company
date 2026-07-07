@@ -4261,12 +4261,12 @@ def test_상태텍스트_살아있음_신호_구성():
     f.last_activity = _t.monotonic() - 14
     txt = s._status_text(f, _t.monotonic() - 23 * 60)
     assert "● 작업 중" in txt and "온라인 세포" in txt and "담당: 기획" in txt
-    # [진행 가시성] 봇 활동을 남기면 '지금 하는 일'(최근 목록의 최신)이 붙는다
+    # [진행 가시성] 봇 활동을 남기면 '지금 하는 일'(전체 기록의 최신)이 붙는다
     f.note_activity(11, "✏️ 파일 작성: cell.js")
     f.note_activity(11, "▶ 실행: npm test")
     txt2 = s._status_text(f, _t.monotonic() - 23 * 60)
     assert "지금 하는 일: ▶ 실행: npm test" in txt2         # 최신
-    assert len(f.live_activity[11]) == 2                    # 롤링 목록(여러 줄 보관)
+    assert len(f.activity_log) == 2                         # 흐름 단위 전체 기록(append-only)
     stamps = [int(x) for x in _re.findall(r"<t:(\d+):R>", txt)]
     assert len(stamps) == 2, f"시작·마지막활동 동적 타임스탬프 2개여야 함: {txt}"
     now = _t.time()

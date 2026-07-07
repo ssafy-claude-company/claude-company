@@ -232,7 +232,7 @@ class MurmurGuide:
         if idle is not None:
             body["idle"] = int(idle)
         if activity is not None:
-            body["activity"] = [str(x)[:120] for x in activity][-30:] if isinstance(activity, (list, tuple)) else [str(activity)[:120]]
+            body["activity"] = [str(x)[:120] for x in activity][-2000:] if isinstance(activity, (list, tuple)) else [str(activity)[:120]]
         res = await self._post("/api/guide/pick/", body)
         return (res or {}).get("claimed", True)
 

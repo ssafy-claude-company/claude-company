@@ -20,9 +20,10 @@ class Flow:
         self.bot_info = bot_info or {}
         # [변경주입 상태] 동료 로스터는 바뀔 때만 재주입(이벤트 기반) — 안 바뀌면 대화 기억에 있음.
         self.seen_roster = {}   # {bot: 마지막으로 본 동료 로스터 문자열}
-        # [진행 가시성] 봇이 '지금 무엇을 하는지'(도구 활동·추론 스니펫) — 훅·narrate가 기록, 상태블록이
-        # 주기 갱신 때 읽어 사용자에게 보인다('작업중'만 몇십분 뜨던 답답함 해소). {bot: (text, mono_ts)}.
-        self.live_activity = {}
+        # [진행 가시성] 이 흐름의 활동 전체 기록(append-only) — 훅·narrate가 기록, 사용자가 '자세히'로
+        # 펼쳐 스크롤한다('작업중'만 뜨던 답답함 해소). 흐름 단위 flat 목록(봇 바뀌어도 시간순 누적).
+        # 임의 상한 없음 — 표시는 UI 고정높이+스크롤이 맡는다. 폭주 가드(_ACT_GUARD)만 최후로.
+        self.activity_log = []   # [(text, mono_ts), …]
         self.comm = CommunicationManager(ORIGIN)
         self.pool = list((bot_info or {}).keys()) or [leader_id]   # 채용 가능 전체(로스터)
         if leader_id not in self.pool:
@@ -160,19 +161,22 @@ class Flow:
         if t and self.project_channel and t.block_id:
             await self.guide.update_status(self.project_channel, t.block_id, t.status)
 
+    _ACT_GUARD = 2000   # 폭주 방어(가드 — UX 상한 아님). 흐름 하나가 이만큼 활동이면 비정상 → 최후로 앞을 버림.
+
     def note_activity(self, bot, text):
-        """[진행 가시성] 봇의 활동(도구·추론 스니펫)을 최근 순 롤링 리스트로 — 한 줄만이 아니라 최근
-        진행 여러 줄을 보여준다('전체적으로'). 직전과 같으면 ts만 갱신(중복 억제), 최근 8개만 유지.
+        """[진행 가시성] 이 흐름의 활동(도구·추론 스니펫)을 시간순 전체 기록에 append. 직전과 같으면
+        ts만 갱신(중복 억제). 임의 상한 없음 — 표시 길이는 UI(고정높이+스크롤)가 맡고, 여긴 폭주 가드만.
         best-effort(관측용 — 실패가 흐름을 못 막음)."""
-        t = " ".join(str(text or "").split())[:110]
+        t = " ".join(str(text or "").split())[:120]
         if not t:
             return
-        lst = self.live_activity.setdefault(int(bot), [])
-        if lst and lst[-1][0] == t:
-            lst[-1] = (t, time.monotonic())      # 같은 활동 반복 — 시각만 갱신(스팸 방지)
+        log = self.activity_log
+        if log and log[-1][0] == t:
+            log[-1] = (t, time.monotonic())       # 같은 활동 반복 — 시각만 갱신(스팸 방지)
         else:
-            lst.append((t, time.monotonic()))
-            del lst[:-30]                         # 최근 30개(롤링 — '자세히' 펼치면 이만큼 보임)
+            log.append((t, time.monotonic()))
+            if len(log) > self._ACT_GUARD:         # 폭주 최후 방어 — 정상 흐름은 여기 안 닿음
+                del log[0:len(log) - self._ACT_GUARD]
 
     def _info(self, oid):
         return self.bot_info.get(oid, "")
