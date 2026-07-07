@@ -190,14 +190,12 @@ from .rule.project import send_file as _rule_send_file  # noqa: F401
 
 
 def _holds_completion(flow, me_id, role) -> bool:
-    """[완료 권한 = 검수(QA) 역할 + 리더(사용자 2026-07)] '완성품 전체 최종 인수'는 QA(검증 기능)의 일이다 —
-    시스템은 이미 검증 게이트에서 최종 인수를 QA로 *라우팅*하는데(test_QA역할은_최종인수: 'QA 우대'), 종전엔
-    마감 도구(complete_task)를 리더가 독점해 QA가 '인수 PASS'로 판정해도 닫을 수단이 없었다 — 그래서 QA는
-    검수만 무한 반복하고 리더는 검증자가 아닌데 마감권만 쥐고 계속 위임하는 루프였다(라이브 P-005: QA 오은우·
-    PM 유찬영이 인수 PASS 선언했는데 complete_task 0회·162턴). 검증 기능 역할(_is_verifier)에게도 마감권을 줘
-    *자기 인수 결과로 직접 닫게* 한다(리더 독점 해소 — 탈중앙). 리더도 유지(조율·폴백·기존 설계 보존)."""
-    from .rule.task import _is_verifier
-    return _is_verifier(role) or role == "leader"
+    """[완료 권한 = 리더(전 방식 복귀 — 사용자 2026-07)] complete_task(마감)는 리더가 쥔다. QA 검증은 별도로
+    _gate_cross_check가 **하드 의무**로 강제한다(owner 인도 후 다른 멤버 검증 0이면 마감 보류 — 리더가 peer/QA
+    검증 없이는 못 닫음). 즉 '리더 완료 + QA 검증 필수'가 원래 구조다. 앞서 시도한 'QA에게 완료권 이관'은 엉뚱한
+    데를 고친 것이라 되돌림 — 라이브 P-005의 비수렴 근본은 완료권이 아니라 ① 진짜 버그(키보드 회귀) ② 목표-유계
+    부재(배포 됐는데 목표 밖 이슈를 안에서 무한 수정)였다. 그건 목표-유계로 따로 해결한다."""
+    return role == "leader"
 
 
 def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
