@@ -4828,6 +4828,42 @@ def test_활동기반_이어가기예산_진행세그는_소모없음():
     assert len(calls3) == 5                            # 연속 2 무진행이 없으므로 완주(리셋 검증)
 
 
+def test_floor_발언은_진전으로_안세_무한루프_차단():
+    """[정체감지 — floor 제외] 세그먼트 경계 floor 발언(응찰·발언)은 리더 컨텍스트엔 전달하되 '진전'으론
+    안 센다. 안 그러면 실작업 0인데도 발언만으로 progressed=True가 돼 정체감지(연속 무진전 한도)가 영영
+    불발(라이브 t-80: 967세그 전부 progressed·tool_use 0·floor 3868 → 2.5시간 무한루프). floor가 매 세그
+    발언을 내도 실작업이 0이면 max_continue에서 종결돼야 하고, 그 발언은 리더 본문엔 전달돼야 한다."""
+    import types
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"}, workspace="/ws", max_continue=2)
+    calls, bodies = [], []
+
+    async def stuck(flow, oid, body, kind, role):
+        calls.append(1); bodies.append(body)
+        flow.current = types.SimpleNamespace(
+            task_id="t1", thread_id="th", block_id="blk", team=[], owner=0,
+            participated=set(), collab_notes="",
+            status=types.SimpleNamespace(status="진행", result=None, purpose="", goal="", owner=""))
+        return "작업 중 (⚠ 턴 한도 도달 — 미완)"       # 실작업 0(무진행)
+
+    async def none_drain(flow, lead):
+        return ""                                      # 실 위임·조율 없음
+
+    async def floor_speaks(flow, lead):
+        return "\n\n[1층 발언권 open — 팀원이 응찰로 발언했습니다]\n관찰: 아직 안 끝났습니다"
+
+    s.run_turn = stuck
+    s._auto_continue_owner = none_drain
+    s._auto_delegate_owner = none_drain
+    s._auto_coordinate = none_drain
+    s._floor_segment_open = floor_speaks               # 매 세그 발언(예전이면 이게 progressed=True로 오판)
+    asyncio.run(s.handle_user_input(500, 11, "정체+발언", root_id="r"))
+    assert len(calls) == 3                             # 첫 턴 + 무진행 이어가기 2회 → 종결(발언은 진전 아님)
+    ci = [e for e in s.flow_log if e["event"] == "continue_incomplete"]
+    assert ci and all(not e.get("progressed") for e in ci)     # floor 발언에도 무진전으로 정확히 판정
+    assert any("발언권 open" in b for b in bodies)              # 발언은 리더 본문엔 전달됨(전달O·진전X)
+
+
 def test_검증위임에_owner도메인_루브릭_자동주입():
     """[RFC-008 P0 보강] owner 인도 후 '다른 멤버'에게 가는 Work(=검증 위임)에 owner 산출물 도메인의
     직무 기준이 루브릭으로 자동 동봉된다 — 라이브 P-010 1차에서 루브릭이 거부 메시지에만 있어 0회

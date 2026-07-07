@@ -1796,14 +1796,20 @@ class Sys:
                 # 무시하던 것(라이브 P-030/P-031: owner에만 재위임, 프론트·데이터·AI needs 방치 → 정지)을 SYS가
                 # 직접 그 전문가에게 위임해 메운다(프롬프트 의존 제거). 결과는 drained로 리더에 전달(판정만).
                 drained += await self._auto_coordinate(flow, lead)
-                # [1층 floor seam] 세그먼트 경계 TRP — turn-taking이면 여기서 자기선택 open(기본은 no-op).
-                drained += await self._floor_segment_open(flow, lead)
                 # [활동 기반 예산 — "작업 중이면 얼마가 걸리든 안 끊는다"(확립 원칙)의 세그먼트 적용]
                 # 직전 세그먼트에 실작업(act_count 증가)이나 위임 완주 도착(drained)이 있었으면 예산을
                 # 소모하지 않는다 — 예산의 목적은 '무진행 루프 차단'이지 '대형 작업 총량 제한'이 아니다.
                 # 라이브 P-010: 동면 재개 5회+재협의 루프가 예산 12를 태워 '진행 중인' 작업이 마감 직전
                 # 절단(사용자: "왜 작업 도중에 끊겼지"). 무진행 정체는 종전대로 이 예산+워치독이 잡는다.
+                # [floor 발언은 '진전' 아님 — 정체감지 기준선] progressed는 **실작업(act_count↑)·실 위임/조율
+                # (drained)** 까지만 센다. 아래 floor 발언은 리더 컨텍스트엔 전달하되(drained) 이 진전 판정엔
+                # 안 넣는다 — 응찰·발언은 턴테이킹 잡음이지 실작업이 아니다. 안 그러면 실작업 0인데도 발언만으로
+                # progressed=True가 돼 정체감지(연속 무진전 12)가 영영 불발(라이브 t-80: 967세그 전부
+                # progressed·tool_use 0·floor 3868 → 2.5시간 무한루프, 사용자 관측: "리더 작업 중만 몇 시간").
                 progressed = (flow.act_count > acts_seg) or bool(str(drained).strip())
+                # [1층 floor seam] 세그먼트 경계 TRP — turn-taking이면 자기선택 open(기본은 no-op). 발언은
+                # drained에 실어 리더에 전달(위 progressed 계산 뒤라 '진전'으론 안 셈 — 이게 무한루프 차단의 핵심).
+                drained += await self._floor_segment_open(flow, lead)
                 if not progressed:
                     cont += 1
                 else:
