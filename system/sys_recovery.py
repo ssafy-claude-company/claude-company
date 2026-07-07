@@ -209,6 +209,20 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     # 다시 요구해 마감이 안 닫히던 진짜 원인 차단(verified는 종전대로 0 — 재개 때 1회 재실행).
     ref.owner_delivered = bool(snap.get("owner_delivered", False))
     ref.cross_checks = int(snap.get("cross_checks", 0) or 0)
+    # [소유권-리더십 화해 — 순환대기 데드락 근본] 재개 시 현재 리더가 owner와 다르고 그 owner가 이미 자기 몫을
+    # 인도완료(owner_delivered)했으면, 소유권을 리더에게 넘긴다. 안 그러면 리더십이 다른 도메인 전문가에게
+    # 재배정된 뒤(라이브 P-005: 백엔드 서도훈이 리더로 재지정) 스테일 owner(디자이너, 이미 인도)가 리더의 남은
+    # 도메인 쓰기(server.js)를 게이트#4로 막아, 봇끼리 소유권 이전만 LIFO 베턴에 반복 거부되는 순환대기가 된다.
+    # 리더=owner가 되면 게이트가 안 걸리고(owner==actor) 이전 시도 자체가 불필요 → 데드락이 형성되지 않는다.
+    # 가드: owner_delivered(진행 중인 owner는 안 뺏음). owner_delivered는 False로 리셋 — 새 owner(리더)는
+    # 아직 자기 도메인 잔여 실작업 전이라 허위완료 방지(complete_task가 새로 인도·검증을 요구).
+    _ldr = getattr(flow, "leader", None)
+    if _ldr and ref.owner and int(ref.owner) != int(_ldr) and ref.owner_delivered:
+        _old = ref.owner
+        ref.owner = int(_ldr)
+        ref.status.owner = flow._info(int(_ldr)) or ref.status.owner
+        ref.owner_delivered = False
+        sys._log("owner_reconciled_to_leader", task=ref.task_id, old_owner=int(_old), new_owner=int(_ldr))
     # [수렴 사실 포괄 복원(2026-06-23, 사용자: '메모리 안정적으로')] 게이트가 읽는 진행 사실 전부 복원 —
     # act_by(누가 Write/Edit/run 했나)는 contrib 게이트의 idle 판정 입력이라, 이걸 안 되살리면 복구마다
     # '전원 idle'로 마감이 막힌다(사용자가 짚은 act_by 리셋). deploy_count는 배포 런어웨이 캡이 재시작 너머
