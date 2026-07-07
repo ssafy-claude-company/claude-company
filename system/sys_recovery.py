@@ -108,6 +108,10 @@ def task_snapshot(flow, ref) -> dict:
         # 배포 anti-thrash 상태(전수감사): _deployed_once·_deploy_writes·writes_by_role가 리셋되면 '코드
         # 변경 없는 재배포' 가드가 복구마다 무력화돼 재배포 런어웨이가 되살아난다 → 함께 영속.
         "deployed_once": bool(getattr(flow, "_deployed_once", False)),
+        # [배포 목표 달성 영속(2026-07, 사용자)] 라이브 검증(HTTP 200+바이트 일치)까지 통과한 '배포 성공' 신호 —
+        # 재개(러너 재시작·복구)돼도 '목표 실증됨=완료 인식'이 유지되게 영속(flow.deployed 문자열은 체크포인트에
+        # 안 실려 restore 흐름에선 사라지므로, 그것만 보던 완료 인식이 무효였던 근본 교정).
+        "deploy_live": bool(getattr(flow, "_deploy_live", False)),
         "deploy_writes": int(getattr(flow, "_deploy_writes", -1)),
         "writes_by_role": {str(k): int(v) for k, v in (getattr(flow, "writes_by_role", None) or {}).items()},
         "consec_fail": int(getattr(flow, "consec_fail", 0) or 0),
@@ -245,6 +249,7 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         flow.act_by[int(_m)] = int(_c)
     flow._deploy_count = int(snap.get("deploy_count", 0) or 0)
     flow._deployed_once = bool(snap.get("deployed_once", False))
+    flow._deploy_live = bool(snap.get("deploy_live", False))   # 배포 목표 달성 신호 복원(완료 인식 유지)
     flow._deploy_writes = int(snap.get("deploy_writes", -1))
     for _r, _w in (snap.get("writes_by_role") or {}).items():
         flow.writes_by_role[_r] = int(_w)

@@ -932,21 +932,29 @@ class Sys:
         # 작업*을 잘랐음 — P-010류, 목표=최대 품질과 모순). 무진행이면 아래 break가 즉시 잡으므로, 이 수는
         # '진행 중인 정당한 사슬'을 자르지 않는 넉넉한 한도로 둔다.
         n = int(os.environ.get("ORGANT_AUTO_CONTINUE", "100")) if limit is None else limit
-        # [배포 목표 달성 = 완료 인식(사용자 2026-07)] 배포가 *라이브로 실증*되면(deploy_sync가 'HTTP 200 +
-        # 산출물 바이트 일치'까지 확인한 "배포 성공") 배포-목표 Task의 목표는 달성된 것 — SYS가 미완 QA를 무한
-        # 이어가지 않는다. 종전엔 라이브 배포 후에도 봇들이 라이브를 계속 뜯어보며 새 트집→owner_incomplete→
-        # continue_incomplete를 40분+ 루프해 *스스로 안 닫혔다*(라이브 P-005: 사용자 수동 마감). '실증된 목표'가
-        # 곧 done 기준 — 이어가기를 마무리 검증 소수로만 제한하고 리더에게 complete_task 마감을 명시한다.
-        _deploy_live = isinstance(getattr(flow, "deployed", None), str) and flow.deployed.startswith("배포 성공")
-        if _deploy_live:
-            n = min(n, 2)
+        # [근본: 검증된 목표 달성 = owner 완료(사용자 2026-07)] 완료를 리더의 열린 판단에만 맡기면, 목표가
+        # *실증적으로 달성*돼도(배포 라이브 검증) 완벽주의 QA가 owner_incomplete를 계속 세워 auto-continue가
+        # 안 끝난다(라이브 P-005: 40분+ 무한 루프 → 수동 마감). 임의 횟수 캡(반창고)이 아니라 근본을 친다:
+        # '검증 가능한 목표가 검증됐다'(_deploy_live — 라이브 HTTP 200+산출물 바이트 일치까지 확인·영속)는
+        # 곧 *그 owner의 일이 객관적으로 done*이라는 뜻이다. owner_incomplete를 해제하고 owner_delivered를
+        # 성립시키면 (a) 이 auto-continue 루프가 owner_incomplete 게이트(아래 while)로 자연 종료하고 (b)
+        # complete_task의 _gate_owner_* 가 통과해 리더가 *진짜로* 마감한다. 추가 polish·재배포는 별도 요청.
+        if (getattr(flow, "_deploy_live", False) and flow.current is not None
+                and getattr(flow.current, "owner_incomplete", False)):
+            flow.current.owner_incomplete = False
+            flow.current.owner_delivered = True
+            self._log("deploy_goal_met_owner_done", task=getattr(flow.current, "task_id", None),
+                      owner=getattr(flow.current, "owner", 0))
+            try:
+                self._checkpoint_open_task(flow)   # 영속 — 재개돼도 done 유지(무한 루프 재발 차단)
+            except Exception:
+                pass
+            return ("\n\n[SYS — 배포 목표 달성(라이브 검증됨: HTTP 200 + 산출물 바이트 일치)] 이 Task의 배포 "
+                    "목표가 *객관적으로 실증*됐습니다 — 담당 owner의 일은 done입니다(시스템이 완료로 인정). "
+                    "**complete_task로 마감하세요.** 추가 QA·polish·재배포는 별도 요청 — 목표는 이미 달성됐고 "
+                    "무한 재검증은 진행이 아닙니다.")
         _orig = (getattr(flow.current, "last_work_body", "") or "").strip() if flow.current else ""
-        if _deploy_live:
-            body = ("[SYS — 배포 목표 달성(라이브로 실증됨)] 이 Task의 배포가 라이브 검증(HTTP 200 + 산출물 "
-                    "바이트 일치)을 통과했습니다 — 목표 달성입니다. 진행 중이던 *구체* 작업만 마저 끝내고, "
-                    "**추가 QA·polish를 새로 시작하지 말고 complete_task로 마감하세요**(라이브의 추가 개선은 "
-                    "별도 요청 — 무한 재검증·재배포는 진행이 아닙니다).")
-        elif _orig:
+        if _orig:
             # [정밀 복구 — 드리프트 차단] 리더가 재작문한 위임이 아니라 *원래 보냈던 위임 원문* 그대로 이어 보낸다
             # (부팅 복구 5:13≠5:47 드리프트 차단). owner는 원래 받았던 그 지시로 정확히 재개한다.
             body = ("[SYS 자동 이어가기 — 처음부터 다시 하지 말 것] 직전에 이 작업으로 위임받았습니다(원문 그대로):\n"
@@ -1849,9 +1857,16 @@ class Sys:
                 # progressed=True가 돼 정체감지(연속 무진전 12)가 영영 불발(라이브 t-80: 967세그 전부
                 # progressed·tool_use 0·floor 3868 → 2.5시간 무한루프, 사용자 관측: "리더 작업 중만 몇 시간").
                 progressed = (flow.act_count > acts_seg) or bool(str(drained).strip())
-                # [1층 floor seam] 세그먼트 경계 TRP — turn-taking이면 자기선택 open(기본은 no-op). 발언은
-                # drained에 실어 리더에 전달(위 progressed 계산 뒤라 '진전'으론 안 셈 — 이게 무한루프 차단의 핵심).
-                drained += await self._floor_segment_open(flow, lead)
+                # [검증된 목표 달성 = 완료 수렴(사용자 2026-07)] 배포가 라이브로 실증되면(_deploy_live — 영속)
+                # 이 지배 루프(리더 continue)가 완료로 수렴해야 한다. 근본: 완료를 리더 열린판단에만 맡기면 매
+                # 세그먼트 floor가 열려 [의견] 재확인이 무한(라이브 P-005: 162턴·floor_bid 75·complete_task 0).
+                # 목표가 *객관적으로* 달성됐으면 (a) floor를 더 안 열어 재토론 churn을 끊고 (b) 아래 run_turn
+                # 본문에 'complete_task 마감'을 강제 주입한다(무한 재확인 대신 닫게). 미달성이면 종전대로 floor.
+                _goal_met = bool(getattr(flow, "_deploy_live", False))
+                if not _goal_met:
+                    # [1층 floor seam] 세그먼트 경계 TRP — turn-taking이면 자기선택 open(기본은 no-op). 발언은
+                    # drained에 실어 리더에 전달(위 progressed 계산 뒤라 '진전'으론 안 셈 — 무한루프 차단의 핵심).
+                    drained += await self._floor_segment_open(flow, lead)
                 if not progressed:
                     cont += 1
                 else:
@@ -1884,7 +1899,11 @@ class Sys:
                 # (조율 큐는 위 _auto_coordinate가 SYS 명의로 *직접 위임*해 처리·소비함 — 그 결과가 drained에
                 #  담겨 리더에게 전달되니, 여기선 프롬프트 주입[리더가 무시하던 coord_note]을 제거한다. 리더는
                 #  SYS가 배정한 그 교차도메인 결과를 통합·판정만 한다. 프롬프트→구조 전환의 핵심 지점.)
-                result = await self.run_turn(flow, lead, _CONTINUE_BODY + team_note + drained,
+                _goal_body = ("[SYS — 배포 목표 달성(라이브 HTTP 200 + 산출물 바이트 일치 검증됨)] 이 Task의 "
+                              "목표가 *객관적으로 실증*됐습니다 — **지금 complete_task로 마감하세요.** 추가 QA·"
+                              "재검증·재배포·polish는 별도 요청입니다(무한 재확인·재배포는 진행이 아닙니다). 정말 "
+                              "남은 미완이 있으면 그것만 한 번에 끝내고 바로 complete_task 하세요.\n\n") if _goal_met else ""
+                result = await self.run_turn(flow, lead, _goal_body + _CONTINUE_BODY + team_note + drained,
                                              Kind.WORK, "leader")
             # 이어가기 한도 소진/마감 후에도 완주 중인 위임이 있으면 그 결과까지 받아 보고에 붙인다
             # (작업 유실 방지 — 마지막 위임이 마감 직전에 끝나는 경우).

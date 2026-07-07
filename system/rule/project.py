@@ -264,6 +264,12 @@ async def deploy(flow, args):
             _hb_task.cancel()
         flow.deploy_inflight = False
         flow.deployed = r                  # 배포 호출됨 기록(SYS의 배포 강제가 중복 안 하게)
+        # [배포 목표 달성 영속(2026-07, 사용자: '재개돼도 fix가 켜져야')] 라이브 검증까지 통과한 '배포 성공'은
+        # 배포-목표 달성 신호다 — *영속 플래그*로 남긴다. flow.deployed(문자열)는 체크포인트에 안 실려 재개
+        # 흐름에서 사라지므로, 그것만 보던 완료-인식(무한 QA 차단)은 restore된 흐름(러너 재시작·복구)에선
+        # 안 먹었다. _deploy_live는 sys_recovery가 영속·복원해 재개 후에도 완료 인식이 유지된다.
+        if isinstance(r, str) and r.startswith("배포 성공"):
+            flow._deploy_live = True
         # [런어웨이 cap 정정(2026-07, 사용자: 'cap을 고쳐 배포 되게')] cap의 목적은 *깨진 앱을 계속
         # 재배포*(P-028: push는 성공했으나 앱이 깨진 채 23회) 차단이다. push/설정 단계 실패(계정·리포·
         # 인증·크기·비-일시)는 *앱까지 가보지도 못한 설정 문제*라 고치면 성공한다 — 이걸 앱-런어웨이 cap에

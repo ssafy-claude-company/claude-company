@@ -2208,21 +2208,20 @@ def test_SYS_자동이어가기_미완위임을_시스템이_완주시킴():
     assert "완료" in out and st["n"] == 2
 
 
-def test_배포_라이브면_자동이어가기_소수제한_후_마감유도():
-    """[배포 목표 달성 = 완료 인식(사용자)] 배포가 라이브로 실증되면(flow.deployed '배포 성공') SYS는 미완
-    QA를 무한 이어가지 않는다 — 이어가기를 소수(≤2)로 제한하고 리더에게 complete_task 마감을 명시(라이브
-    P-005: 배포 라이브 후에도 continue_incomplete 40분+ 루프로 스스로 안 닫히던 것 차단). 배포 없으면
-    종전대로 넉넉히 이어간다(진행 중인 정당한 사슬은 안 자름)."""
+def test_배포_목표달성이면_owner완료로_인정_무한QA차단():
+    """[근본: 검증된 목표 달성 = owner 완료(사용자)] 완료를 리더 판단에만 맡기면 목표가 실증돼도 완벽주의
+    QA가 owner_incomplete를 계속 세워 auto-continue가 무한(라이브 P-005: 40분+ 루프, 수동 마감). 임의 횟수
+    캡(반창고)이 아니라 근본: 배포가 라이브로 검증되면(flow._deploy_live — 영속) '그 owner의 일은 객관적으로
+    done' → owner_incomplete 해제 + owner_delivered 성립 → 루프 즉시 종료(무한 QA 없음) + complete_task
+    게이트 통과로 리더가 진짜 마감. 배포 없으면 종전대로 넉넉히 이어감(정당한 사슬 보존)."""
     g = FakeGuide()
     f = _flow(g)
-    f.deployed = "배포 성공 ✅ 라이브(HTTP 200 + 산출물 바이트 일치): https://organt-p-005.onrender.com"
-    st = {"n": 0, "bodies": []}
+    st = {"n": 0}
 
     async def wake(to, b, k):
-        st["n"] += 1
-        st["bodies"].append(b)
-        f.act_count += 1                                                  # 진행은 함(무진행 break 회피)
-        return "라이브 재확인 중 (⚠ 턴 한도 도달 — 작업이 미완일 수 있음)"    # 계속 미완(perfectionist QA)
+        st["n"] += 1                                                     # 목표 달성이면 이어가기 호출 자체가 없어야
+        f.act_count += 1
+        return "재확인 (⚠ 턴 한도 도달 — 작업이 미완일 수 있음)"
 
     f.wake = wake
     s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "M"})
@@ -2232,9 +2231,13 @@ def test_배포_라이브면_자동이어가기_소수제한_후_마감유도():
     asyncio.run(t["set_goal"].handler({"goal": "g"}))
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "구현"}))
     assert f.current.owner_incomplete is True
-    asyncio.run(s._auto_continue_owner(f, 11))
-    assert st["n"] <= 2, f"배포 라이브면 이어가기 소수 제한이어야(무한 100 아님): {st['n']}"
-    assert any("배포 목표 달성" in b and "complete_task" in b for b in st["bodies"]), st["bodies"]
+    f._deploy_live = True                                                # 배포 라이브 검증됨(영속 신호 — 재개돼도 유지)
+    st["n"] = 0                                                          # 초기 request의 wake는 제외 — 이후 auto_continue의 wake만 측정
+    out = asyncio.run(s._auto_continue_owner(f, 11))
+    assert f.current.owner_incomplete is False                          # 근본: 검증된 목표=owner 일 done으로 인정
+    assert f.current.owner_delivered is True                            # 인도 성립 → complete_task _gate_owner_* 통과
+    assert st["n"] == 0                                                 # auto_continue가 이어가기(wake) 0회 — 즉시 종료(캡 아님)
+    assert "목표 달성" in out and "complete_task" in out
 
 
 def test_SYS_자동이어가기_무진행이면_중단():
