@@ -4552,6 +4552,30 @@ def test_직군밖_Work는_전문가가_반려_리더는_채용지시_받음():
     assert f.comm.alive == 11                                     # 베턴 정상 복귀
 
 
+def test_직군밖_반려는_파일소유도_해제_전문가P2P이전():
+    """[파일 P2P 이전 — 전문가 이전 방식(사용자)] '[직군밖]' 반려 시 task 소유뿐 아니라 반려한 봇 도메인의
+    **파일 lock(file_owner)도 해제**된다 → 올바른 도메인이 리더 위임 없이(탈중앙) 이어받아 편집·재귀속.
+    라이브: 프론트가 server.js 스캐폴드→백엔드가 못 고쳐 텍스트로 넘김→프론트 [직군밖] 거절 데드락 해소."""
+    import os as _os
+    f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11,
+             bot_info={11: "L", 12: "프론트엔드"})
+    f.start_root("root")
+    f.file_owner = {_os.path.realpath("/ws/server.js"): "프론트엔드",   # 프론트가 스캐폴드로 만듦
+                    _os.path.realpath("/ws/app.js"): "프론트엔드"}
+
+    async def wake(to, b, k):
+        return "[직군밖] 백엔드\n이 server.js 하드닝은 백엔드 도메인입니다."
+    f.wake = wake
+    t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "server.js 하드닝"
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "server.js 하드닝해줘"}))
+    # 반려한 프론트엔드의 파일 lock이 전부 해제 → 백엔드가 이어받아 편집·소유 가능(미소유=자유)
+    assert _os.path.realpath("/ws/server.js") not in f.file_owner
+    assert _os.path.realpath("/ws/app.js") not in f.file_owner
+    assert f.current.owner == 0                                   # task 소유도 해제(기존)
+
+
 def test_범용직군_채용은_정책으로_거부():
     """[전문화 정책 — 사용자 결정] 풀스택·제너럴리스트류 범용 직군 채용은 거부된다 — 범용은 모든
     일을 흡수해 전문 채용을 막고(라이브: 1봇 22건 집중) 병렬의 병목이 된다."""
