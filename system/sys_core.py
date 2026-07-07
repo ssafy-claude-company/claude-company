@@ -88,6 +88,10 @@ class Sys:
         self.queue = []                        # 진행 중 들어온 명령(순차 처리 대기)
         self.flow_log = []
         self.flow_log_path = (os.path.join(session_dir, "flow.jsonl") if session_dir else None)
+        # [관측 v1 — 2026-07-07] 봉투: seq(프로세스 단조 정수·동시흐름 순서)·trace_id(현재 처리 중인
+        # 요청의 상관 id — user_request 진입 시 설정, flow/audit 이벤트에 실려 끝단 추적 가능).
+        self._obs_seq = 0
+        self._trace_id = None
         self.projects_path = projects_path     # 레지스트리 영속 경로(없으면 인메모리)
         self.seed_path = seed_path             # 커밋된 시드(리클레임으로 디스크 유실 시 폴백)
         self.projects: Dict[int, dict] = {}    # channel_id → 프로젝트 컨텍스트(개입 진입점)
@@ -326,7 +330,10 @@ class Sys:
         return sys_store.save_profiles(self)
 
     def _log(self, event, **f):
-        rec = {"event": event, "ts": time.time(), **f}
+        # [관측 v1] 봉투 seq·trace_id 부여(하위호환 — 소비측이 결측 허용). f에 명시 trace_id 있으면 우선.
+        self._obs_seq += 1
+        rec = {"event": event, "ts": time.time(), "seq": self._obs_seq,
+               "trace_id": f.pop("trace_id", None) or self._trace_id, **f}
         self.flow_log.append(rec)
         # [관측성 — journald 노출(2026-06, 사용자)] 구조화 이벤트를 stderr(fd2)로도 한 줄 흘린다 → systemd가
         # 저널에 담는다. flow.jsonl(파일)만으론 운영 중 '왜 멈췄나'(flow_idle_aborted·queued·flow_done 등)를
@@ -2016,13 +2023,12 @@ class Sys:
         return None
 
     def _flow_activity(self, channel_id):
-        """[진행 가시성] 이 채널 흐름에서 '일하는 봇의 최근 활동 목록'(오래된→최신, 최근 30). 신선도로
-        비우지 않는다 — 비우면 payload가 지워져 '보이다 없어지다' 깜빡였다(사용자 관측). 최신이 오래됐는지
-        (정체)는 별도 idle_s(quiet 라벨)가 표시한다. 목록이 있으면 그대로, 없으면 []."""
+        """[진행 가시성] 이 채널 흐름의 활동 전체 기록(오래된→최신). 신선도로 비우지 않는다 — 비우면
+        payload가 지워져 '보이다 없어지다' 깜빡였다(사용자 관측). 정체 여부는 별도 idle_s(quiet 라벨)가
+        표시. 임의 상한 없음(표시는 UI 스크롤이 맡음). 있으면 그대로, 없으면 []."""
         for f in list(self.active_flows.values()):
             if getattr(f, "user_channel", None) == int(channel_id) and not getattr(f, "done", False):
-                lst = (getattr(f, "live_activity", None) or {}).get(getattr(getattr(f, "comm", None), "alive", None)) or []
-                return [x[0] for x in lst[-30:]]        # 최근 30줄(신선도 무관 — 안 비움)
+                return [x[0] for x in (getattr(f, "activity_log", None) or [])]
         return []
 
     async def run(self, guide, leader, cap=4, poll=3.0, stall_timeout=900, max_age=7200, once=False):
@@ -2042,6 +2048,9 @@ class Sys:
         _sp = int(os.environ.get("ORGANT_SLEEP_PERIOD", "600"))
         if not once and _sp > 0 and self.session_dir:
             _sleep_task = asyncio.create_task(self._sleep_loop(_sp))
+        # [관측 v1] 프로세스 경계 — 러너 기동. 파일만으론 재시작·크래시 식별 불가하던 것 교정.
+        self._log("runner_boot", version=os.environ.get("ORGANT_VERSION", ""),
+                  pid=os.getpid(), floor=os.environ.get("ORGANT_FLOOR", "request-response"), cap=cap)
         while True:
             try:
                 _now = asyncio.get_event_loop().time()
@@ -2052,9 +2061,13 @@ class Sys:
                         for _mid in list(inflight):
                             _idle = self._flow_idle(inflight[_mid]["ch"])
                             _act = self._flow_activity(inflight[_mid]["ch"])
-                            # 비었으면 None으로 — payload의 마지막 활동을 유지(재시작·소강에 안 지워져 깜빡임 방지).
+                            # 활동이 늘었을 때만 전체 목록 전송(변화 없으면 재전송 안 함 — 대역 절약).
+                            # 비었으면 None → payload의 마지막 활동 유지(재시작·소강에 안 지워져 깜빡임 방지).
+                            _send_act = _act if (_act and len(_act) != inflight[_mid].get("act_n")) else None
+                            if _send_act is not None:
+                                inflight[_mid]["act_n"] = len(_act)
                             await guide.pick(_mid, touch=True, idle=int(_idle) if _idle is not None else 0,
-                                             activity=(_act or None))
+                                             activity=_send_act)
                     except Exception:
                         pass
                     last_beat = _now
@@ -2139,16 +2152,22 @@ class Sys:
                     log.info("▶ 요청 처리(동시 %d/%d): ch=%s to=%s kind=%s body=%r", len(inflight), cap, ch, to_id, m["kind"], m["body"][:42])
                 if once and not inflight and not pend:
                     log.info("[--once] 대기·진행 요청 없음 — 종료.")
+                    self._log("runner_shutdown", reason="once_done")
                     return
                 await asyncio.sleep(2)
             except KeyboardInterrupt:
                 log.info("종료 신호 — 폴링 중단.")
+                self._log("runner_shutdown", reason="keyboard_interrupt")
                 return
             except Exception as e:
                 log.error("폴링 루프 오류: %s\n%s", e, traceback.format_exc())
+                self._log("run_loop_error", err=str(e)[:200])   # [관측 v1] 폴링 루프 예외 실명화
             await asyncio.sleep(poll)
 
     async def route_channel_request(self, channel_id, request: Request, root_id=None) -> dict:
+        # [관측 v1] 이 요청 처리 동안의 trace_id 설정 — 이후 flow/audit 이벤트가 이 id를 달아
+        # 한 요청→전체 인과 사슬을 /api/monitor/trace/<id>로 복원 가능. 요청 msg_id 기반(고유).
+        self._trace_id = "t-" + str(request.message_id or int(time.time() * 1000))[-10:]
         if request.to_id is None:
             self._log("ignored", reason="To 없음")
             return {"mode": "ignored"}
