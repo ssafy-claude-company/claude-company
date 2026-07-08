@@ -32,17 +32,21 @@ tmux new-session -d -s "$N" "cd '$W' && MURMUR_ROOT='$W' claude remote-control -
 ```
 - **원리**: `session.sh`는 worktree 이름=`/root/wt/<T>`로 강제해서 `T=변도진`이면 신규 worktree를 판다. 기존 세션 복구는 **worktree 경로를 직접 지정**해 remote-control을 띄워야 한다.
 
-## fable-* 병렬 세션 (Fable-세션2에서 포크한 4개)
+## Fable 워커 세션 (Fable-세션2에서 포크한 6개 — 이현준-1~3 · 변도진-1~3)
 | 이름 | worktree/브랜치 | 자기 세션ID | tmux |
 |---|---|---|---|
-| **fable-1** | `/root/wt/fable-1` `s/fable-1` | `e6a40f93` | `tmux attach -t fable-1` |
-| **fable-2** | `/root/wt/fable-2` `s/fable-2` | `2f3959d2` | `tmux attach -t fable-2` |
-| **fable-3** | `/root/wt/fable-3` `s/fable-3` | `419969b6` | `tmux attach -t fable-3` |
-| **fable-4** | `/root/wt/fable-4` `s/fable-4` | `48ee815a` | `tmux attach -t fable-4` |
+| **이현준-1** | `/root/wt/이현준-1` `s/이현준-1` | `d39dd393` | `tmux attach -t 이현준-1` |
+| **이현준-2** | `/root/wt/이현준-2` `s/이현준-2` | `c83fd0fa` | `tmux attach -t 이현준-2` |
+| **이현준-3** | `/root/wt/이현준-3` `s/이현준-3` | `da4ba956` | `tmux attach -t 이현준-3` |
+| **변도진-1** | `/root/wt/변도진-1` `s/변도진-1` | `b5cfc899` | `tmux attach -t 변도진-1` |
+| **변도진-2** | `/root/wt/변도진-2` `s/변도진-2` | `475724d5` | `tmux attach -t 변도진-2` |
+| **변도진-3** | `/root/wt/변도진-3` `s/변도진-3` | `9750db36` | `tmux attach -t 변도진-3` |
 
-- **최초 생성**: `Fable-세션2`(e4414f9b) → `claude --resume … --fork-session`(맥락 복제, 원본 불변) + 각자 git worktree + `--remote-control`.
-- **재기동**: **`bash ops/fable.sh <1-4|all>`** — 각자 **자기 세션ID로 resume**(재포크 금지 — 재포크하면 누적작업 소실) + **`--effort max` 고정** + RC. 살아있는 건 스킵.
-- **effort는 launch 플래그로 박혀 있다**(`ops/fable.sh`). `/effort max`는 런타임만 바꿔 재시작 시 상속값(high)으로 돌아가므로, 영구 고정은 이 스크립트가 담당. 전체 세션ID는 `ops/fable.sh`의 `SID` 맵 참조.
+- 전부 **Fable 모델(claude-fable-5) · max effort · RC**. (사람 genesis 세션 `이현준`·`변도진`(번호 없음)과는 별개 — 이건 Fable 워커 복제본.)
+- **최초 생성**: `Fable-세션2`(e4414f9b) → `claude --resume … --fork-session --model fable --effort max`(맥락 복제, 원본 불변) + 각자 git worktree + `--remote-control`.
+- **재기동**: **`bash ops/fable.sh <이름|all>`** — 각자 **자기 세션ID로 resume**(재포크 금지 — 재포크하면 누적작업 소실) + **`--model fable --effort max` 고정** + RC. 살아있는 건 스킵.
+- **기본설정(모델·effort)은 launch 플래그로 박혀 있다**(`ops/fable.sh`). `/model`·`/effort`는 런타임만 바꿔 재시작 시 상속값으로 돌아가므로, 영구 고정은 이 스크립트가 담당. 세션ID 전체는 `ops/fable.sh`의 `SID` 맵 참조.
+- Korean 경로는 `.claude` 프로젝트 디렉터리에서 충돌(이현준-N·변도진-N 동수 → 같은 디렉터리)하지만, resume를 **명시 세션ID**로 하므로 조회 모호성 없음.
 
 ## 착지 (작업 반영)
 각 세션이 스스로: **`bash ops/land.sh <이름>`** → 자기 브랜치를 정본 병합+전체검증(통합 세션 불필요). 라이브 재시작만 사용자 승인.
