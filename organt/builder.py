@@ -13,6 +13,7 @@ from claude_agent_sdk import HookMatcher
 from system.audit import AuditLog, make_post_tool_use_hook
 from system.config import Config
 from system.tool_names import FLOW_TOOLS, LEADER_TOOLS
+from system.protocol import Marker
 from .organt import Organt, build_options, load_persona, pinned_cwd
 from system.permissions import make_pre_tool_use_hook
 
@@ -75,7 +76,7 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                     # [응찰≠생각] 발언권 프로브 응답(응찰/패스/계속/발언권)은 시스템 메커니즘이지 봇의 진짜 작업
                     # 생각이 아니다 — activity log(💭)에 안 넣는다(사용자: "응찰 이러면서 자기 생각이 아닌데").
                     # flow._suppress_activity가 주경로(floor 구간 통째 억제), 이건 백스톱(마커 없는 산문 포함).
-                    if any(m in t for m in ("응찰", "[패스", "[계속", "발언권", "[SYS 프로브")):
+                    if any(m in t for m in Marker.MECHANISM_TOKENS):
                         return
                     if len(t) > 96:                  # [단어경계 컷] '.coll' 같은 중간 절단 방지 — 마지막 공백까지만
                         cut = t[:96]

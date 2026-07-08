@@ -9,6 +9,7 @@ Discord엔 구조화된 형식만 오간다. Discord가 주는 정보(From=보�
   Kind: Work|Info
   Body: ---
 """
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple, Union
@@ -49,6 +50,31 @@ class TaskStatus:
     owner: str = ""                                             # 단일 책임자(accountable)
     group: List[Tuple[str, str]] = field(default_factory=list)  # [(@멘션, 봇 정보)]
     result: Optional[str] = None
+
+
+class Marker:
+    """수행문 마커 사전 — 봇 발화 속 신호(시스템이 파싱해 동작)의 단일 정의.
+
+    대화가 매체인 시스템에서 발화로 수행하는 것은 정당하다(사람도 "동의합니다"로 표결한다).
+    단 그 정의가 여러 파일에 흩어지면 물리법칙(Rule)이 자연어 표면에 산개된다 — 여기가 단일 사전이다.
+    이관 현황(2026-07-08): organt/builder 완료. communication·floor·flow·sys_prompt는
+    본체 세션 착지 후 이관(같은 파일 동시 편집 충돌 회피 — ops Task 게이트 정리와 함께).
+    """
+    BID = "응찰"            # [응찰: N] 발언권 응찰(강도 0~9)
+    CONTINUE = "계속"        # [계속: N] 종결 반대 = 발언 의무를 진 응찰(동형 강도)
+    PASS = "패스"            # [패스] 발언권 포기
+    END = "종료"             # [종료] 종결 찬성
+    DELEGATED = "위임됨"      # [위임됨] 위임 접수 확인(시스템 발화)
+    OFFDOMAIN = "직군밖"      # [직군밖] Work 반려 — 내 도메인이 아님
+    EXPERIENCE = "경험"       # [경험] 보고 속 경험 적재 필드
+    SYS_PROBE = "SYS 프로브"  # 시스템 프로브 표식(봇 생각 아님)
+
+    # 파싱 정본 정규식 — 소비처는 이걸 import해 쓴다(로컬 재정의 금지)
+    BID_RE = re.compile(r"\[\s*(?:응찰|계속)\s*[:：]\s*([0-9])\s*\]")
+    PASS_OR_END_RE = re.compile(r"^\[?\s*(패스|종료)\s*\]?\s*$")
+
+    # 진행 가시성(narrate)에서 '봇의 생각'이 아닌 메커니즘 발화로 거를 토큰들
+    MECHANISM_TOKENS = ("응찰", "[패스", "[계속", "발언권", "[SYS 프로브")
 
 
 # --- 포맷팅 (SYS → Discord) ---
