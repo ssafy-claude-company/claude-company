@@ -201,25 +201,14 @@ async def deploy(flow, args):
         except Exception as _e:
             if flow.log:
                 flow.log("deploy_creds_vault_err", err=str(_e)[:120])
-    from ..deploy import deploy_targets
-    _target_arg = str(args.get("target") or "").strip().lower()
-    _known = deploy_targets()
-    if _target_arg and _target_arg not in _known:
-        return _ok(f"배포 불가: 모르는 타겟 '{_target_arg}'. 사용 가능: {', '.join(_known)}. "
-                   f"AWS·GCP 등 임의 플랫폼은 target='script' + command(배포 셸)로 배포하세요.")
-    _target = _target_arg or (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
-    if _target not in _known:
-        _target = "vps"
-    # 타겟별 최소 요건 게이트: render=자격증명, script=command(그 외는 자격증명 불요)
-    if _target == "render":
-        _creds_ok = bool(gh and ghu and rk and owner)
-    elif _target == "script":
-        _creds_ok = bool(str(args.get("command") or "").strip())
-        if not _creds_ok:
-            return _ok("배포 불가(script): command가 필요합니다 — 배포 셸 명령을 주세요"
-                       "(예: aws s3 sync … / gcloud app deploy / flyctl deploy). 결과 URL은 url 인자로.")
-    else:
-        _creds_ok = True
+    # [구분 없음(2026-07-08 사용자: "구분하지 말라고 그냥")] 봇은 타겟을 고르지 않는다 —
+    # 그냥 배포하거나(기본), 특별한 배포 방법이 있으면 command로 그 셸 명령만 준다.
+    # command 있음 = 봇이 준 방법 그대로(AWS/GCP/Fly/뭐든), 없음 = 기본(자체 서버, env로 변경 가능).
+    _command = str(args.get("command") or "").strip()
+    _url = str(args.get("url") or "").strip()
+    _default_target = (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
+    _target = "script" if _command else _default_target
+    _creds_ok = bool(gh and ghu and rk and owner) if (_target == "render" and not _command) else True
     if not _creds_ok:
         # [하드블록 — 스핀 차단(2026-06, 사용자)] 자격증명 없음은 봇이 *코드로 못 푸는 인프라 벽*이다.
         # 종전엔 봇이 재검증·재시도만 반복(act_count↑=가짜 진행)해 며칠씩 루프하다 무진행 컷났다
@@ -242,7 +231,7 @@ async def deploy(flow, args):
     # [배포 타겟 호환 사전검증 — 첫 배포 전에(2026-06-22 P-028)] Render Node 런타임엔 Python이 없다 —
     # 서버가 런타임에 Python을 spawn하면 라이브에서 502로 죽는다. 5회 상한(사후)이 아니라 *지금* 잡아
     # 명확한 처방을 준다(토큰·빌드 낭비 차단). 빌드타임 학습용 Python은 통과 — 런타임 의존만 차단.
-    _infeasible = _deploy_infeasibility(flow.workspace) if _target == "render" else ""   # Node 전용 검사는 render만
+    _infeasible = _deploy_infeasibility(flow.workspace) if (_target == "render" and not _command) else ""
     if _infeasible:
         if flow.log:
             flow.log("deploy_infeasible", reason=_infeasible[:80])
@@ -278,17 +267,18 @@ async def deploy(flow, args):
                 pass
         _hb_task = asyncio.ensure_future(_deploy_heartbeat())
         try:
-            # target/config는 봇이 명시했을 때만 전달 — 미지정이면 deploy_sync가 스스로
-            # env→기본(vps)으로 푼다(구형 대역/테스트 스텁과의 시그니처 호환).
-            if _target_arg:
+            if _command:                        # 봇이 준 배포 방법 그대로 실행(플랫폼 무관)
                 from functools import partial
-                _cfg = {"command": str(args.get("command") or "").strip(),
-                        "url": str(args.get("url") or "").strip(),
-                        "env": _vault_env}          # 금고 자격증명 dict(script provider가 env로 주입)
+                _cfg = {"command": _command, "url": _url, "env": _vault_env}
                 _dep_fn = partial(deploy_sync, flow.workspace, name, gh, ghu, rk, owner,
-                                  target=_target_arg, config=_cfg)
+                                  target="script", config=_cfg)
                 r = await anyio.to_thread.run_sync(_dep_fn)
-            else:
+            elif _default_target != "vps":          # 전역 기본이 따로 있으면(예: render) 그걸로
+                from functools import partial
+                _dep_fn = partial(deploy_sync, flow.workspace, name, gh, ghu, rk, owner,
+                                  target=_default_target, config={"env": _vault_env})
+                r = await anyio.to_thread.run_sync(_dep_fn)
+            else:                                    # 기본 — 자체 서버(종전 시그니처 호환)
                 r = await anyio.to_thread.run_sync(deploy_sync, flow.workspace, name, gh, ghu, rk, owner)
         except Exception as e:
             r = f"배포 처리 오류: {e}"

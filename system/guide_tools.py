@@ -459,13 +459,13 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
 
 
         @tool("deploy",
-              "검증을 마친 산출물을 실제로 공개 배포한다. name=영문 소문자·하이픈 서비스명. 라이브 URL 반환. "
-              "**배포 타겟은 상황에 맞게 네가 고른다**(한 곳에 종속되지 않음): "
-              "target=vps(기본·회사 서버 /apps/, 자격증명 불요) · render(Render, 금고 자격증명) · "
-              "script(임의 플랫폼 — AWS/GCP/Fly/Vercel 등을 네가 아는 CLI로. command=배포 셸 명령 필수, "
-              "url=결과 공개 URL 선택. 금고 자격증명은 자동으로 환경변수 주입). "
-              "vps/render는 Node 앱(process.env.PORT) 또는 정적(public/·index.html). run 검증 뒤 마지막에 호출.",
-              {"name": str, "target": str, "command": str, "url": str})
+              "검증을 마친 산출물을 공개 배포한다. name=영문 소문자·하이픈 서비스명. 라이브 URL 반환. "
+              "**그냥 배포하면 된다** — 보통은 name만 주면 회사 서버로 배포된다(Node 앱은 process.env.PORT, "
+              "또는 정적 public/·index.html). **특별한 배포 방법이 필요하면**(AWS·GCP·Fly·Vercel 등) "
+              "command에 그 배포 셸 명령을 주면 그대로 실행한다(예: 'aws s3 sync public/ s3://버킷', "
+              "'gcloud app deploy', 'flyctl deploy') — 금고에 넣어둔 자격증명은 환경변수로 자동 주입되고, "
+              "url에 결과 공개 주소를 주면 실응답까지 확인한다. 플랫폼을 미리 구분하지 마라. run 검증 뒤 호출.",
+              {"name": str, "command": str, "url": str})
         async def deploy(args):
             return await _rule_deploy(flow, args)
         tools.append(deploy)
