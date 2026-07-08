@@ -110,6 +110,9 @@ class Sys:
         # _ledger_accrue(owner 정당 수임+교차검증 통과 Task의 owner 저작만) — cover 판정 비편입 4용도
         # (peers 강점줄·_free_alternatives 후보 나열·recommend 투영·관측) 전용.
         self.capability_ledger: Dict[int, Dict[str, int]] = {}
+        # [천장 성장 연동(2026-07-08)] 봇id→성공한 개인 증류 횟수. 증류 실적만큼 개인 기준의 자수 천장이
+        # 자란다(_distill_cap: 600+60/회, 상한 1200) — 고정 600자가 성장한 봇의 지혜를 깎던 것 교정.
+        self.bot_distill_counts: Dict[int, int] = {}
         self.onboarded: set = set()   # [사수 전수] 온보딩(이름·인격) 완료 봇 — 기준은 사수 몫이라 별도 표식(영속)
         self.profiles_path = (os.path.join(session_dir, "role_profiles.json") if session_dir else None)
         self._load_profiles()
@@ -428,7 +431,7 @@ class Sys:
                 # 훼손하는 역설(절단된 반쪽 원칙이 매 턴 주입됨). 마지막 완전한 줄까지만 남긴다.
                 cut = body[:1500]
                 body = cut[:cut.rfind("\n")] if "\n" in cut else cut
-            if job and body and me is not None:
+            if job and body and me is not None and not self._hollow_standard(body):
                 self.bot_profiles[int(me)] = body        # 자기 기준으로만(직군 공용 아님)
                 absorbed.append((job, body))
             return ""
@@ -469,8 +472,12 @@ class Sys:
     # role_profiles는 더 이상 적립·주입되지 않고, 채용 제네시스(_onboard_inner)가 '이어받을 유산'으로만
     # 읽는다(리크루터가 개인 기준으로 변형 생성 — 기계적 시드 복사 아님). role_experience는 레거시 동결.
 
-    # [B-19] 개인 증류 발동선 — 개인 경험(원석)이 이 수 이상 쌓인 봇이 수면(distill_bot) 대상(설계 명세 8).
-    _BOT_DISTILL_MIN = int(os.environ.get("ORGANT_BOT_DISTILL_MIN", "8"))
+    # [B-19] 개인 증류 발동선 — 개인 경험(원석)이 이 수 이상 쌓인 봇이 수면(distill_bot) 대상.
+    # [8→5 하향(2026-07-08, 사용자 승인)] 위 경계: 첫 wake 원석 주입 창이 최근 6건(craft_note exp[-6:])이라
+    # 발동선이 6을 넘으면 '주입에서도 밀리고 증류도 안 된' 유실 구간이 생긴다. 아래 경계: 재료 3~4건은
+    # 정리가 아니라 재작성. 비용: 수면 사이클당 최대 1봇이라 하향해도 호출 상한 불변. 라이브 관측:
+    # 14봇 대부분 원석 1~7건 정체 — 8은 실데이터 대비 과높음.
+    _BOT_DISTILL_MIN = int(os.environ.get("ORGANT_BOT_DISTILL_MIN", "5"))
 
     def pick_distill_bots(self):
         """[B-19] 개인 기준 증류 후보 봇들 — 개인 경험이 임계(8건+) 쌓인 봇, 많은 순(수면 사이클이 소비)."""
@@ -507,6 +514,21 @@ class Sys:
     # [B-19] [개인기준] 블록 파서 — distill_role의 [직무기준] 관례 동형(헤더는 봇 라벨, 본문만 소비).
     _BOT_PROFILE_RE = re.compile(r"\[개인기준\]\s*(?P<who>[^\n]*)\n(?P<body>.*?)\n?\[/개인기준\]", re.S)
 
+    @staticmethod
+    def _hollow_standard(body) -> bool:
+        """기준(개인기준·직무기준)이 '없음'류 탈출구 텍스트뿐인가 — 저장하면 빈 기준이 UI·동료 강점줄·
+        검증 루브릭까지 흘러간다. [경험] 흡수엔 같은 필터가 있었으나 기준 경로(흡수·증류·전수) 셋엔
+        없어 라이브 잔여물('없음'·'none' 기준 2건)이 실제로 생겼다(2026-07-08 검수)."""
+        t = (body or "").strip().rstrip(".").lower()
+        return t in ("", "없음", "없다", "none", "n/a", "-", "특이사항 없음", "해당 없음")
+
+    @staticmethod
+    def _distill_cap(count) -> int:
+        """[천장 성장 연동] 개인 기준 자수 상한 = 600 + 성공 증류 1회당 60, 최대 1200.
+        성장(검증된 증류 실적)만큼만 공간이 는다(직업=기억). 주입은 첫 wake 1회라 1200자도 저비용이고,
+        무한 확장은 일반론 비대라 상한을 박는다(트레이드오프 설정 — 사용자 지시 2026-07-08)."""
+        return min(1200, 600 + 60 * max(0, int(count or 0)))
+
     async def distill_bot(self, mid) -> bool:
         """[B-19 — 수면, 개인 기준 증류] distill_role 동형의 개인판: 봇 자신의 경험(원석 8건+)을 그 봇이
         '개인 기준'(≤600자)으로 압축한다 → bot_profiles[mid] 영속·원석 풀 비움. `__distill__` 의사스코프
@@ -530,6 +552,7 @@ class Sys:
     async def _distill_bot_inner(self, mid, exp) -> bool:
         label = str(self.bot_info.get(mid, "")) or f"봇{mid}"
         cur = self.bot_profiles.get(mid, "(아직 없음)")
+        cap = self._distill_cap(self.bot_distill_counts.get(mid, 0))   # 성장 연동 천장(600→최대 1200)
         flow = Flow(self.guide, 0, self.guild_id, mid, self.bot_info)   # 도구 형식용 빈 흐름(깨우기 없음)
         flow.workspace = self._distill_workspace()   # [OOM 근본교정] 격리 빈 cwd — builder가 cfg.workspace_dir(대형 트리)로 폴백 못 하게
         server = build_guide_server(flow, mid, "member")
@@ -545,7 +568,7 @@ class Sys:
             f"수면의 본질은 '쌓기'가 아니라 '정리'입니다 — 당연한 일반론은 버리고, "
             f"**당신 자신**의 작업 방식·강점·반복 함정만 남기세요:\n"
             f"- 겹치는 교훈은 별도 추가가 아니라 합쳐 더 일반적인 한 원칙으로.\n"
-            f"- **예산: 전체 600자 이내** — 넘치면 가장 덜 중요한 줄을 버리세요.\n"
+            f"- **예산: 전체 {cap}자 이내** — 넘치면 가장 덜 중요한 줄을 버리세요.\n"
             f"- 일회성 디테일·특정 프로젝트 한정 사항은 버리세요.\n"
             f"반드시 아래 형식만으로 답하세요:\n[개인기준] {label}\n(개선된 개인 기준 줄들)\n[/개인기준]"
         )
@@ -556,13 +579,14 @@ class Sys:
             return False
         m = self._BOT_PROFILE_RE.search(out or "")
         body = (m.group("body") or "").strip() if m else ""
-        if len(body) > 600:
+        if len(body) > cap:
             # 하드캡은 '줄 단위'로 — 문장 중간 절단 방지(_absorb_role_profiles 관례 동형).
-            cut = body[:600]
+            cut = body[:cap]
             body = cut[:cut.rfind("\n")] if "\n" in cut else cut
-        if body and body != cur:
+        if body and not self._hollow_standard(body) and body != cur:
             self.bot_profiles[mid] = body
             self.bot_experience[mid] = []                 # 증류 완료 — 원석 비움
+            self.bot_distill_counts[mid] = int(self.bot_distill_counts.get(mid, 0)) + 1   # 천장 성장 실적
             self._save_profiles()
             self._log("bot_distilled", bot=mid, used=len(exp))
             await self._sync_craft(mid, distilled=True)   # [격리] 개인 증류 → 웹 표면 동기(+증류 카운트)
@@ -789,7 +813,7 @@ class Sys:
         if len(body) > 600:
             cut = body[:600]
             body = cut[:cut.rfind("\n")] if "\n" in cut else cut
-        if not body:
+        if not body or self._hollow_standard(body):
             self._log("endow_noop", bot=mid, by=worker)
             return False
         self.bot_profiles[mid] = body
