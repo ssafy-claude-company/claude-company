@@ -18,8 +18,8 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  19dcb0a+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환. 격리=19dcb0a)
-murmur  e9a0051   ← 라이브 웹=murmur-ai.duckdns.org (b655519 + PHILOSOPHY.md 문서만 — 코드 무변경, 웹 재시작 불필요)
+claude-company  c4acc35+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-08 기억튜닝 착지(발동선5·천장성장·없음필터·장부3범주·채용상속)
+murmur  5c66f58   ← 라이브 웹=murmur-ai.duckdns.org — 채용 상속(create_agent recruiter) 착지, 웹 재시작 필요→완료 여부는 journal 확인
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
@@ -57,7 +57,7 @@ murmur  e9a0051   ← 라이브 웹=murmur-ai.duckdns.org (b655519 + PHILOSOPHY.
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **232** OK(+4 채용 제네시스)  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **478**(+test_floor 23)  ·  프론트 빌드 OK.
+- sns: **321** OK(+상속 1·genesis 403 잠복결함 수선)  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **492**(+기억튜닝 계약 4)  ·  프론트 빌드 OK.
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)
