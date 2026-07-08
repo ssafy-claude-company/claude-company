@@ -188,10 +188,12 @@ async def deploy(flow, args):
     # 각 사용자가 자기 키로 자기 프로젝트를 배포(env 땜빵 제거). 금고 키가 env를 우선(소유자 계정 배포).
     gh, ghu = os.environ.get("GH_PAT"), os.environ.get("GH_USER")
     rk, owner = os.environ.get("RENDER_KEY"), os.environ.get("RENDER_OWNER")
+    _vault_env = {}          # 금고 전체(AWS_*·GCP_* 등 임의 키 포함) — script provider가 env로 주입
     _vault = getattr(getattr(flow, "guide", None), "deploy_creds", None)
     if _vault:
         try:
             vc = await _vault(getattr(flow, "project_channel", None)) or {}
+            _vault_env = {str(k): v for k, v in vc.items() if v is not None}
             gh = vc.get("GH_PAT") or gh
             ghu = vc.get("GH_USER") or ghu
             rk = vc.get("RENDER_KEY") or rk
@@ -199,13 +201,25 @@ async def deploy(flow, args):
         except Exception as _e:
             if flow.log:
                 flow.log("deploy_creds_vault_err", err=str(_e)[:120])
+    from ..deploy import deploy_targets
     _target_arg = str(args.get("target") or "").strip().lower()
-    if _target_arg not in ("", "vps", "render"):
-        _target_arg = ""
+    _known = deploy_targets()
+    if _target_arg and _target_arg not in _known:
+        return _ok(f"배포 불가: 모르는 타겟 '{_target_arg}'. 사용 가능: {', '.join(_known)}. "
+                   f"AWS·GCP 등 임의 플랫폼은 target='script' + command(배포 셸)로 배포하세요.")
     _target = _target_arg or (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
-    if _target not in ("vps", "render"):
+    if _target not in _known:
         _target = "vps"
-    _creds_ok = (gh and ghu and rk and owner) if _target == "render" else True
+    # 타겟별 최소 요건 게이트: render=자격증명, script=command(그 외는 자격증명 불요)
+    if _target == "render":
+        _creds_ok = bool(gh and ghu and rk and owner)
+    elif _target == "script":
+        _creds_ok = bool(str(args.get("command") or "").strip())
+        if not _creds_ok:
+            return _ok("배포 불가(script): command가 필요합니다 — 배포 셸 명령을 주세요"
+                       "(예: aws s3 sync … / gcloud app deploy / flyctl deploy). 결과 URL은 url 인자로.")
+    else:
+        _creds_ok = True
     if not _creds_ok:
         # [하드블록 — 스핀 차단(2026-06, 사용자)] 자격증명 없음은 봇이 *코드로 못 푸는 인프라 벽*이다.
         # 종전엔 봇이 재검증·재시도만 반복(act_count↑=가짜 진행)해 며칠씩 루프하다 무진행 컷났다
@@ -228,7 +242,7 @@ async def deploy(flow, args):
     # [배포 타겟 호환 사전검증 — 첫 배포 전에(2026-06-22 P-028)] Render Node 런타임엔 Python이 없다 —
     # 서버가 런타임에 Python을 spawn하면 라이브에서 502로 죽는다. 5회 상한(사후)이 아니라 *지금* 잡아
     # 명확한 처방을 준다(토큰·빌드 낭비 차단). 빌드타임 학습용 Python은 통과 — 런타임 의존만 차단.
-    _infeasible = _deploy_infeasibility(flow.workspace) if _target == "render" else ""
+    _infeasible = _deploy_infeasibility(flow.workspace) if _target == "render" else ""   # Node 전용 검사는 render만
     if _infeasible:
         if flow.log:
             flow.log("deploy_infeasible", reason=_infeasible[:80])
@@ -264,12 +278,15 @@ async def deploy(flow, args):
                 pass
         _hb_task = asyncio.ensure_future(_deploy_heartbeat())
         try:
-            # target kwarg는 봇이 명시했을 때만 전달 — 미지정이면 deploy_sync가 스스로
+            # target/config는 봇이 명시했을 때만 전달 — 미지정이면 deploy_sync가 스스로
             # env→기본(vps)으로 푼다(구형 대역/테스트 스텁과의 시그니처 호환).
             if _target_arg:
                 from functools import partial
+                _cfg = {"command": str(args.get("command") or "").strip(),
+                        "url": str(args.get("url") or "").strip(),
+                        "env": _vault_env}          # 금고 자격증명 dict(script provider가 env로 주입)
                 _dep_fn = partial(deploy_sync, flow.workspace, name, gh, ghu, rk, owner,
-                                  target=_target_arg)
+                                  target=_target_arg, config=_cfg)
                 r = await anyio.to_thread.run_sync(_dep_fn)
             else:
                 r = await anyio.to_thread.run_sync(deploy_sync, flow.workspace, name, gh, ghu, rk, owner)

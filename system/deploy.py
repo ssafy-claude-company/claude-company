@@ -556,17 +556,101 @@ def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
             f"'게이트웨이 미반영'으로 보고하세요(앱 자체는 검증 통과).{repo_note}")
 
 
-def deploy_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region="singapore",
-                target=None):
-    """workspace를 name repo로 push하고 웹으로 배포 → 결과 문자열(라이브 URL 포함).
+# ══ 배포 provider 레지스트리 — 특정 플랫폼 종속 제거(2026-07-08 사용자 방향) ═══════
+# "하나에 종속되지 않게, 봇이 맘대로 할 수 있게 — AWS를 써야 되면 그걸, GCP면 그걸."
+# 배포 타겟은 **데이터**다: provider 하나 = deploy(workspace, name, creds, config)->str.
+# 봇은 상황에 맞는 provider를 스스로 고른다(매체중립의 배포판). 내장 = vps·render·script.
+# 새 플랫폼(AWS/GCP/Fly/Vercel…)은 ① provider 클래스 추가 후 register(), 또는 ② 즉석은
+# script provider로 봇이 배포 레시피(aws/gcloud/flyctl CLI 등)를 직접 지정 — 코드 변경 없이.
 
-    타겟은 **둘 다 쓸 수 있다**(2026-07-08 사용자: "Render를 사용할 수도 있게 하고, 자체 배포도
-    할 수 있게") — 호출별 명시(target 인자) > 전역 env(ORGANT_DEPLOY_TARGET) > 기본 vps.
-    render = 종전 경로 그대로(자격증명 필요), vps = 자체 서버(자격증명 불요)."""
+class DeployProvider:
+    """배포 타겟 한 곳의 계약. name·deploy만 구현하면 레지스트리에 꽂힌다."""
+    name = "base"
+    needs_creds = ()          # 이 provider가 요구하는 자격증명 키(없으면 게이트가 먼저 안내)
+
+    def deploy(self, workspace, name, *, creds, config) -> str:
+        raise NotImplementedError
+
+
+class _VpsProvider(DeployProvider):
+    name = "vps"              # 자체 서버(/apps/) — 자격증명 불요
+    def deploy(self, workspace, name, *, creds, config):
+        return deploy_vps_sync(workspace, name, creds.get("gh_pat"), creds.get("gh_user"))
+
+
+class _RenderProvider(DeployProvider):
+    name = "render"
+    needs_creds = ("gh_pat", "gh_user", "render_key", "owner_id")
+    def deploy(self, workspace, name, *, creds, config):
+        return _deploy_render_sync(workspace, name, creds.get("gh_pat"), creds.get("gh_user"),
+                                   creds.get("render_key"), creds.get("owner_id"),
+                                   creds.get("region") or "singapore")
+
+
+class _ScriptProvider(DeployProvider):
+    """만능 탈출구 — 봇이 지정한 배포 명령을 실행한다(AWS CLI·gcloud·flyctl·vercel 등 무엇이든).
+    금고 자격증명은 env로 주입(봇이 AWS_ACCESS_KEY_ID 등을 금고에 넣어두면 자동으로 닿는다).
+    config: command(필수, 배포 셸)·url(선택, 결과 공개 URL — 있으면 실응답까지 확인)."""
+    name = "script"
+    def deploy(self, workspace, name, *, creds, config):
+        cmd = str((config or {}).get("command") or "").strip()
+        if not cmd:
+            return ("배포 실패(script): command가 필요합니다 — 배포 셸 명령을 주세요"
+                    "(예: aws s3 sync public/ s3://버킷 && aws cloudfront create-invalidation …).")
+        env = {**os.environ, **{str(k): str(v) for k, v in (creds.get("extra") or {}).items()}}
+        env["DEPLOY_NAME"] = name
+        try:
+            r = subprocess.run(cmd, shell=True, cwd=str(workspace), env=env,
+                               capture_output=True, text=True, timeout=900)
+        except Exception as e:
+            return f"배포 실패(script 실행 오류): {type(e).__name__}: {str(e)[:200]}"
+        tail = _mask_secret((r.stdout + r.stderr), *[str(v) for v in (creds.get("extra") or {}).values()])
+        if r.returncode != 0:
+            return f"배포 실패(script exit {r.returncode}): {tail[-400:]}"
+        url = str((config or {}).get("url") or "").strip()
+        if url:
+            served = _check_live(url, tries=6) if _url_safe(url) else None
+            if served:
+                return f"배포 성공 ✅ (script, HTTP {served}): {url}\n로그: {tail[-200:]}"
+            return (f"배포 완료(script) — 명령은 성공했으나 {url} 가 아직 응답하지 않습니다"
+                    f"(전파 지연일 수 있음). 잠시 뒤 확인하세요. 로그: {tail[-200:]}")
+        return f"배포 완료(script, URL 미지정 — 봇이 결과 위치를 직접 보고): {tail[-300:]}"
+
+
+_PROVIDERS: dict = {}
+
+
+def register_provider(provider: DeployProvider) -> None:
+    """새 배포 타겟을 꽂는다 — AWS/GCP 등은 DeployProvider를 구현해 여기로 등록(코드 확장점)."""
+    _PROVIDERS[provider.name] = provider
+
+
+for _p in (_VpsProvider(), _RenderProvider(), _ScriptProvider()):
+    register_provider(_p)
+
+
+def deploy_targets() -> list:
+    """등록된 배포 타겟 이름들 — 봇 도구 설명·안내가 동적으로 참조한다."""
+    return sorted(_PROVIDERS)
+
+
+def deploy_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region="singapore",
+                target=None, config=None):
+    """workspace를 배포한다 → 결과 문자열(라이브 URL 포함). **타겟에 종속되지 않는다**
+    (2026-07-08 사용자: "하나에 종속되지 않게, 봇이 맘대로 — AWS면 AWS, GCP면 GCP").
+    타겟 선택: 호출별 명시(target) > 전역 env(ORGANT_DEPLOY_TARGET) > 기본 vps.
+    provider 레지스트리에서 찾아 위임한다 — 모르는 타겟이면 사용 가능 목록을 돌려준다."""
     t = (target or os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
-    if t != "render":
-        return deploy_vps_sync(workspace, name, gh_pat, gh_user)
-    return _deploy_render_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region)
+    prov = _PROVIDERS.get(t)
+    if prov is None:
+        return (f"배포 실패: 모르는 배포 타겟 '{t}'. 사용 가능: {', '.join(deploy_targets())}. "
+                f"임의 플랫폼(AWS/GCP 등)은 target='script' + command로 배포하세요.")
+    creds = {"gh_pat": gh_pat, "gh_user": gh_user, "render_key": render_key,
+             "owner_id": owner_id, "region": region, "extra": (config or {}).get("env") or {}}
+    try:
+        return prov.deploy(workspace, name, creds=creds, config=config or {})
+    except Exception as e:
+        return f"배포 처리 오류({t}): {type(e).__name__}: {str(e)[:200]}"
 
 
 def _deploy_render_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region="singapore"):
