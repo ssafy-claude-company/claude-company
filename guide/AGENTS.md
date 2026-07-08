@@ -8,9 +8,10 @@
 | 파일 | 상태 | 설명 |
 |---|---|---|
 | `murmur_guide.py` (**MurmurGuide**) | **라이브 클라이언트** | murmur 서버의 guide_bridge API로 말하는 HTTPS 전송기. Phase 2 라이브 러너가 쓰는 실물. 서버 짝: `murmur/backend/sns/guide_bridge.py` |
-| `discord_guide.py` (DiscordGuide) | 비검증 — Discord 시대 산물 | Phase 1(Discord SMS) 구현체. 현재 라이브 경로 아님, 회귀 검증도 안 됨 |
-| `discord_main.py` | 비검증 — Discord 시대 산물 | Discord 리스너 엔트리포인트(SYS 가동). 위와 동일 |
-| `channels.py` | Discord 보조 | 채널 해석 유틸(DiscordGuide 계열). PJT 테스트(`tests/test_channels.py`)가 참조 |
+| `archive/discord_guide.py` (DiscordGuide) | **아카이브** — Discord 시대 산물(비검증) | Phase 1(Discord SMS) 구현체. 옛 경로 `discord_guide.py`는 재수출 shim |
+| `archive/discord_main.py` | **아카이브** — Discord 시대 산물(비검증) | Discord 리스너 엔트리포인트. 옛 경로는 shim. 재활성화 조건: `archive/__init__.py` |
+| `archive/channels.py` | **아카이브** — Discord 보조 | 채널 해석 유틸. 옛 경로는 shim(`ops/tests/test_channels.py` 참조) |
+| `guide_queue.py` · `intake.py` | 매체중립 코어(테스트됨) | Discord 이행(BACKLOG E)의 살아있는 부분 — 아카이브 아님 |
 | `requirements.txt` | — | 매체 SDK 의존성 |
 
 ## 조사 에이전트를 위한 경고 — stale 산출물 오도 전례
