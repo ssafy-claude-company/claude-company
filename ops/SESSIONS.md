@@ -32,6 +32,18 @@ tmux new-session -d -s "$N" "cd '$W' && MURMUR_ROOT='$W' claude remote-control -
 ```
 - **원리**: `session.sh`는 worktree 이름=`/root/wt/<T>`로 강제해서 `T=변도진`이면 신규 worktree를 판다. 기존 세션 복구는 **worktree 경로를 직접 지정**해 remote-control을 띄워야 한다.
 
+## fable-* 병렬 세션 (Fable-세션2에서 포크한 4개)
+| 이름 | worktree/브랜치 | 자기 세션ID | tmux |
+|---|---|---|---|
+| **fable-1** | `/root/wt/fable-1` `s/fable-1` | `e6a40f93` | `tmux attach -t fable-1` |
+| **fable-2** | `/root/wt/fable-2` `s/fable-2` | `2f3959d2` | `tmux attach -t fable-2` |
+| **fable-3** | `/root/wt/fable-3` `s/fable-3` | `419969b6` | `tmux attach -t fable-3` |
+| **fable-4** | `/root/wt/fable-4` `s/fable-4` | `48ee815a` | `tmux attach -t fable-4` |
+
+- **최초 생성**: `Fable-세션2`(e4414f9b) → `claude --resume … --fork-session`(맥락 복제, 원본 불변) + 각자 git worktree + `--remote-control`.
+- **재기동**: **`bash ops/fable.sh <1-4|all>`** — 각자 **자기 세션ID로 resume**(재포크 금지 — 재포크하면 누적작업 소실) + **`--effort max` 고정** + RC. 살아있는 건 스킵.
+- **effort는 launch 플래그로 박혀 있다**(`ops/fable.sh`). `/effort max`는 런타임만 바꿔 재시작 시 상속값(high)으로 돌아가므로, 영구 고정은 이 스크립트가 담당. 전체 세션ID는 `ops/fable.sh`의 `SID` 맵 참조.
+
 ## 착지 (작업 반영)
 각 세션이 스스로: **`bash ops/land.sh <이름>`** → 자기 브랜치를 정본 병합+전체검증(통합 세션 불필요). 라이브 재시작만 사용자 승인.
 
