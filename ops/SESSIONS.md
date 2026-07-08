@@ -3,14 +3,15 @@
 > 세션이 헷갈리거나 끊기면 여기 보고 복구. **웹 랜덤이름(lazy-honey 등)은 무시**하고 아래 URL/pwd로 식별.
 
 ## 현재 세션 (2개, 고정)
-| 이름 | worktree | tmux | 웹 URL |
+| 이름 | worktree | tmux | 웹 접속 |
 |---|---|---|---|
-| **변도진** | `/root/wt/ClaudeCompany-변도진` | `tmux attach -t 변도진` | `https://claude.ai/code/session_01LxLT5czZFP2JNVHWdpcEmj` |
-| **이현준** | `/root/wt/ClaudeCompany-이현준` | `tmux attach -t 이현준` | `https://claude.ai/code/session_01HKuXgXgXE1QqDC7nms3Wkj` |
+| **변도진** | `/root/wt/ClaudeCompany-변도진` | `tmux attach -t 변도진` | env URL → 목록에서 **ClaudeCompany-변도진** |
+| **이현준** | `/root/wt/ClaudeCompany-이현준` | `tmux attach -t 이현준` | 같은 env URL → **ClaudeCompany-이현준** |
 
-- 둘 다 **Opus4.8 · max effort · auto 승인**.
+- 둘 다 **Opus4.8 · max effort · auto 승인** (web-spawn 세션은 기본값으로 뜰 수 있으니 접속 후 `/model opus`·`/effort max` 확인).
+- **웹 URL은 고정이 아니다** — remote-control 재기동 시 env URL이 새로 발급된다(이 VPS 한 대 = 한 environment, 그 안에서 **이름으로 선택**). URL은 해당 tmux pane에서 확인: `tmux capture-pane -t 변도진 -p -J | grep -oE 'https://claude.ai/code[^ ]*'`.
 - 어느 세션인지 확인: 그 세션에 **`pwd`** → 경로가 이름을 알려줌.
-- **제일 안 헷갈림 = 터미널** `tmux attach -t 변도진`(이름 그대로 뜸). 웹은 URL로만 식별.
+- **제일 안 헷갈림 = 터미널** `tmux attach -t 변도진`(이름 그대로 뜸). 웹은 이름으로 식별.
 
 ## 규율 (이게 안정의 핵심)
 - **켠 뒤 세션을 안 건드린다.** kill·세션파일 이동·remote-control 재실행 = 다리 끊김의 원인. 한 번 켜고 냅두면 안정적.
@@ -20,8 +21,16 @@
 | 증상 | 복구 |
 |---|---|
 | 웹만 "응답 멈춤"(세션은 삼) | 그 tmux에서 `/remote-control` 한 번(새 URL 나옴). 세션은 안 죽었음 — `tmux attach -t 변도진`으로 확인 |
-| tmux 세션 죽음(재부팅 등) | `bash ops/session.sh 변도진` 로 재생성(worktree 재사용, Opus·max·auto·정향 자동) |
-| 세션 다 날아감 | `bash ops/session.sh <이름>` 2번(변도진·이현준). worktree는 `/root/wt/`에 남아있음 |
+| tmux 세션 죽음(재부팅 등) | 아래 **재기동 스니펫**(기존 worktree 재사용). **⚠️ `ops/session.sh 변도진` 쓰지 마라** — 이름을 `/root/wt/변도진`(신규)로 매핑해 기존 `ClaudeCompany-변도진`을 안 쓰고 빈 worktree를 새로 판다(2026-07-08 실사고). |
+| 세션 다 날아감 | 아래 스니펫을 변도진·이현준 각각. worktree는 `/root/wt/ClaudeCompany-<이름>`에 남아있음(작업 보존) |
+
+**재기동 스니펫** (`<이름>`=변도진 또는 이현준):
+```bash
+N=변도진; W=/root/wt/ClaudeCompany-$N
+tmux new-session -d -s "$N" "cd '$W' && MURMUR_ROOT='$W' claude remote-control --spawn same-dir --permission-mode auto --name '$N'; exec bash"
+# URL 확인: tmux capture-pane -t "$N" -p -J | grep -oE 'https://claude.ai/code[^ ]*'
+```
+- **원리**: `session.sh`는 worktree 이름=`/root/wt/<T>`로 강제해서 `T=변도진`이면 신규 worktree를 판다. 기존 세션 복구는 **worktree 경로를 직접 지정**해 remote-control을 띄워야 한다.
 
 ## 착지 (작업 반영)
 각 세션이 스스로: **`bash ops/land.sh <이름>`** → 자기 브랜치를 정본 병합+전체검증(통합 세션 불필요). 라이브 재시작만 사용자 승인.
