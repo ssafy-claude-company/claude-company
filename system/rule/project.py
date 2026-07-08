@@ -199,7 +199,9 @@ async def deploy(flow, args):
         except Exception as _e:
             if flow.log:
                 flow.log("deploy_creds_vault_err", err=str(_e)[:120])
-    if not (gh and ghu and rk and owner):
+    _target = (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
+    _creds_ok = (gh and ghu and rk and owner) if _target == "render" else True
+    if not _creds_ok:
         # [하드블록 — 스핀 차단(2026-06, 사용자)] 자격증명 없음은 봇이 *코드로 못 푸는 인프라 벽*이다.
         # 종전엔 봇이 재검증·재시도만 반복(act_count↑=가짜 진행)해 며칠씩 루프하다 무진행 컷났다
         # (라이브 fps: 배포-자격증명 벽에서 121메시지·4.5일). 막힘을 카운트해 2회째엔 흐름을 '하드블록'
@@ -221,7 +223,7 @@ async def deploy(flow, args):
     # [배포 타겟 호환 사전검증 — 첫 배포 전에(2026-06-22 P-028)] Render Node 런타임엔 Python이 없다 —
     # 서버가 런타임에 Python을 spawn하면 라이브에서 502로 죽는다. 5회 상한(사후)이 아니라 *지금* 잡아
     # 명확한 처방을 준다(토큰·빌드 낭비 차단). 빌드타임 학습용 Python은 통과 — 런타임 의존만 차단.
-    _infeasible = _deploy_infeasibility(flow.workspace)
+    _infeasible = _deploy_infeasibility(flow.workspace) if _target == "render" else ""
     if _infeasible:
         if flow.log:
             flow.log("deploy_infeasible", reason=_infeasible[:80])

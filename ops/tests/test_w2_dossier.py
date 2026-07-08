@@ -51,6 +51,9 @@ def _deploy_stub(tmp_path, monkeypatch, with_gitignore):
     if with_gitignore:
         (ws / ".gitignore").write_text("node_modules/\n*.log\n")
     # GitHub API 첫 호출에서 실패시켜 push 이전(=스테이징 직후)에 중단 — 네트워크 없이 검증.
+    # 이 스텁은 render 경로의 계약(하드 실패 문자열)을 검증한다 — vps 타겟(기본)은 push가
+    # best-effort라 여기로 오지 않으므로 명시 고정(B07 gitignore 규율 자체는 두 경로 공통).
+    monkeypatch.setenv("ORGANT_DEPLOY_TARGET", "render")
     monkeypatch.setattr(dp, "_http", lambda *a, **k: (500, {"message": "stub"}))
     out = dp.deploy_sync(str(ws), "svc-x", "pat", "user", "rk", "own")
     assert "배포 실패(GitHub repo)" in out

@@ -1,12 +1,19 @@
-"""산출물 공개 배포 — GitHub repo push + Render 웹서비스 생성/갱신.
+"""산출물 공개 배포 — GitHub repo push + 웹 서빙(기본: 이 VPS, 옵션: Render).
 
-Guide의 `deploy` 리더 툴이 호출한다. 자격증명은 환경변수로 주입한다(코드/로그에 박지 않음):
-  GH_PAT, GH_USER, RENDER_KEY, RENDER_OWNER
-Node 앱(서버가 process.env.PORT 사용)만 지원한다. 같은 name으로 다시 부르면 갱신 배포한다.
+Guide의 `deploy` 리더 툴이 호출한다. 자격증명은 환경변수/금고로 주입한다(코드/로그에 박지 않음):
+  GH_PAT, GH_USER (+Render 타겟일 때만 RENDER_KEY, RENDER_OWNER)
+Node 앱(서버가 process.env.PORT 사용) 또는 정적 산출물(public/·index.html)을 지원한다.
+같은 name으로 다시 부르면 갱신 배포한다.
+
+[Render 종속 제거 — 2026-07-08 사용자 방향] 기본 타겟 = vps: 산출물을 이 VPS의
+ops/var/organt_apps/<name>/으로 복사해 로컬 포트에 기동하고, murmur 게이트웨이
+(/apps/<name>/)가 서빙한다. ORGANT_DEPLOY_TARGET=render로 되돌릴 수 있다(롤백 한 줄).
 """
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import ipaddress
 import socket
@@ -14,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 
@@ -309,8 +317,256 @@ def _final_deploy_result(url, workspace, repo_url, status,
             f"완료 — 곧 라이브'**로 보고하세요(status={status}).")
 
 
+# ══ VPS 배포 백엔드 — Render 종속 제거(2026-07-08 사용자 방향) ══════════════════
+# 산출물을 이 VPS의 앱 풀(ops/var/organt_apps/<name>/)로 복사해 로컬 포트에 기동하고,
+# murmur 게이트웨이(/apps/<name>/)가 공개 서빙한다. 프로세스는 detached(setsid)라 러너
+# 재시작과 독립. 레지스트리(registry.json)가 이름→포트/PID의 단일 장부다.
+
+_APPS_PORT_LO, _APPS_PORT_HI = 4100, 4199   # 앱 풀 포트 대역(로컬 전용 — 게이트웨이만 접근)
+
+
+def _apps_dir() -> Path:
+    from .config import ROOT
+    d = Path(os.environ.get("ORGANT_APPS_DIR") or (Path(ROOT) / "ops" / "var" / "organt_apps"))
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _apps_base_url() -> str:
+    return (os.environ.get("ORGANT_APPS_BASE_URL") or "https://murmur-ai.duckdns.org/apps").rstrip("/")
+
+
+def _registry_path() -> Path:
+    return _apps_dir() / "registry.json"
+
+
+def _load_registry() -> dict:
+    try:
+        return json.loads(_registry_path().read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_registry(reg: dict) -> None:
+    tmp = _registry_path().with_suffix(".tmp")
+    tmp.write_text(json.dumps(reg, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(_registry_path())          # 원자 교체 — 게이트웨이가 반쯤 쓴 파일을 읽지 않게
+
+
+class _RegistryLock:
+    """레지스트리 flock — 서로 다른 흐름의 동시 배포가 포트/장부를 밟지 않게(단일 러너라도 flow는 병렬 가능)."""
+
+    def __enter__(self):
+        import fcntl
+        self._f = open(_apps_dir() / ".lock", "w")
+        fcntl.flock(self._f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *a):
+        self._f.close()
+
+
+def _alloc_port(reg: dict, name: str) -> int:
+    cur = (reg.get(name) or {}).get("port")
+    if cur:
+        return int(cur)                     # 재배포는 같은 포트 재사용(게이트웨이 무변경)
+    used = {int(e.get("port") or 0) for e in reg.values()}
+    for p in range(_APPS_PORT_LO, _APPS_PORT_HI + 1):
+        if p not in used:
+            return p
+    raise RuntimeError("앱 포트 대역(4100~4199) 소진 — 오래된 앱을 정리해야 합니다")
+
+
+def _pid_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _stop_app(entry: dict) -> None:
+    """기존 프로세스 그룹 종료(TERM→2s→KILL). setsid로 띄워 pgid=pid — 자식까지 함께 정리."""
+    pid = entry.get("pid")
+    if not pid or not _pid_alive(pid):
+        return
+    for sig, wait in ((signal.SIGTERM, 2.0), (signal.SIGKILL, 1.0)):
+        try:
+            os.killpg(int(pid), sig)
+        except Exception:
+            return
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if not _pid_alive(pid):
+                return
+            time.sleep(0.1)
+
+
+def _copy_workspace(ws: Path, dst: Path) -> None:
+    """산출물만 복사 — .git(히스토리)·.collab(협의 원본)·node_modules(현지 install)·로그 제외.
+    dst의 기존 node_modules는 남겨 npm install 캐시로 쓴다."""
+    ignore = shutil.ignore_patterns(".git", ".collab", "node_modules", "app.log", "__pycache__")
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in ws.iterdir():
+        if item.name in (".git", ".collab", "node_modules", "app.log", "__pycache__"):
+            continue
+        to = dst / item.name
+        if item.is_dir():
+            shutil.copytree(item, to, dirs_exist_ok=True, ignore=ignore)
+        else:
+            shutil.copy2(item, to)
+
+
+def _spawn_app(appdir: Path, port: int, start_cmd: str) -> int:
+    """앱을 detached(새 세션)로 기동 — 러너와 수명 분리. stdout/err → app.log."""
+    log = open(appdir / "app.log", "ab")
+    p = subprocess.Popen(start_cmd, shell=True, cwd=str(appdir),
+                         env={**os.environ, "PORT": str(port), "NODE_ENV": "production"},
+                         stdout=log, stderr=log, start_new_session=True)
+    return p.pid
+
+
+def _local_health(port: int, tries: int = 20) -> Optional[int]:
+    """로컬 포트가 HTTP로 응답할 때까지 대기 → 상태코드(응답=산 것, 4xx도 기동은 된 것)."""
+    for _ in range(tries):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+        except Exception:
+            time.sleep(0.5)
+    return None
+
+
+def _local_fetch(port: int):
+    def fetch(u):
+        rel = u.split("/", 3)[-1] if u.count("/") >= 3 else ""
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/{rel}",
+                                     headers={"Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.read()
+    return fetch
+
+
+def _push_best_effort(ws: Path, name: str, gh_pat, gh_user) -> str:
+    """GitHub push(레포 공개는 유지 가치) — 자격증명 없으면 건너뛴다(VPS 서빙은 push와 무관).
+    render 경로의 3)·4)단계와 같은 일을 하되, 실패가 배포를 막지 않는 best-effort."""
+    if not (gh_pat and gh_user):
+        return ""
+    st, resp = _http("POST", f"{GITHUB_API}/user/repos", gh_pat,
+                     {"name": name, "private": False,
+                      "description": f"{name} — deployed by Organt Core multi-agent system"})
+    if st not in (201, 422):
+        return f" (repo push 생략: GitHub HTTP {st})"
+    real_user = gh_user
+    if st == 201 and isinstance(resp.get("owner"), dict) and resp["owner"].get("login"):
+        real_user = resp["owner"]["login"]
+    else:
+        _who_st, _who = _http("GET", f"{GITHUB_API}/user", gh_pat)
+        if _who_st == 200 and _who.get("login"):
+            real_user = _who["login"]
+    push_url = f"https://x-access-token:{gh_pat}@github.com/{real_user}/{name}.git"
+    rc, out = _git(["push", "-q", "-f", push_url, "main:main"], str(ws))
+    if rc != 0:
+        return f" (repo push 실패: {_mask_secret(out, gh_pat)[-80:]})"
+    return f"  (repo: https://github.com/{real_user}/{name})"
+
+
+def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
+    """workspace를 VPS 앱 풀로 배포 → 결과 문자열(라이브 URL 포함).
+
+    Node 앱(server.js/npm start)은 로컬 포트에 기동, 정적 산출물(public/·index.html)은
+    무프로세스로 게이트웨이가 직접 서빙. 검증 3단: ①로컬 포트 응답 ②로컬 바이트 대조
+    ③공개 URL(게이트웨이) 확인 — ③이 아직 안 열렸으면(웹 미배포) 그 사실을 명시해 반환."""
+    ws = Path(workspace)
+    if not ws.exists() or not any(ws.iterdir()):
+        return "배포 실패: 작업공간이 비어 있습니다(먼저 구현·검증하세요)."
+    pkg = ws / "package.json"
+    has_server = (ws / "server.js").exists()
+    scripts = {}
+    if pkg.exists():
+        try:
+            scripts = json.loads(pkg.read_text()).get("scripts", {})
+        except Exception:
+            scripts = {}
+    start_cmd = "npm start" if scripts.get("start") else ("node server.js" if has_server else "")
+    static_only = not start_cmd
+    if static_only and not (ws / "public").is_dir() and not (ws / "index.html").exists():
+        return ("배포 실패: 서빙할 것이 없습니다 — Node 서버(server.js 또는 package.json의 start)나 "
+                "정적 산출물(public/ 또는 index.html)이 필요합니다.")
+
+    # 산출물 레포 커밋(히스토리 유지 — render 경로와 동일 규율) + .collab 유출 차단
+    if not (ws / ".git").exists():
+        _git(["init", "-q", "-b", "main"], str(ws))
+    gi = ws / ".gitignore"
+    try:
+        _gi = gi.read_text() if gi.exists() else ""
+    except OSError:
+        _gi = ""
+    if ".collab" not in _gi:
+        gi.write_text((_gi.rstrip("\n") + "\nnode_modules/\n*.log\n.env\n__pycache__/\n.collab/\n").lstrip("\n"))
+    _git(["add", "-A"], str(ws))
+    _git(["commit", "-q", "-m", f"deploy {name}"], str(ws))
+    repo_note = _push_best_effort(ws, name, gh_pat, gh_user)
+
+    with _RegistryLock():
+        reg = _load_registry()
+        entry = reg.get(name) or {}
+        appdir = _apps_dir() / name
+        _stop_app(entry)                          # 구버전 프로세스 정리 후 복사(파일 잠김 회피)
+        _copy_workspace(ws, appdir)
+        port = None
+        if not static_only:
+            if pkg.exists():
+                r = subprocess.run(["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
+                                   cwd=str(appdir), capture_output=True, text=True, timeout=300)
+                if r.returncode != 0:
+                    return f"배포 실패(npm install): {(r.stdout + r.stderr)[-300:]}"
+            port = _alloc_port(reg, name)
+            pid = _spawn_app(appdir, port, start_cmd)
+            reg[name] = {"port": port, "pid": pid, "dir": str(appdir),
+                         "static": False, "cmd": start_cmd, "ts": time.time()}
+        else:
+            reg[name] = {"port": None, "pid": None, "dir": str(appdir),
+                         "static": True, "ts": time.time()}
+        _save_registry(reg)
+
+    url = f"{_apps_base_url()}/{name}/"
+    if not static_only:
+        served = _local_health(port)
+        if served is None:
+            tail = ""
+            try:
+                tail = (appdir / "app.log").read_text(errors="replace")[-240:]
+            except OSError:
+                pass
+            return (f"배포 실패: 앱이 로컬 포트({port})에서 응답하지 않습니다 — 서버가 process.env.PORT로 "
+                    f"listen하는지 확인하세요. 로그 꼬리: {tail}")
+        stale = _verify_live_assets(f"http://127.0.0.1:{port}", ws, fetch=_local_fetch(port))
+        if stale:
+            return (f"배포 실패(서빙 불일치): 기동은 됐지만 앱이 방금 만든 파일을 서빙하지 않습니다 — "
+                    f"{', '.join(stale[:4])}. public/ 정적 서빙 경로를 확인하고 다시 배포하세요.")
+    public = _check_live(url, tries=2)
+    if public:
+        return (f"배포 성공 ✅ 라이브(HTTP {public} + 산출물 일치): {url}{repo_note}"
+                + _measure_usability(url))
+    return (f"배포 성공(로컬 검증 완료) — 앱은 이 서버에서 정상 기동·서빙 중입니다. 공개 URL {url} 은 "
+            f"게이트웨이(murmur 웹) 반영 대기 상태일 수 있습니다 — 잠시 뒤 다시 확인하고, 계속 안 열리면 "
+            f"'게이트웨이 미반영'으로 보고하세요(앱 자체는 검증 통과).{repo_note}")
+
+
 def deploy_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region="singapore"):
-    """workspace를 name repo로 push하고 Render 웹서비스로 배포 → 결과 문자열(라이브 URL 포함)."""
+    """workspace를 name repo로 push하고 웹으로 배포 → 결과 문자열(라이브 URL 포함).
+    타겟은 ORGANT_DEPLOY_TARGET(기본 vps) — 시그니처는 종전 그대로라 호출부(guide 도구·SYS
+    _ensure_deploy) 무변경. render 타겟은 종전 경로 그대로다."""
+    if (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower() != "render":
+        return deploy_vps_sync(workspace, name, gh_pat, gh_user)
+    return _deploy_render_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region)
+
+
+def _deploy_render_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region="singapore"):
+    """[종전 경로 — Render] workspace를 push하고 Render 웹서비스로 배포."""
     ws = Path(workspace)
     if not ws.exists() or not any(ws.iterdir()):
         return "배포 실패: 작업공간이 비어 있습니다(먼저 구현·검증하세요)."
