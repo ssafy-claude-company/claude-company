@@ -41,9 +41,10 @@ class FakeGuide:
         self.calls.append(("file", channel_id, path, sender_id, caption))
         return "fileid"
 
-    async def create_agent(self, channel_id, role):
+    async def create_agent(self, channel_id, role, recruiter=None):
         # [예비 폐지 → recruit genesis] 새 직군 전문가 생성 흉내 — 고유 bot_id 반환(합류 검증용).
-        self.calls.append(("create_agent", channel_id, role))
+        # recruiter=채용 요청 봇(2026-07-08 채용 상속 계약) — 매체가 이 봇의 모델·effort를 복사 생성.
+        self.calls.append(("create_agent", channel_id, role, recruiter))
         self._genesis = getattr(self, "_genesis", 9500) + 1
         return self._genesis
 
@@ -303,7 +304,7 @@ def test_예비인력_새직군_런타임채용_말로만배정차단():
     # 전문가를 즉석 생성(create_agent)해 팀에 합류시킨다(리더가 넘길 전문가 없어 교착하던 것 해소).
     r3 = asyncio.run(t["recruit"].handler({"role": "사운드", "reason": "x"}))
     assert "합류" in r3["content"][0]["text"] and "사운드" in r3["content"][0]["text"]
-    assert ("create_agent", 500, "사운드") in g.calls          # user_channel(500)로 프로젝트 소유자 찾아 생성
+    assert ("create_agent", 500, "사운드", 11) in g.calls      # user_channel(500)로 생성 + recruiter=채용 요청 봇(상속 배선)
     gen = next(i for i in f.current.team if f.bot_info.get(i) == "사운드")
     assert gen >= 9501 and f.bot_info[gen] == "사운드"          # 생성 봇이 그 직군으로 합류
 
