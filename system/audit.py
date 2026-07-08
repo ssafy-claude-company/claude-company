@@ -17,6 +17,12 @@ CAP_EXT = {
     "실데이터 수집·파이프라인": ("csv", "tsv", "parquet", "jsonl", "ndjson", "arrow", "avro"),
     "데이터 영속·DB": ("sql", "sqlite", "sqlite3", "db", "prisma", "ddl"),
     "배포·인프라(DevOps)": ("yml", "yaml", "dockerfile", "tf", "toml", "nginx", "service"),
+    # [장부 공백 교정(2026-07-08, 사용자 승인)] 종전 4범주는 실제 라이브 업무(웹앱 js·html·py)를 하나도
+    # 안 덮어 장부가 늘 비었다(관측: capability_earned 0건 / flow.jsonl). 아래 신규 범주는 **관측·표면화
+    # 전용**(peers 강점줄·recommend·관측 — 종전과 동일 용도 한정)이며, 스태핑 cover 판정(_CAPS)에는
+    # 편입하지 않는다(게이트 무변경 — B-21 '판정 비편입' 원칙 유지).
+    "웹 프론트엔드 구현": ("js", "jsx", "ts", "tsx", "vue", "svelte", "html", "css", "scss"),
+    "백엔드·API 구현": ("py", "go", "rb", "php", "java", "kt"),
 }
 # run 도메인 키워드(명령 문자열 소문자 부분일치) — 확장자에 안 잡히는 실행형 증거(학습 실행·DB 마이그레이션 등).
 CAP_RUN = {
@@ -24,6 +30,8 @@ CAP_RUN = {
     "실데이터 수집·파이프라인": ("data.go.kr", "api.odcloud", "공공데이터", "crawl", "scrape", "etl"),
     "데이터 영속·DB": ("sqlite3 ", "psql", "mysql", "createdb", "alembic", "migrate"),
     "배포·인프라(DevOps)": ("docker", "kubectl", "systemctl", "nginx", "pm2"),
+    "백엔드·API 구현": ("manage.py", "uvicorn", "gunicorn", "flask", "django"),
+    "품질 검증(QA)": ("pytest", "npm test", "jest", "playwright", "vitest", "unittest"),
 }
 # 능력별 증거 임계치(횟수 하한) — 이 수 미만이면 강점줄·후보 나열에 표면화하지 않는다(1회 우연 저작 배제).
 CAP_MIN = {
@@ -31,6 +39,9 @@ CAP_MIN = {
     "실데이터 수집·파이프라인": 3,
     "데이터 영속·DB": 3,
     "배포·인프라(DevOps)": 3,
+    "웹 프론트엔드 구현": 3,
+    "백엔드·API 구현": 3,
+    "품질 검증(QA)": 3,
 }
 
 
