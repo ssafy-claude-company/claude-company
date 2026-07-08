@@ -85,7 +85,8 @@ def _turn_signals(flow, res, allowed):
 
 # [1층 — ②자기선택 응찰/종결표결 파싱] `[응찰: N]`(발언권)·`[계속: N]`(종결 반대 — 동형 강도).
 # 판단은 후보 봇의 LLM이 하고, 여기는 그 판정의 표면 인코딩만 읽는다.
-_BID_RE = re.compile(r"\[\s*(?:응찰|계속)\s*[:：]\s*([0-9])\s*\]")
+from ..protocol import Marker as _Marker
+_BID_RE = _Marker.BID_RE          # [마커 사전 이관 1차] 정의 정본은 protocol.Marker — 여기는 참조만
 
 
 def _bid_score(res) -> int:
