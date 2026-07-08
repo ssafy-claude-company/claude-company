@@ -7,4 +7,10 @@
 ## 현재 점유
 | 세션 | 점유(glob) | since |
 |---|---|---|
-| ux-rest | murmur/** | 2026-07-06 04:10 |
+| 변도진-1 | murmur/docs/** | 2026-07-08 06:06 |
+| 변도진-1 | guide/discord* | 2026-07-08 06:06 |
+| 변도진-1 | guide/channels.py | 2026-07-08 06:06 |
+| 변도진-1 | ops/organt_discord/** | 2026-07-08 06:06 |
+| 변도진-1 | system/protocol.py | 2026-07-08 06:06 |
+| 변도진-1 | organt/builder.py | 2026-07-08 06:06 |
+| 변도진-1 | murmur/backend/** | 2026-07-08 06:06 |
