@@ -199,7 +199,12 @@ async def deploy(flow, args):
         except Exception as _e:
             if flow.log:
                 flow.log("deploy_creds_vault_err", err=str(_e)[:120])
-    _target = (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
+    _target_arg = str(args.get("target") or "").strip().lower()
+    if _target_arg not in ("", "vps", "render"):
+        _target_arg = ""
+    _target = _target_arg or (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
+    if _target not in ("vps", "render"):
+        _target = "vps"
     _creds_ok = (gh and ghu and rk and owner) if _target == "render" else True
     if not _creds_ok:
         # [하드블록 — 스핀 차단(2026-06, 사용자)] 자격증명 없음은 봇이 *코드로 못 푸는 인프라 벽*이다.
@@ -259,7 +264,15 @@ async def deploy(flow, args):
                 pass
         _hb_task = asyncio.ensure_future(_deploy_heartbeat())
         try:
-            r = await anyio.to_thread.run_sync(deploy_sync, flow.workspace, name, gh, ghu, rk, owner)
+            # target kwarg는 봇이 명시했을 때만 전달 — 미지정이면 deploy_sync가 스스로
+            # env→기본(vps)으로 푼다(구형 대역/테스트 스텁과의 시그니처 호환).
+            if _target_arg:
+                from functools import partial
+                _dep_fn = partial(deploy_sync, flow.workspace, name, gh, ghu, rk, owner,
+                                  target=_target_arg)
+                r = await anyio.to_thread.run_sync(_dep_fn)
+            else:
+                r = await anyio.to_thread.run_sync(deploy_sync, flow.workspace, name, gh, ghu, rk, owner)
         except Exception as e:
             r = f"배포 처리 오류: {e}"
         finally:

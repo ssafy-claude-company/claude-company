@@ -459,11 +459,12 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
 
 
         @tool("deploy",
-              "검증을 마친 산출물을 실제로 공개 배포한다(GitHub push + 웹 서빙 — 회사 서버 /apps/ 경로). "
+              "검증을 마친 산출물을 실제로 공개 배포한다(GitHub push + 웹 서빙). "
               "name=영문 소문자·하이픈 서비스명(예: slither-multiplayer). 라이브 URL을 반환. "
-              "Node 앱(서버는 process.env.PORT 사용) 또는 정적 산출물(public/·index.html). "
-              "run 검증을 끝낸 뒤 마지막에 호출.",
-              {"name": str})
+              "target=vps(기본 — 회사 서버 /apps/ 경로, 자격증명 불요) 또는 render(Render 웹서비스, "
+              "소유자 금고 자격증명 필요). Node 앱(서버는 process.env.PORT 사용) 또는 정적 산출물"
+              "(public/·index.html). run 검증을 끝낸 뒤 마지막에 호출.",
+              {"name": str, "target": str})
         async def deploy(args):
             return await _rule_deploy(flow, args)
         tools.append(deploy)

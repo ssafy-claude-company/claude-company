@@ -556,11 +556,15 @@ def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
             f"'게이트웨이 미반영'으로 보고하세요(앱 자체는 검증 통과).{repo_note}")
 
 
-def deploy_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region="singapore"):
+def deploy_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region="singapore",
+                target=None):
     """workspace를 name repo로 push하고 웹으로 배포 → 결과 문자열(라이브 URL 포함).
-    타겟은 ORGANT_DEPLOY_TARGET(기본 vps) — 시그니처는 종전 그대로라 호출부(guide 도구·SYS
-    _ensure_deploy) 무변경. render 타겟은 종전 경로 그대로다."""
-    if (os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower() != "render":
+
+    타겟은 **둘 다 쓸 수 있다**(2026-07-08 사용자: "Render를 사용할 수도 있게 하고, 자체 배포도
+    할 수 있게") — 호출별 명시(target 인자) > 전역 env(ORGANT_DEPLOY_TARGET) > 기본 vps.
+    render = 종전 경로 그대로(자격증명 필요), vps = 자체 서버(자격증명 불요)."""
+    t = (target or os.environ.get("ORGANT_DEPLOY_TARGET") or "vps").strip().lower()
+    if t != "render":
         return deploy_vps_sync(workspace, name, gh_pat, gh_user)
     return _deploy_render_sync(workspace, name, gh_pat, gh_user, render_key, owner_id, region)
 

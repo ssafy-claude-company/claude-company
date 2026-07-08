@@ -26,6 +26,16 @@ class TargetDispatchTest(unittest.TestCase):
         self.assertEqual(out, "VPS!")
         m.assert_called_once_with("/ws", "n", "g", "u")
 
+    def test_explicit_target_arg_beats_env(self):
+        """호출별 명시가 전역 env보다 우선 — 같은 조직에서 두 타겟을 섞어 쓸 수 있다."""
+        with _env(ORGANT_DEPLOY_TARGET="vps"), \
+             mock.patch.object(D, "_deploy_render_sync", return_value="R!") as m:
+            out = D.deploy_sync("/ws", "n", "g", "u", "rk", "ow", target="render")
+        self.assertEqual(out, "R!")
+        with _env(ORGANT_DEPLOY_TARGET="render"), \
+             mock.patch.object(D, "deploy_vps_sync", return_value="V!"):
+            self.assertEqual(D.deploy_sync("/ws", "n", "g", "u", "rk", "ow", target="vps"), "V!")
+
     def test_render_optin(self):
         with _env(ORGANT_DEPLOY_TARGET="render"), \
              mock.patch.object(D, "_deploy_render_sync", return_value="R!") as m:
