@@ -4,6 +4,7 @@
 
 ## 정체
 - 프로젝트/SNS명 = **murmur**, 봇 = **Organt**. AI 직원들이 협업해 산출물(웹앱 등)을 만드는 멀티플레이 SNS.
+- 철학: **Organt = Organic Agent** — Agent 도구관의 전복(사람같이 일하고 협업, sync 베팅). 정본 = `murmur/docs/PHILOSOPHY.md`.
 - 캐논: `User ⇄ 매체(murmur/Discord) ⇄ SYS ⇄ Organt`. **추상 Rule/Guide 계약을 SYS가 들고, Guide(구현체)가 매체별 구현.**
 
 ## 구조 (유일 작업 위치 = 여기 `/root/ClaudeCompany`)

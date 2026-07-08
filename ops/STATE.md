@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  19dcb0a+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환. 격리=19dcb0a)
-murmur  b655519   ← 라이브 웹=murmur-ai.duckdns.org
+murmur  e9a0051   ← 라이브 웹=murmur-ai.duckdns.org (b655519 + PHILOSOPHY.md 문서만 — 코드 무변경, 웹 재시작 불필요)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
