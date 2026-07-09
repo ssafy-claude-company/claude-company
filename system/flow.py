@@ -50,6 +50,10 @@ class Flow:
         self.wrapup_state = None       # 마지막 e2e 판정(§9 — ckpt 동승 대상)
         self.event_counts = None       # §8 오버헤드 집계(sys_core가 tallying_logger로 채움, ON에서만)
         self._last_ms_sig = None        # [파이프라인 §5] 직전 세그먼트의 주기 시그(ms_id,iter) — 주기 전진 감지
+        # [조건 재협상 #1] 사람 에스컬레이트 콜백((text)->None, SYS/매체 주입 — 미주입이면 로그만).
+        # renegotiate_criterion이 '조건 포기 승인 요청'을 사람 창구(채널)로 올릴 때 쓴다. 승인의 귀환
+        # 경로(approve_waiver 배선)는 후속 — 계약 §12-3 코멘트 참조.
+        self.escalate_to_human = None
         self._base = time.strftime("%H%M%S")
         self._n = 0
         self.done = False

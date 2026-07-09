@@ -36,7 +36,7 @@ def test_등록게이트_소망형과_실증절차_없는_조건_거부():
     assert "verify" in gate_criteria([{"desc": "카운터 증가", "verify": ""}])
     ok = [{"desc": "버튼 클릭 시 카운트 1 증가", "verify": "curl -s localhost:3000/count 전후 비교"}]
     assert gate_criteria(ok) is None
-    dup = ok + [{"desc": "버튼 클릭 시 카운트 1 증가", "verify": "다른 절차"}]
+    dup = ok + [{"desc": "버튼 클릭 시 카운트 1 증가", "verify": "wget localhost:3000 재확인"}]
     assert "중복" in gate_criteria(dup)
 
 
@@ -187,6 +187,42 @@ def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monke
     assert "mcp__guide__set_subtask" in FLOW_TOOLS and "mcp__guide__report_iter" in FLOW_TOOLS
     assert "mcp__guide__set_milestone" in LEADER_TOOLS
     assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
+
+
+def test_조건_불가능_출구_정체경보와_재협상_포기(monkeypatch):
+    """[설계검토 #1] 진전 없는 반복 미충족이 임계 도달 시 정체 경보 → 결정권자 재협상 → 사람 승인
+    포기(waive) → 나머지 조건으로 주기 진행(무한 iter 차단). 포기는 봇 혼자 못 하고 사람 승인 필요."""
+    from system.rule.milestone import (approve_waiver, iter_verify, open_milestone,
+                                        renegotiate_criterion, rule_renegotiate)
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.setenv("ORGANT_ITER_STUCK_LIMIT", "3")
+    f = _flow()
+    ms = open_milestone(f, "M1", [{"desc": "카운트 API", "verify": "curl localhost:3000/count"},
+                                  {"desc": "영속 저장", "verify": "재시작 후 curl로 카운트 유지 확인"}])
+    # 진전 없이 3회 미충족 → 정체 경보
+    for i in range(3):
+        ok, note = iter_verify(f, ms, [{"desc": "카운트 API", "passed": False, "evidence": ""}])
+    assert ms.iter_stuck >= 3 and "정체" in note and "renegotiate" in note
+    # 비결정권자는 재협상 못 함
+    assert "결정권자" in rule_renegotiate(f, 12, {"target": "영속 저장", "reason": "환경 제약"})
+    # 결정권자 재협상 → blocked_pending(봇 혼자 포기 못 함, 사람 승인 대기)
+    out = renegotiate_criterion(f, ms, "영속 저장", "이 환경은 파일 영속이 재시작에 안 남음")
+    assert "승인 대기" in out and ms.criteria[1].status == "blocked_pending" and ms.iter_stuck == 0
+    # 사람 승인 → waived → 그 조건은 미충족 목록에서 빠진다
+    approve_waiver(f, ms, "영속 저장", approve=True)
+    assert ms.criteria[1].status == "waived"
+    ok, note = iter_verify(f, ms, [{"desc": "카운트 API", "passed": True, "evidence": "HTTP 200 count:1"}])
+    assert ok is True and ms.status == "wrapup"                # 나머지 조건만 충족돼도 주기 닫힘
+
+
+def test_등록게이트_실행불가_verify_거부(monkeypatch):
+    """[설계검토 #4] verify가 '확인함' 같은 빈 서술이면 거부 — 실행 명령이나 측정 기준을 강제."""
+    from system.rule.milestone import gate_criteria
+    assert gate_criteria([{"desc": "카운트 증가", "verify": "확인한다"}]) is not None    # 빈 서술 거부
+    assert "실행 가능한 형태" in gate_criteria([{"desc": "카운트 증가", "verify": "잘 되는지 본다"}])
+    assert gate_criteria([{"desc": "카운트 증가", "verify": "curl localhost:3000/count 로 확인"}]) is None  # 명령
+    assert gate_criteria([{"desc": "응답 시간", "verify": "3초 이하"}]) is None            # 측정
+    assert gate_criteria([{"desc": "상태코드", "verify": "200 반환"}]) is None             # 수치
 
 
 def test_흐름루프_주기_인식_종료조건(monkeypatch):

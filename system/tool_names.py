@@ -24,7 +24,7 @@ COORD_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL]
 LEADER_TOOLS = [f"mcp__guide__{n}" for n in
                 ("create_project", "create_task", "set_goal", "complete_task", "send_file",
                  "vote", "meet", "parallel_work", "list_projects",
-                 # [파이프라인 §1·§4 — 결정권자 전용은 확정(set_milestone)뿐] set_subtask는 공통
-                 # (FLOW_TOOLS)으로 이동 — 통합주기 1의 허용 누락은 S3 수선, 배치4 재배치를 여기 반영.
+                 # [파이프라인 §1·§4 — 결정권자 전용: 확정(set_milestone)·재협상(renegotiate_criterion)]
+                 # set_subtask는 공통(FLOW_TOOLS)으로 이동 — 통합주기 1의 허용 누락은 S3 수선, 배치4 재배치.
                  # deploy는 탈중앙화로 공통 이동(변도진-1) — 리더 목록에서 제거.
-                 "set_milestone")]
+                 "set_milestone", "renegotiate_criterion")]

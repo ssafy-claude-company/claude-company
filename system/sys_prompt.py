@@ -482,15 +482,23 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
         _ms = _ms_next(flow) if flow is not None else None
         _ms_note = ""
         if _ms is not None:
-            _rem = [c.desc for c in _ms.criteria if not c.passed]
+            _rem = [c.desc for c in _ms.criteria if not c.passed and getattr(c, "status", "active") != "waived"]
             _ms_note = (f"[진행 중 주기] {_ms.ms_id} — {_ms.goal[:60]} (iter {_ms.iter_n}, "
                         f"미충족 {len(_rem)}/{len(_ms.criteria)}"
                         + ((": " + " · ".join(d[:30] for d in _rem[:3])) if _rem else "") + ")\n")
+            # [조건 불가능 출구 #1 — 프레임 노출] 정체(진전 없는 반복)면 재협상을 프레임에서 직접 안내.
+            if getattr(_ms, "iter_stuck", 0) >= 2:
+                _ms_note += (f"[정체 경보 — {_ms.iter_stuck}회 진전 없음] 반복이 결과를 못 바꾸는 중입니다. "
+                             f"조건이 환경상 달성 불가라면 renegotiate_criterion(조건, 사유)으로 재협상하세요"
+                             f"(사람 승인으로 포기/변경) — 같은 iter를 무한 반복하지 마세요.\n")
+        # [개입 우선 #2 — 미답 개입은 iter보다 먼저] 사람 개입이 도착해 있으면 주기 진행 전에 먼저
+        # 반영하라고 못박는다(마일스톤 주기가 길어져도 '40분 대기'가 iter 단위로 재발하지 않게).
+        _intv = "[개입 우선] 위에 사람이 전한 정보가 있으면, 주기(회의·조건·검증) 진행보다 **먼저** 반영·응답하세요.\n" if human_info_note else ""
         return (
             f"당신은 이번 흐름의 **결정권자**입니다 — 관리자가 아니라 확정권 3개만 가진 한 참여자"
             f"(①회의 수렴 확정 ②응찰 동률 해소 ③교착 중재). 진행은 주기(iter)가, 마감은 완수조건이, "
             f"배분은 백로그 릴레이(현장)가 맡습니다. 당신의 역할: {domain or '결정권자'}\n"
-            f"{origin_note}{situation_note}{inbound_note}{human_info_note}"
+            f"{origin_note}{situation_note}{inbound_note}{human_info_note}{_intv}"
             f"받은 형태: {body}\n{peers_note}{_ms_note}\n"
             f"[사이클] ① meet(topic, my_opinion 필수)로 완수조건을 수렴하세요 — 회의는 완전 "
             f"turn-taking(당신 발제 후 전 발언 응찰, 무응찰=종결 표결) ② 수렴을 set_milestone"

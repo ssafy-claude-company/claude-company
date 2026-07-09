@@ -45,7 +45,8 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag):
         "criteria": "POST /count가 값을 증가시킨다 | curl POST 후 GET으로 확인\n"
                     "값이 파일에 저장된다 | 재기동 후 GET 값 유지 확인"})
     assert "개설" in _drive(lead, "set_milestone", {
-        "goal": "프론트", "criteria": "버튼 클릭이 화면 숫자를 올린다 | 브라우저 클릭 확인"})
+        # [#4 게이트 강화 여파] '브라우저 클릭 확인'(빈 서술)은 이제 등록 거부 — 실행 가능형으로.
+        "goal": "프론트", "criteria": "버튼 클릭이 화면 숫자를 올린다 | playwright로 클릭 후 숫자 1 증가 확인"})
     assert len(f.milestones) == 2
 
     # ② iter 실증(증거 있는 충족) → 잔여 정리 → done — Task 경계 도달

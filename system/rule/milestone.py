@@ -23,6 +23,7 @@ __all__ = [
     "ms_to_dict", "ms_from_dict",
     "parse_criteria_lines", "rule_set_milestone", "rule_set_subtask",
     "parse_iter_results", "rule_report_iter",
+    "renegotiate_criterion", "approve_waiver", "rule_renegotiate",
 ]
 
 
@@ -42,6 +43,11 @@ class Criterion:
     verify: str
     passed: bool = False
     evidence: str = ""     # 마지막 검증 영수증(run 출력 요지) — 허위 충족 차단의 원자료
+    # [조건 재협상 — 설계 검토 #1(2026-07-09)] 조건 자체가 환경상 달성 불가일 때의 출구. active →
+    # (결정권자 renegotiate) blocked_pending → (사람 승인) waived. waived 조건은 iter 검증에서
+    # '충족'처럼 제외된다(포기가 명시적으로 기록되고 사람이 승인 — churn을 무한 반복하지 않는다).
+    status: str = "active"   # active | blocked_pending | waived
+    block_reason: str = ""   # 왜 불가능한가(인프라 제약 등) — 사람 승인 판단의 근거
 
 
 @dataclass
@@ -54,6 +60,7 @@ class SubTask:
     backlog_ids: list = field(default_factory=list)   # Backlog 표현은 S2 소유 — 여기는 연결 id만
     status: str = "open"        # open → wrapup(조건 충족·잔여 정리) → done
     iter_n: int = 0
+    iter_stuck: int = 0         # [조건 불가능 출구 #1] 진전 없는 연속 미충족 iter 수(임계 도달=재협상 안내)
 
 
 @dataclass
@@ -64,6 +71,7 @@ class Milestone:
     subtasks: List[SubTask] = field(default_factory=list)
     status: str = "open"        # open → wrapup → done
     iter_n: int = 0
+    iter_stuck: int = 0         # [조건 불가능 출구 #1] 진전 없는 연속 미충족 iter 수
     origin: str = ""            # 이 마일스톤을 낳은 것 — 사용자 원문 or e2e 결함(복기)
 
 
@@ -91,11 +99,33 @@ def gate_criteria(entries) -> Optional[str]:
         if not v:
             return (f"조건 '{d[:40]}'에 verify(실증 절차)가 없습니다 — run으로 확인 가능한 "
                     f"명령/절차를 적으세요(예: curl로 상태코드, pytest 파일, 브라우저 로드 확인).")
+        # [등록 게이트 강화 — 설계 검토 #4(2026-07-09)] verify가 '확인함' 같은 빈 서술이면 churn을
+        # 등록 단계로 옮길 뿐. 실행 가능 신호(명령 토큰) 또는 측정 신호(수치·비교)를 최소 1개 요구한다.
+        if not _verify_is_executable(v):
+            return (f"조건 '{d[:40]}'의 verify가 실행 가능한 형태가 아닙니다: '{v[:40]}' — "
+                    f"run으로 돌릴 명령(curl/pytest/npm/python/grep/localhost/포트/파일경로 등)이나 "
+                    f"측정 기준(수치·= > < %·회·초·개)을 넣으세요. '확인한다'류 서술은 불가.")
         key = d.lower()
         if key in seen:
             return f"조건 '{d[:40]}'이 중복입니다 — 합치거나 구체화하세요."
         seen.add(key)
     return None
+
+
+# 실행 가능 신호(명령 토큰) — 하나라도 있으면 run으로 돌릴 수 있는 verify로 본다(도메인 중립).
+_EXEC_TOKENS = ("curl", "http", "pytest", "npm", "node", "python", "grep", "test", "localhost",
+                "127.0.0.1", "run ", "./", "manage.py", "playwright", "jest", "build", "GET ",
+                "POST ", "status", "assert", "diff", "cat ", "ls ", "wget", ":300", ":800", ":500")
+# 측정 신호 — 비교·수치·단위(정량 기준). 정규식 대신 부분 문자열로 가볍게.
+_MEASURE_TOKENS = ("=", ">", "<", "%", "회", "초", "개", "번", "1", "2", "3", "4", "5",
+                   "6", "7", "8", "9", "0", "코드 2", "200", "404", "이상", "이하", "일치")
+
+
+def _verify_is_executable(v: str) -> bool:
+    """verify 문자열이 '실행 가능한 명령'이나 '측정 기준'을 담는가 — 빈 서술('확인한다') 차단."""
+    t = str(v or "").lower()
+    return (any(tok.lower() in t for tok in _EXEC_TOKENS)
+            or any(tok in v for tok in _MEASURE_TOKENS))
 
 
 # ── 생성 ───────────────────────────────────────────────────────────────────────
@@ -156,6 +186,8 @@ def iter_verify(flow, obj, results):
     - 미충족 → open 유지, 미충족 목록 반환(다음 iter의 일감).
     반환: (passed_all: bool, note: str)."""
     obj.iter_n += 1
+    # [버그 A 교정] '진전'은 이번 iter에 새로 통과한 조건 유무 — 결과 적용 전 미충족 수를 기준선으로.
+    _before = sum(1 for c in obj.criteria if not c.passed and c.status != "waived")
     by_desc = {c.desc: c for c in obj.criteria}
     for r in (results or []):
         d = str(r.get("desc") or "").strip()
@@ -165,20 +197,85 @@ def iter_verify(flow, obj, results):
         ev = str(r.get("evidence") or "").strip()
         if bool(r.get("passed")) and ev:
             c.passed, c.evidence = True, ev[:400]
-    remain = [c.desc for c in obj.criteria if not c.passed]
+    # [조건 재협상 #1] waived(사람 승인 포기) 조건은 '충족'처럼 제외 — 미충족 목록에 안 남는다.
+    remain = [c.desc for c in obj.criteria if not c.passed and c.status != "waived"]
     kind = "ms" if isinstance(obj, Milestone) else "st"
     oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
     if flow.log:
         flow.log("ms_iter_verify", kind=kind, id=oid, iter=obj.iter_n,
                  passed=len(obj.criteria) - len(remain), total=len(obj.criteria))
     if not remain:
+        obj.iter_stuck = 0
         obj.status = "wrapup"
         if flow.log:
             flow.log("ms_iter_pass", kind=kind, id=oid, iter=obj.iter_n)
         _ckpt(flow)
         return True, "완수조건 전부 충족 — 잔여 정리(wrapup) 후 다음 주기로."
+    # [조건 불가능 출구 #1] 같은 조건이 진전 없이 반복 미충족이면 접근이 결과를 못 바꾸는 신호 —
+    # iter_stuck을 세고 임계(기본 3) 도달 시 재협상 경로를 안내한다(무한 iter 차단).
+    # [버그 A] 진전 = 이번 iter에 미충족 수가 줄었는가(새로 통과) — '과거에 하나 통과'로 영구 진전 오판 금지.
+    # [버그 B] 재협상 대기(blocked_pending) 조건이 있으면 정체가 아니라 '사람 응답 대기' — 경보 스팸 정지.
+    _progressed = len(remain) < _before
+    _waiting = any(c.status == "blocked_pending" for c in obj.criteria)
+    if _progressed:
+        obj.iter_stuck = 0
+    elif not _waiting:
+        obj.iter_stuck += 1
     _ckpt(flow)
-    return False, "미충족: " + " · ".join(d[:40] for d in remain)
+    note = "미충족: " + " · ".join(d[:40] for d in remain)
+    if obj.iter_stuck >= _STUCK_LIMIT:
+        if flow.log:
+            flow.log("ms_iter_stuck", kind=kind, id=oid, iter=obj.iter_n, stuck=obj.iter_stuck)
+        note += (f"\n[정체 — {obj.iter_stuck}회 연속 진전 없음] 반복이 결과를 못 바꾸고 있습니다. "
+                 f"조건이 환경상 달성 불가라면 결정권자가 renegotiate_criterion(대상 조건, 사유)로 "
+                 f"재협상하세요 — 사람 승인으로 조건을 포기(waive)하거나 바꿉니다. 무한 반복하지 마세요.")
+    return False, note
+
+
+_STUCK_LIMIT = int(os.environ.get("ORGANT_ITER_STUCK_LIMIT", "3"))
+
+
+def renegotiate_criterion(flow, obj, target: str, reason: str) -> str:
+    """[조건 재협상 #1 — 결정권자] 달성 불가 조건을 blocked_pending으로 표시하고 사람에게 에스컬레이트한다.
+    사람 승인(approve_waiver)이 오기 전엔 waive되지 않는다 — '포기'는 봇이 혼자 못 하고 사람이 승인한다
+    (조건=마감권이므로 포기도 방향 결정 = 사람 몫). 승인 전까지 그 조건은 여전히 미충족으로 남되,
+    iter_stuck 경보가 반복 안 되게 재협상 진행 중 표식을 둔다."""
+    c = next((x for x in obj.criteria if x.desc == target or target in x.desc), None)
+    if c is None:
+        return f"재협상 대상 조건을 못 찾음: {target[:40]} — 현재 조건: {' · '.join(x.desc[:24] for x in obj.criteria)}"
+    if c.status == "waived":
+        return f"이미 포기(waived)된 조건입니다: {c.desc[:40]}"
+    c.status = "blocked_pending"
+    c.block_reason = str(reason or "").strip()[:300]
+    obj.iter_stuck = 0   # 재협상 진행 중 — 경보 반복 정지(사람 응답 대기)
+    oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
+    if flow.log:
+        flow.log("criterion_renegotiate", id=oid, target=c.desc[:60], reason=c.block_reason[:80])
+    # 사람 에스컬레이트(매체가 있으면) — deliver 경로는 SYS가 주입, 없으면 로그만(관통·테스트 안전)
+    esc = getattr(flow, "escalate_to_human", None)
+    if callable(esc):
+        try:
+            esc(f"[조건 재협상 승인 요청] 마일스톤 조건 '{c.desc[:60]}'을(를) 포기/변경할지 판단 필요 — "
+                f"사유: {c.block_reason[:120]}. 승인하면 그 조건 없이 주기가 진행됩니다.")
+        except Exception:
+            pass
+    return (f"조건 '{c.desc[:40]}' 재협상 요청 — 사람 승인 대기(blocked_pending). 사유: {c.block_reason[:80]}. "
+            f"승인 오면 그 조건은 포기(waive)되고 나머지로 주기가 진행됩니다. 그 사이 다른 조건을 진행하세요.")
+
+
+def approve_waiver(flow, obj, target: str, approve: bool = True) -> str:
+    """[사람 승인 경로] blocked_pending 조건을 waived(포기 확정) 또는 active(반려)로. 매체(murmur)가
+    사람 결정을 받아 호출하거나, SYS가 deliver_human_info의 '[조건 포기 승인/반려]'를 파싱해 부른다."""
+    c = next((x for x in obj.criteria if (x.desc == target or target in x.desc)
+              and x.status == "blocked_pending"), None)
+    if c is None:
+        return f"승인 대기 중인 재협상 조건을 못 찾음: {target[:40]}"
+    c.status = "waived" if approve else "active"
+    oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
+    if flow.log:
+        flow.log("criterion_waiver", id=oid, target=c.desc[:60], approved=bool(approve))
+    _ckpt(flow)
+    return (f"조건 '{c.desc[:40]}' {'포기 승인됨(waived) — 나머지 조건으로 주기 진행' if approve else '반려됨 — 다시 충족해야 함'}.")
 
 
 def wrapup_done(flow, obj) -> str:
@@ -210,7 +307,7 @@ def ms_replan(flow, defects) -> Optional[Milestone]:
     if not ds:
         return None
     entries = [{"desc": f"결함 해소: {d[:80]}",
-                "verify": f"결함 재현 절차를 재실행해 미재현 확인: {d[:120]}"} for d in ds]
+                "verify": f"run으로 재현 절차 재실행 → 재현 0회 확인: {d[:120]}"} for d in ds]
     ms = open_milestone(flow, goal=f"e2e 결함 {len(ds)}건 해소", criteria_entries=entries,
                         origin="e2e:" + " | ".join(d[:60] for d in ds)[:400])
     if isinstance(ms, str):        # 게이트 거부(이론상 없음 — 방어)
@@ -273,6 +370,22 @@ def rule_set_subtask(flow, me_id, args) -> str:
         return f"등록 거부: {st}"
     return (f"SubTask {st.st_id} 추가 — {goal[:60]} (마일스톤 {ms.ms_id}). "
             f"참여는 자발입니다 — 백로그 제출로 참여하세요.")
+
+
+def rule_renegotiate(flow, me_id, args) -> str:
+    """[결정권자 — 조건 재협상 #1] 진행 중 주기의 달성 불가 조건을 사람 승인 대기로 올린다.
+    target=조건 desc(부분일치), reason=왜 불가능한가. 결정권자만(포기는 방향 결정)."""
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    if not _is_decider(flow, me_id):
+        return "조건 재협상은 결정권자의 몫입니다 — 정체를 보고하면 결정권자가 올립니다."
+    ms = next_milestone(flow)
+    if ms is None:
+        return "재협상할 주기가 없습니다."
+    target = str(args.get("target") or "").strip()
+    if not target:
+        return "target(재협상할 조건)이 비었습니다."
+    return renegotiate_criterion(flow, ms, target, str(args.get("reason") or ""))
 
 
 def parse_iter_results(text: str):
@@ -347,31 +460,37 @@ def rule_report_iter(flow, me_id, args) -> str:
 
 # ── 직렬화 (계약 §9 — 최대 저장: 체크포인트 동승·재시작 후 중간 재개) ─────────────
 
+def _crit_dict(c):
+    return {"desc": c.desc, "verify": c.verify, "passed": c.passed, "evidence": c.evidence,
+            "status": c.status, "block_reason": c.block_reason}   # [#1] 재협상 상태 동승
+
+
 def ms_to_dict(ms: Milestone) -> dict:
     return {"ms_id": ms.ms_id, "goal": ms.goal, "status": ms.status, "iter_n": ms.iter_n,
-            "origin": ms.origin,
-            "criteria": [{"desc": c.desc, "verify": c.verify, "passed": c.passed,
-                          "evidence": c.evidence} for c in ms.criteria],
+            "iter_stuck": ms.iter_stuck, "origin": ms.origin,
+            "criteria": [_crit_dict(c) for c in ms.criteria],
             "subtasks": [{"st_id": s.st_id, "goal": s.goal, "status": s.status,
-                          "iter_n": s.iter_n, "participants": sorted(int(p) for p in s.participants),
+                          "iter_n": s.iter_n, "iter_stuck": s.iter_stuck,
+                          "participants": sorted(int(p) for p in s.participants),
                           "backlog_ids": list(s.backlog_ids),
-                          "criteria": [{"desc": c.desc, "verify": c.verify, "passed": c.passed,
-                                        "evidence": c.evidence} for c in s.criteria]}
+                          "criteria": [_crit_dict(c) for c in s.criteria]}
                          for s in ms.subtasks]}
 
 
 def ms_from_dict(d: dict) -> Milestone:
     def _crit(rows):
         return [Criterion(desc=str(r.get("desc") or ""), verify=str(r.get("verify") or ""),
-                          passed=bool(r.get("passed")), evidence=str(r.get("evidence") or ""))
+                          passed=bool(r.get("passed")), evidence=str(r.get("evidence") or ""),
+                          status=str(r.get("status") or "active"), block_reason=str(r.get("block_reason") or ""))
                 for r in (rows or [])]
     ms = Milestone(ms_id=str(d.get("ms_id") or ""), goal=str(d.get("goal") or ""),
                    criteria=_crit(d.get("criteria")), status=str(d.get("status") or "open"),
-                   iter_n=int(d.get("iter_n") or 0), origin=str(d.get("origin") or ""))
+                   iter_n=int(d.get("iter_n") or 0), iter_stuck=int(d.get("iter_stuck") or 0),
+                   origin=str(d.get("origin") or ""))
     for s in (d.get("subtasks") or []):
         ms.subtasks.append(SubTask(
             st_id=str(s.get("st_id") or ""), goal=str(s.get("goal") or ""),
             criteria=_crit(s.get("criteria")), participants=set(int(p) for p in (s.get("participants") or [])),
             backlog_ids=list(s.get("backlog_ids") or []), status=str(s.get("status") or "open"),
-            iter_n=int(s.get("iter_n") or 0)))
+            iter_n=int(s.get("iter_n") or 0), iter_stuck=int(s.get("iter_stuck") or 0)))
     return ms

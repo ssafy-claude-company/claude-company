@@ -115,7 +115,7 @@ def _chown_tree(path, uid, gid):
 from .rule.task import (_perceptual_essential, _wants_real_data,  # noqa: F401  [PJT/tests(test_sys)가 파사드에서 직접 import — 유지]
                         _has_real_dataset, _synthesizes_data, _is_verifier)
 # [마일스톤 파이프라인 — S1(PIPELINE_REWORK_2026-07-09)] 도구 표면·회의 설명 분기가 소비.
-from .rule.milestone import (pipeline_on as _pipe_on, rule_report_iter,
+from .rule.milestone import (pipeline_on as _pipe_on, rule_renegotiate, rule_report_iter,
                              rule_set_milestone, rule_set_subtask)
 from .rule.wrapup import (rule_e2e_finish, rule_e2e_open, rule_e2e_result,
                           rule_e2e_scope)
@@ -483,6 +483,16 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             async def set_milestone(args):
                 return _ok(rule_set_milestone(flow, me_id, args))
             tools.append(set_milestone)
+
+            @tool("renegotiate_criterion",
+                  "[조건 재협상 — 결정권자] 완수조건이 환경상 달성 불가일 때(예: 인프라 제약)의 정식 "
+                  "출구. iter가 같은 조건을 진전 없이 반복 미충족(정체 경보)하면 무한 반복하지 말고 이걸로 "
+                  "올린다. target=재협상할 조건(desc 일부), reason=왜 불가능한가. **사람 승인**이 오면 그 "
+                  "조건은 포기(waive)되고 나머지 조건으로 주기가 진행된다 — 봇이 혼자 포기 못 한다(조건=마감권).",
+                  {"target": str, "reason": str})
+            async def renegotiate_criterion(args):
+                return _ok(rule_renegotiate(flow, me_id, args))
+            tools.append(renegotiate_criterion)
 
         @tool("vote",
               "팀 표결(구조적 합의): 선택지를 두고 멤버 전원의 선택+근거를 **동시에**(독립·앵커링 방지) "
