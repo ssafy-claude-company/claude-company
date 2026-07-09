@@ -40,6 +40,7 @@ class Flow:
         # Milestone 목록. ORGANT_PIPELINE 미설정이면 빈 리스트로 남는다(동작 불변). 상태는 최대
         # 저장 원칙: rule/milestone.ms_to_dict로 체크포인트에 동승(재시작 후 중간 재개).
         self.milestones: list = []
+        self._last_ms_sig = None        # [파이프라인 §5] 직전 세그먼트의 주기 시그(ms_id,iter) — 주기 전진 감지
         self._base = time.strftime("%H%M%S")
         self._n = 0
         self.done = False
