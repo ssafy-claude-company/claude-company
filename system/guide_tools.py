@@ -251,9 +251,10 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         @tool("report_iter",
               "진행 중 주기의 완수조건 실증 결과를 제출한다(검증 참여자 누구나). results=한 줄에 "
               "'조건 | pass/fail | 증거(run 출력 요지)' — **증거 없는 pass는 인정되지 않는다**. "
-              "조건이 전부 실증되면 주기가 스스로 잔여 정리(wrapup)로 넘어가고, 정리가 끝나면 "
-              "wrapup='done'으로 주기를 닫는다. 마감은 사람이 아니라 조건이다.",
-              {"results": str, "wrapup": str})
+              "target=SubTask id(또는 goal 일부)를 주면 그 SubTask의 검증 — 통과 시 잔여 백로그가 "
+              "자동 정리되고 SubTask가 닫힌다. 비우면 마일스톤 검증: 전부 실증되면 wrapup(잔여 정리)로 "
+              "넘어가고, 정리가 끝나면 wrapup='done'으로 닫는다. 마감은 사람이 아니라 조건이다.",
+              {"results": str, "target": str, "wrapup": str})
         async def report_iter(args):
             return _ok(rule_report_iter(flow, me_id, args))
         tools.append(report_iter)

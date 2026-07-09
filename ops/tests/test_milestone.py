@@ -169,6 +169,26 @@ def test_결정권자_프레임_프롬프트(monkeypatch):
     assert "결정권자" not in p_off                             # OFF — 종전 담당자 프레임 불변
 
 
+def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monkeypatch):
+    """[통합주기 3 — §12-1 접점] report_iter(target=SubTask): 조건 실증 → S2 on_subtask_wrapup
+    (잔여 백로그 정리) 호출 → 자동 종료. 허용목록도 공통(FLOW_TOOLS)에 있어 훅이 거부하지 않는다."""
+    from system.rule.milestone import rule_report_iter, rule_set_milestone, rule_set_subtask
+    from system.tool_names import FLOW_TOOLS, LEADER_TOOLS
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    rule_set_milestone(f, 11, {"goal": "M1", "criteria": "전체 빌드 | npm run build"})
+    rule_set_subtask(f, 12, {"goal": "프론트 뼈대", "criteria": "index 로드 | curl -s /"})
+    st = f.milestones[0].subtasks[0]
+    out = rule_report_iter(f, 12, {"target": st.st_id, "results": "index 로드 | pass | HTTP 200"})
+    assert "통과 — 종료" in out and st.status == "done"        # 훅 경유 자동 종료(정리 요지 동봉)
+    out = rule_report_iter(f, 12, {"target": "없는것", "results": "x | pass | e"})
+    assert "못 찾았습니다" in out
+    # [S3 발견 결함의 회귀 가드] 등록(guide_tools)과 허용(tool_names)은 한 세트다.
+    assert "mcp__guide__set_subtask" in FLOW_TOOLS and "mcp__guide__report_iter" in FLOW_TOOLS
+    assert "mcp__guide__set_milestone" in LEADER_TOOLS
+    assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
+
+
 def test_체크포인트_동승과_복원_왕복(tmp_path):
     """[§9 최대 저장] checkpoint_open_task가 주기 상태를 프로젝트 레지스트리에 싣고,
     restore_open_task가 open_task 유무와 무관하게 되살린다(재시작 후 중간 재개의 실배선)."""

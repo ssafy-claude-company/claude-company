@@ -291,15 +291,31 @@ def parse_iter_results(text: str):
     return out
 
 
+def _find_subtask(ms: Milestone, key):
+    """target 문자열(st_id 전체·꼬리·goal 부분일치)로 SubTask를 찾는다 — 봇이 정확한 id를 몰라도 되게."""
+    k = str(key or "").strip()
+    if not k:
+        return None
+    for s in ms.subtasks:
+        if s.st_id == k or s.st_id.endswith(k) or k in s.goal:
+            return s
+    return None
+
+
 def rule_report_iter(flow, me_id, args) -> str:
     """[iter 검증 제출 — 누구나(검증 참여자)] 진행 중 주기의 완수조건 실증 결과를 제출한다.
     조건이 전부 실증되면 주기가 스스로 wrapup으로 넘어간다 — 마감은 사람이 아니라 조건.
-    wrapup='done'이면 잔여 정리 완료 선언(wrapup 상태에서만 유효)."""
+    target을 주면 그 SubTask의 iter 검증(통과 시 S2 잔여 백로그 정리 훅 → 자동 종료 — §12-1 접점).
+    wrapup='done'은 마일스톤 잔여 정리 완료 선언(wrapup 상태에서만)."""
     if not pipeline_on():
         return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
     ms = next_milestone(flow)
     if ms is None:
         return "검증할 주기가 없습니다 — set_milestone으로 주기를 먼저 여세요."
+    tgt = _find_subtask(ms, args.get("target"))
+    if str(args.get("target") or "").strip() and tgt is None:
+        return (f"대상 SubTask를 못 찾았습니다: {str(args.get('target'))[:40]} — "
+                f"현재 주기의 SubTask: {', '.join(s.st_id for s in ms.subtasks) or '(없음)'}")
     if str(args.get("wrapup") or "").strip().lower() in ("done", "완료"):
         r = wrapup_done(flow, ms)
         if r != "done":
@@ -310,11 +326,23 @@ def rule_report_iter(flow, me_id, args) -> str:
     results = parse_iter_results(args.get("results"))
     if not results:
         return "results가 비었습니다 — 한 줄에 '조건 | pass/fail | 증거(run 출력 요지)'."
-    ok, note = iter_verify(flow, ms, results)
+    obj = tgt or ms
+    ok, note = iter_verify(flow, obj, results)
+    if ok and tgt is not None:
+        # [S2 접점(§12-1)] SubTask 조건 충족 → 잔여 백로그 정리 훅(wrapup_done **앞**) → 자동 종료.
+        # 지역 import — 모듈 의존은 backlog→milestone 단방향 유지(여기는 호출 시점 결합만).
+        try:
+            from .backlog import on_subtask_wrapup
+            _sweep = on_subtask_wrapup(flow, tgt)
+        except Exception as e:
+            _sweep = f"(잔여 정리 훅 실패 — 수동 정리 필요: {str(e)[:60]})"
+        wrapup_done(flow, tgt)
+        return f"SubTask {tgt.st_id} iter {tgt.iter_n} 통과 — 종료. {_sweep}"
     if ok:
         return (f"iter {ms.iter_n} 통과 — 주기 {ms.ms_id}가 wrapup(잔여 정리)로 전이. "
                 f"남은 SubTask·백로그를 정리한 뒤 report_iter(wrapup='done')로 닫으세요.")
-    return f"iter {ms.iter_n} — {note}. 증거 없는 pass는 인정되지 않습니다."
+    kind = f"SubTask {tgt.st_id}" if tgt is not None else f"주기 {ms.ms_id}"
+    return f"{kind} iter {obj.iter_n} — {note}. 증거 없는 pass는 인정되지 않습니다."
 
 
 # ── 직렬화 (계약 §9 — 최대 저장: 체크포인트 동승·재시작 후 중간 재개) ─────────────
