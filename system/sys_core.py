@@ -1912,10 +1912,17 @@ class Sys:
                 except Exception as _e:
                     self._log("precise_resume_failed", err=str(_e)[:150])
             result = await self.run_turn(flow, lead, _body, Kind.WORK, "leader")
+            # [마일스톤 파이프라인 §5 — 진행을 '리더 세그먼트'가 아니라 '주기(iter)'가 관할]
+            # 플래그 ON이면 continue 루프의 종료 조건에 '미완 주기 존재'를 더한다 — 결정권자가 주기를
+            # 안 닫고 턴을 끝내도 SYS가 계속 깨워 회의→조건→릴레이→iter로 주기를 닫게 한다(마감은 조건).
+            # 큰 재작성(세그먼트 루프 통째 교체)은 관통 관측 뒤로 — 실 관측 없이 물리를 갈면 리스크만 큼.
+            from .rule.milestone import next_milestone as _ms_next, pipeline_on as _ms_on
+            def _ms_pending():
+                return _ms_on() and _ms_next(flow) is not None
             # 구조적 연속 실행: 턴 한도로 작업이 끊겼으면(진행 중 Task가 남았거나 '턴 한도' 표시)
             # 같은 세션으로 이어서 완료까지 재호출한다 — '턴 한도 = 무조건 中断' 결함 해소.
             cont = 0
-            while ((flow.current is not None or "턴 한도 도달" in (result or ""))
+            while ((flow.current is not None or "턴 한도 도달" in (result or "") or _ms_pending())
                    and cont < self.max_continue and not flow.cancelled):   # [사용자 중지] 이어가기 멈춤
                 # [하드블록 종결/자기치유(B-03 G4)] 봇이 못 푸는 인프라 벽(배포 자격증명 등)에 막히면 재시도
                 # 루프를 멈춘다 — 가짜 진행(재검증)으로 며칠씩 빙빙 돌다 무진행 컷나던 것 차단. 단 '연속
@@ -1961,7 +1968,13 @@ class Sys:
                 # 안 넣는다 — 응찰·발언은 턴테이킹 잡음이지 실작업이 아니다. 안 그러면 실작업 0인데도 발언만으로
                 # progressed=True가 돼 정체감지(연속 무진전 12)가 영영 불발(라이브 t-80: 967세그 전부
                 # progressed·tool_use 0·floor 3868 → 2.5시간 무한루프, 사용자 관측: "리더 작업 중만 몇 시간").
-                progressed = (flow.act_count > acts_seg) or bool(str(drained).strip())
+                # [파이프라인 §5] 주기 진행(iter 전진·주기 종료)도 '진전'으로 센다 — 결정권자가 도구로
+                # 주기를 굴리면 act_count가 안 올라도 정체가 아니다(무진행 컷 오판 방지).
+                _ms_now = _ms_next(flow) if _ms_on() else None
+                _ms_sig = (getattr(_ms_now, "ms_id", ""), getattr(_ms_now, "iter_n", 0)) if _ms_now else None
+                progressed = (flow.act_count > acts_seg or bool(str(drained).strip())
+                              or (_ms_on() and _ms_sig != getattr(flow, "_last_ms_sig", None)))
+                flow._last_ms_sig = _ms_sig
                 # [1층 floor seam] 세그먼트 경계 TRP — turn-taking이면 자기선택 open(기본은 no-op). 발언은
                 # drained에 실어 리더에 전달(위 progressed 계산 뒤라 '진전'으론 안 셈 — 이게 무한루프 차단의 핵심).
                 drained += await self._floor_segment_open(flow, lead)
@@ -1975,7 +1988,8 @@ class Sys:
                 flow.leader_segment += 1
                 self._log("continue_incomplete",
                           task=(flow.current.task_id if flow.current else None), attempt=cont,
-                          seg=flow.leader_segment, progressed=progressed)
+                          seg=flow.leader_segment, progressed=progressed,
+                          ms=(_ms_sig[0] if _ms_sig else None), ms_iter=(_ms_sig[1] if _ms_sig else None))
                 # [기억 구멍 무력화] 이어가기마다 팀·소유의 '시스템 사실'을 재주입한다 — 외부 절단
                 # (SIGTERM)으로 직전 턴이 세션에 안 남으면 리더가 자기 팀 구성을 잊고 '참여 중인가요?'
                 # 재확인·팀 밖 호출을 반복했다(라이브 관측). 기억은 흔들려도 사실은 SYS가 들고 있다.

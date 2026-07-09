@@ -189,6 +189,24 @@ def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monke
     assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
 
 
+def test_흐름루프_주기_인식_종료조건(monkeypatch):
+    """[§5 흐름 축] 플래그 ON에서 '미완 주기 존재'가 continue 루프의 계속 조건이 된다 —
+    결정권자가 주기를 안 닫으면 SYS가 계속 깨워 주기를 닫게 한다(진행을 주기가 관할). OFF면 무영향."""
+    from system.rule.milestone import next_milestone, open_milestone, pipeline_on
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    # _run_leader 내부 _ms_pending과 동일 술어를 재구성(단위 검증 — 루프 전체는 대본/관통이 검증)
+    _pending = lambda: pipeline_on() and next_milestone(f) is not None
+    assert _pending() is False                                  # 주기 없음 — 계속 안 함
+    open_milestone(f, "M1", [{"desc": "a", "verify": "run a"}])
+    assert _pending() is True                                   # 미완 주기 — 계속(결정권자를 깨움)
+    f.milestones[0].status = "done"
+    assert _pending() is False                                  # 주기 소진 — 종료 허용
+    monkeypatch.delenv("ORGANT_PIPELINE", raising=False)
+    open_milestone(f, "M2", [{"desc": "b", "verify": "run b"}])  # 데이터 있어도
+    assert (pipeline_on() and next_milestone(f) is not None) is False   # OFF면 무영향
+
+
 def test_체크포인트_동승과_복원_왕복(tmp_path):
     """[§9 최대 저장] checkpoint_open_task가 주기 상태를 프로젝트 레지스트리에 싣고,
     restore_open_task가 open_task 유무와 무관하게 되살린다(재시작 후 중간 재개의 실배선)."""

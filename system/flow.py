@@ -49,6 +49,7 @@ class Flow:
         self.e2e_results = None        # 항목별 제출 결과(id → {ok, observed, evidence})
         self.wrapup_state = None       # 마지막 e2e 판정(§9 — ckpt 동승 대상)
         self.event_counts = None       # §8 오버헤드 집계(sys_core가 tallying_logger로 채움, ON에서만)
+        self._last_ms_sig = None        # [파이프라인 §5] 직전 세그먼트의 주기 시그(ms_id,iter) — 주기 전진 감지
         self._base = time.strftime("%H%M%S")
         self._n = 0
         self.done = False
