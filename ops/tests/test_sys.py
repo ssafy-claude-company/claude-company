@@ -86,7 +86,8 @@ def test_member는_request_recruit_run():
     # [W3 B-14] report는 멤버 세션 장착(구조화 필드 스태시 — Response는 여전히 반환값).
     # cast_vote(B-15)는 fork 가지에만 장착(fork_kind 세팅 시) — 일반 멤버 세션엔 없음.
     f = _flow(FakeGuide())
-    assert {t.name for t in make_guide_tools(f, 12, "member")} == {"request", "recruit", "run", "report"}
+    # [배포 탈중앙화 2026-07-08] deploy는 이제 전 멤버 장착(리더 독점 폐지 — 검증 끝낸 owner가 직접 공개).
+    assert {t.name for t in make_guide_tools(f, 12, "member")} == {"request", "recruit", "run", "report", "deploy"}
 
 
 def test_leader는_project_task_도구():
@@ -2128,11 +2129,12 @@ def test_직군보유자_자기직군_덮어쓰기_거부_1봇1직업():
     assert "이미" in r2["content"][0]["text"] and f.bot_info[11] == "L"   # 같은 직군은 무해 통과
 
 
-def test_겸직_예외_예비없으면_허용_유사직군도_허용_한도2():
-    """겸직(직군 추가)은 사용자 정책의 예외 둘 중 하나일 때만 허용된다 — ① 풀에 예비가 0명(어쩔 수
-    없음) ② 새 직군이 기존과 '비슷한 일'(도메인 토큰 공유). 허용 시 교체가 아니라 '추가'다(기존
-    전문화 기억 유지 — 라벨·직업 기억이 '주직군·부직군'). 봇당 최대 2개(직군 스택 재발 방지)."""
-    # ① 예비 0명 — 무관한 직군이라도 겸직 허용(기존 직군 유지 + 추가)
+def test_겸직_유사직군만_허용_무관은_genesis유도_한도2():
+    """[예비 폐지 후 겸직 정책 재정의(2026-07-08)] 겸직(직군 추가)은 새 직군이 기존과 '비슷한 일'(도메인
+    토큰 공유)일 때만 허용된다 — 종전 '예비 0명이면 어쩔 수 없이 허용' 조건은 예비 폐지로 상시 참이 돼
+    무관 겸직을 전부 통과시키는 1봇1직업 침식이었다(genesis가 있으니 '어쩔 수 없음'이 없음). 허용 시
+    교체가 아니라 '추가'(주직군 전문화 기억 유지), 봇당 최대 2개(직군 스택 재발 방지)."""
+    # ① 무관한 직군 겸직 → 거부 + genesis(새 전문가 채용) 유도
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드"})
     f.start_root("root")
@@ -2141,24 +2143,25 @@ def test_겸직_예외_예비없으면_허용_유사직군도_허용_한도2():
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12"}))
     r = asyncio.run(t["recruit"].handler({"member": "12", "role": "QA", "reason": "재배치"}))
-    assert "겸직" in r["content"][0]["text"]
-    assert f.bot_info[12] == "백엔드·QA" and persisted.get(12) == "백엔드·QA"   # 기존 유지 + 추가
+    assert "거부" in r["content"][0]["text"] and "1봇 1직업" in r["content"][0]["text"]
+    assert f.bot_info[12] == "백엔드"                       # 직군 그대로(침식 없음)
     # 이미 보유한 직군 재요청 → 변경 없이 무해 통과
-    r_dup = asyncio.run(t["recruit"].handler({"member": "12", "role": "QA", "reason": "재확인"}))
-    assert f.bot_info[12] == "백엔드·QA"
-    # 한도: 직군 2개 보유자에게 셋째 직군(예비 0명이어도) → 거부
-    r_cap = asyncio.run(t["recruit"].handler({"member": "12", "role": "사운드", "reason": "추가"}))
-    assert "한도" in r_cap["content"][0]["text"] and f.bot_info[12] == "백엔드·QA"
-    # ② 예비가 있어도 '비슷한 일'(기존 직군명 재사용 — 토큰 공유)이면 겸직 허용
+    r_dup = asyncio.run(t["recruit"].handler({"member": "12", "role": "백엔드", "reason": "재확인"}))
+    assert f.bot_info[12] == "백엔드"
+    # ② '비슷한 일'(도메인 토큰 공유)이면 겸직 허용 — 주직군 유지 + 부직군 추가
     g2 = FakeGuide()
     f2 = Flow(g2, channel_id=500, guild_id=1, leader_id=11,
-              bot_info={11: "L", 12: "디자이너", 13: "게임 비주얼 디자이너", 14: "예비"})
+              bot_info={11: "L", 12: "디자이너", 13: "게임 비주얼 디자이너"})
     f2.start_root("root")
     t2 = _tools(f2, 11, "leader")
     asyncio.run(t2["create_task"].handler({"members": "12,13"}))
     r2 = asyncio.run(t2["recruit"].handler({"member": "12", "role": "게임 비주얼 디자이너", "reason": "통합"}))
     assert "겸직" in r2["content"][0]["text"]
     assert f2.bot_info[12] == "디자이너·게임 비주얼 디자이너"   # 주직군 유지 + 부직군 추가
+    # ③ 한도: 직군 2개 보유자에게 셋째(유사해도, 변형게이트는 new_role로 명시 통과) → 거부
+    r_cap = asyncio.run(t2["recruit"].handler(
+        {"member": "12", "role": "UI 디자이너", "new_role": "yes", "reason": "추가"}))
+    assert "한도" in r_cap["content"][0]["text"] and f2.bot_info[12] == "디자이너·게임 비주얼 디자이너"
 
 
 def test_위임은_도구호출_취소에도_완주_detached결과_전달():
@@ -3811,7 +3814,7 @@ def test_meet_1라운드_독립fork_2라운드부터_문맥토론():
     f.wake = wake
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
-    r = asyncio.run(t["meet"].handler({"topic": "저장 방식", "members": "", "rounds": "2"}))
+    r = asyncio.run(t["meet"].handler({"topic": "저장 방식", "members": "", "rounds": "2", "my_opinion": "소집자 독립의견"}))
     txt = r["content"][0]["text"]
     assert "[회의록]" in txt and "12의 입장" in txt and "13의 입장" in txt
     r1 = [b for _, b in seen if "1라운드" in b]
@@ -4172,7 +4175,7 @@ def test_fork수집중_신규request와_중첩수집은_대기():
         assert f.fork_active == 1
         r1 = await t["request"].handler({"to_id": "12", "kind": "Info", "body": "딴 질문"})
         assert "[대기]" in r1["content"][0]["text"]            # 수집 중 신규 요청 차단
-        r2 = await t["meet"].handler({"topic": "T", "members": "", "rounds": "1"})
+        r2 = await t["meet"].handler({"topic": "T", "members": "", "rounds": "1", "my_opinion": "소집자 독립의견"})
         assert "[대기]" in r2["content"][0]["text"]            # 중첩 수집 차단
         gate.set()
         out = await vote_t
@@ -4362,7 +4365,7 @@ def test_상태텍스트_살아있음_신호_구성():
     f.note_activity(11, "✏️ 파일 작성: cell.js")
     f.note_activity(11, "▶ 실행: npm test")
     txt2 = s._status_text(f, _t.monotonic() - 23 * 60)
-    assert "지금 하는 일: ▶ 실행: npm test" in txt2         # 최신
+    assert "지금 하는 일: [기획] ▶ 실행: npm test" in txt2   # 최신([💭 발화자 귀속] 직군 라벨 접두)
     assert len(f.activity_log) == 2                         # 흐름 단위 전체 기록(append-only)
     stamps = [int(x) for x in _re.findall(r"<t:(\d+):R>", txt)]
     assert len(stamps) == 2, f"시작·마지막활동 동적 타임스탬프 2개여야 함: {txt}"
@@ -4545,15 +4548,17 @@ def test_배포_변경없는_재배포_차단_anti_thrash(monkeypatch):
     assert "배포 성공" in r3["content"][0]["text"] and calls["n"] == 2
 
 
-def test_배포_런어웨이_횟수상한_차단(monkeypatch):
-    """[런어웨이 배포 차단(2026-06-21 라이브 P-028: 깨진 배포를 코드 바꿔가며 23회 재배포)] anti-thrash는 '코드
-    변경 없는 재배포'만 막아, 코드를 만지며 무한 재배포(근본은 배포 구조 문제라 코드 수정으론 안 고쳐짐)는 통과됐다.
-    흐름당 실배포 5회를 넘으면 하드 차단하고 '배포 구조 문제로 사용자에게 보고'로 에스컬레이트 — 무한 재시도 금지."""
+def test_배포_런어웨이_맹목재배포는_2회째_즉시보류(monkeypatch):
+    """[재배포=새 정보 요구 — 카운터 폐지(2026-07-08, 사용자: '5회 하드코딩 말고 원리로')] 런어웨이(P-028:
+    코드 바꿔가며 23회)와 정당 반복의 차이는 횟수가 아니라 **배포 사이 독립 검증 유무**다. 동료가 있는
+    팀에서 검증 없는 재배포(맹목 스핀)는 2회째에 즉시 보류(23회까지 갈 것 없이) — 검증이 오르면 자동
+    해제(상태 기반, 영구 잠금 아님). 동료 없는 흐름은 요구 불가라 면제(교차검증 게이트와 동일 예외)."""
     import system.deploy as dp, os
-    f = Flow(FakeGuide(), channel_id=501, guild_id=1, leader_id=11, bot_info={11: "L"})
+    f = Flow(FakeGuide(), channel_id=501, guild_id=1, leader_id=11, bot_info={11: "L", 12: "QA"})
     f.start_root("root")
     f.workspace = "/tmp/ws-cap"; f.project_id = "P-028"
     t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
+    asyncio.run(t["create_task"].handler({"members": "12"}))   # 동료 있음 — 검증 요구 대상
     calls = {"n": 0}
     def fake(ws, name, *a):
         calls["n"] += 1
@@ -4561,18 +4566,44 @@ def test_배포_런어웨이_횟수상한_차단(monkeypatch):
     monkeypatch.setattr(dp, "deploy_sync", fake)
     for k in ("GH_PAT", "GH_USER", "RENDER_KEY", "RENDER_OWNER"):
         os.environ.setdefault(k, "x")
-    # 코드를 매번 바꿔가며(anti-thrash 우회) 5회 배포 — 모두 통과(런어웨이 흉내)
-    for i in range(5):
-        f.writes_by_role["프론트"] = f.writes_by_role.get("프론트", 0) + 1
-        r = asyncio.run(t["deploy"].handler({"name": "site"}))
-        assert "배포 성공" in r["content"][0]["text"], f"{i+1}회차 통과 실패"
-    assert calls["n"] == 5
-    # 6회차: 코드 변경해도 횟수 상한으로 하드 차단 — 실배포 안 일어남, 사용자 보고로 에스컬레이트
+    # 1회차: 통과
+    f.writes_by_role["프론트"] = f.writes_by_role.get("프론트", 0) + 1
+    r1 = asyncio.run(t["deploy"].handler({"name": "site"}))
+    assert "배포 성공" in r1["content"][0]["text"] and calls["n"] == 1
+    # 2회차(코드는 바꿨지만 독립 검증 0 = 맹목 스핀): 즉시 보류 — 실배포 안 일어남
     f.writes_by_role["프론트"] += 1
-    r6 = asyncio.run(t["deploy"].handler({"name": "site"}))
-    assert "배포 중단" in r6["content"][0]["text"] and "5회 초과" in r6["content"][0]["text"]
-    assert "사용자에게 보고" in r6["content"][0]["text"]
-    assert calls["n"] == 5   # 실배포 안 늘어남(차단됨)
+    r2 = asyncio.run(t["deploy"].handler({"name": "site"}))
+    assert "재배포 보류" in r2["content"][0]["text"] and "독립 검증" in r2["content"][0]["text"]
+    assert calls["n"] == 1
+    # 독립 검증이 오르면(cross_checks↑) 자동 해제 — 재배포 통과
+    f.current.cross_checks = 1
+    r3 = asyncio.run(t["deploy"].handler({"name": "site"}))
+    assert "배포 성공" in r3["content"][0]["text"] and calls["n"] == 2
+
+
+def test_배포캡_검증주도_반복은_미과금_맹목스핀만_과금(monkeypatch):
+    """[캡=맹목 스핀만(2026-07-08)] 직전 배포 이후 독립 교차검증이 있었던 배포(검증이 잡은 결함을 고쳐
+    다시 냄)는 캡에 안 센다 — 라이브 P-005: 매 배포 사이 QA/PM이 실결함을 잡은 정당한 반복이 5회 캡에
+    막혀 정직 마감이 '배포 구조 문제' 예외 보고로 강등. 검증 0 사이 재배포(맹목 스핀)는 종전대로 과금."""
+    import system.deploy as dp, os
+    f = Flow(FakeGuide(), channel_id=502, guild_id=1, leader_id=11, bot_info={11: "L", 12: "QA"})
+    f.start_root("root")
+    f.workspace = "/tmp/ws-vc"; f.project_id = "P-VC"
+    t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    monkeypatch.setattr(dp, "deploy_sync", lambda ws, name, *a: f"배포 성공 ✅ https://organt-{name}.onrender.com")
+    for k in ("GH_PAT", "GH_USER", "RENDER_KEY", "RENDER_OWNER"):
+        os.environ.setdefault(k, "x")
+    # 검증-주도 반복 7회: 매 배포 사이 코드 변경 + 교차검증 증가 → 전부 통과(무제한 — 카운터 없음)
+    for i in range(7):
+        f.writes_by_role["프론트"] = f.writes_by_role.get("프론트", 0) + 1
+        f.current.cross_checks = i          # 배포 사이 독립 검증 발생
+        r = asyncio.run(t["deploy"].handler({"name": "site"}))
+        assert "배포 성공" in r["content"][0]["text"], f"{i+1}회차(검증 주도)가 막힘"
+    # 이후 맹목 스핀(검증 없이 재배포) → 즉시 보류
+    f.writes_by_role["프론트"] += 1                        # 코드는 바꾸되 검증 없음
+    r = asyncio.run(t["deploy"].handler({"name": "site"}))
+    assert "재배포 보류" in r["content"][0]["text"] and "독립 검증" in r["content"][0]["text"]
 
 
 def test_배포_진행중_재호출은_대기_새배포_트리거_금지():
@@ -4672,6 +4703,53 @@ def test_직군밖_반려는_파일소유도_해제_전문가P2P이전():
     assert f.file_owner[_os.path.realpath("/ws/server.js")] == _norm_job("백엔드")
     assert f.file_owner[_os.path.realpath("/ws/app.js")] == _norm_job("백엔드")
     assert f.current.owner == 0                                   # task 소유도 해제(기존)
+
+
+def test_파일권한_주인승낙_당겨오기_이양_peer():
+    """[파일 권한 승낙 — 주인이 직접 이양(2026-07-08, 사용자: '남의 파일은 물어보고 주인이 승낙해야')]
+    게이트#9로 막힌 봇이 파일 주인에게 request로 '편집 권한'을 요청하면, 주인이 응답에 '[권한 이양 X]'로
+    승낙한다 → 주인 도메인의 file_owner가 X로 이양된다(리더 경유 아님 — 파일 주인과 직접 합의). [직군밖]
+    (밀어내기=Work 반려)의 대칭인 '당겨오기 요청 승낙' 경로 — 종전엔 이 승낙 경로가 없어 게이트#9가 '수정
+    요청'만 안내→튕기던 데드락(라이브 P-005: 프론트가 백엔드 소유 app.js 키보드를 못 고쳐 바운스)."""
+    import os as _os
+    from system.rule.comm_helpers import _norm_job
+    f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11,
+             bot_info={11: "L", 12: "백엔드", 13: "프론트엔드"})
+    f.start_root("root")
+    f.file_owner = {_os.path.realpath("/ws/app.js"): _norm_job("백엔드")}   # 백엔드가 app.js 소유
+
+    async def wake(to, b, k):
+        return "[권한 이양 프론트엔드]\n키보드 UX는 프론트 도메인이 맞습니다 — 편집 권한 넘깁니다."
+    f.wake = wake
+    t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "키보드 회귀 수정"
+    # 프론트가 파일 주인(백엔드)에게 편집 권한 요청 → 백엔드 응답이 '[권한 이양 프론트엔드]' 승낙
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "app.js 키보드 편집 권한 주세요"}))
+    assert f.file_owner[_os.path.realpath("/ws/app.js")] == _norm_job("프론트엔드")   # 주인 승낙 → 프론트로 이양
+
+
+def test_파일권한_단순허락_담당유지_편집권만_peer():
+    """[단순 허락 — 담당 안 넘기고 편집권만(2026-07-08, 사용자)] 주인이 '[편집 허락 X]'로 답하면 소유(담당)는
+    그대로 두고 X에게 편집 권한만 준다(file_permits). 완전 이양('[권한 이양]')과 구분 — 공유 산출물(app.js:
+    프론트 UX + 백 로직)처럼 둘 다 정당히 손대는 경우. 게이트#9는 owner+permits를 통과로 인정."""
+    import os as _os
+    from system.rule.comm_helpers import _norm_job
+    f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11,
+             bot_info={11: "L", 12: "백엔드", 13: "프론트엔드"})
+    f.start_root("root")
+    _app = _os.path.realpath("/ws/app.js")
+    f.file_owner = {_app: _norm_job("백엔드")}
+
+    async def wake(to, b, k):
+        return "[편집 허락 프론트엔드]\napp.js 로직은 제 담당이지만 키보드 UX 편집은 허락합니다."
+    f.wake = wake
+    t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "키보드 회귀 수정"
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "app.js 키보드 편집 권한 주세요"}))
+    assert f.file_owner[_app] == _norm_job("백엔드")                     # 담당(소유)은 주인이 유지
+    assert _norm_job("프론트엔드") in f.file_permits.get(_app, set())    # 프론트는 편집권만 획득
 
 
 def test_범용직군_채용은_정책으로_거부():
@@ -5021,6 +5099,69 @@ def test_검증위임에_owner도메인_루브릭_자동주입():
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "보완"}))        # owner 본인 재위임
     body12 = [b for to, b in waked if to == 12][-1]
     assert "산출물 품질 기준" not in body12             # owner 자신에겐 안 붙음
+
+
+def test_회귀보존_경고_이미검증통과_산출물에만_주입():
+    """[회귀 보존 — 수정 시점 사전경고(2026-07-08)] 이미 교차검증을 거친 산출물(cross_checks>0)에 가는
+    Work엔 '이미 되던 것을 깨지 마라' 회귀-보존 경고가 붙는다 — 한 기준 고치며 다른 기준 깨는 반쪽수정
+    (오실레이션) 예방. 완료 시점 버전인식 acceptance 재검증(task_gates)과 짝. 첫 인도(cross_checks=0)엔
+    무발동(prior 검증 없으면 회귀 위험 0 → 노이즈 0). 수정하는 owner 본인에게도 붙는다(반쪽수정 주체)."""
+    g = FakeGuide()
+    f = _flow(g)
+    f.bot_info[12] = "프론트엔드"
+    waked = []
+
+    async def wake(to, b, k):
+        waked.append((to, b))
+        return "ok"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.participated.add(12)
+    asyncio.run(t["set_goal"].handler({"goal": "키보드"}))
+    f.current.owner = 12
+    f.current.owner_delivered = True
+    # cross_checks=0 (아직 검증 전) → 회귀 경고 무발동
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "고쳐"}))
+    assert "회귀 보존" not in [b for to, b in waked if to == 12][-1]
+    # 교차검증 발생(cross_checks>0) 후 재위임 → 회귀-보존 경고 발동
+    waked.clear()
+    f.current.cross_checks = 2
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "또 고쳐"}))
+    body = [b for to, b in waked if to == 12][-1]
+    assert "회귀 보존" in body and "2회 교차검증" in body and "반쪽수정" in body
+
+
+def test_배포신선도_경고_미배포변경시_위임에_주입():
+    """[배포 신선도 — 버전 정체성(2026-07-08)] 마지막 배포 이후 로컬 변경이 있으면(라이브≠로컬) 인도 후
+    위임 본문에 '라이브는 옛 버전일 수 있다 — 진단 전 버전부터 확인, 재작성 금지'가 기계 주입된다 —
+    검증·회의가 라이브를 현재 코드로 앵커해 옛 결함을 오진, 이미 고친 걸 재작성하던 것(라이브 P-005)의
+    구조 차단. 배포 후 변경 0이면 무발동(노이즈 0)."""
+    g = FakeGuide()
+    f = _flow(g)
+    f.bot_info[12] = "프론트엔드"
+    waked = []
+
+    async def wake(to, b, k):
+        waked.append((to, b))
+        return "ok"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.participated.add(12)
+    asyncio.run(t["set_goal"].handler({"goal": "키보드"}))
+    f.current.owner = 12
+    f.current.owner_delivered = True
+    f._deployed_once = True
+    f._deploy_writes = 3
+    f.writes_by_role = {"프론트": 3}                      # 배포 후 변경 0 → 무발동
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "검증"}))
+    assert "배포 신선도" not in [b for to, b in waked if to == 12][-1]
+    waked.clear()
+    f.writes_by_role = {"프론트": 5}                      # 배포 후 변경 2건 → 경고 주입
+    asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "재검증"}))
+    body = [b for to, b in waked if to == 12][-1]
+    assert "배포 신선도 경고" in body and "2건" in body and "재작성 금지" in body
 
 
 

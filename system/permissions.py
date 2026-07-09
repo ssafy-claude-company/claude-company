@@ -205,7 +205,9 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                     _od3 = flow.file_owner.get(_rp3)
                     if _od3:
                         from .guide_tools import _jobs_of as _j3, _norm_job as _n3
-                        _mine3 = _od3 in {_n3(j) for j in _j3(flow._info(actor) or "") if j.strip()}
+                        _my3 = {_n3(j) for j in _j3(flow._info(actor) or "") if j.strip()}
+                        _permit3 = (getattr(flow, "file_permits", None) or {}).get(_rp3, set())
+                        _mine3 = (_od3 in _my3) or bool(_my3 & _permit3)   # [단순 허락] 편집권 받은 파일도 '내 것'처럼 협의 맥락 구현 허용
             if woke_info and not _mine3:
                 audit.record("tool_denied", actor=actor, role=role, tool=tool,
                              reason="협의(Info) 중 선구현", tool_use_id=tool_use_id)
@@ -354,16 +356,21 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                 if _owner_dom:
                     from .guide_tools import _jobs_of, _norm_job
                     _mydoms = {_norm_job(j) for j in _jobs_of(flow._info(actor) or "") if j.strip()}
-                    if _owner_dom not in _mydoms:
+                    _permitted = bool(_mydoms & (getattr(flow, "file_permits", None) or {}).get(_orp, set()))
+                    if _owner_dom not in _mydoms and not _permitted:   # [단순 허락] 편집권 받은 직군은 통과(담당은 주인 유지)
                         audit.record("tool_denied", actor=actor, role=role, tool=tool,
                                      reason="타 직군 소유 파일 편집", tool_use_id=tool_use_id)
                         return _deny(
                             f"[소유 경계] 이 파일은 **{_owner_dom}** 직군이 만든 산출물입니다 — 당신"
-                            f"({flow._info(actor) or actor})은 직접 수정할 수 없습니다(백엔드가 프론트 못 고치듯, "
-                            f"수정 권한 없는 도메인을 직접 고치면 흡수). 결함을 발견했으면: ① **검증만** 위임받았으면 "
-                            f"그 결함을 **보고**로 올리고, ② **개선 권한**을 받았으면 owner({_owner_dom})에게 "
-                            f"**request(Work)로 수정을 요청**하세요(자기검증 무효 — 만든 사람이 고쳐야 깊이가 납니다). "
-                            f"owner가 지금 대기 중이면 기다리거나 리더가 위임하게 하세요(부재면 리더가 재배정/recruit).")
+                            f"({flow._info(actor) or actor})은 아직 직접 수정할 수 없습니다(남의 파일은 먼저 "
+                            f"묻는 게 원칙 — 자기검증 무효, 만든 사람이 고쳐야 깊이가 납니다). 셋 중 하나: "
+                            f"① **검증만** 위임받았으면 그 결함을 **보고**로 올리세요. "
+                            f"② owner가 고치는 게 맞으면 **owner({_owner_dom})에게 request(Work)로 수정을 요청**하세요. "
+                            f"③ 이 부분이 **정말 당신 도메인 일**이면(주인이 아니라 당신이 고쳐야 깊이가 나면), "
+                            f"**owner({_owner_dom})에게 request로 '편집 권한을 달라'고 직접 요청**하세요 — 주인이 응답에 "
+                            f"**`[권한 이양 <당신 직군>]`**(담당까지 넘김 — 이후 당신이 그 파일 주인)로 답하거나, "
+                            f"**`[편집 허락 <당신 직군>]`**(담당은 주인이 유지하고 당신에게 편집권만)로 답하면 당신이 "
+                            f"편집하게 됩니다(**리더 경유 아님 — 파일 주인과 직접 합의**). owner가 부재면 리더가 재배정/recruit.")
 
         # [구버전 키워드 흡수 게이트 제거 — P0-C 데드코드 정리(2026-06, PR#23 06문서 B2·07 P0-C)]
         # 위 소유-기반 게이트(#9, *기록된 소유* file_owner)가, 파일 도메인을 키워드/_CAPS로 *추측*하던

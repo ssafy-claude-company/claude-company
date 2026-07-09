@@ -95,6 +95,9 @@ def task_snapshot(flow, ref) -> dict:
         "contrib_checked": bool(getattr(ref, "contrib_checked", False)),
         "cross_check_offdomain": int(getattr(ref, "cross_check_offdomain", 0) or 0),
         "last_verify_writes": int(getattr(ref, "last_verify_writes", -1)),
+        "acceptance_pass_writes": int(getattr(ref, "acceptance_pass_writes", -1)),  # [버전 인식 acceptance] 통과 시점 저작수 — 재개 후에도 변경 감지 재검증이 일관
+        "verify_fail_streak": int(getattr(ref, "verify_fail_streak", 0) or 0),       # [원리 기반 루프 신호] 연속 실패 검증 수 — 재개가 루프 감지를 잃지 않게
+        "deploy_cross": int(getattr(flow, "_deploy_cross", -1)),   # [캡=맹목 스핀만] 마지막 배포 시점 교차검증 수 — 검증 주도 반복의 캡 미과금이 재개 너머 일관
         "cross_checkers": sorted(int(x) for x in (getattr(ref, "cross_checkers", None) or set())),
         "loop_escalated": bool(getattr(ref, "loop_escalated", False)),
         "run_count": int(getattr(ref, "run_count", 0) or 0),
@@ -147,6 +150,14 @@ def checkpoint_open_task(sys, flow) -> None:
                       if flow.current is not None else None)
     if getattr(flow, "file_owner", None) is not None:   # [소유 경계 영속] Task 전이마다 같이 저장
         p["file_owner"] = dict(flow.file_owner or {})
+    # [미답 질문 영속(2026-07-09)] 상시 재주입 큐가 흐름 메모리라 재시작을 못 넘던 구멍 — 라이브에서
+    # 리더가 질문을 받은 채 재시작되자 질문이 증발했다. 체크포인트에 동승시켜 재개 흐름이 이어받는다.
+    _uq = getattr(flow, "unanswered_questions", None)
+    if _uq:
+        p["unanswered_questions"] = list(_uq)[-5:]
+    else:
+        p.pop("unanswered_questions", None)
+        p["file_permits"] = {q: sorted(d) for q, d in (getattr(flow, "file_permits", {}) or {}).items() if d}  # [단순 허락 영속]
     # [마일스톤 파이프라인 §9 — 최대 저장] 주기 상태(마일스톤·SubTask·조건·증거) 전부 동승 —
     # 크래시·재시작 후 iter 중간부터 재개하는 토대. 플래그 OFF면 빈 리스트라 무비용.
     p["milestones"] = [ms_to_dict(m) for m in (getattr(flow, "milestones", None) or [])]
@@ -164,6 +175,10 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     스냅샷을 반환(없으면 None)."""
     # [마일스톤 §9 — 복원] 주기 상태는 open_task와 독립으로 되살린다(마일스톤만 있고 미완 Task가
     # 없는 시점의 죽음도 복구). 손상 스냅샷은 빈 시작으로 저하 — 복구가 복구를 못 막게.
+    try:
+        flow.unanswered_questions = list(proj.get("unanswered_questions") or []) or None
+    except Exception:
+        flow.unanswered_questions = None
     try:
         flow.milestones = [ms_from_dict(d) for d in (proj.get("milestones") or [])]
     except Exception:
@@ -259,6 +274,9 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     ref.contrib_checked = bool(snap.get("contrib_checked", False))
     ref.cross_check_offdomain = int(snap.get("cross_check_offdomain", 0) or 0)
     ref.last_verify_writes = int(snap.get("last_verify_writes", -1))
+    ref.acceptance_pass_writes = int(snap.get("acceptance_pass_writes", -1))
+    ref.verify_fail_streak = int(snap.get("verify_fail_streak", 0) or 0)
+    flow._deploy_cross = int(snap.get("deploy_cross", -1))
     ref.cross_checkers = {int(x) for x in snap.get("cross_checkers", [])}
     ref.loop_escalated = bool(snap.get("loop_escalated", False))
     ref.run_count = int(snap.get("run_count", 0) or 0)

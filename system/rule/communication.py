@@ -126,6 +126,14 @@ async def meet(flow, me_id, args):
         return (f"지금은 회의를 열 수 없습니다(활성={flow.comm.alive}) — 진행 중인 요청의 "
                    f"응답을 받은 뒤 다시 시도하세요.")
     topic = str(args.get("topic", "")).strip()
+    # [리더도 참여자 — 중재자 아님(2026-07-08, 사용자: '리더가 하나의 참여자가 아닌 중재자로 전락')]
+    # 소집자(리더)도 자기 도메인 관점의 독립 의견을 내야 회의를 연다 — 진행자로만 빠져 남의 의견만
+    # 수합·확정하던 중앙집권 구조 해소. R1 브랜치엔 이 의견이 안 보이므로 앵커링 0(동료는 독립적으로).
+    my_view = str(args.get("my_opinion", "")).strip()
+    if not my_view:
+        return ("[회의 — 당신도 참여자입니다] 소집자(당신)도 이 주제에 **자기 도메인 관점의 독립 의견**을 "
+                "내야 회의를 엽니다 — meet(topic=…, my_opinion='당신의 입장 3~5줄, 근거와 함께')로 다시 "
+                "여세요. 리더는 의견을 수합·확정만 하는 중재자가 아니라 **동등한 한 참여자**입니다.")
     try:
         rounds = max(1, min(3, int(str(args.get("rounds", "2")).strip() or "2")))
     except ValueError:
@@ -159,16 +167,26 @@ async def meet(flow, me_id, args):
                 await _say_speech(flow, m, "[회의 1R]", res or note)  # 본인 명의 발언
                 if res is not None and m in flow.current.team and m != flow.leader:
                     flow.current.participated.add(m)        # 회의 발언 = 실질 협의 인정
+            # [리더도 참여자] 소집자의 독립 의견도 회의록·채널에 본인 명의로 — R1 브랜치엔 이미 안 보였으므로
+            # 앵커링 0(동료는 독립 수집 완료). 리더가 '남 의견만 모으는 중재자'가 아니라 한 참여자로 발언.
+            minutes.append(f"[1R] {flow._info(me_id) or me_id}(소집자): {_speech_clip(my_view)}")
+            r1_full.append((flow._info(me_id) or me_id, my_view))
+            last_full = (flow._info(me_id) or me_id, my_view)
+            await _say_speech(flow, me_id, "[회의 1R]", my_view)
             # [B-09 Phase A — Task Dossier] R1 종료 즉시 MINUTES.md에 전문 기록(append-only·무절단) —
             # collab_notes 6,000자 head-keep이 '캡 도달 후 새 기록 통째 유실'하던 것의 내용 보존 원본.
             dossier_append(flow, "MINUTES.md",
                            f"## 회의 — {topic} [1R 독립의견]\n"
                            + "\n".join(f"[1R] {w}: {t}" for w, t in r1_full))
         else:
-            minutes.append(f"[발제] {flow._info(me_id) or me_id}: {topic}")
+            # [완전 TT × 리더도 참여자] 발제 = 주제 + 소집자 자기 의견(my_opinion) — 소집자도 중재자가
+            # 아니라 첫 참여자다. 이후 전 발언이 응찰.
+            _preface = topic + (f"\n[소집자 의견] {my_view}" if str(my_view or "").strip() else "")
+            minutes.append(f"[발제] {flow._info(me_id) or me_id}: {_speech_clip(_preface)}")
+            await _say_speech(flow, me_id, "[발제]", _preface)
             dossier_append(flow, "MINUTES.md",
                            f"## 회의 — {topic} [발제 — 완전 TT(§4): 강제 R1 없음]\n"
-                           f"{flow._info(me_id) or me_id}: {topic}")
+                           f"{flow._info(me_id) or me_id}: {_preface}")
         # ══ [1층 floor seam — R2+ 발언권 순환의 정책화(CA-Lab RFC-003 1층)] 토론의 발언 '순서'는
         # FloorPolicy가 정하고, 발언 1회의 실행(베턴 프레임·wake·회의록·게시·참여 인정)은 정책과
         # 무관한 단일 경로(_speech)다 — 베턴·점유 담보(Engagement·BusyInOtherFlow)는 그대로(1층은
@@ -401,6 +419,14 @@ async def _req_gate_team(flow, me_id, to, tag):
             flow.current.status.group = _group_of(flow, flow.current.team)
             await flow.refresh()
             _dbg(f"{tag} +Task자동합류(프로젝트팀원)")
+            # [합류 가시화(2026-07-08, 사용자: '암묵적 봇 호출 — 갑자기 튀어나옴')] 팀 밖 봇이 위임으로
+            # 조용히 합류하면 관찰자에겐 정체불명 발화로 보인다(라이브: 박지호 QA가 무표식 등장). 합류
+            # 사실을 SYS 명의 한 줄로 피드에 남긴다 — 행동 무변경, 가시성만(best-effort).
+            try:
+                await flow.guide.post(int(flow.current.thread_id), 0,
+                                      f"[합류] {flow._info(to) or ''}(id {to}) — 위임으로 이 Task에 합류.")
+            except Exception:
+                pass
         elif to in flow.pool:
             same = [m for m in flow.project_team
                     if m != me_id and not _is_spare(flow, m)
@@ -833,6 +859,32 @@ async def request(flow, me_id, role, args):
                                    f"구체적 결함으로 보고하세요(돌아가는가 아니라 '충분한가'). 이 요청이 **후속 "
                                    f"구현/통합**이면 아래 기준을 참고해 같은 품질 수준을 맞추세요:\n"
                                    + _speech_clip("\n---\n".join(rub), 2500))
+            # [배포 신선도 — 버전 정체성(2026-07-08, 사용자: '로컬을 서버에 적용 안 했을 뿐인데 재작성하려
+            # 했다')] 검증·회의가 '라이브'를 현재 코드로 앵커하는데 라이브≠로컬(미배포 변경)이면 옛 버전의
+            # 결함을 현재 결함으로 오진해 이미 고친 걸 재작성한다(라이브 P-005: 로컬에 있는 단일축 수정을
+            # 뿌리째 재구현 위임 — 사람이 우연히 diff 떠서야 정정). 시스템이 아는 사실(_deploy_writes vs
+            # 현재 저작수)을 위임에 기계 주입 — 봇이 진단 전에 버전부터 확인하게.
+            _dw = getattr(flow, "_deploy_writes", -1)
+            if getattr(flow, "_deployed_once", False) and _dw >= 0:
+                _cw = sum(int(v) for v in (flow.writes_by_role or {}).values())
+                if _cw > _dw:
+                    owner_body += (f"\n[배포 신선도 경고 — 시스템 실측] 마지막 배포 이후 로컬 변경 "
+                                   f"{_cw - _dw}건이 **라이브에 미반영**입니다. 라이브에서 보는 동작·코드는 "
+                                   f"옛 버전일 수 있습니다 — **결함 진단·검증 전에 로컬과 라이브가 같은 버전인지"
+                                   f"(diff/바이트) 먼저 확인**하세요. 라이브에서 재현된 결함이 로컬에 이미 "
+                                   f"고쳐져 있으면 그건 코드 결함이 아니라 *배포 지연*입니다(재작성 금지 — "
+                                   f"배포·확인이 처방).")
+            # [회귀 보존 — 이미 검증 통과한 산출물(2026-07-08)] 산출물이 이전 라운드에 교차검증을 통과한
+            # 적 있으면(cross_checks>0) 이번 수정/검증은 *이미 되던 것*을 깨지 않는지 함께 봐야 한다 —
+            # 한 기준을 고치며 다른 기준을 깨는 반쪽수정(오실레이션)이 반복의 원인. 완료 시점의 버전인식
+            # acceptance 재검증(task_gates)과 짝을 이루는 *수정 시점* 사전 경고 — '같은 직군이 뭘 했는지
+            # 안 본다'의 예방판(발동은 prior 검증이 있을 때만이라 첫 인도엔 무발동, 노이즈 0).
+            if getattr(flow.current, "cross_checks", 0) > 0:
+                owner_body += (f"\n[회귀 보존 — 이미 검증 통과한 산출물({flow.current.cross_checks}회 교차검증)] "
+                               f"이 산출물은 이전 라운드에 검증을 거쳤습니다. 당신의 작업이 **이미 되던 것을 깨지 "
+                               f"않는지** 반드시 함께 확인하세요 — 한 기준을 고치며 다른 기준을 깨는 *반쪽수정*이 "
+                               f"이 산출물이 안 닫히던 원인입니다. 인도(또는 검증) 전에 **acceptance 전 항목이 현재 "
+                               f"버전에서 동시에 충족**되는지 회귀 확인하세요(고친 부분만이 아니라 전에 되던 것까지).")
             if flow.log:
                 # [B-09 Phase A 관측 지표] 위임 주입 자수 — '흐름당 재주입 자수·dedup 절감'(§4 정량
                 # 재확인, B-10 되돌림 조건의 베이스라인)을 flow.jsonl에서 직접 계산할 수 있게.
@@ -984,6 +1036,50 @@ async def request(flow, me_id, role, args):
                     flow.persist_owner()
                 except Exception:
                     pass
+        # [파일 권한 승낙 — 주인이 직접 이양(2026-07-08, 사용자: '남의 파일은 물어보고 주인이 승낙해야')]
+        # 게이트#9로 막힌 봇이 파일 주인에게 request로 '편집 권한'을 요청하면, 주인이 응답에 '[권한 이양 X]'로
+        # 승낙한다 → 주인이 쥔 파일 lock(file_owner)을 요청 도메인 X로 이양(리더 경유 아님 — 파일 주인과 직접
+        # 합의). [직군밖](밀어내기=Work 반려)의 대칭 — 이건 '당겨오기 요청'에 대한 owner 승낙이라 kind·owner
+        # 무관하게 처리한다. X가 이후 그 파일을 소유·편집(게이트#9·#3의 '자기 도메인' 통과). 종전엔 승낙 경로가
+        # 없어 게이트#9가 '수정 요청'만 안내→튕김. (이양은 도메인 단위 — [직군밖]과 동일 입도.)
+        _grant_m = re.search(r"\[\s*권한\s*(?:이양|양도|넘김|부여)\s*([^\]\n]+?)\s*\]", result or "")
+        if _grant_m and getattr(flow, "file_owner", None):
+            _gdoms = {_norm_job(j) for j in _jobs_of(flow._info(to) or "") if j.strip()} - {""}
+            _gtarget = _norm_job(_grant_m.group(1).strip())
+            if _gdoms and _gtarget and not _gtarget.startswith("예비") and _gtarget not in _gdoms:
+                _gtouched = [p for p, d in list(flow.file_owner.items()) if d in _gdoms]
+                for _p in _gtouched:
+                    flow.file_owner[_p] = _gtarget      # 주인 승낙 → 요청 도메인으로 이양
+                if _gtouched:
+                    if flow.log:
+                        flow.log("file_grant_transfer", frm=int(to), to_dom=_gtarget, files=len(_gtouched))
+                    if getattr(flow, "persist_owner", None):
+                        try:
+                            flow.persist_owner()
+                        except Exception:
+                            pass
+        # [단순 허락 — 담당은 안 넘기고 편집권만(2026-07-08, 사용자)] 주인이 '[편집 허락 X]'로 답하면 소유(담당)는
+        # 그대로 두고 X에게 그 파일 *편집 권한*만 준다(file_permits). 완전 이양(위 [권한 이양])과 구분 — 주인이
+        # 계속 그 파일 책임자이되, X도 편집 가능(게이트#9·#3이 owner+permits를 통과로 인정). 공유 산출물(app.js:
+        # 프론트 UX + 백 로직)처럼 둘 다 정당히 손대는 경우의 최소 침습 해법(멀티오너 데이터모델 불필요).
+        _permit_m = re.search(r"\[\s*(?:편집\s*)?허락\s*([^\]\n]+?)\s*\]", result or "")
+        if _permit_m and getattr(flow, "file_owner", None) is not None:
+            _pdoms = {_norm_job(j) for j in _jobs_of(flow._info(to) or "") if j.strip()} - {""}
+            _ptarget = _norm_job(_permit_m.group(1).strip())
+            if _pdoms and _ptarget and not _ptarget.startswith("예비") and _ptarget not in _pdoms:
+                _ptouched = [p for p, d in list(flow.file_owner.items()) if d in _pdoms]
+                if getattr(flow, "file_permits", None) is None:
+                    flow.file_permits = {}
+                for _p in _ptouched:
+                    flow.file_permits.setdefault(_p, set()).add(_ptarget)   # 편집권만 부여 — 소유(담당)는 유지
+                if _ptouched:
+                    if flow.log:
+                        flow.log("file_grant_permit", frm=int(to), to_dom=_ptarget, files=len(_ptouched))
+                    if getattr(flow, "persist_owner", None):
+                        try:
+                            flow.persist_owner()
+                        except Exception:
+                            pass
         # owner가 '위임 도중 실제로 일했나' — 단일흐름이라 깨운 동료(+그 하위)만 활성이므로 wake 전후
         # act_count(run/Write/Edit) 증가 = owner 작업. 거짓이면 owner는 깨어났지만 착수 전/계획만 하고
         # 곧장 반환한 것(허위완료의 씨앗). 이걸로 '검증된 인도'와 '빈 응답'을 가른다.
@@ -1176,22 +1272,34 @@ async def request(flow, me_id, role, args):
                 # 만 적용되게 — 검증자에게 새 작업 시키는 것까지 막던 회귀 차단).
                 flow.current.last_verify_writes = sum(int(v) for v in (flow.writes_by_role or {}).values())
                 flow.current.cross_checkers.add(int(to))
+            # [원리 기반 루프 신호(2026-07-09)] 이 검증의 '결과'를 본다 — 실패로 끝났으면 연속실패 +1,
+            # 통과가 하나라도 나오면 0으로. 루프의 본질 = 결과 없는 반복이지 횟수가 아니다(고정 12회 폐지).
+            _head9 = (result or "")[:300]
+            _failish = any(t in _head9 for t in ("FAIL", "실패", "미달", "반대", "안 닫", "재현 불가", "BLOCKED"))
+            _passish = any(t in _head9 for t in ("PASS", "통과", "이상 없", "확인 완료", "충족"))
+            if _passish and not _failish:
+                flow.current.verify_fail_streak = 0
+            elif _failish:
+                flow.current.verify_fail_streak = int(getattr(flow.current, "verify_fail_streak", 0) or 0) + 1
             _ckpt(flow)              # [교차검증 사실 영속] 복구가 교차검증을 다시 요구하지 않게(마감 닫힘)
-            # [회로차단기 — 수렴 경보(2026-06-23 협업재설계 S1)] 교차검증이 임계를 넘는데 안 닫히면 = 수렴이
-            # 아니라 *루프*다. 봇은 '해결 불가'(플랫폼 한계 등)를 스스로 판정 못 해 무한 검증한다(라이브 P-031
-            # 콜드스타트 41회). 봇에게 없는 메타인지를 시스템이 대신 — 사용자에게 *1회* 에스컬레이트해 판정을 넘긴다.
-            if (flow.current.cross_checks >= _LOOP_ESCALATE_CROSS
+            # [회로차단기 — 수렴 경보] 검증이 연속으로 실패로만 끝난다(사이에 통과 0) = 접근을 바꿔도 결과가
+            # 안 바뀌는 반복 — 흔히 코드로 못 고치는 한계(플랫폼 제약 등). 봇은 '해결 불가'를 스스로 판정 못
+            # 하므로 시스템이 메타인지를 대신해 사람에게 *1회* 넘긴다. (종전 고정 12회 — 라이브에서 12사이클
+            # 낭비 후에야 발동하는 늦은 임의 수치로 판명, 2026-07-09 결과 기반으로 교체)
+            from .task import _LOOP_FAIL_STREAK
+            if (int(getattr(flow.current, "verify_fail_streak", 0) or 0) >= _LOOP_FAIL_STREAK
                     and not getattr(flow.current, "loop_escalated", False)):
                 flow.current.loop_escalated = True
                 if flow.log:
-                    flow.log("loop_circuit_breaker", task=flow.current.task_id, cross=flow.current.cross_checks)
+                    flow.log("loop_circuit_breaker", task=flow.current.task_id,
+                             streak=flow.current.verify_fail_streak, cross=flow.current.cross_checks)
                 try:
+                    _goal9 = ((flow.current.status.goal or flow.current.purpose or "") if flow.current else "")[:60]
                     await flow.guide.post(
                         flow.user_channel, 0,
-                        f"[수렴 경보 — 사람 판정 필요] 이 Task가 교차검증을 {flow.current.cross_checks}회 했는데도 "
-                        f"아직 안 닫힙니다. 봇들이 *같은 문제를 반복해 잡고* 있는데, 흔히 코드로 못 고치는 *한계*"
-                        f"(플랫폼 제약 등)입니다 — 봇은 '해결 불가'를 스스로 판정 못 해 무한 검증합니다. 결정해주세요: "
-                        f"**① 현 상태 수용·마감** / **② 다른 방향 제시**.")
+                        f"[수렴 경보 — 사람 판정 필요] (대상 Task: {_goal9}…) 검증이 {flow.current.verify_fail_streak}회 연속 실패로만 "
+                        f"끝나고 그 사이 통과가 없습니다 — 접근을 바꿔도 결과가 안 바뀌는 반복이라, 흔히 코드로 "
+                        f"못 고치는 한계(플랫폼 제약 등)입니다. 결정해주세요: **① 현 상태 수용·마감** / **② 다른 방향 제시**.")
                 except Exception:
                     pass
                 _ckpt(flow)

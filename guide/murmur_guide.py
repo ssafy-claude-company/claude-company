@@ -47,6 +47,7 @@ class MurmurGuide:
         self._ids = itertools.count(int(time.time() * 1000))
         self._thread_channel = {}                          # thread_id → channel_id (클라 보유)
         self._origin_channel = None                        # 이 요청의 채널 — 협업을 여기로 라우팅(러너가 세팅)
+        self._last_msg = {}                                # channel_id → 마지막 기록 msg_id — [댓글형 시각화] 관찰([의견])을 직전 결과에 reply_to로 붙이는 근거
 
     def _new_id(self):
         return next(self._ids)
@@ -146,7 +147,22 @@ class MurmurGuide:
             "op": "post", "channel_id": int(ch), "thread_id": int(channel_id),
             "sender_id": int(sender_id or 0), "msg_type": "plain", "body": str(content),
             "reply_to": (int(reply_to) if reply_to else None)})
+        if int(sender_id or 0) != 0:
+            self._track_last(ch, channel_id, res.get("msg_id"))   # 앵커=마지막 '봇' 발화 — SYS 게시([배포 결과] 등)에 의견이 달리는 어색함 방지(사용자)
         return str(res.get("msg_id"))
+
+    def _track_last(self, ch, thread_id, msg_id):
+        """[댓글형 시각화] 채널·스레드별 마지막 기록 msg_id — 관찰([의견])을 직전 결과에 붙일 근거."""
+        try:
+            if msg_id:
+                self._last_msg[int(ch)] = int(msg_id)
+                self._last_msg[int(thread_id)] = int(msg_id)
+        except (TypeError, ValueError):
+            pass
+
+    def last_message_id(self, channel_id):
+        """이 Guide가 그 채널/스레드에 마지막으로 기록한 msg_id(없으면 None) — reply_to 대상."""
+        return self._last_msg.get(int(channel_id))
 
     async def send_request(self, thread_id, sender_id, to_id, kind, body):
         ch = self._thread_channel.get(int(thread_id)) or ORIGIN_CHANNEL.get() or self._origin_channel or int(thread_id)
@@ -155,6 +171,7 @@ class MurmurGuide:
             "op": "send_request", "channel_id": int(ch), "thread_id": int(thread_id),
             "sender_id": int(sender_id), "msg_type": "request",
             "to_id": (int(to_id) if to_id else None), "kind": k, "body": str(body)})
+        self._track_last(ch, thread_id, res.get("msg_id"))
         return str(res.get("msg_id"))
 
     async def send_response(self, thread_id, sender_id, request_msg_id, body):
@@ -163,6 +180,7 @@ class MurmurGuide:
             "op": "send_response", "channel_id": int(ch), "thread_id": int(thread_id),
             "sender_id": int(sender_id), "msg_type": "response",
             "reply_to": (int(request_msg_id) if request_msg_id else None), "body": str(body)})
+        self._track_last(ch, thread_id, res.get("msg_id"))
         return str(res.get("msg_id"))
 
     async def read_thread(self, thread_id, limit=50, include_plain=False):
@@ -213,7 +231,33 @@ class MurmurGuide:
         # DiscordGuide.typing과 같은 계약: async with로 쓰는 컨텍스트 매니저(SNS엔 타이핑 표시 없음 → no-op).
         yield
 
-    async def send_file(self, channel_id, path, sender_id=0, caption=""): return "0"
+    async def send_file(self, channel_id, path, sender_id=0, caption=""):
+        """[파일 공유 실구현(2026-07-08)] murmur에선 업로드가 아니라 **경로 메시지** — 파일은 이미
+        워크스페이스에 있고 웹이 /projects/<pid>/file/?path=로 서빙한다. 종전 no-op 스텁이라 봇의
+        이미지·산출물 공유가 조용히 증발했었다(사용자 관측)."""
+        import os as _os
+        rel = _os.path.basename(str(path)) if _os.path.isabs(str(path)) else str(path)
+        # 워크스페이스 절대경로가 오면 상대화 시도(작업공간 밖이면 이름만)
+        try:
+            _ws = None
+            for _cand in (getattr(self, "_workspace_hint", None),):
+                pass
+        except Exception:
+            pass
+        if _os.path.isabs(str(path)):
+            # 절대경로 → 'workspace/' 뒤 상대부만 추출(러너 규약: 작업공간 내 파일만 전송됨)
+            parts = str(path).split("/organt_sns_workspace/", 1)
+            if len(parts) == 2 and "/" in parts[1]:
+                rel = parts[1].split("/", 1)[1]
+        ch = self._thread_channel.get(int(channel_id)) or ORIGIN_CHANNEL.get() or self._origin_channel or int(channel_id)
+        res = await self._post("/api/guide/ingest/", {
+            "op": "post", "channel_id": int(ch), "thread_id": int(channel_id),
+            "sender_id": int(sender_id or 0), "msg_type": "plain",
+            "body": f"[파일] {rel}" + (f" — {caption}" if caption else ""),
+            "payload": {"file": rel}})
+        if int(sender_id or 0) != 0:
+            self._track_last(ch, channel_id, res.get("msg_id"))
+        return str(res.get("msg_id"))
     async def react(self, channel_id, message_id, emoji): return None
     async def delete_message(self, channel_id, message_id): return None
     async def hide_channel(self, guild_id, channel_id): return None

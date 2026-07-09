@@ -920,6 +920,13 @@ class Sys:
         err_note = ""
         if tasks:
             self._log("await_inflight_delegation", n=len(tasks))
+            # [마감 대기 가시화(2026-07-09, 사용자)] 최종 보고·배포 성공이 이미 보이는데 마감 검증이
+            # 침묵으로 돌면 "끝났는데 왜 대기중"이 된다(라이브: msg320 QA 25분 침묵) — 한 줄로 알린다.
+            try:
+                await flow.guide.post(int(flow.user_channel), 0,
+                                      f"[마감 대기] 완주 중인 작업 {len(tasks)}건의 결과를 회수한 뒤 마감합니다 — 새 요청은 그 뒤 처리됩니다.")
+            except Exception:
+                pass
             results = await asyncio.gather(*tasks, return_exceptions=True)
             # [위임 실패 가시화(2026-06, 사용자)] 인플라이트 위임 턴이 예외로 죽으면 종전엔 gather가
             # 조용히 삼켜(return_exceptions) 리더가 결과도 에러도 못 받고 무진행으로 멎어 잘렸다(라이브:
@@ -1060,6 +1067,17 @@ class Sys:
             if _d:
                 res = (res or "") + "\n" + _d
             out.append(_sc(res or "", 4000))
+            # [복구 응답도 피드에(2026-07-08, 사용자: '보고 없이 다음 작업으로 넘어간 것처럼 보임')] 정상
+            # 경로는 _deliver가 send_response로 워커 응답을 매체에 기록하는데, 정밀 복구 unwind는 comm.respond
+            # (인프로세스)만 해 **협업 피드에 응답이 증발**했다 — 부모는 결과를 받아 다음으로 가는데 관찰자
+            # 눈엔 '보고 없이 이어받은' 것으로 보임(라이브: 프론트의 수정+배포 보고가 피드에 0건). 프레임엔
+            # 원 요청 msg_id가 없어 reply 링크는 불가 — 워커 본인 명의 평문 게시로 연속성만 복원(best-effort).
+            if (res or "").strip() and flow.current is not None:
+                try:
+                    await flow.guide.post(int(flow.current.thread_id), worker,
+                                          "[복구 완주 보고] " + _sc(res, 1800))
+                except Exception:
+                    pass
             if flow.comm.alive == worker and not flow.comm.done:
                 try:
                     flow.comm.respond(worker, "accept", res or "")   # 부모에 올림(C→B→A 자연 unwind)
@@ -1177,6 +1195,10 @@ class Sys:
                                          _fork_collect, _is_spare, _turn_signals)
         from .guide_tools import _speech_clip as _sc
         team = [m for m in getattr(flow.current, "team", []) if m != lead and not _is_spare(flow, m)]
+        # [연속 응찰 허용 — 쿨다운 도입 기각(2026-07-08, 사용자 판정)] 직전 발화자 제외를 넣었다 되돌림:
+        # 라이브에서 같은 봇의 연속 응찰(msg239→240)이 자기 실측을 스스로 정정하는 결정적 새 발견이었다 —
+        # 응찰의 정당성은 '누가'가 아니라 '지금 보탤 게 있나'(LLM 자기판정)로 이미 거른다. 기계 차단은
+        # 정당한 연속 관찰까지 막는다(관찰의 가치 판정은 응찰 점수와 리더 통합에 맡김).
         if not team:
             return ""
         rot = flow.leader_segment % len(team)
@@ -1210,8 +1232,9 @@ class Sys:
                       nxt=int(w), reason=f"응찰 {pos[0][1]}")
             try:
                 res = await flow.wake(
-                    w, "[발언권 획득 — 응찰 선정] 방금 응찰한 관찰·우려·제안을 3~7줄로 발언하세요"
-                       "(구체적으로 — 무엇이, 왜, 어떻게 하자는 것인지).", Kind.INFO)
+                    w, "[발언권 획득 — 응찰 선정] 방금 응찰한 내용을 3~7줄로 발언하세요"
+                       "(구체적으로 — 무엇이, 왜, 어떻게 하자는 것인지). **'관찰:'·'우려:' 같은 머리 라벨 "
+                       "없이 바로 본문으로, 반드시 한국어로**(영어 사고 서술 금지) — 발언 종류는 시스템이 배지로 표시합니다.", Kind.INFO)
             except Exception as e:
                 res = f"(발언 실패: {e})"
             try:
@@ -1226,8 +1249,16 @@ class Sys:
             # [봇 대화 가시화] 낙찰자 발언을 **채널에 올린다** — 종전엔 리더 컨텍스트로만 가고 채널엔 안 남아
             # 사용자에게 '리더 혼자' 보였다(사용자: "봇들간의 대화도 안남고"). 발언자 명의로, `[의견]` 마커로
             # 남겨 SNS가 '의견' badge로 이쁘게 렌더한다(collab_kind='floor' — 회의처럼 종류로 표현).
+            # [댓글형 시각화(2026-07-08, 사용자: '결과에 댓글 달리듯')] 관찰은 '직전 결과에 대한' 발언이므로
+            # 그 채널의 마지막 기록 메시지에 reply_to로 붙인다 — 프론트가 부모 아래 댓글로 렌더(의견↔결론
+            # 연결). 매체중립: last_message_id 없는 Guide(디스코드)는 종전 평문 게시.
             try:
-                await self.guide.post(flow.user_channel, w, f"[의견] {_sc(res, 1800)}")
+                _lmi = getattr(self.guide, "last_message_id", None)
+                _rt = _lmi(flow.user_channel) if callable(_lmi) else None
+                if _rt:
+                    await self.guide.post(flow.user_channel, w, f"[의견] {_sc(res, 1800)}", reply_to=_rt)
+                else:
+                    await self.guide.post(flow.user_channel, w, f"[의견] {_sc(res, 1800)}")
             except Exception:
                 pass                                     # 채널 순단이 흐름을 못 막게(best-effort)
             return ("\n\n[1층 발언권 open — 세그먼트 경계에서 팀원이 응찰로 발언권을 얻어 발언했습니다"
@@ -1375,6 +1406,54 @@ class Sys:
                     _out = await self._absorb_role_profiles(await _do(), me=organt_id)
                 else:
                     _out = await self._absorb_role_profiles(await self._run_until_silent(_do, flow), me=organt_id)
+                # [파일 권한 마커 흡수 — 피드 청결(2026-07-08, 사용자: '[권한 이양] 이런거 남겨야 해?')]
+                # 응답 속 '[권한 이양 X]'(소유 이양)·'[편집 허락 X]'(편집권만)를 여기서 처리(file_owner 이전/
+                # file_permits 부여)하고 본문에서 제거 — 이양은 일어나되 기계 마커가 협업 피드를 어지럽히지
+                # 않게([경험] 블록 흡수와 동형; 봇 산문의 handoff 설명은 남아 사람은 읽을 수 있음). run_turn은
+                # flow·행위자(granter=organt_id)를 다 가짐. (_deliver의 파싱은 테스트/폴백 — 이양 멱등이라 무해.)
+                try:
+                    if (flow is not None and _out and getattr(flow, "file_owner", None) is not None
+                            and re.search(r"\[\s*(?:권한\s*(?:이양|양도|넘김|부여)|(?:편집\s*)?허락)\s", _out)):
+                        from .rule.comm_helpers import _norm_job as _nj, _jobs_of as _jo
+                        _gd = {_nj(j) for j in _jo(self.bot_info.get(organt_id, "") or "") if j.strip()} - {""}
+                        _mine = [p for p, d in list(flow.file_owner.items()) if d in _gd] if _gd else []
+                        _gm = re.search(r"\[\s*권한\s*(?:이양|양도|넘김|부여)\s*([^\]\n]+?)\s*\]", _out)
+                        _pm = re.search(r"\[\s*(?:편집\s*)?허락\s*([^\]\n]+?)\s*\]", _out)
+                        if _gm and _mine:
+                            _t = _nj(_gm.group(1).strip())
+                            if _t and not _t.startswith("예비") and _t not in _gd:
+                                for _p in _mine:
+                                    flow.file_owner[_p] = _t          # 소유 이양(담당까지)
+                        if _pm and _mine:
+                            _t = _nj(_pm.group(1).strip())
+                            if _t and not _t.startswith("예비") and _t not in _gd:
+                                if getattr(flow, "file_permits", None) is None:
+                                    flow.file_permits = {}
+                                for _p in _mine:
+                                    flow.file_permits.setdefault(_p, set()).add(_t)   # 편집권만(담당 유지)
+                        if _mine and (_gm or _pm) and getattr(flow, "persist_owner", None):
+                            try:
+                                flow.persist_owner()
+                            except Exception:
+                                pass
+                        _out = re.sub(r"\[\s*권한\s*(?:이양|양도|넘김|부여)\s*[^\]\n]+?\s*\]", "", _out)
+                        _out = re.sub(r"\[\s*(?:편집\s*)?허락\s*[^\]\n]+?\s*\]", "", _out).strip()
+                except Exception:
+                    pass
+                # [턴 영속 관문 — 유실 0(2026-07-08, 사용자 설계: '원본은 SYS에 저장·관리, 의존 SNS(murmur/
+                # Discord)는 전송·뷰 — 복구/백필은 SYS에서')] 모든 봇 턴의 최종 출력을 **SYS 쪽**(.collab
+                # dossier TURNS.md — 매체중립·원자적 append-only)에 무조건 영속한다. 기록이 각 호출부 opt-in
+                # (send_response/post)에만 의존하면 새 경로가 기록을 빼먹을 때마다 매체 유실이 재발하는데
+                # (정밀 복구 unwind 건), 관문 원본이 SYS에 있으면 어느 매체든 여기서 복구·백필하면 된다.
+                # best-effort(기록 실패가 흐름을 못 막음) — 현재 Task 없는 턴은 dossier 없음(조용히 통과).
+                try:
+                    if flow is not None and (_out or "").strip():
+                        from ._util import dossier_append
+                        _who = f"{self.bot_info.get(organt_id, '') or organt_id}({organt_id})"
+                        dossier_append(flow, "TURNS.md",
+                                       f"## {_who} — {getattr(kind, 'value', kind)} 턴 출력\n{_out}")
+                except Exception:
+                    pass
                 # [B-14 — report 스태시 흡수(인자 > regex; [경험]/[직무기준] 블록 폴백 존치)] 이 턴에 봇이
                 # report 도구로 남긴 experience/craft_standard를 종전 블록 텍스트로 합성해 같은 흡수 경로
                 # (_absorb_role_profiles — 영속·'없음' 필터 포함)로 소비한다. 두 키만 pop — 나머지 필드
@@ -1396,6 +1475,9 @@ class Sys:
                 if flow is not None:   # [사람 개입] 주입된 노트 소비-clear(턴 성공 후 1회 — revive 재시도엔 유지돼 재주입)
                     try:
                         (flow.pending_info or {}).pop(organt_id, None)
+                        # [미답 질문 해소] 리더가 [답변]을 실제로 냈으면 상시 재주입 종료
+                        if organt_id == flow.leader and "[답변]" in (_out or "") and getattr(flow, "unanswered_questions", None):
+                            flow.unanswered_questions = []
                     except Exception:
                         pass
                 return _out
@@ -1427,19 +1509,12 @@ class Sys:
         rk, owner = os.environ.get("RENDER_KEY"), os.environ.get("RENDER_OWNER")
         from .guide_tools import deploy_service_name
         name = deploy_service_name(flow)   # [멀티 프로젝트] 프로젝트별 결정적 서비스명(env 고정 제거)
-        # [cap 우회 차단(2026-06-23 전수감사; 리뷰F3 교정)] 배포 런어웨이 cap(5회)이 걸리면 SYS 강제배포를
-        # *건너뛴다* — 종전엔 cap이 flow.deployed를 안 세팅해 여기가 6번째 배포를 강제하던 결함. deploy_capped는
-        # 인메모리라 재시작 후 풀리지만 _deploy_count(≥5)는 영속되므로, 둘 중 하나라도 서면 막아 *재시작 너머*
-        # cap을 보장한다(리뷰F3: deploy_capped만 보면 복구 후 6번째 배포가 1회 새던 잔여 구멍). 사용자에 에스컬레이트.
-        if getattr(flow, "deploy_capped", False) or getattr(flow, "_deploy_count", 0) >= 5:
-            self._log("ensure_deploy_skipped_capped", count=getattr(flow, "_deploy_count", 0))
-            try:
-                await self.guide.post(
-                    flow.user_channel, 0,
-                    "[배포 중단 — 런어웨이 차단] 프로젝트 배포를 5회 초과 시도했습니다(코드 수정으론 안 고쳐지는 "
-                    "*배포 구조/타겟 문제* 가능성). 자동 재배포를 멈췄습니다 — 확인이 필요합니다.")
-            except Exception:
-                pass
+        # [보류 우회 차단 — 매직5 제거(2026-07-08, 사용자: '하드코딩 반창고 청산')] 배포 도구가 '검증 없는
+        # 재배포'로 보류 중(deploy_capped)이면 SYS 강제배포도 건너뛴다 — 도구 규칙(재배포=새 정보 요구)을
+        # SYS가 우회하면 원리가 무력화된다. 종전 '_deploy_count>=5' 이중 캡은 도구 캡 폐지와 함께 제거
+        # (라이브: 검증 낀 정당 배포로 이미 성공·마감된 흐름에까지 '배포 중단' 알림을 오발하던 잔재).
+        if getattr(flow, "deploy_capped", False):
+            self._log("ensure_deploy_skipped_held", count=getattr(flow, "_deploy_count", 0))
             return result
         if flow.deployed or not (deployable and name and gh and ghu and rk and owner):
             return result
@@ -1629,6 +1704,7 @@ class Sys:
             # [소유 경계 복원/시딩] 저장된 file_owner를 흐름에 싣고(복구에도 유지), 비어 있으면(추적 첫 시작)
             # audit 이력의 최초 작성자로 1회 시딩 — 기존 파일도 올바른 직군 소유로(분류 아닌 생성 기록 기반).
             flow.file_owner = dict(proj.get("file_owner") or {})
+            flow.file_permits = {p: set(d) for p, d in (proj.get("file_permits") or {}).items() if d}  # [단순 허락 복원] 리스트→집합
             if not flow.file_owner:
                 self._seed_file_owner(flow)
             flow.project_id, flow.intervention = proj["id"], proj
@@ -1947,6 +2023,7 @@ class Sys:
 
         leader_task = asyncio.create_task(_run_leader())
         flow._run_task = leader_task   # [사용자 작업 중지] request_cancel이 즉시 인터럽트할 핸들
+        _resume_cut = False            # [재개-컷] 워치독의 체크포인트-재개 취소인가(응답 게시·done 마킹 금지)
         try:
             # 무진행(행) 워치독: idle_timeout 동안 진행이 0이면 리더 턴 취소(리더-행 구멍 메움). 진행 중이면 무제한.
             result = await self._await_with_idle_watchdog(leader_task, flow)
@@ -1959,10 +2036,11 @@ class Sys:
                           "작업공간에 남아 있고, 미완 작업은 다음에 이어갈 수 있습니다.)")
                 self._log("flow_user_stopped", project=flow.project_channel is not None)
             else:
+                _resume_cut = int(getattr(flow, "root_id", 0) or 0) in getattr(self, "_resume_cut_mids", set())
                 result = (f"(흐름 자동 중단: 약 {self.idle_timeout // 60}분간 아무 진행(요청·파일작성·실행)이 없어 '행'으로 "
                           f"판단했습니다 — 리더/동료 서브프로세스가 멈춘 듯합니다(환경 불안정). 지금까지 산출물은 작업공간에 "
                           f"남아 있습니다. 다시 시도하거나 반복되면 잠시 뒤 재요청하세요.)")
-                self._log("flow_idle_aborted")
+                self._log("flow_resume_cut" if _resume_cut else "flow_idle_aborted")
         except Exception as e:                     # 리더가 죽어도 흐름은 닫고 보고한다
             result = f"(리더 처리 중 오류: {e})"
         # 배포 강제: 배포 가능한 산출물인데 deploy를 안 불렀으면 리더에게 '배포만' 한 번 더(누락 방지).
@@ -1975,7 +2053,7 @@ class Sys:
         # 리더의 반환값 = 사용자에게 가는 Response(=보고). origin 프레임을 닫아 시작점 복귀.
         # [사용자 중지는 피드에 평문 안 남김] 취소는 상태(live_status '중지됨')로 보이니 별도 알림 메시지를
         # 채널에 안 올린다 — 종전엔 "(사용자가 작업을 중지했습니다…)"가 봇 평문으로 떠 피드가 지저분했다.
-        if not getattr(flow, "cancelled", False):
+        if not getattr(flow, "cancelled", False) and not _resume_cut:
             try:
                 await self.guide.post(flow.user_channel, lead, format_response(result),
                                       reply_to=flow.root_id)
@@ -2030,6 +2108,12 @@ class Sys:
         # [전역 점유 해제 안전망] 이 흐름의 모든 점유를 일괄 해제 — 정상 경로는 respond/escalate가
         # 대칭으로 풀지만, 예외·강제 종료로 남은 점유가 있어도 여기서 회사 풀로 돌려보낸다.
         self.engaged.release_scope(scope_key)
+        if _resume_cut:
+            # [재개-컷] 마감 꼬리(점유 해제·Task 중단 스냅샷·open_task 영속)는 끝냈다 — 이제 취소를
+            # 재전파해 reap이 "■ 중지됨"으로 처리(done 마킹 없음)하게 한다. unpick된 원 요청이
+            # 다음 폴에서 재픽업돼 open_task 스냅샷으로 정밀 재개된다.
+            self._resume_cut_mids.discard(int(getattr(flow, "root_id", 0) or 0))
+            raise asyncio.CancelledError()
         # [임시 폴더 위생] 프로젝트로 승격되지 못한 흐름 폴더(new-…)가 비어 있으면 정리 — 루트에
         # 빈 껍데기가 쌓이지 않게(산출물이 있으면 보존: 사용자가 살펴볼 수 있게 남긴다).
         if not flow.project_id:
@@ -2208,10 +2292,18 @@ class Sys:
                         if (stalled or too_old) and not _info.get("cut"):
                             try:
                                 _info["cut"] = True
-                                _info["task"].cancel()
                                 _why = f"무진행 {int(idle)}s" if stalled else f"최대수명 {max_age}s"
                                 _n = cut_resumes.get(_mid, 0) + 1
                                 cut_resumes[_mid] = _n
+                                if _n <= 5:
+                                    # [재개-컷 경합 수리(2026-07-08)] 흐름 핸들러가 취소를 삼켜 정상 반환하면
+                                    # reap이 done=True로 종결해 재개가 영구 무효화됐다(라이브 실증: RPG e2e
+                                    # msg256 — unpick 5초 뒤 done_ts 재작인). 취소 **전에** 재개-컷임을 등록해
+                                    # 핸들러가 응답 게시를 건너뛰고 취소를 재전파하게 한다(마감 꼬리는 수행).
+                                    if not hasattr(self, "_resume_cut_mids"):
+                                        self._resume_cut_mids = set()
+                                    self._resume_cut_mids.add(int(_mid))
+                                _info["task"].cancel()
                                 if _n <= 5:
                                     seen.discard(_mid)
                                     await guide.pick(_mid, unpick=True)

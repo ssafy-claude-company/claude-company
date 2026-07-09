@@ -130,7 +130,7 @@ async def send_file(flow, me_id, args):
     return _ok(f"파일 전송됨 → 사용자: {rel} ({sz // 1024}KB). 사용자가 Discord에서 직접 받습니다.")
 
 
-async def deploy(flow, args):
+async def deploy(flow, args, me_id=None):
     """[Rule 로직] deploy — guide_tools에서 이관(평문 반환, @tool이 _ok 래핑)."""
     from .._util import _ok, _speech_clip
     from .task import _ckpt
@@ -147,23 +147,33 @@ async def deploy(flow, args):
                    "아니라 **새 배포를 또 트리거**해 빌드를 계속 리셋합니다). 진행 중인 배포의 "
                    "성공/실패 결과가 곧 이 도구의 응답으로 돌아옵니다 — 그때 판단하세요.")
     # [런어웨이 배포 차단 — 횟수 상한(2026-06-21 라이브 P-028: 깨진 배포를 코드 바꿔가며 23회 재배포한 루프)]
-    # 위의 anti-thrash는 '코드 변경 없는 재배포'만 잡아, '코드를 만지며 무한 재배포'(근본은 배포 구조 문제라 코드
-    # 수정으론 안 고쳐짐)는 통과됐다. 흐름당 실배포 N회를 넘으면 *하드 차단*하고 사용자 보고로 에스컬레이트 —
-    # 못 고치는 걸 무한 재시도하는 토큰·빌드 낭비를 구조적으로 끊는다(횟수는 품질판정 아닌 안전 백스톱).
-    if getattr(flow, "_deploy_count", 0) >= 5:
+    # [재배포 = 새 정보 요구 — 카운터 폐지(2026-07-08, 사용자: '5회 같은 하드코딩 반창고 말고 원리로')]
+    # 종전 '흐름당 5회' 캡은 임의 숫자라 정당한 반복(매 배포 사이 검증이 실결함을 잡음 — 라이브 P-005)을
+    # 6회째에 막아 정직 마감을 예외 보고로 강등시켰다. 런어웨이(P-028: 밤새 23회)와 정당 반복의 기계적
+    # 차이는 횟수가 아니라 **배포 사이 독립 검증의 유무**다 — 그래서 규칙은: 재배포(2회차+)는 직전 배포
+    # 이후 *다른 봇의 검증*(cross_checks 증가)이 있어야 한다. 맹목 스핀은 2회째에 즉시 잡히고(23회까지
+    # 갈 것 없이), 검증 낀 반복은 무제한. 동료가 정말 없는 팀은 요구 불가라 면제(교차검증 게이트와 동일
+    # 예외 패턴 — '제3멤버 있는 한 우회 없음, 없을 때만 예외'). 트레이드오프: 솔로 브링업도 반복마다
+    # 동료 검증 1턴이 필요해짐 — 교차검증 의무와 같은 원리의 비용이라 수용(사용자 방향).
+    _cc_now0 = int(getattr(flow.current, "cross_checks", 0) or 0) if flow.current is not None else 0
+    _cc_at0 = int(getattr(flow, "_deploy_cross", -1))
+    _peers = ([m for m in getattr(flow.current, "team", []) if m != flow.leader]
+              if flow.current is not None else [])
+    if (getattr(flow, "_deployed_once", False) and _cc_at0 >= 0
+            and _cc_now0 <= _cc_at0 and _peers):
         if flow.log:
-            flow.log("deploy_cap", count=flow._deploy_count)
-        # [cap 우회 차단(2026-06-23 전수감사)] 종전엔 cap 시 flow.deployed를 안 세팅해, 흐름 끝의
-        # _ensure_deploy(sys_core)가 '아직 배포 안 됨'으로 보고 6번째 배포를 *강제* → cap이 무력화됐다.
-        # deploy_capped 플래그로 SYS 강제배포를 막고, SYS가 사용자에게 직접 에스컬레이트한다.
+            flow.log("deploy_blind_held", cross=_cc_now0)
+        # SYS 강제배포(_ensure_deploy)가 이 보류를 우회하지 않게 — 종전 deploy_capped와 같은 하류 의미.
         flow.deploy_capped = True
         _ckpt(flow)
         return _ok(
-            "[배포 중단 — 5회 초과(런어웨이 차단)] 이 작업에서 배포를 이미 5번 시도했습니다. 라이브가 아직 "
-            "정상이 아니라면 이건 *앱 코드*가 아니라 **배포 구조/타겟 문제**일 가능성이 큽니다(예: Node 서버가 "
-            "Python을 spawn하는데 Render Node 환경엔 Python이 없음 — 같은 종류의 불일치). **더 재배포하지 마세요** "
-            "— (1) 라이브 URL을 run으로 curl해 실제 상태를 확인하고, (2) 코드로 못 고치는 배포 구조 문제면 "
-            "complete_task에 '배포 구조 문제: <원인>'을 정직하게 적어 사용자에게 보고하세요. 무한 재시도는 금지입니다.")
+            "[재배포 보류 — 직전 배포 이후 독립 검증 0] 배포를 반복하기 전에 **다른 동료가 라이브/산출물을 "
+            "실제로 검증**해야 합니다(맹목 재배포는 같은 결과를 반복하며 빌드·토큰만 태웁니다 — 검증이 "
+            "새 정보를 줘야 다음 배포가 의미 있음). ① 동료에게 request(Work)로 라이브 검증을 맡기고 그 "
+            "결과를 받아 고친 뒤 배포하세요(검증이 오르면 이 보류는 자동 해제). ② 검증으로도 못 푸는 "
+            "배포 구조 문제(타겟 불일치 등)면 complete_task에 '배포 구조 문제: <원인>'을 정직하게 적어 "
+            "사용자에게 보고하세요.")
+    flow.deploy_capped = False   # 검증이 올랐거나 첫 배포 — 보류 해제(상태 기반, 영구 잠금 아님)
     # [배포 반-스래싱 — 변경 없는 재배포 차단(2026-06-21 라이브 P-026: 리더가 18회 재배포로 30분 낭비)]
     # Render 무료 빌드는 60s+라 deploy_sync가 *타임아웃*으로 보여도 빌드는 계속 진행된다. 리더가 '실패했나'
     # 싶어 코드 변경 없이 재배포하면 빌드를 처음부터 리셋해 *더 느려진다*(자기영속 thrash — deploy_inflight는
@@ -302,11 +312,38 @@ async def deploy(flow, args):
             or r.startswith("배포 실패(비-일시") or r.startswith("배포 처리 오류"))
         if not _push_stage_fail:
             flow._deployed_once = True
-            flow._deploy_count = getattr(flow, "_deploy_count", 0) + 1   # 런어웨이 상한 — 실제 push된 것만
+            # [캡 = 맹목 스핀만(2026-07-08, 사용자: '정당한 반복 수정 배포가 캡에 막혀 예외로 닫힘 — 재발
+            # 방지')] 캡의 표적(P-028)은 *검증 없이* 배포를 반복하는 런어웨이다. 직전 배포 이후 **독립
+            # 교차검증이 있었던** 배포는 '검증이 잡은 결함을 고쳐 다시 내는' 정당한 반복이라 캡에 안 센다
+            # (라이브 P-005: 매 배포 사이 QA/PM 검증이 실결함을 잡았는데 5회 캡이 6번째 정당 배포를 차단 →
+            # 정직 마감이 '배포 구조 문제' 예외 보고로 강등). 맹목 스핀(검증 0 사이 재배포)은 종전대로 센다.
+            _cc_now = int(getattr(flow.current, "cross_checks", 0) or 0) if flow.current is not None else 0
+            _cc_at = int(getattr(flow, "_deploy_cross", -1))
+            if _cc_at >= 0 and _cc_now > _cc_at:
+                if flow.log:
+                    flow.log("deploy_verified_iteration", cross=_cc_now)   # 검증 주도 반복 — 캡 미과금
+            else:
+                flow._deploy_count = getattr(flow, "_deploy_count", 0) + 1   # 런어웨이 상한 — 검증 없는 재배포만
+            flow._deploy_cross = _cc_now
         _ckpt(flow)   # [즉시 영속(2026-06-23 전수감사)] deploy_count는 Task 전이 사이에 증가하므로
                       # 전이 때만 찍던 스냅샷은 stale → 죽으면 cap이 0으로 리셋돼 무한 재배포. 배포 즉시 영속.
         if _dep["on"]:
             flow.detached_results.append(f"배포 결과 → {_speech_clip(r, 4000)}")
+            # [배포 결과 피드 가시화(2026-07-08, 사용자: '트리거됐다 하고 끝났네')] detached 배포는 결과가
+            # 어느 봇 턴에도 안 실려 피드에 '트리거됨'만 남고 '라이브 확인'이 증발했다 — 관찰자에겐 미완으로
+            # 보임. 결과 도착 즉시 SYS 명의(0)로 스레드에 게시(동기 배포는 봇 보고에 실리므로 제외 — 중복 0).
+            try:
+                if flow.current is not None:
+                    # 피드엔 헤드라인만(첫 줄). [배포=발언(2026-07-08, 사용자: '배포도 검증 과정의 발언')]
+                    # 무주체 SYS 구분선이 아니라 **배포를 호출한 봇 명의**로 흐름에 들어간다 — 검증 과정의
+                    # 일부로 읽히고, 이후 의견이 이 발언에 자연히 달린다(순차 부착).
+                    _head = (r or "").splitlines()[0] if r else ""
+                    _note = str(args.get("note") or "").strip()
+                    _why = f"{_speech_clip(_note, 160)} — " if _note else ""
+                    await flow.guide.post(int(flow.current.thread_id), int(me_id or 0),
+                                          f"[배포 결과] {_why}{_speech_clip(_head, 200)}")
+            except Exception:
+                pass
         return _ok(r)
 
     inner = asyncio.ensure_future(_do_deploy())
@@ -315,8 +352,10 @@ async def deploy(flow, args):
     if getattr(flow, "_handoff", False):
         _dep["on"] = True
         return _ok("[배포 트리거됨 — SYS가 빌드가 라이브가 될 때까지 확인해 그 결과(라이브 URL)로 당신을 "
-                   "재개합니다. **재배포·추가 행동 없이 이 턴을 마치세요** — 재배포는 빌드를 처음부터 "
-                   "리셋합니다. 결과가 도착하면 그때 URL을 확인·보고하세요.]")
+                   "재개합니다. **재배포·추가 도구 호출 없이 이 턴을 마치세요** — 재배포는 빌드를 처음부터 "
+                   "리셋합니다. 단, **턴을 마치는 보고에 이번에 무엇을 왜 바꿨는지(파일·위치·로직)는 반드시 "
+                   "포함**하세요 — '배포 트리거됨' 공지가 작업 보고를 대체하지 않습니다(검증자가 뭘 재검증할지 "
+                   "알아야 함). 라이브 URL 확인은 결과가 도착한 뒤에.]")
     try:
         return await asyncio.shield(inner)
     except asyncio.CancelledError:

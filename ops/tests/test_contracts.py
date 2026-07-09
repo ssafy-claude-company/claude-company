@@ -24,6 +24,7 @@ CONTRACT = {
     "system.config.load_config": ["guide"],
     "system.permissions.make_pre_tool_use_hook": ["organt"],
     "system.protocol.Kind": ["guide", "murmur"],
+    "system.protocol.Marker": ["organt"],   # 수행문 마커 사전(narrate 필터 — builder가 참조)
     "system.protocol.Request": ["guide", "murmur"],
     "system.protocol.Response": ["guide", "murmur"],
     "system.protocol.parse": ["guide"],

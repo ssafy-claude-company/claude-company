@@ -267,7 +267,7 @@ def test_meet_TT_응찰승자가_발언권을_얻고_지명이_다음을_정한�
     f.wake = wake
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13,14"}))
-    r = asyncio.run(t["meet"].handler({"topic": "저장 방식", "members": "", "rounds": "2"}))
+    r = asyncio.run(t["meet"].handler({"topic": "저장 방식", "members": "", "rounds": "2", "my_opinion": "소집자 독립의견"}))
     txt = r["content"][0]["text"]
     disc = [(to, b) for to, b in seen if "1라운드" not in b]
     probes = [(to, b) for to, b in disc if "발언권 응찰" in b]
@@ -295,7 +295,7 @@ def test_meet_TT_전원무응찰이면_종결확인_거쳐_조기종결():
     f.wake = wake
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
-    r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3"}))
+    r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3", "my_opinion": "소집자 독립의견"}))
     disc = [b for b in seen if "1라운드" not in b]
     # 응찰1 · 종결확인 표결2(전원) = 3 wake — 종전(③계속 경유 5 wake) 대비 절감
     assert len(disc) == 3 and sum("종결 확인" in b for b in disc) == 2
@@ -325,7 +325,7 @@ def test_meet_TT_종결반대자는_발언권을_받아_직접_말한다():
     f.wake = wake
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
-    r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3"}))
+    r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3", "my_opinion": "소집자 독립의견"}))
     txt = r["content"][0]["text"]
     revived = [(to, b) for to, b in seen if "발언권 획득" in b]
     assert revived and revived[0][0] == 12             # 반대자(백엔드)가 발언권 획득
@@ -346,7 +346,7 @@ def test_meet_기본은_종전_고정라운드_그대로():
     f.wake = wake
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
-    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3"}))
+    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "3", "my_opinion": "소집자 독립의견"}))
     disc = [(to, b) for to, b in seen if "라운드] 주제" in b and "1라운드" not in b]
     assert [d[0] for d in disc] == [12, 13, 12, 13]    # 고정 순서 2R→3R
     assert "[회의 2라운드]" in disc[0][1] and "[회의 3라운드]" in disc[2][1]

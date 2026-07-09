@@ -8,7 +8,7 @@ from typing import List
 
 from ..protocol import TaskStatus
 from .task_gates import (  # noqa: F401 (M9 재수출)
-    _ASSET_EXTS, _DATA_FILE_EXTS, _PERCEPT_AUDIO_HINTS, _SYNTH_MARKERS, _VERIFIER_HINTS, _ckpt, _finalize_done, _gate_acceptance, _gate_contrib, _gate_cross_check, _gate_data_provenance, _gate_existence, _gate_iface_dialogue, _gate_owner_delivered, _gate_owner_incomplete, _gate_percept, _gate_standard, _gate_verified, _gate_visual, _has_real_asset, _has_real_dataset, _has_visual_runtime, _is_verifier, _ledger_accrue, _merge_gate_args, _perceptual_essential, _synthesizes_data, _wants_real_data)
+    _ASSET_EXTS, _DATA_FILE_EXTS, _PERCEPT_AUDIO_HINTS, _SYNTH_MARKERS, _VERIFIER_HINTS, _ckpt, _finalize_done, _gate_acceptance, _gate_contrib, _gate_cross_check, _gate_data_provenance, _gate_deploy_fresh, _gate_existence, _gate_iface_dialogue, _gate_owner_delivered, _gate_owner_incomplete, _gate_percept, _gate_standard, _gate_verified, _gate_visual, _has_real_asset, _has_real_dataset, _has_visual_runtime, _is_verifier, _ledger_accrue, _merge_gate_args, _perceptual_essential, _synthesizes_data, _wants_real_data)
 
 
 # 폰트·영상) 파일 확장자. 지각 비대칭 차원(특히 사운드)을 코드로 합성한 placeholder가 아니라 실제 받아온
@@ -44,8 +44,10 @@ class TaskRef:
     cross_checks: int = 0                            # owner 인도 후 '다른 멤버'의 검증 참여 수(0이면 complete 1회 보류 — 품질 판정 독점 방지)
     cross_check_offdomain: int = 0                   # 그중 owner와 '다른 도메인' 검증 수(독립 검증 — 같은 직군 검증은 같은 맹점 에코)
     last_verify_writes: int = -1                      # [검증 종료상태(2026-06-23 전수감사)] 마지막 *독립(off-domain)* 검증 시점의 저작수(writes_by_role 합). 독립검증 후 코드 변경 0이면 그 검증자 재요청을 막아 무한 '최종 검증' 루프 차단(고친 뒤·첫 검증·새 검증자는 허용).
+    acceptance_pass_writes: int = -1                  # [회귀 재검출(2026-07-08) — 버전 인식 acceptance] 수용계약 게이트가 통과한 *시점*의 저작수. 이후 산출물이 바뀌면(합 증가) 그 통과는 '직전 버전 것'이라 무효 → 재검증. 마감기준판 last_verify_writes: 반쪽수정(이미 통과한 기준을 깨는 오실레이션)을 카운트(12회) 아닌 '변경 감지'로 잡는다. 안 바뀌면 캐시 유지(무한 반려 아님).
     cross_checkers: set = field(default_factory=set)  # [검증 종료상태 — 리뷰F1] 이 산출물을 독립검증한 검증자 id 집합. 재검증 dedup이 '이미 검증한 그 검증자'에게만 적용되게(검증자에게 *새 작업* 시키는 건 안 막게).
-    loop_escalated: bool = False                      # [회로차단기 S1] 교차검증 임계 초과 미수렴으로 사용자에게 이미 에스컬레이트했나(1회만 — 영속).
+    loop_escalated: bool = False                      # [회로차단기 S1] 수렴 실패로 사용자에게 이미 에스컬레이트했나(1회만 — 영속).
+    verify_fail_streak: int = 0                       # [원리 기반 루프 신호(2026-07-09)] 검증이 연속으로 실패로 끝난 횟수 — PASS가 나오면 0으로. 3연속 = 반복 접근이 결과를 못 바꾸는 중.
     cc_held: int = 0                                  # 교차검증 게이트가 이 Task에서 보류된 횟수 — 3회+면 '반복 마감(독점·헛돎)' 경보로 에스컬레이트(리더가 혼자 run 반복+재마감하는 스래싱 차단; cross_check 오르면 자연 통과라 교착 없음)
     complete_retry: bool = False                     # (구) 1회 보류 시절 잔재 — 교차 검증 의무 하드화(Rule/Task 6)로 미사용, 호환 위해 유지
     leader_writes: int = 0                           # 리더가 이 Task에서 직접 쓴 파일 수(위임 없이 독식하면 차단)
@@ -98,9 +100,12 @@ class TaskRef:
 # 특화된 역할(QA)이 자연히 담당한다. 그 역할을 능력 키워드로 식별해 *홀리스틱 최종 검증을 우선 라우팅*한다
 # (부분·기술 검증은 도메인 동료도 가능 — QA는 전체·최종에 우대). 직군 '선택'을 박는 게 아니라 '검증 기능'을 알아본다.
 
-# [회로차단기 임계(2026-06-23 협업재설계 S1)] 교차검증 N회+ 미수렴 = 루프 → 사용자 1회 에스컬레이트(advisory).
-# 봇은 '해결 불가'(플랫폼 한계 등)를 스스로 판정 못 해 무한 검증하므로, 시스템이 메타인지를 대신해 사람에게 넘긴다.
-_LOOP_ESCALATE_CROSS = int(os.environ.get("ORGANT_LOOP_CROSS", "12"))
+# [회로차단기 — 원리 기반(2026-07-09, 사용자: "12 같은 하드코딩 수치 뭐야")] 루프의 본질은 횟수가 아니라
+# **결과 없는 반복** — 검증이 연속으로 실패로만 끝나고 그 사이 통과가 한 번도 없으면(기본 3연속), 접근을
+# 바꿔도 결과가 안 바뀌는 것(흔히 코드 밖 한계) → 사람 판정으로. 종전 고정 12회는 늦고(12사이클 낭비)
+# 근거가 임의였다(라이브: 12회 채우는 동안 같은 영속성 FAIL 반복). 3은 "재시도 규율"류의 연속-실패 상수.
+_LOOP_FAIL_STREAK = int(os.environ.get("ORGANT_LOOP_FAIL_STREAK", "3"))
+_LOOP_ESCALATE_CROSS = int(os.environ.get("ORGANT_LOOP_CROSS", "0") or 0)   # 0=비활성(레거시 호환용 잔존)
 
 
 
@@ -552,6 +557,9 @@ async def complete_task(flow, role, args):
     if _msg:
         return _ok(_msg)
     _msg = _gate_data_provenance(flow, args)
+    if _msg:
+        return _ok(_msg)
+    _msg = _gate_deploy_fresh(flow, args)   # [배포 신선도] 검증한 버전 ≠ 라이브면 마감 불가(로컬·라이브 분기 생존 차단)
     if _msg:
         return _ok(_msg)
     # [교차 검증 의무 — _gate_cross_check] 공유 지역변수(third·has_product·_engx·_scopex)는 이후

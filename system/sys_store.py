@@ -409,6 +409,8 @@ def save_file_owner(sys, flow) -> None:
         return
     try:
         sys.projects[int(ch)]["file_owner"] = dict(getattr(flow, "file_owner", {}) or {})
+        # [단순 허락 영속] file_permits(파일→편집권 직군 집합)도 함께 — set은 JSON 불가라 정렬 리스트로
+        sys.projects[int(ch)]["file_permits"] = {p: sorted(d) for p, d in (getattr(flow, "file_permits", {}) or {}).items() if d}
         sys._save_projects()
     except Exception:
         pass

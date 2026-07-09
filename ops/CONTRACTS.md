@@ -22,6 +22,7 @@
 | `system.sys_core.Sys` | system | guide·murmur |
 | `system.sys_core.load_personas` / `save_personas` | system | guide / murmur |
 | `system.protocol.Kind·Request·Response·parse` | system | guide·murmur |
+| `system.protocol.Marker` | system | organt |
 | `system.audit.AuditLog` | system | guide·murmur·organt |
 | `system.audit.make_post_tool_use_hook` | system | organt |
 | `system.permissions.make_pre_tool_use_hook` | system | organt |

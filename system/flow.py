@@ -118,7 +118,8 @@ class Flow:
         # '보고/요청'으로 돌린다(키워드 분류 폐기 — 무한 하드코딩 종결). 프로젝트 단위로 projects.json에
         # 영속(복구 때 리셋 안 되게 — act_by·_gate_pass의 인메모리 결함 반복 차단). persist_owner는 SYS 주입.
         self.file_owner = {}           # realpath(str) → 직군(normalized). PostToolUse가 기록, PreToolUse가 강제.
-        self.persist_owner = None      # () -> None: file_owner를 proj에 써 영속(SYS가 주입)
+        self.file_permits = {}         # [단순 허락(2026-07-08, 사용자)] realpath(str) → {편집 허락받은 직군}. 소유(담당)는 안 넘어가고 편집 권한만 — 주인이 '[편집 허락 X]'로 부여. 게이트#9·#3이 owner에 더해 이 집합도 통과로 인정.
+        self.persist_owner = None      # () -> None: file_owner(+file_permits)를 proj에 써 영속(SYS가 주입)
         self.fork_kind = {}            # [fork 수집] 행위자→Kind: 프레임 없는 가지에도 선구현 게이트 적용
         self.fork_active = 0           # [fork 동시성 가드] 수집 진행 수 — 수집 중 신규 요청/수집은 [대기]
         self.recruit_open = None       # [진짜 채용] 열린 공고 {role,reason,applicants:{mid:지원서},names} — 선발(member=)
@@ -188,6 +189,12 @@ class Flow:
         t = " ".join(str(text or "").split())[:120]
         if not t:
             return
+        # [💭 발화자 귀속(2026-07-08, 사용자: '생각이 떴는데 작업 중 라벨이 딴 봇으로 바뀜')] activity는
+        # 롤링 버퍼라 이전 봇의 생각줄이 남은 채 actor 라벨만 바뀌면 새 봇의 생각처럼 오독된다 — 줄 단위로
+        # 발화자(직군 라벨)를 박아 누가 한 생각인지 항상 보이게 한다.
+        _who = (self._info(bot) or "").strip() if callable(getattr(self, "_info", None)) else ""
+        if _who:
+            t = f"[{_who}] {t}"[:140]
         log = self.activity_log
         if log and log[-1][0] == t:
             log[-1] = (t, time.monotonic())       # 같은 활동 반복 — 시각만 갱신(스팸 방지)

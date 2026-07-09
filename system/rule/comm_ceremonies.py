@@ -173,7 +173,7 @@ async def parallel_work(flow, me_id, args):
         if to not in flow.current.team:
             return (f"요청 거부: {flow._info(to) or to}는 이 Task 팀이 아닙니다 — 팀에 더한 뒤 위임하세요.")
         if _is_spare(flow, to):
-            return (f"요청 거부: {flow._info(to) or to}는 직군 미배정('예비') — recruit로 직군 부여 먼저.")
+            return (f"요청 거부: {flow._info(to) or to}는 직군 미배정 상태 — recruit(member=, role=)로 직군 부여 먼저.")
         files = [f.strip() for f in str(it.get("files") or "").split(",") if f.strip()]
         if not files:
             return (f"형식 오류: {flow._info(to) or to}의 files가 비었습니다 — 병렬의 전제는 영역 분리(리스).")
@@ -265,6 +265,16 @@ async def parallel_work(flow, me_id, args):
         raise
 
 
+_INVALID_ROLES = {"none", "null", "na", "n/a", "nan", "nil", "undefined", "unknown", "any", "all",
+                  "tbd", "미정", "없음", "무", "무직", "역할", "직군", "placeholder", "temp", "임시", "-", "x"}
+
+
+def _invalid_role(name: str) -> bool:
+    """placeholder/무효 직군명 — 직군은 실제 전문 도메인이어야 한다(라이브 P-005 재발 차단)."""
+    n = (name or "").strip().lower()
+    return (not n) or n in _INVALID_ROLES or _norm_job(name) in _INVALID_ROLES
+
+
 async def recruit(flow, me_id, role, args):
     """[Communication Rule 로직] recruit — **진짜 채용**(2026-07-09 사용자 설계).
 
@@ -286,6 +296,15 @@ async def recruit(flow, me_id, role, args):
     role_name = (args.get("role") or "").strip()
     spec = (args.get("member") or "").strip()
     reason = str(args.get("reason") or "").strip()
+    # [무효/placeholder 직군 거부(2026-07-08, 라이브 P-005: role='none'으로 봇이 genesis됨)] recruit이
+    # 자유텍스트 직군명을 받다 보니 봇이 'none'·'미정' 같은 placeholder를 넘기면 그대로 '직군'이 돼
+    # 정체불명 봇이 생성됐다(직군=전문 도메인이라는 불변식 위반). 실제 전문 도메인만 통과시킨다 —
+    # 공고의 참고 role과 지원서의 [직군: X] 선언(아래 선발부) 모두 이 검사를 지난다.
+    if role_name and _invalid_role(role_name):
+        return (f"채용 거부: '{role_name}'은(는) 직군이 아닙니다(placeholder). 직군은 **실제 전문 도메인**이어야 "
+                f"합니다 — 이 일이 어떤 전문성을 요구하는지 보고 구체 도메인을 role로 지정하세요"
+                f"(예: 백엔드 / 프론트엔드 / QA / AI 엔지니어 / 디자이너). '아무나'가 필요하면 그건 채용이 "
+                f"아니라 기존 동료에게 request(Work)로 맡기거나 need만으로 공고하는 겁니다.")
     # [전문화 정책 — 범용 직군 금지(사용자 결정)] 범용(풀스택 등)은 모든 일을 흡수해 전문 채용을
     # 억제하고(라이브: AI·서버·데이터가 한 봇에 22건 집중) 병렬의 병목이 된다. 전문 직군으로 나눠 뽑는다.
     if role_name and any(gw in _norm_job(role_name)
@@ -325,13 +344,16 @@ async def recruit(flow, me_id, role, args):
                 cur_jobs = _jobs_of(cur)
                 if any(_norm_job(j) == _norm_job(role_name) for j in cur_jobs):
                     return (f"이미 '{role_name}' 직군을 보유하고 있습니다 — 그대로 진행하세요(변경 없음).")
-                spares_left = [s for s in flow.pool if _is_spare(flow, s)]
+                # 겸직 예외(사용자 정책 — 예비 개념 폐지 후 조건 재정의 2026-07-08): 새 직군이 기존 직군과
+                # '비슷한 일'(도메인 토큰 공유)일 때만, **기존 직군을 유지한 채** 새 직군을 더한다
+                # (교체 아님 — 전문화 기억 보존). 봇당 최대 2개(직군 스택 누적 재발 방지). 무관한 직군은
+                # 1봇 1직업 원칙 — 공고(recruit)로 지원을 받는 게 정도(유찰이면 genesis 신규 채용).
                 similar = any(_job_tokens(j) & _job_tokens(role_name) for j in cur_jobs)
-                if spares_left and not similar:
+                if not similar:
                     return (f"자기 직군 추가 거부: 당신은 이미 '{cur}' 직군입니다 — **1봇 1직업** 원칙이라 "
-                            f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
+                            f"무관한 직군('{role_name}') 겸직은 기존 직군과 비슷한 일일 때만 허용됩니다"
                             f"(전문화 보호). '{role_name}'이 필요하면 Task를 연 뒤 recruit(role='{role_name}')로 "
-                            f"공고를 올려 지원을 받으세요(예비 {len(spares_left)}명).")
+                            f"공고를 올려 지원을 받으세요(지원자가 없으면 그 전문가가 신규 생성돼 합류).")
                 if len(cur_jobs) >= 2:
                     return (f"겸직 한도 초과: 당신은 이미 직군 2개('{cur}')를 보유하고 있습니다 — 봇당 "
                             f"겸직은 최대 2개입니다. '{role_name}'은 공고를 올려 다른 동료가 맡게 하세요.")
@@ -381,11 +403,10 @@ async def recruit(flow, me_id, role, args):
             tentative = False
             if cur and not _is_spare(flow, mid):
                 cur_jobs = _jobs_of(cur)
-                spares_left = [s for s in flow.pool if _is_spare(flow, s)]
                 similar = any(_job_tokens(j) & _job_tokens(role_name) for j in cur_jobs)
-                if spares_left and not similar:
+                if not similar:
                     return (f"겸직 거부: {cur}(id {mid})는 이미 '{cur}' 직군입니다 — **1봇 1직업** 원칙이라 "
-                            f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
+                            f"무관한 직군('{role_name}') 겸직은 기존 직군과 비슷한 일일 때만 허용됩니다"
                             f"(전문화 보호). 필요하면 recruit(role='{role_name}')로 공고를 올려 지원을 받으세요.")
                 if len(cur_jobs) >= 2:
                     return (f"겸직 한도 초과: {flow._info(mid) or mid}(id {mid})는 이미 직군 2개('{cur}') "
@@ -425,6 +446,9 @@ async def recruit(flow, me_id, role, args):
         role_for = ("" if (_own and not _is_spare(flow, mid))
                     else (_app.get("role") or open_p["role"]))
         if not _own or _is_spare(flow, mid):
+            if role_for and _invalid_role(role_for):
+                return (f"선발 보류: 선언 직군 '{role_for}'은(는) placeholder입니다 — 실제 전문 도메인을 "
+                        f"선언한 지원자를 선발하거나 재공고하세요.")
             if not role_for:
                 return (f"선발 보류: {flow._info(mid) or mid}은(는) 직군이 없고 지원서에 [직군: 이름] "
                         f"선언도 없습니다 — 어떤 직군으로 일할지가 있어야 채용됩니다. 본인 선언을 "
@@ -594,14 +618,16 @@ async def _recruit_join(flow, mid, role_name, via="선발", fresh=False):
             flow.bot_info[mid] = role_name
             flow.tentative_roles[mid] = role_name
         elif not any(_norm_job(j) == _norm_job(role_name) for j in _jobs_of(cur)):
-            # 이미 다른 직군 보유 — 1봇 1직업. 겸직은 예외 둘(예비 없음/유사 일)일 때만, 최대 2개.
+            # 이미 다른 직군 보유 — 원칙은 **1봇 1직업**. [예비 잔재 제거 2026-07-08] 겸직 예외는
+            # '새 직군이 기존 직군과 비슷한 일'(도메인 토큰 공유)일 때만 — 종전 '예비 0명 허용' 조건은
+            # 예비 폐지로 상시 참이 돼 1봇1직업을 침식했다(공고·genesis가 있으니 어쩔 수 없는 경우가 없음).
+            # 허용 시 교체가 아니라 **추가**(주직군 전문화 기억 유지), 봇당 최대 2개.
             cur_jobs = _jobs_of(cur)
-            spares_left = [s for s in flow.pool if _is_spare(flow, s)]
             similar = any(_job_tokens(j) & _job_tokens(role_name) for j in cur_jobs)
-            if spares_left and not similar:
+            if not similar:
                 return (f"선발 불가: {cur}(id {mid})는 이미 '{cur}' 직군입니다 — **1봇 1직업** 원칙이라 "
-                        f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
-                        f"(전문화 기억 보호). 예비 지원자를 선발하거나 재공고하세요.")
+                        f"무관한 직군('{role_name}') 겸직은 기존 직군과 비슷한 일일 때만 허용됩니다"
+                        f"(전문화 기억 보호). 다른 지원자를 선발하거나 재공고하세요(유찰 시 신규 채용).")
             if len(cur_jobs) >= 2:
                 return (f"선발 불가(겸직 한도): {flow._info(mid) or mid}(id {mid})는 이미 직군 2개('{cur}') "
                         f"보유 — 봇당 겸직은 최대 2개입니다. 다른 지원자를 선발하거나 재공고하세요.")

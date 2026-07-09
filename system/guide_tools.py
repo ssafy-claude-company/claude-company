@@ -411,6 +411,21 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                 return _ok(f"투표 기록됨: {opt} — 근거를 Response로 간결히 반환하며 턴을 마치세요.")
             tools.append(cast_vote)
 
+    # [배포 탈중앙화(2026-07-08, 사용자: '리더만 배포권은 말도 안 되는 중앙집권')] deploy는 리더 전용이
+    # 아니라 **모든 협업 멤버**에게 준다 — 검증을 끝낸 사람(대개 산출물 owner)이 직접 공개한다. 리더 전용이던
+    # 탓에 워커가 수정을 끝내고도 '배포 권한 아무도 없어?'로 빙빙 돌던 교착의 근본. 보안(키 인프로세스라
+    # 봇이 키를 못 읽음)·런어웨이(배포 캡·anti-thrash)는 *누가* 부르든 그대로 작동하므로 리더 독점 이유 없음.
+    @tool("deploy",
+          "검증을 마친 산출물을 실제로 공개 배포한다(GitHub push + Render 웹서비스 생성/갱신). "
+          "name=영문 소문자·하이픈 서비스명(예: slither-multiplayer). 라이브 URL을 반환. "
+          "Node 앱이어야 하고 서버는 process.env.PORT를 사용해야 함. run 검증을 끝낸 뒤 마지막에 호출. "
+          "리더만이 아니라 검증을 끝낸 누구나(대개 owner) 직접 배포한다 — 리더에게 넘기려 멈추지 말 것. "
+          "note=이번 배포의 계기·변경 한 줄(필수에 준함 — 피드에 '누가 왜 배포했나'로 남습니다).",
+          {"name": str, "note": str})
+    async def deploy(args):
+        return await _rule_deploy(flow, args, me_id=me_id)
+    tools.append(deploy)
+
     if role == "leader":
         @tool("create_project",
               "Project로 판단되면 전용 채널 생성 + 규모를 산정해 팀 배정"
@@ -427,8 +442,8 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "확정**한다 — 이때 **각 직군 전문가가 *자기 도메인*의 Task·소유를 직접 제안**하게 하라(리더가 남의 "
               "도메인을 정하지 말 것 — 전문가가 자기 분야를 정의). Owner는 그 일을 Work로 받은 동료가 된다(선배정 "
               "금지). **members=이 일에 필요한 직군 동료를 당신이 직접 고른다**(자동 전원 소집 아님 — 직군 고정 방지) — "
-              "고를 때 **각 동료의 누적 경험·강점(직무 기준)을 살려** 적임자에게 맡겨라. 비우면 프로젝트팀(예비 제외) "
-              "기본, 모자란 직군은 recruit(role=)로 채운다.",
+              "고를 때 **각 동료의 누적 경험·강점(직무 기준)을 살려** 적임자에게 맡겨라. 비우면 프로젝트팀 "
+              "기본, 모자란 직군은 recruit(role=)로 채운다(그 직군 전문가가 즉석 생성돼 합류).",
               {"members": str})
         async def create_task(args):
             # [도구=얇은 래퍼] 로직은 rule/task.py(Task Rule)
@@ -479,15 +494,17 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(vote)
 
         @tool("meet",
-              ("완전 turn-taking 회의(§4): 소집자가 주제를 발제하면 매 발언권이 응찰([응찰: N])로 "
-               "돌아간다 — 강제 라운드 없음, 무응찰이면 종결 표결로 합의 종결. topic=주제, members="
-               "쉼표구분(비우면 현재 Task 팀 전원), rounds=발언 예산 배수(기본 2). 완수조건을 정하는 "
+              ("완전 turn-taking 회의(§4): 소집자가 주제+자기 의견을 발제하면 매 발언권이 응찰"
+               "([응찰: N])로 돌아간다 — 강제 라운드 없음, 무응찰이면 종결 표결로 합의 종결. topic=주제, "
+               "members=쉼표구분(비우면 현재 Task 팀 전원), rounds=발언 예산 배수(기본 2). my_opinion="
+               "당신(소집자)의 독립 의견(필수) — 당신도 중재자가 아니라 한 참여자다. 완수조건을 정하는 "
                "회의라면, 수렴 뒤 결정권자가 set_milestone으로 확정한다.") if _pipe_on() else
               ("라운드로빈 회의: 1라운드는 전원의 '독립 의견'을 동시에 수집하고(앵커링 방지), 2라운드부터 "
                "서로의 발언을 보며 직렬로 토론한다(회의록 반환). topic=주제, members=쉼표구분(비우면 현재 "
-               "Task 팀 전원), rounds=라운드 수(기본 2). 1:1 중계 없이 실제 다자 토론을 구조화 — 회의록을 "
-               "보고 리더가 수렴·확정한다."),
-              {"topic": str, "members": str, "rounds": str})
+               "Task 팀 전원), rounds=라운드 수(기본 2). **my_opinion=당신(소집자)의 독립 의견(필수) — "
+               "당신도 중재자가 아니라 한 참여자로 자기 도메인 관점을 낸다**. 1:1 중계 없이 실제 다자 토론을 "
+               "구조화 — 회의록을 보고 수렴·확정한다."),
+              {"topic": str, "members": str, "rounds": str, "my_opinion": str})
         async def meet(args):
             return _ok(await _rule_meet(flow, me_id, args))
         tools.append(meet)

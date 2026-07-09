@@ -320,6 +320,65 @@ def test_G5_마감은_존재이유_회계를_별도요구():
     assert f.current is None                             # 회계 동봉 → 마감
 
 
+def test_수용계약_통과후_산출물변경시_재검증_회귀차단():
+    """[회귀 재검출 — 버전 인식 acceptance(2026-07-08)] 수용계약 게이트는 통과 후 산출물이 바뀌면
+    (writes_by_role 합↑) 그 통과가 '직전 버전 것'이라 무효화해 재검증한다 — 3라운드에서 통과한 뒤
+    7라운드 반쪽수정이 이미 통과한 기준을 깨도 '이미 통과'로 눈감던 구멍(오실레이션이 마감으로 새던
+    길)을 닫는다. 안 바뀌면 통과 유지(오락가락·무한 반려 아님). 교차검증의 last_verify_writes 버전
+    인식과 동형 — 12회 회로차단기(매직넘버)가 존재하던 이유를 '카운트' 아닌 '변경 감지'로 대체."""
+    from system.rule.task_gates import _gate_acceptance
+    g = FakeGuide()
+    f = _flow(g)
+    f.acceptance_checked = False                          # 이 게이트만 라이브
+    tools = _tools(f, 11, "leader")
+    asyncio.run(tools["create_task"].handler({"purpose": "키보드", "members": "12"}))
+    f.current.participated.add(12)
+    asyncio.run(tools["set_goal"].handler(
+        {"goal": "키보드 동작", "acceptance": "빈칸서 j/k 타이핑 / 입력없을때 j/k 네비"}))
+    tid = f.current.task_id
+    f.writes_by_role = {"프론트": 3}
+    # 1) 증거 동봉 → 통과, 이 버전(저작수 3) 각인
+    assert _gate_acceptance(f, {"result": "[수용기준 검증] 타이핑·네비 둘 다 확인"}) is None
+    assert ("acceptance", tid) in f._gate_pass and f.current.acceptance_pass_writes == 3
+    # 2) 변경 없이 재호출(빈 result) → 캐시 통과 유지(오락가락 아님)
+    assert _gate_acceptance(f, {"result": "다 됐음"}) is None
+    assert ("acceptance", tid) in f._gate_pass
+    # 3) 반쪽수정(저작수↑) → 통과 무효화, 증거 없으면 마감 보류(회귀 재검증 요구)
+    f.writes_by_role["프론트"] += 1                       # 4 > 3 = 산출물 변경됨
+    r = _gate_acceptance(f, {"result": "다 됐음"})
+    assert r is not None and "수용 계약" in r             # 재검증 요구
+    assert ("acceptance", tid) not in f._gate_pass        # 캐시 무효화됨
+    # 4) 새 버전에 전 기준 증거 재동봉 → 재통과, 새 저작수(4) 각인
+    assert _gate_acceptance(f, {"result": "[수용기준 검증] 현재 버전서 타이핑·네비 둘 다 재확인"}) is None
+    assert f.current.acceptance_pass_writes == 4
+
+
+def test_배포신선도_게이트_라이브뒤처지면_마감보류_배포후_자연통과():
+    """[배포 신선도 게이트(2026-07-08)] 배포 이력이 있는 흐름에서 마지막 배포 이후 로컬 변경이 있으면
+    (검증한 버전 ≠ 라이브) 마감 보류 — '로컬 수정·검증 완료, 라이브 미배포'인 채 닫힌 task가 로컬≠라이브
+    분기를 다음 흐름까지 살려 옛 결함 오진·재작성을 낳던 것(라이브 P-005 msg201)의 구조 차단. 상태 기반:
+    배포하면(저작수 갱신) 자연 통과, '[배포 불필요: 사유]'로 의식적 탈출, 배포 이력 없으면 무발동."""
+    from system.rule.task_gates import _gate_deploy_fresh
+    g = FakeGuide()
+    f = _flow(g)
+    tools = _tools(f, 11, "leader")
+    asyncio.run(tools["create_task"].handler({"purpose": "p", "members": "12"}))
+    # 배포 이력 없음 → 무발동(로컬 산출물 흐름 무영향)
+    f.writes_by_role = {"프론트": 5}
+    assert _gate_deploy_fresh(f, {"result": "done"}) is None
+    # 배포 이력 + 배포 후 변경 2건 → 보류
+    f._deployed_once = True
+    f._deploy_writes = 3
+    r = _gate_deploy_fresh(f, {"result": "done"})
+    assert r is not None and "배포 신선도" in r and "2건" in r
+    # 의식적 탈출(사유 필수)
+    assert _gate_deploy_fresh(f, {"result": "[배포 불필요: 문서 변경만]"}) is None
+    assert _gate_deploy_fresh(f, {"result": "[배포 불필요: ]"}) is not None   # 빈 사유는 탈출 아님
+    # 배포하면(저작수 갱신) 자연 통과 — 상태 기반, flow-once 아님
+    f._deploy_writes = 5
+    assert _gate_deploy_fresh(f, {"result": "done"}) is None
+
+
 # ──────────────────────── B-06 [G3] 캐주얼 도구 미장착 ────────────────────────
 
 def test_G3_casual모드는_run만_collab기본은_전체장착():

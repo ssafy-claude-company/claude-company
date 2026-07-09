@@ -163,7 +163,7 @@ def test_B09_meet가_MINUTES_md에_전문_append(tmp_path):
     async def wake(to, b, k):
         return f"{to}의 입장: {long}"
     f.wake = wake
-    asyncio.run(t["meet"].handler({"topic": "저장 방식", "members": "", "rounds": "2"}))
+    asyncio.run(t["meet"].handler({"topic": "저장 방식", "members": "", "rounds": "2", "my_opinion": "소집자 독립의견"}))
     doc = open(_doss(f, "MINUTES.md"), encoding="utf-8").read()
     assert "## 회의 — 저장 방식 [1R 독립의견]" in doc and "[2R 토론]" in doc
     assert long in doc                             # 전문 무절단(잘림 표기 자체가 없어야 함)
@@ -362,7 +362,7 @@ def test_B11_플래그_on_meet_R2는_전원압축_직전전문_MINUTES참조(tmp
         seen.append((to, b))
         return f"{to}의 입장: {long}"
     f.wake = wake
-    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "2"}))
+    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "2", "my_opinion": "소집자 독립의견"}))
     r2 = [b for _, b in seen if "2라운드" in b]
     assert r2 and all("[전원 1R 요지 — 시스템 압축]" in b for b in r2)     # 전원 가시성(200자 압축)
     assert all("[직전 발언 전문]" in b and "MINUTES.md" in b for b in r2)  # 직전 1발언 전문+참조
@@ -383,7 +383,7 @@ def test_B11_플래그_off_meet_R2는_종전_재방송(tmp_path, monkeypatch):
         seen.append((to, b))
         return f"{to}의 입장"
     f.wake = wake
-    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "2"}))
+    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "2", "my_opinion": "소집자 독립의견"}))
     r2 = [b for _, b in seen if "2라운드" in b]
     assert r2 and all("[1R]" in b and "[전원 1R 요지" not in b for b in r2)
 
@@ -509,7 +509,8 @@ def test_B12_meet_채널발언이_매체조건부로_게시(tmp_path):
     async def wake(to, b, k):
         return f"{to}의 발언 " + "근거 " * 300
     f.wake = wake
-    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "1"}))
+    asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "1",
+                                   "my_opinion": "소집자 의견 " + "근거 " * 300}))
     posts = [c[3] for c in g.calls if c[0] == "post" and "[회의 1R]" in str(c[3])]
     assert posts and all("…[전문: /api/docs/7/]" in p for p in posts)
-    assert len([c for c in g.calls if c[0] == "doc"]) == 2      # 발언자별 전문 문서
+    assert len([c for c in g.calls if c[0] == "doc"]) == 3      # 발언자별 전문 문서(멤버2 + 소집자 리더 = 참여자)

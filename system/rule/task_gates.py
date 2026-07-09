@@ -285,6 +285,19 @@ def _gate_acceptance(flow, args):
     에러문자열 or None(통과)."""
     import re
     from .._util import _speech_clip
+    # [회귀 재검출 — 버전 인식(2026-07-08)] 교차검증 게이트가 last_verify_writes로 '코드 바뀌면 peer
+    # 재검증'을 강제하듯, 수용계약 통과도 *그 버전 것*이다 — 통과 후 산출물이 바뀌면(writes_by_role 합
+    # 증가) 이번 수정이 이미 통과한 기준을 깼을 수 있으므로 캐시된 통과를 무효화해 재검증한다. 종전엔
+    # _gate_pass가 task당 1회('오락가락 차단')라, 3라운드에서 통과한 뒤 7라운드 반쪽수정이 기준을 깨도
+    # '이미 통과'로 눈감았다(오실레이션이 마감으로 새던 구멍). 이게 12회 회로차단기(매직넘버)가 존재하던
+    # 이유 — 수렴을 '카운트'로 포기하는 대신 '현재 버전 전 기준 통과'로 구조 강제. 안 바뀌면 통과 유지.
+    _cur_w = sum(int(v) for v in (flow.writes_by_role or {}).values())
+    _apw = getattr(flow.current, "acceptance_pass_writes", -1)
+    if (("acceptance", flow.current.task_id) in flow._gate_pass
+            and _apw >= 0 and _cur_w > _apw):
+        flow._gate_pass.discard(("acceptance", flow.current.task_id))
+        if flow.log:
+            flow.log("acceptance_reverify_on_change", task=flow.current.task_id, at=_apw, now=_cur_w)
     if not getattr(flow, "acceptance_checked", False) and ("acceptance", flow.current.task_id) not in flow._gate_pass:
         _result = args.get("result") or ""
         # [반사적 빈 탈출 차단 — percept와 동 원리(2026-06-19 감사)] '검증/충족/확인/반영'은 항목별
@@ -319,8 +332,40 @@ def _gate_acceptance(flow, args):
                 "증거를 적어 재호출하세요. 정말 품질 기준이랄 게 없는 단순 산출물이면 result에 **'[수용기준 "
                 "N/A] <이유>'**를 적어 재호출하세요(의식적 판단 — 그냥 재호출론 통과 안 됨).")
         flow._gate_pass.add(("acceptance", flow.current.task_id))   # 이 산출물(Task)의 수용계약 검사 통과(per-Task)
+        flow.current.acceptance_pass_writes = _cur_w   # [버전 인식] 이 통과가 유효한 산출물 버전(저작수) 각인 → 이후 변경 시 재검증
         _ckpt(flow)              # [통과 영속] 보류 반환 전에도 누적 통과를 저장 → 복구가 재서술 안 시킴
     return None
+
+def _gate_deploy_fresh(flow, args):
+    """[게이트] 배포 신선도 — 검증한 산출물과 라이브가 같은 버전이어야 마감(2026-07-08, 사용자 규명:
+    '로컬을 서버에 적용 안 했을 뿐인데 재작성하려 했다'). 근본: 이전 흐름이 '로컬 수정·검증 완료, 라이브
+    미배포'인 채 마감돼도 아무것도 안 막아 로컬≠라이브 분기가 다음 흐름까지 생존 — 다음 팀이 라이브(옛
+    버전)를 '현재 코드'로 앵커해 옛 결함을 오진, 이미 고친 걸 재작성했다(라이브 P-005 msg201). 상태 기반
+    (배포하면 저작수가 갱신돼 자연 통과 — 카운트·키워드·flow-once 없음): 배포 이력이 있는 흐름에서 마지막
+    배포 이후 로컬 변경이 있으면 보류. 비-라이브 산출물은 result '[배포 불필요: 사유]'로 의식적 탈출.
+    에러문자열 or None(통과)."""
+    import re
+    if not getattr(flow, "_deployed_once", False):
+        return None                                     # 배포 이력 없는 흐름(로컬 산출물) — 무발동
+    if getattr(flow, "deploy_capped", False):
+        return None   # [게이트↔캡 데드락 차단] 캡이 배포를 막은 흐름에 '배포하고 와라'를 요구하면 상호 교착 —
+                      # 캡 경로가 자기 처방('배포 구조 문제를 정직 보고하고 마감')을 소유하므로 이 게이트는 비킴.
+    _dw = getattr(flow, "_deploy_writes", -1)
+    if _dw < 0:
+        return None
+    _cw = sum(int(v) for v in (flow.writes_by_role or {}).values())
+    if _cw <= _dw:
+        return None                                     # 라이브 = 로컬 최신 — 통과
+    if re.search(r"\[\s*배포\s*불필요\s*[:：]\s*\S{2,}", args.get("result") or ""):
+        return None                                     # 의식적 드롭(비-라이브 변경 — 사유 필수)
+    if flow.log:
+        flow.log("deploy_fresh_gate", task=flow.current.task_id, at=_dw, now=_cw)
+    return (f"마감 보류(배포 신선도 — 검증한 버전 ≠ 라이브): 마지막 배포 이후 로컬 변경 {_cw - _dw}건이 "
+            f"**라이브에 미반영**입니다. 이 상태로 마감하면 다음 흐름이 라이브(옛 버전)를 현재로 오인해 "
+            f"이미 고친 결함을 재작성합니다(실제 발생). **deploy로 최신을 배포하고 라이브를 확인한 뒤** "
+            f"재호출하세요. 이 변경이 정말 라이브 산출물과 무관하면(문서·로컬 전용) result에 "
+            f"**'[배포 불필요: <사유>]'**를 적어 재호출하세요(사유 필수 — 그냥 재호출론 통과 안 됨).")
+
 
 def _gate_existence(flow, args):
     """[게이트] G5 — 존재이유 회계(B-05). acceptance에 '[존재이유]' 테스트가 박힌 Task는 마감 result가 그 **실행

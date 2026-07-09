@@ -154,7 +154,11 @@ PRINCIPLE_SECTIONS = [
      "다 설정시키는 설계 금지."),
     ("report", 60,
      "[보고] 결과는 간결한 일반 텍스트로 반환하세요 — 그 반환값이 곧 요청자에게 가는 Response. '---' 구분선/"
-     "'✅ 완성' 배너/표/긴 머리말 같은 장식은 쓰지 말고, 보고하려고 request 쓰지 마세요."),
+     "'✅ 완성' 배너/표/긴 머리말 같은 장식은 쓰지 말고, 보고하려고 request 쓰지 마세요. "
+     "**채팅(Response)엔 이번 작업의 결과·결정·다음 액션만 — 교훈·회고·일반화된 노하우('~해야 한다'류 "
+     "메타 배움)는 채팅에 쓰지 마세요.** 그건 협업 피드를 어지럽힙니다 — 배운 건 **report(experience=…) "
+     "인자**나 **[경험]…[/경험] 블록**으로만 남기세요(시스템이 흡수해 당신 개인 증류로 보관, 채팅엔 안 남음). "
+     "동료에게 '무엇을 하라'는 지시·요청과 '무엇을 배웠다'는 회고는 다릅니다 — 후자는 피드에 남기지 말 것."),
     # [B-map — .collab/ 어포던스는 persona로 내구 이전] '협업 사실은 .collab/에 있으니 Read'는 회사 공통·
     # 압축에도 살아남아야 하는 어포던스라 persona(organt/CLAUDE.md → system_prompt)에 각인한다. PRINCIPLE에
     # 중복 주입하지 않는다(디스크 파일은 자기설명적 헤더 보유 + persona가 언제 Read할지 안내).
@@ -181,8 +185,9 @@ LEADER_EXTRA_SECTIONS = [
      "왕복 2회+면 공정 종결."),
     ("lead_team", 80,
      "[팀 구성] 작업 무게를 보고 팀 규모를 정해 create_project(team=…) — 무겁거나 중요한 도메인엔 여러 명, "
-     "풀 여유 인력도 활용(놀리지 말 것). 필요 직군이 없으면 recruit(role='직군')로 '예비'를 채용하세요 — "
-     "**말로 '너 X 담당'은 불가(직군 부여가 먼저, 시스템이 강제), 1봇 1직업, 같은 직군 있으면 재사용.**"),
+     "풀 여유 인력도 활용(놀리지 말 것). 필요 직군이 없으면 recruit(role='직군')로 채용하세요 — 그 직군 "
+     "전문가가 즉석 생성돼 합류합니다. **말로 '너 X 담당'은 불가(직군 부여가 먼저, 시스템이 강제), "
+     "1봇 1직업, 같은 직군 있으면 재사용.**"),
     ("lead_branches", 84,
      "[처리 갈래] 요청 성격을 보고:\n"
      "- 단순 질문(혼자 답 가능) → 답만 간결히 반환.\n"
@@ -439,6 +444,10 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
     # 순수 프롬프트 노트(요청·baton 아님): 맹종 말고 당신 판단으로 작업에 반영하고, 반영 여부·방식을 응답에 한 줄로
     # 알리세요(대화 느낌). 워커에게 보낼 게 있으면 당신(리더)이 그 owner에게 그 취지로 재위임/지시하세요.
     _pend = (getattr(flow, "pending_info", None) or {}).get(me) if flow is not None else None
+    # [미답 질문 상시 재주입(2026-07-09)] 1회성 노트는 바쁜 리더가 무시한다(라이브: 3턴 미답) —
+    # [답변] 게시가 관측될 때까지 리더 매 턴 선두에 다시 박는다(소비-clear 대상 아님).
+    _unans = (getattr(flow, "unanswered_questions", None) or []) if (flow is not None and role == "leader") else []
+    _pend = list(_unans) + list(_pend or []) if (_unans or _pend) else _pend
     human_info_note = (("[사람이 작업 중 전한 정보 — 방금 도착]\n"
                         + "\n".join(f"· {t}" for t in _pend)
                         + "\n→ 당신 판단으로 진행 중 작업에 반영하고(원문 의도 기준), 반영 여부·방식을 응답에 간단히 알리세요.\n\n")
@@ -509,7 +518,7 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
         team_note = (
             f"[팀은 당신이 동적으로 짠다 — 자동 전원 아님] 직군 구성은 미리 고정돼 있지 않습니다. 이 일에 **필요한 "
             f"직군을 당신이 직접 고르세요** — create_project(team='필요한 직군/동료들')로 팀을 정하고, 모자란 직군은 "
-            f"recruit(role='직군명')로 더하세요(예비 인력이 그 직군으로 채용됨). 자동으로 전원이 소집되지 않습니다"
+            f"recruit(role='직군명')로 더하세요(그 직군 전문가가 즉석 생성돼 합류). 자동으로 전원이 소집되지 않습니다"
             f"(놀던 인력까지 무조건 부르지 말 것). set_goal은 '당신이 고른 그 팀 전원'의 협의로 통과합니다.\n")
         portfolio = sys._portfolio_note()   # 회사가 만들어온 것 — 신규성 판단·중복 회피의 사실 근거(담당자에게만)
         # [B-17 — A(중복) 프롬프트 삭제(BOT_ARCH_REDESIGN 2026-07-03 W3)] "(시스템 강제)" 블록은 매 wake
