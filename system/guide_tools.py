@@ -115,7 +115,8 @@ def _chown_tree(path, uid, gid):
 from .rule.task import (_perceptual_essential, _wants_real_data,  # noqa: F401  [PJT/tests(test_sys)가 파사드에서 직접 import — 유지]
                         _has_real_dataset, _synthesizes_data, _is_verifier)
 # [마일스톤 파이프라인 — S1(PIPELINE_REWORK_2026-07-09)] 도구 표면·회의 설명 분기가 소비.
-from .rule.milestone import pipeline_on as _pipe_on, rule_set_milestone, rule_set_subtask
+from .rule.milestone import (pipeline_on as _pipe_on, rule_report_iter,
+                             rule_set_milestone, rule_set_subtask)
 
 
 # [스태핑 커버리지 — 리더 흡수 차단(2026-06-19, 사용자: '전문가 분배 무조건, 리더는 자기 직군만')]
@@ -232,6 +233,28 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     async def recruit(args):
         return _ok(await _rule_recruit(flow, me_id, role, args))
     tools.append(recruit)
+
+    # [마일스톤 파이프라인 — 공통 표면(전 참여자)] SubTask 추가(자발 참여의 문)와 iter 검증 제출은
+    # 결정권자 전용이 아니다 — 현장 누구나. 플래그 OFF면 미등록(표면 불변).
+    if _pipe_on():
+        @tool("set_subtask",
+              "진행 중 마일스톤에 SubTask를 추가한다(주기 중에도 가능·누구나). goal=단위 목표, "
+              "criteria='조건 | 실증절차' 줄들(등록 게이트 동일). 참여는 자발 — 배정이 아니라 "
+              "백로그 제출로 참여한다.",
+              {"goal": str, "criteria": str})
+        async def set_subtask(args):
+            return _ok(rule_set_subtask(flow, me_id, args))
+        tools.append(set_subtask)
+
+        @tool("report_iter",
+              "진행 중 주기의 완수조건 실증 결과를 제출한다(검증 참여자 누구나). results=한 줄에 "
+              "'조건 | pass/fail | 증거(run 출력 요지)' — **증거 없는 pass는 인정되지 않는다**. "
+              "조건이 전부 실증되면 주기가 스스로 잔여 정리(wrapup)로 넘어가고, 정리가 끝나면 "
+              "wrapup='done'으로 주기를 닫는다. 마감은 사람이 아니라 조건이다.",
+              {"results": str, "wrapup": str})
+        async def report_iter(args):
+            return _ok(rule_report_iter(flow, me_id, args))
+        tools.append(report_iter)
 
     @tool("run",
           f"작업공간에서 명령을 실행해 산출물을 직접 검증(빌드/구동/테스트). cwd={flow.workspace or '작업공간 루트'} "
@@ -442,15 +465,6 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             async def set_milestone(args):
                 return _ok(rule_set_milestone(flow, me_id, args))
             tools.append(set_milestone)
-
-            @tool("set_subtask",
-                  "진행 중 마일스톤에 SubTask를 추가한다(주기 중에도 가능). goal=단위 목표, "
-                  "criteria='조건 | 실증절차' 줄들(마일스톤과 같은 등록 게이트). 참여는 자발 — "
-                  "배정이 아니라 백로그 제출로 참여한다.",
-                  {"goal": str, "criteria": str})
-            async def set_subtask(args):
-                return _ok(rule_set_subtask(flow, me_id, args))
-            tools.append(set_subtask)
 
         @tool("vote",
               "팀 표결(구조적 합의): 선택지를 두고 멤버 전원의 선택+근거를 **동시에**(독립·앵커링 방지) "

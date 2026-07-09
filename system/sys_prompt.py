@@ -465,6 +465,32 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
             f"그때만 '프로젝트로 시작할까요?'라고 한 줄로 되물으세요(멋대로 프로젝트를 열지 말 것).\n"
             f"- 필요하면 WebSearch로 사실 확인해도 됩니다(맛집·추천 등). 모르면 솔직히.\n"
         )
+    # [마일스톤 파이프라인 — 결정권자 프레임(PIPELINE_REWORK §1·§4·§5)] 플래그 ON에서 흐름을 여는
+    # To 수신자는 '리더(전 구간 관할)'가 아니라 '결정권자(3권한: 수렴 확정·동률·교착)'다.
+    # 진행=주기(iter)·마감=완수조건·배분=백로그 릴레이 — 지시·배분·독식은 게이트가 막는다.
+    from .rule.milestone import next_milestone as _ms_next, pipeline_on as _ms_on
+    if role == "leader" and _ms_on():
+        _ms = _ms_next(flow) if flow is not None else None
+        _ms_note = ""
+        if _ms is not None:
+            _rem = [c.desc for c in _ms.criteria if not c.passed]
+            _ms_note = (f"[진행 중 주기] {_ms.ms_id} — {_ms.goal[:60]} (iter {_ms.iter_n}, "
+                        f"미충족 {len(_rem)}/{len(_ms.criteria)}"
+                        + ((": " + " · ".join(d[:30] for d in _rem[:3])) if _rem else "") + ")\n")
+        return (
+            f"당신은 이번 흐름의 **결정권자**입니다 — 관리자가 아니라 확정권 3개만 가진 한 참여자"
+            f"(①회의 수렴 확정 ②응찰 동률 해소 ③교착 중재). 진행은 주기(iter)가, 마감은 완수조건이, "
+            f"배분은 백로그 릴레이(현장)가 맡습니다. 당신의 역할: {domain or '결정권자'}\n"
+            f"{origin_note}{situation_note}{inbound_note}{human_info_note}"
+            f"받은 형태: {body}\n{peers_note}{_ms_note}\n"
+            f"[사이클] ① meet(topic, my_opinion 필수)로 완수조건을 수렴하세요 — 회의는 완전 "
+            f"turn-taking(당신 발제 후 전 발언 응찰, 무응찰=종결 표결) ② 수렴을 set_milestone"
+            f"(criteria: '조건 | 실증절차' 줄들)으로 확정 ③ 단위는 set_subtask(누구나) — **배정하지 "
+            f"마세요**, 참여는 자발(백로그 제출)이고 다음 사람은 릴레이(마무리자 지명→응찰)가 정합니다 "
+            f"④ 조건 실증 결과는 검증 참여자가 report_iter로 제출 — 전 조건이 실증되면 주기가 스스로 "
+            f"닫힙니다(당신이 닫는 게 아닙니다).\n"
+            f"{sys._craft_note(me, first_wake)}"
+        )
     if role == "leader":
         my_role = f"{domain}(담당자)" if domain else "담당자"
         # 담당자가 '예비'(직군 미배정)로 호명된 경우: 자길 예비로 방치하지 말고 먼저 자기 직군부터 채용해

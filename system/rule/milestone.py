@@ -22,6 +22,7 @@ __all__ = [
     "iter_verify", "wrapup_done", "next_milestone", "ms_replan",
     "ms_to_dict", "ms_from_dict",
     "parse_criteria_lines", "rule_set_milestone", "rule_set_subtask",
+    "parse_iter_results", "rule_report_iter",
 ]
 
 
@@ -272,6 +273,48 @@ def rule_set_subtask(flow, me_id, args) -> str:
         return f"등록 거부: {st}"
     return (f"SubTask {st.st_id} 추가 — {goal[:60]} (마일스톤 {ms.ms_id}). "
             f"참여는 자발입니다 — 백로그 제출로 참여하세요.")
+
+
+def parse_iter_results(text: str):
+    """검증자가 쓴 결과 텍스트(한 줄 = '조건 | pass/fail | 증거')를 iter_verify 입력으로."""
+    out = []
+    for ln in str(text or "").splitlines():
+        ln = ln.strip().lstrip("-•* ").strip()
+        if not ln:
+            continue
+        parts = [p.strip() for p in ln.split("|")]
+        if len(parts) < 2:
+            continue
+        out.append({"desc": parts[0],
+                    "passed": parts[1].lower() in ("pass", "passed", "ok", "충족", "통과", "y", "true"),
+                    "evidence": parts[2] if len(parts) > 2 else ""})
+    return out
+
+
+def rule_report_iter(flow, me_id, args) -> str:
+    """[iter 검증 제출 — 누구나(검증 참여자)] 진행 중 주기의 완수조건 실증 결과를 제출한다.
+    조건이 전부 실증되면 주기가 스스로 wrapup으로 넘어간다 — 마감은 사람이 아니라 조건.
+    wrapup='done'이면 잔여 정리 완료 선언(wrapup 상태에서만 유효)."""
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    ms = next_milestone(flow)
+    if ms is None:
+        return "검증할 주기가 없습니다 — set_milestone으로 주기를 먼저 여세요."
+    if str(args.get("wrapup") or "").strip().lower() in ("done", "완료"):
+        r = wrapup_done(flow, ms)
+        if r != "done":
+            return r
+        nxt = next_milestone(flow)
+        return (f"주기 {ms.ms_id} 종료. " + (f"다음 주기: {nxt.ms_id} — {nxt.goal[:60]}" if nxt
+                                             else "남은 주기 없음 — Task 경계(e2e 전수)로."))
+    results = parse_iter_results(args.get("results"))
+    if not results:
+        return "results가 비었습니다 — 한 줄에 '조건 | pass/fail | 증거(run 출력 요지)'."
+    ok, note = iter_verify(flow, ms, results)
+    if ok:
+        return (f"iter {ms.iter_n} 통과 — 주기 {ms.ms_id}가 wrapup(잔여 정리)로 전이. "
+                f"남은 SubTask·백로그를 정리한 뒤 report_iter(wrapup='done')로 닫으세요.")
+    return f"iter {ms.iter_n} — {note}. 증거 없는 pass는 인정되지 않습니다."
 
 
 # ── 직렬화 (계약 §9 — 최대 저장: 체크포인트 동승·재시작 후 중간 재개) ─────────────
