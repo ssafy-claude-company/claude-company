@@ -12,6 +12,7 @@
 - ORGANT_PIPELINE 플래그 이중수용: 플래그 OFF면 이 모듈의 어떤 경로도 라이브 동작을 바꾸지 않는다.
 """
 import os
+import re
 import time
 
 # §11 이벤트 어휘 — 계약 그대로(변형 금지)
@@ -142,18 +143,183 @@ def emit_verdict(flow, verdict: str, defects, snapshot=None) -> None:
 async def enter_replan(flow, defects, entry=None) -> str:
     """e2e_fail → 마일스톤 재수립 진입(§6 복기). 재수립 자체는 S1의 회의·생성 체계가 수행한다.
 
-    entry: S1이 확정할 진입점 콜러블(시그니처 미확정 — mock 주입 지점). 관례상
-    entry(flow, brief, defects)를 기대하고, 없으면 이벤트만 적재하고 brief를 돌려준다
-    (호출부가 회의 입력으로 쓴다). async·sync 콜러블 모두 수용.
+    entry 기본값 = S1의 실 진입점 `milestone.ms_replan`(통합주기 1 착지 — ms_replan 이벤트도
+    거기서 적재된다). 커스텀 entry(flow, brief, defects)는 자기 이벤트를 스스로 책임진다.
+    async·sync 콜러블 모두 수용. 반환 = 재수립 회의 입력 텍스트(brief).
     """
     if not defects:
         raise WrapupError("결함 없이 재수립 진입은 없습니다 — e2e_pass면 Task가 닫힌다.")
     brief = format_defects(defects)
-    log = getattr(flow, "log", None)
-    if log:
-        log(MS_REPLAN, defects=len(defects))
-    if entry is not None:
+    if entry is None:
+        from . import milestone as _ms
+        _ms.ms_replan(flow, [_defect_line(d) for d in defects])
+    else:
         out = entry(flow, brief, defects)
         if hasattr(out, "__await__"):
             await out
     return brief
+
+
+def _defect_line(d) -> str:
+    """결함 dict → 한 줄(S1 ms_replan의 defects 입력 단위 — 새 마일스톤 조건 초안의 원문이 된다)."""
+    return f"({d.get('kind')}) {str(d.get('spec') or '')[:60]} — 관측: {str(d.get('observed') or '')[:60]}"
+
+
+# ── 아크: 분모 조립 → (QA가 판단·제출) → 판정 → 복기 (§6 — 도구 표면은 guide_tools) ──────
+
+def assemble_base_checklist(flow) -> list:
+    """Task 경계 e2e 개시 — 조건·원문 축을 flow에서 자동 조립(§6 ①·④).
+
+    조건 축 = 전 마일스톤의 완수조건 전부(통과 여부 무관 — **최종 버전**에서 재실증해 뒤 작업이
+    앞 것을 깼는지 잡는다). 항목에 출처 마일스톤(ms)을 달아 결함의 suspect_ms로 쓴다.
+    원문 축 = flow.task_origin(사용자 원 요구)의 문장들. 표면·관통 축은 QA의 e2e_scope 제출로
+    확장된다(분모는 구조가 들되, 표면의 발견은 봇의 판단).
+    """
+    conds, tags = [], []
+    for m in (getattr(flow, "milestones", None) or []):
+        for c in m.criteria:
+            conds.append(f"{c.desc} | 재실증: {c.verify}")
+            tags.append(m.ms_id)
+    origin = [s.strip() for s in re.split(r"[.\n]", str(getattr(flow, "task_origin", "") or ""))
+              if s.strip()]
+    cl = build_checklist(conditions=conds, origin_items=origin)
+    for it in cl:
+        if it["kind"] == KIND_CONDITION:
+            it["ms"] = tags[int(it["id"].split(":")[1]) - 1]
+    flow.e2e_checklist = cl
+    flow.e2e_results = {}
+    return cl
+
+
+def register_scope(flow, surfaces=None, arcs=None) -> list:
+    """QA가 발견한 표면·관통 경로를 분모에 추가(§6 ②·③). 반환 = 추가된 항목(id 포함 — 봇에게 회신).
+    중복 spec은 조용히 무시(재제출 무해). 개시 전 호출은 규약 위반."""
+    cl = getattr(flow, "e2e_checklist", None)
+    if cl is None:
+        raise WrapupError("e2e가 개시되지 않았습니다 — e2e_open(분모 조립)이 먼저입니다.")
+    added = []
+    for kind, items in ((KIND_SURFACE, surfaces), (KIND_ARC, arcs)):
+        n = sum(1 for it in cl if it["kind"] == kind)
+        for spec in (items or []):
+            s = str(spec or "").strip()
+            if not s or any(it["kind"] == kind and it["spec"] == s for it in cl):
+                continue
+            n += 1
+            it = {"id": f"{kind}:{n}", "kind": kind, "spec": s}
+            cl.append(it)
+            added.append(it)
+    return added
+
+
+def submit_result(flow, item_id: str, ok, observed: str = "", evidence: str = "") -> str:
+    """항목 결과 제출(QA의 판단을 구조로 수집). 반환 = 진행 현황 한 줄(남은 항목 안내)."""
+    cl = getattr(flow, "e2e_checklist", None)
+    if cl is None:
+        raise WrapupError("e2e가 개시되지 않았습니다 — e2e_open이 먼저입니다.")
+    iid = str(item_id or "").strip()
+    known = {it["id"] for it in cl}
+    if iid not in known:
+        raise WrapupError(f"분모에 없는 항목: {iid} — 유효 항목: {', '.join(sorted(known))}")
+    if getattr(flow, "e2e_results", None) is None:
+        flow.e2e_results = {}
+    flow.e2e_results[iid] = {"ok": bool(ok), "observed": str(observed or "").strip(),
+                             "evidence": str(evidence or "").strip()}
+    remain = [it["id"] for it in cl if it["id"] not in flow.e2e_results]
+    return (f"{len(flow.e2e_results)}/{len(cl)} 제출됨"
+            + (f" — 남은 항목: {', '.join(remain)}" if remain else " — 전 항목 제출 완료, e2e_finish로 판정하세요."))
+
+
+def render_checklist(flow) -> str:
+    """분모 현황을 봇에게 서빙 — 항목 id·내용·제출 상태."""
+    cl = getattr(flow, "e2e_checklist", None) or []
+    rs = getattr(flow, "e2e_results", None) or {}
+    lines = [f"[e2e 분모 {len(cl)}항목 — 각 항목을 실증(run·브라우저)하고 e2e_result로 제출하세요]"]
+    for it in cl:
+        mark = "제출됨" if it["id"] in rs else "미제출"
+        lines.append(f"- {it['id']} ({mark}): {it['spec']}")
+    return "\n".join(lines)
+
+
+def finish_e2e(flow):
+    """판정 + 이벤트(§11) + 실패 시 복기(§6 — S1 ms_replan 실 진입점). 반환 (verdict, defects, new_ms)."""
+    cl = getattr(flow, "e2e_checklist", None)
+    if not cl:
+        raise WrapupError("e2e가 개시되지 않았습니다 — e2e_open이 먼저입니다.")
+    verdict, defects = judge(cl, getattr(flow, "e2e_results", None) or {})
+    emit_verdict(flow, verdict, defects, overhead_snapshot(flow))
+    new_ms = None
+    if verdict == E2E_FAIL:
+        from . import milestone as _ms
+        new_ms = _ms.ms_replan(flow, [_defect_line(d) for d in defects])
+    return verdict, defects, new_ms
+
+
+# ── 도구 표면용 래퍼 (guide_tools의 얇은 래퍼가 부른다 — 문자열 반환, 봇 대면 문구) ──────
+
+def _boundary_gap(flow) -> str:
+    """Task 경계 판정 — 미완 마일스톤 목록(비면 경계 도달). §6: e2e는 Task 경계에서."""
+    ms = getattr(flow, "milestones", None) or []
+    if not ms:
+        return "마일스톤이 없습니다(마일스톤 파이프라인 Task가 아님)"
+    open_ms = [m.ms_id for m in ms if m.status != "done"]
+    return f"미완 마일스톤: {', '.join(open_ms)}" if open_ms else ""
+
+
+def rule_e2e_open(flow) -> str:
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    gap = _boundary_gap(flow)
+    if gap:
+        return f"e2e 개시 불가 — 아직 Task 경계가 아닙니다({gap}). 모든 마일스톤이 닫힌 뒤 개시하세요."
+    try:
+        cl = assemble_base_checklist(flow)
+    except WrapupError as e:
+        return f"e2e 개시 불가: {e}"
+    return (f"e2e 개시 — 분모 {len(cl)}항목(조건 회귀·원문 대조). **당신이 할 일**: ① 산출물의 노출 "
+            f"표면(페이지·라우트·API·명령)과 주 사용 경로를 파악해 e2e_scope로 제출(분모 확장) "
+            f"② 각 항목을 실제 실행(run·브라우저)으로 검사해 e2e_result로 제출(증거 필수) "
+            f"③ 전 항목 제출 후 e2e_finish.\n" + render_checklist(flow))
+
+
+def rule_e2e_scope(flow, args) -> str:
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    try:
+        added = register_scope(flow,
+                               surfaces=str(args.get("surfaces") or "").splitlines(),
+                               arcs=str(args.get("arcs") or "").splitlines())
+    except WrapupError as e:
+        return str(e)
+    if not added:
+        return "추가된 항목 없음(빈 입력 또는 전부 중복)."
+    return ("분모 확장 — 추가 항목: "
+            + " · ".join(f"{it['id']}({it['spec'][:40]})" for it in added)
+            + "\n각 항목을 검사해 e2e_result로 제출하세요.")
+
+
+def rule_e2e_result(flow, args) -> str:
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    ok = str(args.get("ok") or "").strip().lower() in ("true", "pass", "ok", "yes", "1", "충족")
+    try:
+        return submit_result(flow, str(args.get("item") or ""), ok,
+                             observed=str(args.get("observed") or ""),
+                             evidence=str(args.get("evidence") or ""))
+    except WrapupError as e:
+        return str(e)
+
+
+def rule_e2e_finish(flow) -> str:
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    try:
+        verdict, defects, new_ms = finish_e2e(flow)
+    except WrapupError as e:
+        return str(e)
+    if verdict == E2E_PASS:
+        return "e2e_pass — 전 항목 증거 있는 충족. Task 마무리 가능."
+    head = f"e2e_fail — 결함 {len(defects)}건."
+    if new_ms is not None:
+        head += (f" 복기 마일스톤 {new_ms.ms_id} 개설됨(결함 해소가 완수조건 초안 — 확정은 회의에서). "
+                 f"결함이 해소되면 다시 Task 경계에서 e2e_open 하세요.")
+    return head + "\n" + format_defects(defects)
