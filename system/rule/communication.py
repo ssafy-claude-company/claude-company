@@ -153,8 +153,10 @@ async def meet(flow, me_id, args):
         # [마일스톤 파이프라인 §4 — 완전 turn-taking(2026-07-09 확정)] 강제 R1(전원 의무 발화) 폐지:
         # 소집자 발제 후 첫 발화부터 응찰. 트레이드오프 관측(§8 민감 접근): R1은 발산(앵커링 방지)
         # 장치였다 — 제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다.
-        from .milestone import pipeline_on as _ms_on
+        from .milestone import extract_consensus as _ms_extract, open_milestone as _ms_open_fn
+        from .milestone import pipeline_on as _ms_on, parse_criteria_lines as _ms_parse
         _no_r1 = _ms_on()
+        conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
         if not _no_r1:
             for m, res, note in await _fork_collect(flow, me_id, members, body_r1):
                 cut = _speech_clip(res or note)   # 회의록·채널 발언은 같은 내용(기록 일치)
@@ -308,10 +310,18 @@ async def meet(flow, me_id, args):
                 return []
             def body_of(c):
                 if purpose == CLOSE_VOTE:
+                    # [결정권자 폐지 — 종결 표결이 곧 확정(2026-07-09, 사용자)] 파이프라인 회의에서
+                    # [종료] 투표는 수렴안(완수조건 초안)을 동봉한다 — 가결되면 그 안이 그대로 등록된다
+                    # (사람이 아니라 표결+등록 게이트가 확정). 확정 발화 권력의 비인격 대체.
+                    _conv = ("\n마쳐도 된다면 `[종료]` 다음 줄에 이 회의의 수렴안을 동봉하세요:\n"
+                             "[수렴안]\n목표: <이 주기의 목표 한 줄>\n<조건 | 실증절차(run으로 확인)>\n"
+                             "<조건 | 실증절차>\n[/수렴안]\n"
+                             "(동료가 이미 낸 수렴안에 동의하면 그대로 복사·수정해 제출 — 가결 시 최다 "
+                             "지지안이 등록됩니다)" if _no_r1 else " 마쳐도 되면 `[종료]`만.")
                     return (f"[회의 — 종결 확인] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
                             f"판단하세요. 더 다뤄야 할 것이 있으면 `[계속: N]`(N=1~9)과 무엇인지 한 줄만 "
-                            f"— 발언권을 받아 직접 발언하게 됩니다. 마쳐도 되면 `[종료]`만.")
+                            f"— 발언권을 받아 직접 발언하게 됩니다.{_conv}")
                 return (f"[회의 — 발언권 응찰] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
                         f"지금 발언권이 비어 있습니다. 당신({flow._info(c)})이 **지금** 발언할 필요가 "
                         f"있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 이유만 "
@@ -321,6 +331,11 @@ async def meet(flow, me_id, args):
                 wakes["n"] += 1
                 s = 0 if res is None else _bid_score(res)
                 out.append((m, s))
+                if purpose == CLOSE_VOTE and _no_r1 and res:
+                    # [종결 표결 동봉 수렴안 수집] 가결 시 자동 등록의 원료 — 제출 순서 보존.
+                    _c = _ms_extract(res)
+                    if _c:
+                        conv_props.append(_c)
                 if flow.log:
                     flow.log("floor_bid", surface="meet", who=m, score=s,
                              vote=(purpose == CLOSE_VOTE))
@@ -349,9 +364,30 @@ async def meet(flow, me_id, args):
             flow.current.collab_notes = _speech_clip(
                 (getattr(flow.current, 'collab_notes', '') + '\n\n' + record).strip(), 6000)
             _ckpt(flow)   # 합의는 크래시-세이프(재개 위임에도 동봉되도록 스냅샷에 포함)
+        # [결정권자 폐지 — 표결이 곧 확정] 파이프라인 회의가 합의 종결로 끝났고 수렴안이 동봉됐으면
+        # 시스템이 서기로서 즉시 등록한다(사람 확정 발화 없음). 최다 지지 = 동일안 제출 수, 동률=최신.
+        # 등록 게이트(실행·측정 강제)가 품질을 지키고, 거부되면 사유를 회의록에 남겨 재회의를 유도한다.
+        _confirm_note = ""
+        if _no_r1 and conv_props:
+            from collections import Counter
+            _ranked = [p for p, _ in Counter(conv_props).most_common()]
+            for _prop in _ranked:
+                _lines = _prop.splitlines()
+                _goal = next((l.split(":", 1)[1].strip() for l in _lines
+                              if l.strip().startswith("목표")), topic)
+                _crit = "\n".join(l for l in _lines if "|" in l)
+                _ms = _ms_open_fn(flow, _goal, _ms_parse(_crit), origin=f"회의 가결: {topic[:60]}")
+                if not isinstance(_ms, str):
+                    _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 마일스톤 {_ms.ms_id} 자동 등록"
+                                     f"(조건 {len(_ms.criteria)}개). 이제 set_subtask·백로그로 진행하세요.")
+                    if flow.log:
+                        flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props))
+                    break
+                _confirm_note = f"\n\n[표결 확정 실패] 수렴안이 등록 게이트에 거부됨: {_ms} — 조건을 다듬어 재회의하세요."
         return (f"[회의록] 주제: {topic} ({rounds}라운드, {len(members)}명)\n"
                    + "\n".join(minutes)
-                   + "\n\n(수렴·확정은 당신(리더)의 몫 — 합의점을 정리해 set_goal/결정에 반영하세요.)")
+                   + (_confirm_note if _no_r1 else
+                      "\n\n(수렴·확정은 당신(리더)의 몫 — 합의점을 정리해 set_goal/결정에 반영하세요.)"))
 
     inner = asyncio.ensure_future(_run_meet())
     flow.inflight_tasks.add(inner)

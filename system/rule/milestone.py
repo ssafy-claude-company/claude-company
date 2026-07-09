@@ -24,6 +24,7 @@ __all__ = [
     "parse_criteria_lines", "rule_set_milestone", "rule_set_subtask",
     "parse_iter_results", "rule_report_iter",
     "renegotiate_criterion", "approve_waiver", "rule_renegotiate",
+    "extract_consensus",
 ]
 
 
@@ -331,19 +332,26 @@ def parse_criteria_lines(text: str):
     return out
 
 
-def _is_decider(flow, me_id) -> bool:
-    """결정권자 판정 — 플래그 ON 세계에서 흐름의 To 수신자(구 리더 자리)가 결정권자로 축소 승계된다
-    (계약 §1: 권한은 수렴 확정·동률·교착 3개뿐 — 이 도구는 그중 '확정'의 표면이다)."""
-    return int(me_id) == int(getattr(flow, "leader", 0) or 0)
+# [결정권자 폐지(2026-07-09, 사용자)] 확정 권력 삭제 — 확정은 회의 종결 표결(가결=수렴안 자동 등록)이
+# 하고, 이 도구는 '서기'의 표면(누구나)이다. 품질은 사람이 아니라 등록 게이트가 지킨다.
+_CONSENSUS_RE = None   # 지연 컴파일(아래 extract_consensus)
+
+
+def extract_consensus(text: str):
+    """봇 발화에서 [수렴안]...[/수렴안] 블록(조건 | 실증절차 줄들)을 꺼낸다 — 종결 표결 동봉용."""
+    global _CONSENSUS_RE
+    import re as _re
+    if _CONSENSUS_RE is None:
+        _CONSENSUS_RE = _re.compile(r"\[수렴안\]\s*\n?(?P<body>.*?)\n?\[/수렴안\]", _re.S)
+    m = _CONSENSUS_RE.search(str(text or ""))
+    return m.group("body").strip() if m else None
 
 
 def rule_set_milestone(flow, me_id, args) -> str:
-    """[결정권자 전용] 회의 수렴을 확정해 마일스톤 개설. 게이트 거부는 사유+처방을 그대로 반환."""
+    """[누구나 — 서기] 회의 수렴을 등록해 마일스톤 개설. 확정의 실체는 회의 종결 표결(가결)이고
+    등록은 기록 행위다 — 품질은 등록 게이트가 방어. 게이트 거부는 사유+처방을 그대로 반환."""
     if not pipeline_on():
         return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
-    if not _is_decider(flow, me_id):
-        return ("등록 거부: 마일스톤 확정은 결정권자의 몫입니다 — 회의(meet)에서 조건을 수렴한 뒤 "
-                "결정권자가 등록합니다(당신은 회의에서 의견·응찰로 참여하세요).")
     goal = str(args.get("goal") or "").strip()
     if not goal:
         return "등록 거부: goal(이 주기의 목표 한 줄)이 비었습니다."
@@ -373,12 +381,11 @@ def rule_set_subtask(flow, me_id, args) -> str:
 
 
 def rule_renegotiate(flow, me_id, args) -> str:
-    """[결정권자 — 조건 재협상 #1] 진행 중 주기의 달성 불가 조건을 사람 승인 대기로 올린다.
-    target=조건 desc(부분일치), reason=왜 불가능한가. 결정권자만(포기는 방향 결정)."""
+    """[누구나 — 조건 재협상 #1] 진행 중 주기의 달성 불가 조건을 사람 승인 대기로 올린다.
+    target=조건 desc(부분일치), reason=왜 불가능한가. 정체를 겪는 현장 누구나 올린다 —
+    진짜 게이트는 사람 승인(approve_waiver)이므로 올리는 권한을 독점할 이유가 없다(결정권자 폐지)."""
     if not pipeline_on():
         return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
-    if not _is_decider(flow, me_id):
-        return "조건 재협상은 결정권자의 몫입니다 — 정체를 보고하면 결정권자가 올립니다."
     ms = next_milestone(flow)
     if ms is None:
         return "재협상할 주기가 없습니다."

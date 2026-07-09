@@ -113,19 +113,34 @@ def test_도구는_플래그_ON에서만_등록(monkeypatch):
     assert {"set_milestone", "set_subtask"} <= names_on
 
 
-def test_확정은_결정권자만_파싱과_게이트_경유(monkeypatch):
-    """[§1·§4] 마일스톤 확정 도구 — 결정권자 아닌 봇은 거부, '조건 | 실증절차' 줄 파싱, 게이트 경유."""
+def test_등록은_누구나_서기_파싱과_게이트_경유(monkeypatch):
+    """[결정권자 폐지] 마일스톤 등록은 누구나(서기) — 확정의 실체는 회의 종결 표결이고 품질은
+    등록 게이트가 방어. '조건 | 실증절차' 줄 파싱·소망형 거부는 그대로."""
     from system.rule.milestone import rule_set_milestone, rule_set_subtask
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
-    f = _flow()          # leader=11 (_flow의 Flow 생성 인자)
-    out = rule_set_milestone(f, 12, {"goal": "M1", "criteria": "a | run a"})
-    assert "결정권자" in out and not f.milestones            # 비결정권자 거부
-    out = rule_set_milestone(f, 11, {"goal": "M1", "criteria": "- 카운트 API | curl 확인\n버튼 UI | playwright 확인"})
-    assert "개설" in out and len(f.milestones[0].criteria) == 2   # 줄 파싱(불릿 관용)
+    f = _flow()
+    out = rule_set_milestone(f, 12, {"goal": "M1", "criteria": "- 카운트 API | curl 확인\n버튼 UI | playwright 확인"})
+    assert "개설" in out and len(f.milestones[0].criteria) == 2   # 비리더도 등록 가능(서기)
     out = rule_set_milestone(f, 11, {"goal": "M2", "criteria": "잘 동작해야 함"})
-    assert "거부" in out and len(f.milestones) == 1          # 소망형 — 등록 게이트가 막음
+    assert "거부" in out and len(f.milestones) == 1          # 소망형 — 등록 게이트가 막음(품질 방어)
     out = rule_set_subtask(f, 12, {"goal": "프론트 뼈대", "criteria": "index 로드 | curl -s /"})
     assert "추가" in out and f.milestones[0].subtasks        # SubTask 추가는 현장 누구나(자발 참여)
+
+
+def test_종결표결_수렴안_추출과_결정권자_부재(monkeypatch):
+    """[결정권자 폐지] [수렴안] 블록 파서 — 종결 표결 동봉분을 시스템이 서기로 등록하는 원료.
+    재협상도 누구나(사람 승인이 진짜 게이트)."""
+    from system.rule.milestone import extract_consensus, open_milestone, rule_renegotiate
+    body = ("[종료]\n[수렴안]\n목표: 방명록 1주기\n등록 API 동작 | curl POST 후 GET 확인\n"
+            "목록 표시 | playwright 로드 확인\n[/수렴안]")
+    c = extract_consensus(body)
+    assert c and "등록 API" in c and "playwright" in c
+    assert extract_consensus("[종료]") is None               # 미동봉 — 등록 없음
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    open_milestone(f, "M1", [{"desc": "a", "verify": "run a"}])
+    out = rule_renegotiate(f, 12, {"target": "a", "reason": "인프라 제약"})
+    assert "승인 대기" in out                                # 비리더도 재협상 가능(누구나)
 
 
 def test_iter_제출_도구_전_사이클(monkeypatch):
@@ -146,14 +161,14 @@ def test_iter_제출_도구_전_사이클(monkeypatch):
     assert "wrapup" in out                                     # 전 조건 실증 — 스스로 전이
     out = rule_report_iter(f, 12, {"wrapup": "done"})
     assert "종료" in out and f.milestones[0].status == "done"  # 정리 선언으로 닫힘
-    # 공통 표면: member 역할에서도 set_subtask·report_iter가 보인다(자발 참여의 문)
+    # 공통 표면: member 역할에서도 파이프라인 도구 전부가 보인다 — set_milestone도 서기(누구나)
     from system.guide_tools import make_guide_tools
     names = {t.name for t in make_guide_tools(f, 12, "member")}
-    assert {"set_subtask", "report_iter"} <= names and "set_milestone" not in names
+    assert {"set_subtask", "report_iter", "set_milestone", "renegotiate_criterion"} <= names
 
 
-def test_결정권자_프레임_프롬프트(monkeypatch):
-    """[배치4] 플래그 ON에서 흐름을 여는 To 수신자는 리더가 아니라 결정권자 프레임을 받는다."""
+def test_발제자_프레임_프롬프트(monkeypatch):
+    """[결정권자 폐지] 플래그 ON에서 To 수신자는 권한 없는 '발제자' 프레임을 받는다."""
     from system.sys_prompt import prompt as _prompt
     from types import SimpleNamespace
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
@@ -162,11 +177,12 @@ def test_결정권자_프레임_프롬프트(monkeypatch):
                                capability_ledger={}, _craft_note=lambda me, fw=True: "",
                                _portfolio_note=lambda: "", _origin_request="")
     p = _prompt(fake_sys, "카운터 만들어줘", "Work", "leader", 11, leader_id=11, flow=f)
-    assert "결정권자" in p and "set_milestone" in p and "report_iter" in p
+    assert "발제자" in p and "권한은 없습니다" in p            # 권력 아닌 첫 턴 역할
+    assert "수렴안" in p and "report_iter" in p                # 확정=종결 표결(자동 등록) 안내
     assert "배정하지 마세요" in p                              # 배분은 릴레이 몫
     monkeypatch.delenv("ORGANT_PIPELINE", raising=False)
     p_off = _prompt(fake_sys, "카운터 만들어줘", "Work", "leader", 11, leader_id=11, flow=f)
-    assert "결정권자" not in p_off                             # OFF — 종전 담당자 프레임 불변
+    assert "발제자" not in p_off                               # OFF — 종전 담당자 프레임 불변
 
 
 def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monkeypatch):
@@ -184,16 +200,18 @@ def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monke
     out = rule_report_iter(f, 12, {"target": "없는것", "results": "x | pass | e"})
     assert "못 찾았습니다" in out
     # [S3 발견 결함의 회귀 가드] 등록(guide_tools)과 허용(tool_names)은 한 세트다.
-    assert "mcp__guide__set_subtask" in FLOW_TOOLS and "mcp__guide__report_iter" in FLOW_TOOLS
-    assert "mcp__guide__set_milestone" in LEADER_TOOLS
+    # [결정권자 폐지] 파이프라인 도구 4종 전부 공통(FLOW) — 리더 전용 배치 금지.
+    assert {"mcp__guide__set_subtask", "mcp__guide__report_iter",
+            "mcp__guide__set_milestone", "mcp__guide__renegotiate_criterion"} <= set(FLOW_TOOLS)
+    assert "mcp__guide__set_milestone" not in LEADER_TOOLS
     assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
 
 
 def test_조건_불가능_출구_정체경보와_재협상_포기(monkeypatch):
-    """[설계검토 #1] 진전 없는 반복 미충족이 임계 도달 시 정체 경보 → 결정권자 재협상 → 사람 승인
-    포기(waive) → 나머지 조건으로 주기 진행(무한 iter 차단). 포기는 봇 혼자 못 하고 사람 승인 필요."""
+    """[설계검토 #1 · 결정권자 폐지] 진전 없는 반복 미충족이 임계 도달 시 정체 경보 → **누구나**
+    재협상 상신 → 사람 승인 포기(waive) → 나머지 조건으로 주기 진행(무한 iter 차단)."""
     from system.rule.milestone import (approve_waiver, iter_verify, open_milestone,
-                                        renegotiate_criterion, rule_renegotiate)
+                                        rule_renegotiate)
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     monkeypatch.setenv("ORGANT_ITER_STUCK_LIMIT", "3")
     f = _flow()
@@ -203,10 +221,8 @@ def test_조건_불가능_출구_정체경보와_재협상_포기(monkeypatch):
     for i in range(3):
         ok, note = iter_verify(f, ms, [{"desc": "카운트 API", "passed": False, "evidence": ""}])
     assert ms.iter_stuck >= 3 and "정체" in note and "renegotiate" in note
-    # 비결정권자는 재협상 못 함
-    assert "결정권자" in rule_renegotiate(f, 12, {"target": "영속 저장", "reason": "환경 제약"})
-    # 결정권자 재협상 → blocked_pending(봇 혼자 포기 못 함, 사람 승인 대기)
-    out = renegotiate_criterion(f, ms, "영속 저장", "이 환경은 파일 영속이 재시작에 안 남음")
+    # 재협상은 누구나(결정권자 폐지) — 진짜 게이트는 사람 승인. 봇 혼자 포기 못 함(blocked_pending).
+    out = rule_renegotiate(f, 12, {"target": "영속 저장", "reason": "이 환경은 파일 영속이 재시작에 안 남음"})
     assert "승인 대기" in out and ms.criteria[1].status == "blocked_pending" and ms.iter_stuck == 0
     # 사람 승인 → waived → 그 조건은 미충족 목록에서 빠진다
     approve_waiver(f, ms, "영속 저장", approve=True)

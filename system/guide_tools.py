@@ -259,6 +259,27 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return _ok(rule_report_iter(flow, me_id, args))
         tools.append(report_iter)
 
+        # [결정권자 폐지(2026-07-09, 사용자)] 확정=회의 종결 표결(가결 시 수렴안 자동 등록).
+        # set_milestone은 '서기' 표면(누구나 — 표결 없이 열 때·복기 때), 재협상도 누구나(게이트=사람 승인).
+        @tool("set_milestone",
+              "**마일스톤**(Task의 큰 주기: 목표+완수조건)을 등록한다 — 누구나(서기 역할). 정석은 "
+              "meet 회의의 종결 표결에 [수렴안]을 동봉해 가결로 자동 등록되는 것이고, 이 도구는 그 외 "
+              "경로(단독 소형 주기·복기)용. goal=목표 한 줄, criteria='조건 | 실증절차' 줄들. "
+              "소망형·실행 불가 조건은 등록이 거부된다. 조건 충족이 주기를 닫는다 — 사람이 아니라.",
+              {"goal": str, "criteria": str})
+        async def set_milestone(args):
+            return _ok(rule_set_milestone(flow, me_id, args))
+        tools.append(set_milestone)
+
+        @tool("renegotiate_criterion",
+              "[조건 재협상 — 누구나] 완수조건이 환경상 달성 불가일 때의 정식 출구. 정체 경보(진전 "
+              "없는 반복)가 뜨면 무한 반복하지 말고 이걸로 올린다. target=조건(desc 일부), reason=왜 "
+              "불가능한가. **사람 승인**이 오면 그 조건은 포기(waive)되고 나머지로 주기가 진행된다.",
+              {"target": str, "reason": str})
+        async def renegotiate_criterion(args):
+            return _ok(rule_renegotiate(flow, me_id, args))
+        tools.append(renegotiate_criterion)
+
     @tool("run",
           f"작업공간에서 명령을 실행해 산출물을 직접 검증(빌드/구동/테스트). cwd={flow.workspace or '작업공간 루트'} "
           f"(이 절대경로가 작업공간 — `/workspace` 아님). 60s 제한, "
@@ -471,28 +492,8 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return await _rule_set_goal(flow, me_id, role, args)
         tools.append(set_goal)
 
-        # [마일스톤 파이프라인 — S1 도구 표면(PIPELINE_REWORK_2026-07-09 §1·§2·§4)] 플래그 ON에서만
-        # 등록 — OFF 라이브는 도구 자체가 없다(동작 불변). 로직은 rule/milestone.py(매체중립).
-        if _pipe_on():
-            @tool("set_milestone",
-                  "회의(meet) 수렴을 확정해 **마일스톤**(Task의 큰 주기: 목표+완수조건)을 개설한다 — "
-                  "결정권자 전용. goal=이 주기의 목표 한 줄. criteria=완수조건 여러 줄, 한 줄에 "
-                  "'조건 | 실증절차'(run으로 확인 가능한 명령/방법). 소망형('잘 동작해야 함')·절차 없는 "
-                  "조건은 등록이 거부된다. **조건 충족(iter 검증)이 주기를 닫는다** — 사람이 아니라.",
-                  {"goal": str, "criteria": str})
-            async def set_milestone(args):
-                return _ok(rule_set_milestone(flow, me_id, args))
-            tools.append(set_milestone)
-
-            @tool("renegotiate_criterion",
-                  "[조건 재협상 — 결정권자] 완수조건이 환경상 달성 불가일 때(예: 인프라 제약)의 정식 "
-                  "출구. iter가 같은 조건을 진전 없이 반복 미충족(정체 경보)하면 무한 반복하지 말고 이걸로 "
-                  "올린다. target=재협상할 조건(desc 일부), reason=왜 불가능한가. **사람 승인**이 오면 그 "
-                  "조건은 포기(waive)되고 나머지 조건으로 주기가 진행된다 — 봇이 혼자 포기 못 한다(조건=마감권).",
-                  {"target": str, "reason": str})
-            async def renegotiate_criterion(args):
-                return _ok(rule_renegotiate(flow, me_id, args))
-            tools.append(renegotiate_criterion)
+        # [결정권자 폐지(2026-07-09)] set_milestone·renegotiate_criterion은 공통 구역(위 recruit 옆)으로
+        # 이동 — 확정=종결 표결, 등록=서기(누구나), 재협상=누구나(게이트=사람 승인).
 
         @tool("vote",
               "팀 표결(구조적 합의): 선택지를 두고 멤버 전원의 선택+근거를 **동시에**(독립·앵커링 방지) "
