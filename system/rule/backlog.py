@@ -22,10 +22,12 @@ Sacks 3규칙 완성형 (§3 확정):
 겹침을 멈춰 세워 제출자가 재사용인지 진짜 새 백로그인지 명시(force)하게 한다. 판정은 위임 중복
 판정과 같은 어휘 겹침(_body_overlap 재사용 — 도메인 하드코딩 없음).
 """
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from .comm_helpers import _body_overlap
+from .milestone import next_milestone, pipeline_on   # 단방향: milestone은 backlog를 모른다(순환 0)
 
 # 상태 4종 (§3 확정 — 이 밖의 상태 없음)
 OPEN, IN_PROGRESS, BLOCKED, DONE = "open", "in_progress", "blocked", "done"
@@ -293,3 +295,139 @@ class BacklogRelay:
             b = Backlog.from_dict(bd)
             r._pool[b.backlog_id] = b
         return r
+
+
+# ══ 파이프라인 배선 — 위임축 접점 + SubTask iter 연동 (통합주기 2) ═══════════════
+#
+# 여기부터는 흐름(flow)과 S1 실물(Milestone/SubTask)에 붙는 층이다. 전부 pipeline_on() 뒤 —
+# 플래그 미설정이면 모든 함수가 즉시 no-op/None이라 기존 동작 불변.
+# 원리: 릴레이는 위임을 '대체'하지 않는다 — 위임(request)은 그대로 전송이고, 릴레이는 그 위임축의
+# **장부와 턴 규칙**이다(누가 배분권을 쥐고 있고, 어느 백로그가 누구 손에 있나). 물리는 얇게.
+
+_BACKLOG_MARK = re.compile(r"\[\s*백로그\s+(B\d+)\s*\]")
+
+
+def active_subtask(flow):
+    """진행 중 마일스톤의 첫 미완 SubTask — 지금 릴레이가 붙는 판. 없으면 None."""
+    if not getattr(flow, "milestones", None):
+        return None
+    ms = next_milestone(flow)
+    if ms is None:
+        return None
+    for st in ms.subtasks:
+        if st.status != "done":
+            return st
+    return None
+
+
+def relay_for(flow, st) -> BacklogRelay:
+    """SubTask의 릴레이 get-or-create. 상태는 flow.backlog_relays(dict)에 살고, sys_recovery가
+    체크포인트에 통째로 실어 재시작 후 중간 재개한다(§9). S1 접점 유지: st.backlog_ids에는
+    연결 id만 미러(표현은 여기, 연결은 S1 필드 — milestone.py SubTask 주석 그대로)."""
+    store = getattr(flow, "backlog_relays", None)
+    if store is None:
+        store = flow.backlog_relays = {}
+    r = store.get(st.st_id)
+    if r is None:
+        r = store[st.st_id] = BacklogRelay(subtask_id=st.st_id, log=getattr(flow, "log", None))
+    else:
+        r._log = getattr(flow, "log", None)      # ckpt 복원분은 log가 비어 있다 — 접근 시 재바인딩
+    st.backlog_ids = [b.backlog_id for b in r.backlogs]
+    return r
+
+
+def _match_backlog(relay: BacklogRelay, body: str) -> Optional[Backlog]:
+    """위임 본문 → 백로그 매칭. 명시 마커([백로그 Bn])가 우선, 없으면 위임 중복 판정과 같은 어휘
+    겹침(_body_overlap). done은 매칭 제외 — 완료물 재위임은 기존 Redo 기제의 몫이다."""
+    m = _BACKLOG_MARK.search(str(body or ""))
+    if m:
+        b = relay._pool.get(m.group(1))
+        return b if b is not None and b.status != DONE else None
+    for b in relay.backlogs:
+        if b.status != DONE and _body_overlap(body, b.body):
+            return b
+    return None
+
+
+def sync_delegation(flow, me_id, to, body) -> Optional[str]:
+    """[위임축 접점 — communication.request가 게이트들 뒤에서 호출] Work 위임을 릴레이에 맞춘다.
+
+    반환: None=통과 / 문자열=거부 사유(다른 게이트와 같은 코칭 반환).
+    - 본문이 백로그를 가리키면 그 위임이 곧 배분이다 — 턴 규칙(§3: 배분권은 마무리자)을 검증하고
+      릴레이 장부를 전이시킨다(relay_pick 이벤트·participants·backlog_ids 동기).
+    - 백로그 밖 위임(일반 협의·과도기 작업)은 그대로 통과 — 릴레이는 강제 전면화가 아니라 장부다.
+    - 같은 (백로그, 수행자) 재전달(이어가기·Redo)은 장부 무변화로 통과.
+    """
+    if not pipeline_on():
+        return None
+    st = active_subtask(flow)
+    if st is None:
+        return None
+    r = relay_for(flow, st)
+    b = _match_backlog(r, body)
+    if b is None:
+        return None
+    if b.status == IN_PROGRESS:
+        if b.assignee == int(to):
+            return None                          # 같은 배분 재전달(이어가기) — 장부 그대로
+        return (f"[릴레이] {b.backlog_id}는 지금 {getattr(flow, '_info', lambda x: x)(b.assignee)} "
+                f"손에 있습니다(in_progress) — 겹침 방지. 그의 완료·차단을 기다리거나 다른 백로그를 맡기세요.")
+    if r.turn_holder is not None and int(me_id) != r.turn_holder:
+        holder = getattr(flow, "_info", lambda x: x)(r.turn_holder) or r.turn_holder
+        return (f"[릴레이] 배분권은 마지막 작업자({holder})에게 있습니다(§3 — 배분은 현장이 끝까지). "
+                f"백로그 {b.backlog_id} 지정은 그의 몫입니다. 당신이 맡고 싶으면 응찰([응찰: N])로 나서세요.")
+    try:
+        r.pick(int(me_id), b.backlog_id, int(to))
+    except BacklogError as e:
+        return f"[릴레이] {e}"
+    try:
+        st.participants.add(int(to))
+        st.participants.add(int(me_id))
+        st.backlog_ids = [x.backlog_id for x in r.backlogs]
+    except Exception:
+        pass
+    return None
+
+
+def sync_completion(flow, worker) -> None:
+    """[위임축 접점 — owner 실작업 인도 확정 지점에서 호출] 그 수행자의 in_progress 백로그를
+    done으로 — 그가 새 턴 홀더(다음 배분권자)가 된다(backlog_done 이벤트). 백로그 밖 위임이면 no-op."""
+    if not pipeline_on():
+        return
+    st = active_subtask(flow)
+    if st is None:
+        return
+    r = (getattr(flow, "backlog_relays", None) or {}).get(st.st_id)
+    if r is None:
+        return
+    for b in r.backlogs:
+        if b.status == IN_PROGRESS and b.assignee == int(worker):
+            try:
+                r.done(int(worker), b.backlog_id)
+                st.participants.add(int(worker))
+            except BacklogError:
+                pass
+            break
+
+
+def on_subtask_wrapup(flow, st) -> str:
+    """[SubTask iter 연동 — §2] iter_verify 통과(status=wrapup) 후 호출: 잔여 백로그 정리 +
+    디스크 장부(.collab/MILESTONES.md, §9 미러). 반환 = 장부 요지 한 줄(호출부가 채널 보고에 씀).
+
+    호출자는 iter 구동부(S1) — wrapup_done(정리 완료 선언) **앞**에 이걸 부른다. 계약 §12-1 코멘트.
+    """
+    r = (getattr(flow, "backlog_relays", None) or {}).get(st.st_id)
+    if r is None or r.closed:
+        return "정리할 백로그 없음"
+    left = r.close_iter()
+    done_n = len([b for b in r.backlogs if b.status == DONE])
+    lines = [f"## SubTask {st.st_id} 백로그 장부 — iter {st.iter_n} 종료(완수조건 충족)",
+             f"완료 {done_n} · 잔여 정리 {len(left)}"]
+    lines += [f"- [{b.status}] {b.backlog_id} {b.body[:80]} (수행: {b.assignee}, 차단 {b.block_count}회)"
+              for b in r.backlogs]
+    try:
+        from .._util import dossier_append
+        dossier_append(flow, "MILESTONES.md", "\n".join(lines))
+    except Exception:
+        pass                                     # 장부 실패가 정리를 죽이지 않는다(§9 미러는 보조)
+    return f"백로그 {done_n} 완료, 잔여 {len(left)}건 정리(미완은 done 참칭 없이 보존)"

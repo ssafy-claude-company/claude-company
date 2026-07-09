@@ -115,7 +115,10 @@ def _chown_tree(path, uid, gid):
 from .rule.task import (_perceptual_essential, _wants_real_data,  # noqa: F401  [PJT/tests(test_sys)가 파사드에서 직접 import — 유지]
                         _has_real_dataset, _synthesizes_data, _is_verifier)
 # [마일스톤 파이프라인 — S1(PIPELINE_REWORK_2026-07-09)] 도구 표면·회의 설명 분기가 소비.
-from .rule.milestone import pipeline_on as _pipe_on, rule_set_milestone, rule_set_subtask
+from .rule.milestone import (pipeline_on as _pipe_on, rule_report_iter,
+                             rule_set_milestone, rule_set_subtask)
+from .rule.wrapup import (rule_e2e_finish, rule_e2e_open, rule_e2e_result,
+                          rule_e2e_scope)
 
 
 # [스태핑 커버리지 — 리더 흡수 차단(2026-06-19, 사용자: '전문가 분배 무조건, 리더는 자기 직군만')]
@@ -232,6 +235,29 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     async def recruit(args):
         return _ok(await _rule_recruit(flow, me_id, role, args))
     tools.append(recruit)
+
+    # [마일스톤 파이프라인 — 공통 표면(전 참여자)] SubTask 추가(자발 참여의 문)와 iter 검증 제출은
+    # 결정권자 전용이 아니다 — 현장 누구나. 플래그 OFF면 미등록(표면 불변).
+    if _pipe_on():
+        @tool("set_subtask",
+              "진행 중 마일스톤에 SubTask를 추가한다(주기 중에도 가능·누구나). goal=단위 목표, "
+              "criteria='조건 | 실증절차' 줄들(등록 게이트 동일). 참여는 자발 — 배정이 아니라 "
+              "백로그 제출로 참여한다.",
+              {"goal": str, "criteria": str})
+        async def set_subtask(args):
+            return _ok(rule_set_subtask(flow, me_id, args))
+        tools.append(set_subtask)
+
+        @tool("report_iter",
+              "진행 중 주기의 완수조건 실증 결과를 제출한다(검증 참여자 누구나). results=한 줄에 "
+              "'조건 | pass/fail | 증거(run 출력 요지)' — **증거 없는 pass는 인정되지 않는다**. "
+              "target=SubTask id(또는 goal 일부)를 주면 그 SubTask의 검증 — 통과 시 잔여 백로그가 "
+              "자동 정리되고 SubTask가 닫힌다. 비우면 마일스톤 검증: 전부 실증되면 wrapup(잔여 정리)로 "
+              "넘어가고, 정리가 끝나면 wrapup='done'으로 닫는다. 마감은 사람이 아니라 조건이다.",
+              {"results": str, "target": str, "wrapup": str})
+        async def report_iter(args):
+            return _ok(rule_report_iter(flow, me_id, args))
+        tools.append(report_iter)
 
     @tool("run",
           f"작업공간에서 명령을 실행해 산출물을 직접 검증(빌드/구동/테스트). cwd={flow.workspace or '작업공간 루트'} "
@@ -443,15 +469,6 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                 return _ok(rule_set_milestone(flow, me_id, args))
             tools.append(set_milestone)
 
-            @tool("set_subtask",
-                  "진행 중 마일스톤에 SubTask를 추가한다(주기 중에도 가능). goal=단위 목표, "
-                  "criteria='조건 | 실증절차' 줄들(마일스톤과 같은 등록 게이트). 참여는 자발 — "
-                  "배정이 아니라 백로그 제출로 참여한다.",
-                  {"goal": str, "criteria": str})
-            async def set_subtask(args):
-                return _ok(rule_set_subtask(flow, me_id, args))
-            tools.append(set_subtask)
-
         @tool("vote",
               "팀 표결(구조적 합의): 선택지를 두고 멤버 전원의 선택+근거를 **동시에**(독립·앵커링 방지) "
               "수집·집계한다. question=안건, options='선택지1;선택지2;...', members=쉼표구분(비우면 현재 "
@@ -530,6 +547,47 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         async def send_file(args):
             return await _rule_send_file(flow, me_id, args)
         tools.append(send_file)
+
+    # [e2e 마무리 — S3 도구 표면(PIPELINE_REWORK §6)] 전 멤버 장착 — Task 경계 개시는 현장의 몫
+    # (마지막 작업자/QA, §3 관례와 동형). 플래그 ON에서만 등록(OFF 라이브는 도구 자체가 없다 — 동작
+    # 불변). 로직은 rule/wrapup.py(매체중립): 분모(체크리스트)·판정·복기는 구조가, 검사는 봇이.
+    if _pipe_on():
+        @tool("e2e_open",
+              "Task 경계(모든 마일스톤 done)에서 **전수 e2e 검증을 개시**한다 — 전 마일스톤의 완수조건"
+              "(최종 버전 재실증)과 사용자 원문이 검사 분모로 자동 조립돼 항목 id 목록이 반환된다. "
+              "개시 후: 산출물의 노출 표면을 e2e_scope로 추가하고, 각 항목을 실제 실행으로 검사해 "
+              "e2e_result로 제출하라.",
+              {})
+        async def e2e_open(args):
+            return _ok(rule_e2e_open(flow))
+        tools.append(e2e_open)
+
+        @tool("e2e_scope",
+              "e2e 분모 확장 — 산출물을 열어 파악한 **노출 표면**(surfaces: 페이지·라우트·API·명령, "
+              "한 줄에 하나)과 **주 사용 경로**(arcs: 실기동 관통 시나리오, 한 줄에 하나)를 제출한다. "
+              "추가된 항목 id가 반환된다 — 이 목록이 '전수'의 분모가 되므로 아는 표면을 빠뜨리지 마라.",
+              {"surfaces": str, "arcs": str})
+        async def e2e_scope(args):
+            return _ok(rule_e2e_scope(flow, args))
+        tools.append(e2e_scope)
+
+        @tool("e2e_result",
+              "e2e 항목 하나의 검사 결과 제출. item=항목 id(예: condition:1), ok=pass/fail, "
+              "observed=관측한 것 한 줄, evidence=**실행 증거**(run 출력·브라우저 확인 요지 — 증거 없는 "
+              "pass는 결함으로 판정된다).",
+              {"item": str, "ok": str, "observed": str, "evidence": str})
+        async def e2e_result(args):
+            return _ok(rule_e2e_result(flow, args))
+        tools.append(e2e_result)
+
+        @tool("e2e_finish",
+              "전 항목 제출 후 판정 — 전부 '증거 있는 pass'면 e2e_pass(Task 마무리 가능), 아니면 "
+              "e2e_fail: 결함 목록으로 복기 마일스톤이 자동 개설된다(결함 해소가 완수조건 초안, "
+              "확정은 회의). 미제출 항목은 '검사 안 됨' 결함이 된다.",
+              {})
+        async def e2e_finish(args):
+            return _ok(rule_e2e_finish(flow))
+        tools.append(e2e_finish)
 
     # [완료 권한 = 검수 역할(사용자 2026-07)] acceptance/'done' 판정은 QA의 일 — 종전엔 리더가 독점(complete_task
     # 리더 전용)했다. 리더의 역할은 기획·위임·조율이지 검수가 아니라, QA/PM이 '인수 PASS'로 판정해도 닫을 권한이

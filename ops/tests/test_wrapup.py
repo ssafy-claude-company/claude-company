@@ -26,6 +26,7 @@ class FakeFlow:
 
     def __init__(self):
         self.events = []
+        self.milestones = []
         self.meet_count = 3
         self.iter_count = 5
 
@@ -125,7 +126,18 @@ def test_enter_replan_passes_brief_and_defects_to_entry():
     assert got["flow"] is flow and got["defects"] == defects
     assert got["brief"] == brief and "재수립 입력" in brief
     assert defects[0]["spec"] in brief                       # 형식 보존 — 원문이 회의 입력에 남는다
-    assert [e for e, _ in flow.events] == [MS_REPLAN]
+    assert flow.events == []                                 # 커스텀 entry는 이벤트를 스스로 책임진다
+
+
+def test_enter_replan_default_entry_is_s1_ms_replan():
+    """entry 미지정 → S1의 실 진입점(milestone.ms_replan)이 복기 마일스톤을 연다."""
+    defects = [{"id": "condition:1", "kind": KIND_CONDITION, "spec": "카운트 저장",
+                "observed": "값 유실", "evidence": "curl", "suspect_ms": "MS-x"}]
+    flow = FakeFlow()
+    asyncio.run(enter_replan(flow, defects))
+    assert len(flow.milestones) == 1                          # 복기 마일스톤 개설
+    assert flow.milestones[0].origin.startswith("e2e:")
+    assert [e for e, _ in flow.events] == ["ms_open", "ms_replan"]   # 이벤트는 S1 쪽에서 적재
 
 
 def test_enter_replan_accepts_async_entry():
@@ -164,6 +176,102 @@ def test_overhead_snapshot_loose_coupling_defaults():
     snap = overhead_snapshot(FakeFlow())
     assert snap["meetings"] == 3 and snap["iters"] == 5      # 있는 카운터는 읽고
     assert snap["wallclock_s"] == 0 and snap["tokens_out"] == 0  # 없는 건 0 — 죽지 않는다
+
+
+# ── ⑧ 아크: 개시(분모 자동 조립) → scope 확장 → 제출 → 판정 → 복기 ──────
+
+from system.rule.milestone import Criterion, Milestone  # noqa: E402 — S1 접점(같은 rule 층)
+from system.rule.wrapup import (assemble_base_checklist, finish_e2e,  # noqa: E402
+                                register_scope, rule_e2e_finish, rule_e2e_open,
+                                rule_e2e_result, rule_e2e_scope, submit_result)
+
+
+def _flow_at_boundary():
+    """마일스톤 2개가 전부 done인(=Task 경계) flow — 조건 3개, 원문 2문장."""
+    flow = FakeFlow()
+    flow.task_origin = "버튼 누르면 카운트가 1씩 증가. 새로고침해도 값이 유지"
+    flow.milestones = [
+        Milestone(ms_id="MS-1", goal="카운터 API", status="done",
+                  criteria=[Criterion("POST /count가 값을 증가시킨다", "curl -X POST 후 GET으로 확인"),
+                            Criterion("값이 파일에 저장된다", "재기동 후 GET 값 유지 확인")]),
+        Milestone(ms_id="MS-2", goal="프론트", status="done",
+                  criteria=[Criterion("버튼 클릭이 화면 숫자를 올린다", "브라우저에서 클릭 후 표시 확인")]),
+    ]
+    return flow
+
+
+def test_assemble_pulls_all_criteria_with_suspect_ms_and_origin():
+    flow = _flow_at_boundary()
+    cl = assemble_base_checklist(flow)
+    conds = [it for it in cl if it["kind"] == KIND_CONDITION]
+    assert len(conds) == 3 and [c["ms"] for c in conds] == ["MS-1", "MS-1", "MS-2"]
+    assert len([it for it in cl if it["kind"] == KIND_ORIGIN]) == 2
+    assert flow.e2e_checklist is cl and flow.e2e_results == {}
+
+
+def test_scope_extends_denominator_and_dedups():
+    flow = _flow_at_boundary()
+    assemble_base_checklist(flow)
+    added = register_scope(flow, surfaces=["GET /", "POST /count"], arcs=["기동→클릭3회→새로고침"])
+    assert [it["id"] for it in added] == ["surface:1", "surface:2", "arc:1"]
+    assert register_scope(flow, surfaces=["GET /"]) == []     # 중복 무시
+    with pytest.raises(WrapupError):
+        register_scope(FakeFlow(), surfaces=["x"])            # 개시 전 호출 = 위반
+
+
+def test_submit_validates_and_tracks_remaining():
+    flow = _flow_at_boundary()
+    cl = assemble_base_checklist(flow)
+    with pytest.raises(WrapupError):
+        submit_result(flow, "ghost:9", True, evidence="x")
+    note = submit_result(flow, cl[0]["id"], True, evidence="curl 200")
+    assert f"1/{len(cl)} 제출됨" in note and "남은 항목" in note
+
+
+def test_finish_pass_emits_event_no_replan():
+    flow = _flow_at_boundary()
+    cl = assemble_base_checklist(flow)
+    for it in cl:
+        submit_result(flow, it["id"], True, observed="OK", evidence=f"실행: {it['id']}")
+    verdict, defects, new_ms = finish_e2e(flow)
+    assert verdict == E2E_PASS and defects == [] and new_ms is None
+    assert [e for e, _ in flow.events] == [E2E_PASS]
+    assert flow.events[0][1]["overhead"]["meetings"] == 3     # §8 동승
+
+
+def test_finish_fail_opens_replan_milestone_with_suspect():
+    flow = _flow_at_boundary()
+    cl = assemble_base_checklist(flow)
+    for it in cl:
+        submit_result(flow, it["id"], True, observed="OK", evidence="e")
+    submit_result(flow, cl[0]["id"], False, observed="POST가 500", evidence="curl 로그")
+    verdict, defects, new_ms = finish_e2e(flow)
+    assert verdict == E2E_FAIL and len(defects) == 1
+    assert defects[0]["suspect_ms"] == "MS-1"                 # 의심 마일스톤이 결함에 실린다
+    assert new_ms is not None and new_ms.origin.startswith("e2e:")
+    assert len(flow.milestones) == 3                          # 복기 마일스톤 추가
+    names = [e for e, _ in flow.events]
+    assert names[:1] == [E2E_FAIL] and "ms_replan" in names   # §11 사슬
+
+
+def test_tool_wrappers_full_round(monkeypatch):
+    """도구 표면 왕복 대본 — 개시(경계 게이트)→scope→result→finish까지 봇 대면 문구로."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    flow = _flow_at_boundary()
+    flow.milestones[1].status = "open"
+    assert "아직 Task 경계가 아닙니다" in rule_e2e_open(flow)  # 경계 게이트
+    flow.milestones[1].status = "done"
+    out = rule_e2e_open(flow)
+    assert "e2e 개시" in out and "condition:1" in out
+    assert "surface:1" in rule_e2e_scope(flow, {"surfaces": "GET /", "arcs": ""})
+    for it in flow.e2e_checklist:
+        rule_e2e_result(flow, {"item": it["id"], "ok": "pass", "observed": "OK", "evidence": "run 출력"})
+    assert rule_e2e_finish(flow).startswith("e2e_pass")
+
+
+def test_tool_wrappers_flag_off(monkeypatch):
+    monkeypatch.delenv("ORGANT_PIPELINE", raising=False)
+    assert "ORGANT_PIPELINE" in rule_e2e_open(FakeFlow())     # OFF면 안내만, 동작 없음
 
 
 # ── ⑦ 플래그 ────────────────────────────────────────────────────────────

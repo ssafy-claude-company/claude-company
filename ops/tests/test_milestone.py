@@ -128,6 +128,67 @@ def test_확정은_결정권자만_파싱과_게이트_경유(monkeypatch):
     assert "추가" in out and f.milestones[0].subtasks        # SubTask 추가는 현장 누구나(자발 참여)
 
 
+def test_iter_제출_도구_전_사이클(monkeypatch):
+    """[배치4 — 드라이브] report_iter: 결과 파싱 → 검증 → wrapup 전이 → done 마감 안내까지
+    봇 주도 전 사이클이 도구만으로 돈다(마감은 사람이 아니라 조건)."""
+    from system.rule.milestone import parse_iter_results, rule_report_iter
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    assert "주기가 없습니다" in rule_report_iter(f, 12, {"results": "a | pass | ok"})
+    rule_set_milestone_ok = __import__("system.rule.milestone", fromlist=["rule_set_milestone"]).rule_set_milestone
+    rule_set_milestone_ok(f, 11, {"goal": "M1", "criteria": "카운트 API | curl 확인\n버튼 UI | playwright 확인"})
+    # 파싱: pass 표기 관용·증거 분리
+    rs = parse_iter_results("카운트 API | pass | HTTP 200\n- 버튼 UI | fail | 안 보임")
+    assert rs[0]["passed"] and not rs[1]["passed"] and rs[0]["evidence"] == "HTTP 200"
+    out = rule_report_iter(f, 12, {"results": "카운트 API | pass | HTTP 200\n버튼 UI | fail | 안 보임"})
+    assert "미충족" in out                                     # 일부만 실증 — 주기 유지
+    out = rule_report_iter(f, 12, {"results": "버튼 UI | pass | playwright visible"})
+    assert "wrapup" in out                                     # 전 조건 실증 — 스스로 전이
+    out = rule_report_iter(f, 12, {"wrapup": "done"})
+    assert "종료" in out and f.milestones[0].status == "done"  # 정리 선언으로 닫힘
+    # 공통 표면: member 역할에서도 set_subtask·report_iter가 보인다(자발 참여의 문)
+    from system.guide_tools import make_guide_tools
+    names = {t.name for t in make_guide_tools(f, 12, "member")}
+    assert {"set_subtask", "report_iter"} <= names and "set_milestone" not in names
+
+
+def test_결정권자_프레임_프롬프트(monkeypatch):
+    """[배치4] 플래그 ON에서 흐름을 여는 To 수신자는 리더가 아니라 결정권자 프레임을 받는다."""
+    from system.sys_prompt import prompt as _prompt
+    from types import SimpleNamespace
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    fake_sys = SimpleNamespace(bot_info={11: "백엔드", 12: "QA"}, bot_profiles={}, bot_experience={},
+                               capability_ledger={}, _craft_note=lambda me, fw=True: "",
+                               _portfolio_note=lambda: "", _origin_request="")
+    p = _prompt(fake_sys, "카운터 만들어줘", "Work", "leader", 11, leader_id=11, flow=f)
+    assert "결정권자" in p and "set_milestone" in p and "report_iter" in p
+    assert "배정하지 마세요" in p                              # 배분은 릴레이 몫
+    monkeypatch.delenv("ORGANT_PIPELINE", raising=False)
+    p_off = _prompt(fake_sys, "카운터 만들어줘", "Work", "leader", 11, leader_id=11, flow=f)
+    assert "결정권자" not in p_off                             # OFF — 종전 담당자 프레임 불변
+
+
+def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monkeypatch):
+    """[통합주기 3 — §12-1 접점] report_iter(target=SubTask): 조건 실증 → S2 on_subtask_wrapup
+    (잔여 백로그 정리) 호출 → 자동 종료. 허용목록도 공통(FLOW_TOOLS)에 있어 훅이 거부하지 않는다."""
+    from system.rule.milestone import rule_report_iter, rule_set_milestone, rule_set_subtask
+    from system.tool_names import FLOW_TOOLS, LEADER_TOOLS
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    rule_set_milestone(f, 11, {"goal": "M1", "criteria": "전체 빌드 | npm run build"})
+    rule_set_subtask(f, 12, {"goal": "프론트 뼈대", "criteria": "index 로드 | curl -s /"})
+    st = f.milestones[0].subtasks[0]
+    out = rule_report_iter(f, 12, {"target": st.st_id, "results": "index 로드 | pass | HTTP 200"})
+    assert "통과 — 종료" in out and st.status == "done"        # 훅 경유 자동 종료(정리 요지 동봉)
+    out = rule_report_iter(f, 12, {"target": "없는것", "results": "x | pass | e"})
+    assert "못 찾았습니다" in out
+    # [S3 발견 결함의 회귀 가드] 등록(guide_tools)과 허용(tool_names)은 한 세트다.
+    assert "mcp__guide__set_subtask" in FLOW_TOOLS and "mcp__guide__report_iter" in FLOW_TOOLS
+    assert "mcp__guide__set_milestone" in LEADER_TOOLS
+    assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
+
+
 def test_체크포인트_동승과_복원_왕복(tmp_path):
     """[§9 최대 저장] checkpoint_open_task가 주기 상태를 프로젝트 레지스트리에 싣고,
     restore_open_task가 open_task 유무와 무관하게 되살린다(재시작 후 중간 재개의 실배선)."""

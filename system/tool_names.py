@@ -10,9 +10,19 @@ RUN_TOOL = "mcp__guide__run"
 # [W3] report(B-14 — 멤버 보고 스태시)·cast_vote(B-15 — fork 가지 표결)는 멤버 세션에만 장착되지만,
 # 허용목록은 공통 상수에 둔다(장착=guide_tools, 허용=여기 — 등록만 되고 허용에서 빠지면 런타임 권한거부).
 FLOW_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL, RUN_TOOL,
-              "mcp__guide__report", "mcp__guide__cast_vote"]
+              "mcp__guide__report", "mcp__guide__cast_vote",
+              # [파이프라인 §6 — e2e 마무리(S3)] 전 멤버 표면. 플래그 OFF면 등록 자체가 없어
+              # 허용목록에 있어도 무해(호출 불가) — 이중수용 관례.
+              "mcp__guide__e2e_open", "mcp__guide__e2e_scope",
+              "mcp__guide__e2e_result", "mcp__guide__e2e_finish",
+              # [파이프라인 §2·§3 — 공통 표면(통합주기 3 정합)] SubTask 추가(자발 참여의 문)와
+              # iter 실증 제출은 현장 누구나 — 배치4에서 공통 구역으로 옮긴 등록과 허용을 한 세트로.
+              "mcp__guide__set_subtask", "mcp__guide__report_iter"]
 # 리더(코디네이터) 흐름 도구: 조율만(run 없음) — 구현·실행은 owner/QA가 한다.
 COORD_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL]
 LEADER_TOOLS = [f"mcp__guide__{n}" for n in
                 ("create_project", "create_task", "set_goal", "complete_task", "deploy", "send_file",
-                 "vote", "meet", "parallel_work", "list_projects")]
+                 "vote", "meet", "parallel_work", "list_projects",
+                 # [파이프라인 §1·§4 — 결정권자 전용은 확정(set_milestone)뿐] set_subtask는 공통
+                 # (FLOW_TOOLS)으로 이동 — 통합주기 1의 허용 누락은 S3 수선, 배치4 재배치를 여기 반영.
+                 "set_milestone")]

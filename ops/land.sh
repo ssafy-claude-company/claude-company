@@ -24,23 +24,33 @@ for spec in $REPOS; do
   fi
 done
 
-# 2) 자기 브랜치(s/$S)를 정본 main에 병합
+# 2) 자기 브랜치(s/$S)를 정본에 병합 — 정본 브랜치는 그 체크아웃이 실제로 서 있는 브랜치.
+#    (claude-company 정본은 main이 아니라 **master**다 — 하드코딩 'main'이 rev-list 실패를
+#     '0 커밋'으로 삼켜 조용히 병합 0건이 되던 결함 수선, 2026-07-09 이현준-3.)
 merged=0
 for spec in $REPOS; do
   name="${spec%%:*}"; rest="${spec#*:}"; main="${rest%%:*}"
   br="s/$S"
   git -C "$main" show-ref --verify --quiet "refs/heads/$br" 2>/dev/null || continue
-  ahead=$(git -C "$main" rev-list --count "main..$br" 2>/dev/null || echo 0)
+  base=$(git -C "$main" symbolic-ref --short HEAD 2>/dev/null || echo main)
+  ahead=$(git -C "$main" rev-list --count "$base..$br" 2>/dev/null || echo 0)
   if [ "$ahead" -gt 0 ]; then
-    echo "  $name: $br → main 병합 ($ahead 커밋)"
-    git -C "$main" checkout -q main
+    # [안전] 정본 체크아웃이 더러우면(타 세션이 그 트리에서 작업 중) 브랜치 전환·병합 금지 —
+    # 여긴 라이브 러너의 import 소스다. 남의 미커밋 위에서 checkout/merge 하지 않는다.
+    if [ -n "$(git -C "$main" status --porcelain 2>/dev/null)" ]; then
+      echo "  ⚠ $name 정본 체크아웃($main)에 미커밋 변경(타 세션 작업 중일 수 있음) — 병합 보류."
+      echo "     그 트리가 정리된 뒤 다시 land.sh 하거나, 통합 담당에게 브랜치($br)를 맡기세요."
+      exit 1
+    fi
+    echo "  $name: $br → $base 병합 ($ahead 커밋)"
+    git -C "$main" checkout -q "$base"
     if ! git -C "$main" merge --no-edit "$br"; then
       echo "  ⚠ $name 병합 충돌 — 'git -C $main status'로 수동 해결 후 다시 land.sh"; exit 1
     fi
     merged=$((merged+1))
   fi
 done
-[ "$merged" = 0 ] && { echo "병합할 커밋 없음(브랜치가 main과 같음)."; exit 0; }
+[ "$merged" = 0 ] && { echo "병합할 커밋 없음(브랜치가 정본과 같음)."; exit 0; }
 
 # 3) murmur 스탬프 갱신(claude-company는 STATE 동거라 신선도 info)
 m=$(git -C "$MS/murmur" rev-parse --short HEAD)
