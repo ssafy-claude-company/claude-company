@@ -221,13 +221,14 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     tools.append(request)
 
     @tool("recruit",
-          "동료가 필요하면 **지목하지 말고 '필요'를 공고**한다(진짜 채용): recruit(role=직군, "
-          "reason=무슨 일을 하게 되는지) → 시스템이 후보들에게 공고를 돌려 **지원서**가 돌아온다 → "
-          "지원자 중에서 recruit(member=지원자, reason=선발 사유)로 확정. 지원하지 않은 동료의 지명은 "
-          "거부된다(독단 영입 금지). 지원자가 없으면 신규 채용(genesis)이 자동으로 이뤄진다. "
-          "**1봇 1직업**(겸직은 예비 없음/유사 일일 때만, 최대 2). **직군명은 기존 것 재사용 우선** — "
-          "변형 이름 금지, 정말 새 직군일 때만 new_role='yes'.",
-          {"member": str, "role": str, "reason": str, "new_role": str})
+          "동료가 필요하면 **지목하지 말고 '필요'를 공고**한다(진짜 채용): recruit(need='어떤 문제/"
+          "일손이 필요한지') → 한가한 동료 전원이 공고를 받고 스스로 지원([지원]+지원서)하거나 "
+          "패스한다 → 지원서가 돌아오면 recruit(member=지원자, reason=선발 사유)로 확정. "
+          "직군을 미리 정할 필요 없다 — 문제에 집중하라(원하면 role=로 참고 표기; 직군 없는 지원자는 "
+          "지원서에 [직군: 이름]을 선언). 지원하지 않은 동료의 지명은 거부된다(독단 영입 금지). "
+          "지원자가 없고 role이 있으면 신규 채용(genesis) 자동. **1봇 1직업**(겸직은 예비 없음/유사 "
+          "일일 때만, 최대 2) · 직군명은 기존 것 재사용 우선(변형 금지, 신설은 new_role='yes').",
+          {"member": str, "need": str, "role": str, "reason": str, "new_role": str})
     async def recruit(args):
         return _ok(await _rule_recruit(flow, me_id, role, args))
     tools.append(recruit)

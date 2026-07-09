@@ -419,23 +419,52 @@ async def recruit(flow, me_id, role, args):
             names = ", ".join(f"{flow._info(a) or a}(id {a})" for a in open_p["applicants"])
             return (f"선발 불가: {flow._info(mid) or mid}은(는) 이 공고에 지원하지 않았습니다 — "
                     f"지원자 중에서만 선발할 수 있습니다(독단 영입 차단). 지원자: {names or '없음'}")
-        role_for = open_p["role"]
+        _app = open_p["applicants"][mid]
+        _own = (flow._info(mid) or "").strip()
+        # 직군 = 지원자의 것: 보유 직군 그대로 > 지원서의 [직군: X] 선언 > 공고의 참고 role.
+        role_for = ("" if (_own and not _is_spare(flow, mid))
+                    else (_app.get("role") or open_p["role"]))
+        if not _own or _is_spare(flow, mid):
+            if not role_for:
+                return (f"선발 보류: {flow._info(mid) or mid}은(는) 직군이 없고 지원서에 [직군: 이름] "
+                        f"선언도 없습니다 — 어떤 직군으로 일할지가 있어야 채용됩니다. 본인 선언을 "
+                        f"받거나 다른 지원자를 선발하세요.")
+            # 새 직군 라벨이 생기는 순간 — 범용·변형 게이트를 여기서 강제(공고 시 role이 없었어도).
+            if any(gw in _norm_job(role_for)
+                   for gw in ("풀스택", "풀 스택", "fullstack", "full stack", "full-stack",
+                              "제너럴", "generalist", "만능", "올라운드")):
+                return (f"선발 불가(전문화 정책): '{role_for}'는 범용 직군입니다 — 전문 직군으로 "
+                        f"선언한 지원자를 선발하세요.")
+            existing_jobs = {j for vv in flow.bot_info.values()
+                             if vv and not str(vv).startswith(_SPARE_LABEL)
+                             for j in _jobs_of(vv)}
+            dup = _find_variant_job(role_for, existing_jobs)
+            if dup and _norm_job(args.get("new_role") or "") not in ("yes", "y", "true", "1"):
+                return (f"선발 보류(직군 변형): 선언 직군 '{role_for}'은 기존 '{dup}'의 변형으로 "
+                        f"보입니다 — 같은 일이면 그 이름을 쓰게 하거나, 정말 새 직군이면 "
+                        f"new_role='yes'와 함께 다시 선발하세요.")
         joined = await _recruit_join(flow, mid, role_for, via="선발")
         if joined is not None:
             return joined                      # 게이트 거부 문구(겸직 등)
         flow.recruit_open = None
+        _shown = role_for or (flow._info(mid) or "").strip() or "공고"
         if flow.log:
-            flow.log("recruit_awarded", role=role_for, to=mid, applicants=len(open_p["applicants"]))
-        await _say(flow, me_id, f"[채용 확정] {flow._info(mid) or mid} — '{role_for}' 공고 선발"
+            flow.log("recruit_awarded", role=_shown, to=mid, applicants=len(open_p["applicants"]))
+        await _say(flow, me_id, f"[채용 확정] {flow._info(mid) or mid} — 지원서 선발({_shown})"
                                 + (f" (사유: {reason})" if reason else ""))
-        return (f"{flow._info(mid) or mid} 선발·합류 — '{role_for}' 공고에 대한 지원서 기준"
+        return (f"{flow._info(mid) or mid} 선발·합류({_shown}) — 지원서 기준"
                 f"{('(사유: ' + reason + ')') if reason else ''}. 현재 팀: {flow._names(flow.current.team)}")
 
-    # ── ① 공고(role=) — 후보를 깨워 지원을 받는다 ─────────────────────────────
-    if not role_name:
-        return ("공고 방법: recruit(role='직군', reason='무슨 일을 하게 되는지')로 팀의 필요를 올리세요 — "
-                "시스템이 후보들에게 공고를 돌려 지원서를 모아 돌려줍니다. 동료 지목(member=)은 "
-                "지원자 선발 확정에만 씁니다.")
+    # ── ① 공고 — 문제(필요)를 올리면 후보를 깨워 지원을 받는다 ──────────────────
+    # [문제 중심(사용자 질문 2026-07-09: "role에 얽매여도 되나?")] 공고의 본문은 role이 아니라
+    # **문제**다 — role은 공고자가 미리 찍는 추측(구분)이라 지원 풀을 좁힌다. 직군은 지원자
+    # 쪽 속성(기존 직군 또는 [직군: X] 자기 선언)으로 남는다. role은 참고로만 실린다.
+    need = str(args.get("need") or "").strip() or reason
+    if not (need or role_name):
+        return ("공고 방법: recruit(need='어떤 문제/일손이 필요한지')로 팀의 필요를 올리세요 — "
+                "시스템이 한가한 동료들에게 공고를 돌려 지원서를 모아 돌려줍니다. 직군을 미리 "
+                "정할 필요 없습니다(원하면 role=로 참고 표기). 동료 지목(member=)은 지원자 선발 "
+                "확정에만 씁니다.")
     _hold = _clarify_hold(flow, me_id)
     if _hold:
         return _hold
@@ -450,26 +479,18 @@ async def recruit(flow, me_id, role, args):
         await _say(flow, me_id, f"[채용 공고 교체] 종전 '{open_p['role']}' 공고를 닫고 새 공고를 올립니다.")
         flow.recruit_open = None
 
-    # 후보: 그 직군 보유 > 유사 직군 > 예비(무직). 현재 팀·타 흐름 점유 제외, 상한 4.
+    # 후보 = 한가한 동료 전원(현재 팀·공고자·타 흐름 점유만 제외) — 직군 필터도 인원 상한도
+    # 없다(임의 숫자 금지). 누가 이 문제에 맞는지는 시스템이 아니라 **후보 자신**이 판단한다.
     eng, scope = flow.comm.engagement, flow.comm.scope
 
     def _free(m):
         return not (eng is not None and scope is not None and eng.busy_elsewhere(m, scope))
 
-    exact, similar, spare = [], [], []
-    for m in flow.pool:
-        if m == me_id or m in flow.current.team or not _free(m):
-            continue
-        info = (flow._info(m) or "").strip()
-        if _is_spare(flow, m) or not info:
-            spare.append(m)
-        elif any(_norm_job(j) == _norm_job(role_name) for j in _jobs_of(info)):
-            exact.append(m)
-        elif any(_job_tokens(j) & _job_tokens(role_name) for j in _jobs_of(info)):
-            similar.append(m)
-    cands = (exact + similar + spare)[:4]
+    cands = [m for m in flow.pool
+             if m != me_id and m not in flow.current.team and _free(m)]
 
-    posting = (f"[채용 공고] 직군: {role_name}" + (f" — {reason}" if reason else "")
+    posting = ("[채용 공고] " + (need or f"'{role_name}' 일손이 필요합니다")
+               + (f" (직군 참고: {role_name})" if role_name and need else "")
                + f"\n프로젝트: {getattr(flow, 'project_name', '') or '(미등록)'}"
                + (f" · 현재 Task: {_speech_clip(flow.current.status.purpose or '', 80)}"
                   if flow.current.status.purpose else ""))
@@ -489,12 +510,14 @@ async def recruit(flow, me_id, role, args):
                 except CommError:
                     break              # 베턴 경합 — 수집 중단(지원 0으로 처리)
                 me_info = (flow._info(m) or "").strip()
+                _jobless = _is_spare(flow, m) or not me_info
                 body = (f"{posting}\n\n[지원 여부를 스스로 정하세요] 당신: "
-                        f"{me_info or '예비(직군 미정)'}."
-                        + (f" 선발되면 '{role_name}' 직군으로 채용됩니다(첫 실작업 시 확정)."
-                           if (_is_spare(flow, m) or not me_info) else "")
+                        f"{me_info or '무직(직군 미정)'}. 이 문제를 당신이 풀 수 있는지 스스로 판단하세요."
+                        + ((" 지원한다면 어떤 직군으로 일할지 [직군: 이름]으로 함께 선언하세요"
+                            + (f"(공고의 참고 직군: {role_name})." if role_name else "."))
+                           if _jobless else "")
                         + "\n맡고 싶으면 첫 줄에 [지원], 이어서 지원서(왜 당신인가 — 당신의 경험·"
-                          "기준에서 근거)를 4문장 이내로. 맡지 않겠으면 [패스] 한 줄만. "
+                          "기준에서 근거)를 간결히. 맡지 않겠으면 [패스] 한 줄만. "
                           "지원해도 선발은 공고자가 지원서를 보고 정합니다.")
                 try:
                     res = await flow.wake(m, body, Kind.INFO)
@@ -505,17 +528,24 @@ async def recruit(flow, me_id, role, args):
                 except CommError:
                     pass
                 if res and Marker.APPLY_RE.search(res):
-                    applicants[m] = res
+                    _decl = Marker.ROLE_DECL_RE.search(res)
+                    applicants[m] = {"text": res,
+                                     "role": (_decl.group(1).strip() if _decl else "")}
                     await _say_speech(flow, m, "[지원]", res)   # 지원서 = 본인 명의 공개 발화
                     if flow.log:
-                        flow.log("recruit_apply", role=role_name, who=m)
+                        flow.log("recruit_apply", role=role_name or "(문제 공고)", who=m)
                 else:
                     if flow.log:
-                        flow.log("recruit_pass", role=role_name, who=m)
+                        flow.log("recruit_pass", role=role_name or "(문제 공고)", who=m)
         finally:
             flow.fork_active -= 1
 
     if not applicants:
+        if not role_name:
+            # 문제 공고 유찰 + 직군 미지정 — 무엇을 새로 뽑을지 시스템이 정하지 않는다(공고자 몫).
+            await _say(flow, me_id, "[채용] 공고 유찰 — 지원자가 없습니다.")
+            return ("공고 유찰: 지원자가 없습니다. 필요를 더 구체화해 재공고하거나, 새로 뽑아야 "
+                    "한다면 role='직군'을 붙여 다시 공고하세요(그 직군 전문가를 신규 생성해 채웁니다).")
         # 유찰 → genesis 폴백(신규 채용 — 채용 상속). 신입은 지원 절차 없이 합류(신규 생성이므로).
         await _say(flow, me_id, f"[채용] '{role_name}' 공고 유찰(후보 {len(cands)}·지원 0) — 신규 채용으로 전환합니다.")
         _mk = getattr(g, "create_agent", None)
@@ -542,14 +572,14 @@ async def recruit(flow, me_id, role, args):
         return (f"'{role_name}' 공고 유찰 → 신규 채용: {flow._info(nid) or nid} 합류. "
                 f"현재 팀: {flow._names(flow.current.team)}")
 
-    flow.recruit_open = {"role": role_name, "reason": reason,
+    flow.recruit_open = {"role": role_name, "need": need,
                          "applicants": dict(applicants)}
-    lines = [f"[채용 공고 '{role_name}'] 지원 {len(applicants)}건 — 지원서를 읽고 선발하세요:"]
+    lines = [f"[채용 공고] 지원 {len(applicants)}건 — 지원서를 읽고 선발하세요:"]
     for m, app in applicants.items():
-        lines.append(f"\n· {flow._info(m) or m}(id {m}):\n{_speech_clip(app, 600)}")
-    lines.append(f"\n선발 = recruit(member='<이름|id>', reason='선발 사유'). "
-                 f"모두 부적합하면 다시 공고(role=…)하거나 그대로 진행하세요 — "
-                 f"지원 안 한 동료의 지명은 불가합니다.")
+        _decl = f" (직군 선언: {app['role']})" if app.get("role") else ""
+        lines.append(f"\n· {flow._info(m) or m}(id {m}){_decl}:\n{app['text']}")
+    lines.append("\n선발 = recruit(member='<이름|id>', reason='선발 사유'). "
+                 "모두 부적합하면 필요를 고쳐 재공고하세요 — 지원 안 한 동료의 지명은 불가합니다.")
     return "\n".join(lines)
 
 
@@ -557,7 +587,7 @@ async def _recruit_join(flow, mid, role_name, via="선발", fresh=False):
     """합류 마무리(공통) — 직군 부여(겸직 게이트·잠정 영속)·팀 합류·스레드 멤버십.
     거부 사유가 있으면 그 문구를 반환(합류 안 함), 성공이면 None."""
     g = flow.guide
-    if not fresh:
+    if not fresh and role_name:
         # 예비/무직 → 그 직군으로 잠정 채용(일로 직업 획득 — 첫 실작업 시 영속)
         cur = flow._info(mid)
         if _is_spare(flow, mid) or not cur:

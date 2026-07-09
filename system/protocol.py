@@ -74,6 +74,7 @@ class Marker:
     BID_RE = re.compile(r"\[\s*(?:응찰|계속)\s*[:：]\s*([0-9])\s*\]")
     PASS_OR_END_RE = re.compile(r"^\[?\s*(패스|종료)\s*\]?\s*$")
     APPLY_RE = re.compile(r"\[\s*지원\s*\]")
+    ROLE_DECL_RE = re.compile(r"\[\s*직군\s*[:：]\s*([^\]]+?)\s*\]")   # 무직 지원자의 자기 직군 선언
 
     # 진행 가시성(narrate)에서 '봇의 생각'이 아닌 메커니즘 발화로 거를 토큰들
     MECHANISM_TOKENS = ("응찰", "[패스", "[계속", "발언권", "[SYS 프로브")
