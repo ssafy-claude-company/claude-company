@@ -18,9 +18,20 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  c4acc35+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-08 기억튜닝 착지(발동선5·천장성장·없음필터·장부3범주·채용상속)
-murmur  a68e144   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 계약·접점 코멘트 착지(문서만)
+claude-company  a3c5f43+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-09 진짜 채용 착지(공고→지원→선발, 문제 중심·매직넘버 폐지)
+murmur  a68e144   ← 라이브 웹=murmur-ai.duckdns.org — 채용 피드 매핑·RULE_SPEC §11 개정 착지(a68e144)
 ```
+
+## 진짜 채용 — 지명제 폐지, 공고·지원·선발 (2026-07-09 착지, 러너 재시작 시 라이브)
+- **recruit 전면 재설계**(`rule/comm_ceremonies.recruit`): 리더·팀이 독단 영입하지 않는다.
+  ① 공고 `recruit(need='문제/일손')` → 한가한 동료 전원 깨워 지원 받음(role은 참고만 — 후보
+  필터 아님, **매직넘버 상한 폐지**) ② 지원 `[지원]`+지원서 또는 `[패스]`(자기선택, 본인 명의
+  채널 게시) ③ 선발 `recruit(member=지원자)` — **지원 안 한 봇 지명 거부**. 유찰=genesis 폴백.
+  직군=지원자 속성(보유>[직군:X] 선언>공고 role). 관측 `recruit_posted/apply/pass/awarded/genesis`.
+- 근거: 발언권 1층(응찰=자기선택)의 멤버십판. 사용자 교정 반영("role에 얽매이지 마라·문제 중심·
+  임의 숫자 금지"). 유지 게이트: placeholder 직군 거부·변형 차단·1봇1직업(겸직 유사일만·최대2).
+- 대본 검증: 브레인 pytest 583(전용 test_recruit_social 5 + 재작성 8) · system 87. **실 LLM
+  라이브(봇이 실제 지원서 쓰는지)는 러너 재시작 후 flow.jsonl 관측 대기.** murmur 피드=채용 이벤트 표시.
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
 - **env 플래그 default-OFF(ORGANT_DOC_COLLAB 등)·이중수용** — 플래그 없으면 라이브 동작 불변. **유일한 무조건 라이브 변화 = B-12 회의 발언 채널 clip(200→500자, 러너 재시작 시 반영)**. 브레인 스위트 455. B-19 distill_bot+bot_profiles(개인 증류, ORGANT_BOT_DISTILL_MIN=8) · B-20 peers 강점 1줄(데이터 없으면 종전 문자열=증가분 0) · B-21 capability ledger(적립=owner_delivered+교차검증 통과 Task의 owner 저작만, cover 판정 무변경 — role_profiles.json `capability_ledger` 키) · B-22 personas.json(murmur 러너 DB→JSON 미러→Discord 러너 로드→빌더; **Discord persona 경로는 이 VPS에서 라이브 비검증 — ARCHITECTURE §6, 단위 테스트 한정**). **커밋·push·배포 완료(5bf64a1 live).** Dossier 등 플래그 기능은 ORGANT_DOC_COLLAB 등 켜야 활성(현재 관측만).
