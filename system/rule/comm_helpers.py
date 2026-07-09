@@ -117,6 +117,21 @@ def _norm_job(name: str) -> str:
     return " ".join((name or "").split()).casefold()
 
 
+def _same_job(a, b) -> bool:
+    """두 직군명이 같은 도메인인가 — 정규화 일치 또는 한쪽이 다른 쪽의 **접두(약칭)**.
+    로스터 파편(라이브: '프론트' vs '프론트엔드', '기획' vs '기획자')이 문자열 매칭에서
+    다른 직군으로 취급돼 적임자 누락·중복 생성을 낳던 것 교정. 접두만 인정한다 —
+    '디자이너'⊂'게임 비주얼 디자이너' 같은 *부분 포함*은 전문화를 뭉개므로 다르게 본다
+    (약칭은 앞에서 자른다: '프론트'→'프론트엔드', '기획'→'기획자'가 접두로 잡힘)."""
+    na, nb = _norm_job(a), _norm_job(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    lo, hi = (na, nb) if len(na) <= len(nb) else (nb, na)
+    return len(lo) >= 2 and hi.startswith(lo)
+
+
 # 겸직 라벨 구분자: '백엔드·QA' = 주직군 + 부직군. 겸직은 예외(예비 0명 또는 유사 직무)에서만,
 # 봇당 최대 2개 — 더하기만 하던 시절의 '직군 5~6개 스택'(라이브 관측)으로 회귀하지 않기 위한 한도.
 _JOB_SEP = "·"
@@ -210,11 +225,11 @@ def _find_variant_job(name: str, existing) -> Optional[str]:
     계속 불어났다(중복 생성 오류의 뿌리). 무엇이 '정답 이름'인지는 시스템이 정하지 않는다(하드코딩 금지)
     — 같은 이름(공백·대소문자 무시)은 기존 역할 재사용이라 통과시키고, 변형만 멈춰 세워 에이전트가
     '재사용'인지 '진짜 새 직군'인지 명시하게 한다."""
-    mine_n, mine_t = _norm_job(name), _job_tokens(name)
+    mine_t = _job_tokens(name)
     if not mine_t:
         return None
-    if any(_norm_job(ex) == mine_n for ex in existing):
-        return None                        # 같은 이름이 이미 있음 → 그대로 재사용(변형 아님), 즉시 통과
+    if any(_same_job(ex, name) for ex in existing):
+        return None                        # 같은 이름·약칭(접두)은 재사용 → 즉시 통과(변형 아님)
     for ex in sorted(existing):            # 정렬: 같은 입력엔 같은 안내(메시지 결정성)
         if mine_t & _job_tokens(ex):
             return ex

@@ -10,7 +10,7 @@ from .comm_engine import BusyInOtherFlow, CommError
 from .comm_helpers import (
     _JOB_SEP, _SPARE_LABEL, _add_members, _clarify_hold, _find_variant_job,
     _fork_collect, _group_of, _is_spare, _job_tokens, _jobs_of, _norm_job,
-    _resolve_members, _say, _say_speech,
+    _resolve_members, _same_job, _say, _say_speech,
 )
 
 
@@ -342,7 +342,7 @@ async def recruit(flow, me_id, role, args):
             new_label = role_name
             if cur and not _is_spare(flow, me_id):
                 cur_jobs = _jobs_of(cur)
-                if any(_norm_job(j) == _norm_job(role_name) for j in cur_jobs):
+                if any(_same_job(j, role_name) for j in cur_jobs):
                     return (f"이미 '{role_name}' 직군을 보유하고 있습니다 — 그대로 진행하세요(변경 없음).")
                 # 겸직 예외(사용자 정책 — 예비 개념 폐지 후 조건 재정의 2026-07-08): 새 직군이 기존 직군과
                 # '비슷한 일'(도메인 토큰 공유)일 때만, **기존 직군을 유지한 채** 새 직군을 더한다
@@ -397,7 +397,7 @@ async def recruit(flow, me_id, role, args):
             # [팀 내 재배치·겸직 — 영입 아님] 이미 팀인 동료의 직군 추가는 공고 대상이 아니다(합류가
             # 아니라 라벨 변경). 1봇1직업·겸직 예외(예비 0/유사 일)·한도 2는 그대로 강제.
             cur = (flow._info(mid) or "").strip()
-            if cur and any(_norm_job(j) == _norm_job(role_name) for j in _jobs_of(cur)):
+            if cur and any(_same_job(j, role_name) for j in _jobs_of(cur)):
                 return (f"{flow._info(mid) or mid}은(는) 이미 '{role_name}' 직군을 보유 — 변경 없이 "
                         f"그대로 진행하세요.")
             tentative = False
@@ -617,7 +617,7 @@ async def _recruit_join(flow, mid, role_name, via="선발", fresh=False):
         if _is_spare(flow, mid) or not cur:
             flow.bot_info[mid] = role_name
             flow.tentative_roles[mid] = role_name
-        elif not any(_norm_job(j) == _norm_job(role_name) for j in _jobs_of(cur)):
+        elif not any(_same_job(j, role_name) for j in _jobs_of(cur)):
             # 이미 다른 직군 보유 — 원칙은 **1봇 1직업**. [예비 잔재 제거 2026-07-08] 겸직 예외는
             # '새 직군이 기존 직군과 비슷한 일'(도메인 토큰 공유)일 때만 — 종전 '예비 0명 허용' 조건은
             # 예비 폐지로 상시 참이 돼 1봇1직업을 침식했다(공고·genesis가 있으니 어쩔 수 없는 경우가 없음).
