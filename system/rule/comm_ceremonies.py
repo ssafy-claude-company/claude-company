@@ -555,7 +555,10 @@ async def recruit(flow, me_id, role, args):
                     _decl = Marker.ROLE_DECL_RE.search(res)
                     applicants[m] = {"text": res,
                                      "role": (_decl.group(1).strip() if _decl else "")}
-                    await _say_speech(flow, m, "[지원]", res)   # 지원서 = 본인 명의 공개 발화
+                    # 게시가 "[지원]" prefix를 붙이므로 본문 선두의 마커는 벗긴다 — "[지원] [지원] …"
+                    # 중복 방지(격리 라이브 관측 2026-07-09에서 발견). 파싱(applicants)은 원문 유지.
+                    _clean = re.sub(rf"^\s*\[\s*{Marker.APPLY}\s*\]\s*", "", str(res))
+                    await _say_speech(flow, m, "[지원]", _clean)   # 지원서 = 본인 명의 공개 발화
                     if flow.log:
                         flow.log("recruit_apply", role=role_name or "(문제 공고)", who=m)
                 else:

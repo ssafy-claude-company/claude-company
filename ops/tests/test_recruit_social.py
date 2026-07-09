@@ -56,6 +56,7 @@ def test_공고_지원_선발_해피패스_과정이_채널에_보인다():
     posts = [c for c in g.calls if c[0] == "post"]
     assert any("[채용 공고]" in c[3] for c in posts)             # 공고가 채널에 게시됨
     assert any("[지원]" in c[3] and c[2] == 13 for c in posts)   # 지원서가 본인(13) 명의로 게시됨
+    assert not any("[지원] [지원]" in c[3] for c in posts)        # 마커 중복 없음(본문 선두 마커는 벗김)
     assert f.recruit_open and 13 in f.recruit_open["applicants"]
     # 지원 안 한 12·14 지명 → 거부 / 지원자 13 선발 → 합류
     rno = asyncio.run(t["recruit"].handler({"member": "14", "reason": "그냥"}))
