@@ -26,6 +26,8 @@ from typing import Dict, Optional
 from ._util import doc_collab_on, dossier_read, dossier_rel
 from .audit import CAP_MIN   # noqa: F401 — 재수출(파사드 보존: 기존 소비자는 sys_core 이름을 봄)
 from .rule.communication import CommError, Engagement
+from .rule.milestone import pipeline_on as _ms_pipeline_on
+from .rule.wrapup import tallying_logger as _wrapup_tally
 from .guide_tools import Flow, TaskRef, build_guide_server, make_guide_tools   # noqa: F401 — TaskRef 재수출(사용처는 sys_recovery로 이동)
 from .protocol import Kind, Request, TaskStatus, format_response   # noqa: F401 — TaskStatus 재수출(사용처는 sys_recovery로 이동)
 from . import sys_prompt
@@ -1751,7 +1753,10 @@ class Sys:
         if root_id is not None:
             flow.start_root(root_id)
         flow.wake = lambda to, b, k: self.run_turn(flow, to, b, k, "member")
-        flow.log = self._log                       # 관측: req_sent 등을 flow.jsonl로 영속
+        # [§8 관측 — S3 접점 한 줄] 파이프라인 ON이면 로그 관문에서 이벤트 집계를 동승(오버헤드
+        # 스냅샷용 요약 — 정본은 flow.jsonl 그대로). OFF면 종전 바인딩 그대로(라이브 불변).
+        flow.log = (_wrapup_tally(flow, self._log) if _ms_pipeline_on()
+                    else self._log)                # 관측: req_sent 등을 flow.jsonl로 영속
         flow.last_activity = time.monotonic()
         # [Rule/Status — 상태 가시화] 흐름 시작과 함께 그 채널에 상태 메시지 1개를 System Bot으로
         # 올리고, 진행 동안 '수정'으로만 조용히 갱신한다(알림 0 — Guide/Discord.md). 시스템이 멈추면

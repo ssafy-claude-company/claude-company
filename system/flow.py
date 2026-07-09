@@ -43,6 +43,12 @@ class Flow:
         # SubTask별 백로그 릴레이(st_id → rule/backlog.BacklogRelay). 같은 원칙 — 플래그 OFF면
         # 빈 dict(동작 불변), 상태는 to_ckpt로 체크포인트 동승(§9 — 릴레이 중간부터 재개).
         self.backlog_relays: dict = {}
+        # [파이프라인 §6·§8 — S3(wrapup)] e2e 전수 검증·관측 상태(M6 선언화 — 유령속성 금지).
+        # None=미개시가 계약이라 기본값을 빈 컨테이너가 아니라 None으로 둔다(e2e_open이 채움).
+        self.e2e_checklist = None      # e2e 분모 — rule/wrapup.assemble_base_checklist가 조립
+        self.e2e_results = None        # 항목별 제출 결과(id → {ok, observed, evidence})
+        self.wrapup_state = None       # 마지막 e2e 판정(§9 — ckpt 동승 대상)
+        self.event_counts = None       # §8 오버헤드 집계(sys_core가 tallying_logger로 채움, ON에서만)
         self._base = time.strftime("%H%M%S")
         self._n = 0
         self.done = False
