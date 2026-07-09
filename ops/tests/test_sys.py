@@ -5894,3 +5894,48 @@ def test_리더_recruit_도중채용_첫위임전_형성완료(tmp_path):
     wp = next(e[2] for e in log if e[0] == "work")
     assert "[당신의 직무 기준" in wp and "슬라이스 검증" in wp   # 첫 턴부터 자기 기준
     assert 55 in s.onboarded and "슬라이스 검증" in s.bot_profiles[55]
+
+
+def test_발제자_응찰_무지정요청은_봇자기선택으로_선출():
+    """[갭5] 무지정 새 요청의 발제자를 is_leader 폴백(지정)이 아니라 봇 응찰(자기선택)로 선출한다.
+    최고 응찰이 발제자. 응찰 0이면 None(호출부 폴백). 점유 봇은 후보 제외."""
+    import asyncio
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None,
+            bot_info={11: "백엔드", 12: "프론트엔드", 13: "QA"}, workspace="/ws")
+
+    # 각 봇의 응찰 대본 — 프론트(12)가 최고 응찰
+    bids = {11: "[응찰: 3] 백엔드로 거들 수 있습니다.",
+            12: "[응찰: 8] 이건 UI 중심이라 제가 이끌겠습니다.",
+            13: "[패스]"}
+
+    class _Bidder:
+        def __init__(self, mid):
+            self.mid = mid
+        async def handle(self, prompt):
+            assert "[발제자 응찰]" in prompt
+            return bids[self.mid]
+
+    s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _Bidder(int(oid))
+    s._distill_workspace = lambda: None
+
+    winner = asyncio.run(s._elect_proposer(500, "그림 맞히기 게임 만들어줘"))
+    assert winner == 12                                  # 최고 응찰(8)이 발제자
+
+    # 점유 봇은 후보 제외 — 12를 타 흐름 점유시키면 그 다음(11)이 이긴다
+    s.engaged._is_live = lambda scope: True   # 유령 자가치유 끄기(수동 점유 유지)
+    s.engaged.engage(12, "other-flow")
+    winner2 = asyncio.run(s._elect_proposer(500, "다른 요청"))
+    assert winner2 == 11                                 # 12 제외 → 11(응찰 3)
+
+    # 아무도 응찰 안 하면 None(호출부가 종전 leader 폴백)
+    bids2 = {11: "[패스]", 13: "[패스]"}
+    s.engaged.release(12, "other-flow")
+    del s.bot_info[12]
+    s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: type(
+        "P", (), {"handle": lambda self, p: _acoro(bids2.get(int(oid), "[패스]"))})()
+    assert asyncio.run(s._elect_proposer(500, "x")) is None
+
+
+async def _acoro(v):
+    return v

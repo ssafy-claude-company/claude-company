@@ -25,7 +25,13 @@ from typing import Dict, Optional
 
 from ._util import doc_collab_on, dossier_read, dossier_rel
 from .audit import CAP_MIN   # noqa: F401 — 재수출(파사드 보존: 기존 소비자는 sys_core 이름을 봄)
-from .rule.communication import CommError, Engagement
+from .rule.communication import CommError, Engagement, _bid_score as _bid_of
+from .rule.comm_helpers import _SPARE_LABEL
+
+
+def _is_spare_label(label) -> bool:
+    """레거시 '예비'(직군 미배정) 라벨 판별 — flow 없이 라벨 문자열만으로(발제자 응찰 후보 필터용)."""
+    return str(label or "").strip().startswith(_SPARE_LABEL)
 from .rule.milestone import pipeline_on as _ms_pipeline_on
 from .rule.wrapup import tallying_logger as _wrapup_tally
 from .guide_tools import Flow, TaskRef, build_guide_server, make_guide_tools   # noqa: F401 — TaskRef 재수출(사용처는 sys_recovery로 이동)
@@ -690,6 +696,58 @@ class Sys:
             except Exception:
                 pass
         return ok
+
+    async def _elect_proposer(self, channel_id, body):
+        """[발제자 응찰 — 갭5, 사용자 설계 2026-07-09] 무지정 새 요청의 발제자를 is_leader 폴백(지정)이
+        아니라 **봇들의 자기선택**으로 정한다. 채용 공고·1층 발언권 응찰의 '발제자판' — 4입구 문법 통일.
+
+        한가한 봇 전원(점유 제외)에게 요청을 보여주고 '이끌 의향'을 [응찰: N](+이유) 또는 [패스]로
+        받는다. 최고 응찰이 발제자. 아무도 응찰 안 하면 None(호출부가 종전 폴백=leader). 후보 사전
+        필터·인원 상한 없음(누가 맞는지는 시스템이 아니라 봇 자신이 판단 — 매직넘버 금지)."""
+        cands = [int(m) for m in self.bot_info
+                 if not _is_spare_label(self.bot_info.get(int(m)))
+                 and self.engaged.holder(int(m)) is None]
+        if not cands:
+            return None
+        clip = " ".join(str(body or "").split())[:400]
+        bids = []
+        for mid in cands:
+            if self.engaged.holder(mid) is not None:
+                continue
+            self.engaged.engage(mid, "__propose__")       # 응찰 중 배경 점유(배타 — 이중 존재 차단)
+            try:
+                flow = Flow(self.guide, 0, self.guild_id, mid, self.bot_info)
+                flow.workspace = self._distill_workspace()
+                server = build_guide_server(flow, mid, "member")
+                try:
+                    organt = self.organt_builder(mid, server, "member", flow, state_tag=f"propose_{channel_id}")
+                except TypeError:
+                    organt = self.organt_builder(mid, server, "member", flow)
+                prompt = (
+                    f"[발제자 응찰] 새 요청이 들어왔습니다. 이 일을 **당신이 이끌(발제) 의향**이 있는지 "
+                    f"스스로 정하세요 — 지명이 아니라 자기선택입니다. 당신 직군: {self.bot_info.get(mid)}.\n\n"
+                    f"요청: {clip}\n\n"
+                    f"이끌고 싶으면 첫 줄에 [응찰: N](N=0~9, 이 일과 당신의 적합도·의지) + 한 줄 이유. "
+                    f"맞지 않으면 [패스] 한 줄. 도구 쓰지 말고 텍스트로만.")
+                try:
+                    out = await organt.handle(prompt)
+                except Exception:
+                    out = ""
+            finally:
+                self.engaged.release(mid, "__propose__")
+            score = _bid_of(out)
+            if score > 0:
+                bids.append((score, mid, out))
+                self._log("propose_bid", channel=channel_id, who=mid, score=score)
+            else:
+                self._log("propose_pass", channel=channel_id, who=mid)
+        if not bids:
+            return None
+        bids.sort(key=lambda b: (-b[0], b[1]))            # 최고 응찰(동점=id 안정순)
+        winner = bids[0]
+        self._log("propose_elected", channel=channel_id, who=winner[1], score=winner[0],
+                  bidders=len(bids))
+        return winner[1]
 
     async def _onboard_inner(self, new_mid, role, recruiter) -> bool:
         flow = Flow(self.guide, 0, self.guild_id, recruiter, self.bot_info)   # 도구 형식용 빈 흐름
@@ -1555,8 +1613,20 @@ class Sys:
         """리더 부재 시 가용 봇 자동 재배정(영속) — sys_store.valid_leader로 추출(위임만)."""
         return sys_store.valid_leader(self, proj)
 
-    async def handle_user_input(self, channel_id, leader_id, user_text, root_id=None, attachments=None) -> dict:
+    async def handle_user_input(self, channel_id, leader_id, user_text, root_id=None, attachments=None,
+                                elect=False) -> dict:
         proj = self.projects.get(int(channel_id))   # 이 채널이 등록된 프로젝트면 '개입'(이어지는 작업)
+        # [발제자 응찰 — 갭5] 무지정 새 요청이면 발제자를 봇 자기선택(응찰)으로 선출한다 — is_leader
+        # 폴백(지정)의 대체. 등록 프로젝트 개입엔 적용 안 함(이어가는 담당이 이미 있음). 선출 실패
+        # (아무도 응찰 안 함)면 leader_id 폴백 그대로(막다른 길 방지).
+        if elect and not proj:
+            try:
+                _elected = await self._elect_proposer(channel_id, user_text)
+            except Exception as _e:
+                self._log("propose_failed", err=str(_e)[:120])
+                _elected = None
+            if _elected:
+                leader_id = int(_elected)
         # [신규×신규 병렬 완화] 신규 요청도 고유 스코프로 동시 진행한다 — 과거 'main' 직렬은 등록
         # 경합 방지용이었으나 전역 점유·스코프 선점·원자 등록 이후 근거가 소멸(라이브: 서로 다른
         # 리더에게 보낸 두 신규가 직렬돼 병렬 의도가 좌절). 같은 리더면 전역 점유가 자연 직렬화한다.
@@ -2351,7 +2421,21 @@ class Sys:
                     if len(inflight) >= cap:
                         break
                     mid = m["msg_id"]
-                    to_id = int(m["to_id"]) if m["to_id"] else (int(m["route_to"]) if m.get("route_to") else leader)
+                    # [발제자 응찰 — 갭5] 무지정(To 없음)·무라우트(등록 리더/최근활동 없음) = 새 요청.
+                    # 종전엔 is_leader 폴백(leader)으로 발제자를 '지정'했다 — 이제 봇들이 응찰로
+                    # 자기선택한다(handle_user_input에서 실제 선출). 여기선 게이트 통과용 provisional만:
+                    # 한가한 후보 하나(없으면 종전 leader). 실 발제자는 elect=True로 선출된다.
+                    _elect = not m["to_id"] and not m.get("route_to")
+                    if m["to_id"]:
+                        to_id = int(m["to_id"])
+                    elif m.get("route_to"):
+                        to_id = int(m["route_to"])
+                    elif _elect:
+                        to_id = next((int(b) for b in self.bot_info
+                                      if not _is_spare_label(self.bot_info.get(int(b)))
+                                      and self.engaged.holder(int(b)) is None), leader)
+                    else:
+                        to_id = leader
                     ch = int(m["channel_id"])
                     if ch in busy_ch or to_id in busy_lead or self.engaged.holder(to_id) is not None:
                         continue
@@ -2366,7 +2450,7 @@ class Sys:
                         seen.discard(mid)
                         continue
                     guide.set_origin(ch)
-                    inflight[mid] = {"task": asyncio.create_task(self.route_channel_request(ch, req)), "ch": ch, "t0": _now}
+                    inflight[mid] = {"task": asyncio.create_task(self.route_channel_request(ch, req, elect=_elect)), "ch": ch, "t0": _now}
                     busy_ch.add(ch)
                     busy_lead.add(to_id)
                     log.info("▶ 요청 처리(동시 %d/%d): ch=%s to=%s kind=%s body=%r", len(inflight), cap, ch, to_id, m["kind"], m["body"][:42])
@@ -2384,7 +2468,7 @@ class Sys:
                 self._log("run_loop_error", err=str(e)[:200])   # [관측 v1] 폴링 루프 예외 실명화
             await asyncio.sleep(poll)
 
-    async def route_channel_request(self, channel_id, request: Request, root_id=None) -> dict:
+    async def route_channel_request(self, channel_id, request: Request, root_id=None, elect=False) -> dict:
         # [관측 v1] 이 요청 처리 동안의 trace_id 설정 — 이후 flow/audit 이벤트가 이 id를 달아
         # 한 요청→전체 인과 사슬을 /api/monitor/trace/<id>로 복원 가능. 요청 msg_id 기반(고유).
         self._trace_id = "t-" + str(request.message_id or int(time.time() * 1000))[-10:]
@@ -2393,4 +2477,5 @@ class Sys:
             return {"mode": "ignored"}
         return await self.handle_user_input(channel_id, request.to_id, request.body,
                                             root_id=request.message_id,
-                                            attachments=getattr(request, "attachments", None))
+                                            attachments=getattr(request, "attachments", None),
+                                            elect=elect)
