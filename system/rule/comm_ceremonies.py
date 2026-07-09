@@ -373,7 +373,9 @@ async def recruit(flow, me_id, role, args):
             _new = None
             if _mk and getattr(flow, "user_channel", None):
                 try:
-                    _new = await _mk(flow.user_channel, role_name)   # user_channel=프로젝트 id(set_leader와 동일)
+                    # [채용 상속(사용자 규칙 2026-07-08)] recruiter=채용 요청 봇 — 신입의 모델·effort를
+                    # 채용자와 '같은 선'으로 복사 생성(상향은 스튜디오에서 사용자 직접 선택만).
+                    _new = await _mk(flow.user_channel, role_name, recruiter=me_id)   # user_channel=프로젝트 id
                 except Exception:
                     _new = None
             if _new:

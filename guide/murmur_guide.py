@@ -59,12 +59,14 @@ class MurmurGuide:
         except Exception:
             pass
 
-    async def create_agent(self, channel_id, role):
+    async def create_agent(self, channel_id, role, recruiter=None):
         """[예비 폐지 → recruit genesis] 새 직군 전문가를 원격 생성(예비 dead-end 대체 — 리더가 넘길
-        전문가가 없어 교착하던 것 해소). 신규 bot_id 반환(실패 None)."""
+        전문가가 없어 교착하던 것 해소). recruiter=채용 요청 봇 id — 신입의 모델·effort를 채용자와
+        '같은 선'으로 복사 생성(사용자 규칙 2026-07-08, 상향은 스튜디오 직접 선택만). 신규 bot_id 반환(실패 None)."""
         try:
             r = await self._post("/api/guide/ingest/", {"op": "create_agent",
-                                                        "channel_id": int(channel_id), "role": str(role)})
+                                                        "channel_id": int(channel_id), "role": str(role),
+                                                        "recruiter": int(recruiter or 0)})
             return (r or {}).get("bot_id")
         except Exception:
             return None

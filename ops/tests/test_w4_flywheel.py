@@ -54,12 +54,13 @@ def test_B19_개인증류_경험8건이_개인기준으로_압축·영속(tmp_pa
 
 
 def test_B19_임계미달·점유중이면_증류안함(tmp_path):
-    """[B-19] 원석 8건 미만이면 증류 비발동, 그 봇이 흐름 점유 중이면 이번 주기 스킵(유휴 판정 이식)."""
+    """[B-19] 원석이 발동선(5건 — 2026-07-08 하향: 주입 창 6건 이하 & 압축 재료 하한) 미만이면 증류
+    비발동, 그 봇이 흐름 점유 중이면 이번 주기 스킵(유휴 판정 이식)."""
     s = Sys(FakeGuide(), guild_id=1, organt_builder=None, bot_info={11: "QA"}, session_dir=str(tmp_path))
-    s.bot_experience[11] = ["교훈"] * 7
+    s.bot_experience[11] = ["교훈"] * 4
     assert s.pick_distill_bots() == []                        # 임계 미달 — 후보 아님
     assert asyncio.run(s.distill_bot(11)) is False
-    s.bot_experience[11] = ["교훈"] * 8
+    s.bot_experience[11] = ["교훈"] * 5
     s.engaged.engage(11, "__distill__")                       # 이미 점유 중(항상 live인 의사스코프)
     assert asyncio.run(s.distill_bot(11)) is False            # 점유 중 스킵(작업 우선·중복 증류 차단)
     s.engaged.release(11, "__distill__")
@@ -124,9 +125,11 @@ def test_B21_확장자·run도메인·배포이력_매핑표():
     assert capability_of("Write", {"file_path": "Dockerfile"}) == "배포·인프라(DevOps)"   # 무확장 이름
     assert capability_of("mcp__guide__run", {"command": "docker build -t app ."}) == "배포·인프라(DevOps)"
     assert capability_of("mcp__guide__deploy", {}) == "배포·인프라(DevOps)"               # 배포 이력
-    assert capability_of("Write", {"file_path": "app.py"}) is None                        # 범주 밖 — 증거 아님
+    assert capability_of("Write", {"file_path": "app.py"}) == "백엔드·API 구현"           # [2026-07-08 장부 공백 교정]
+    assert capability_of("Write", {"file_path": "readme.md"}) is None                     # 범주 밖 — 증거 아님
     assert set(CAP_MIN) == {"AI/ML(모델 학습·예측)", "실데이터 수집·파이프라인",
-                            "데이터 영속·DB", "배포·인프라(DevOps)"}                      # 임계치 4능력 전수
+                            "데이터 영속·DB", "배포·인프라(DevOps)",
+                            "웹 프론트엔드 구현", "백엔드·API 구현", "품질 검증(QA)"}      # 임계치 전수(+3범주)
 
 
 def test_B21_PostToolUse가_행위자별_증거수집(tmp_path):
