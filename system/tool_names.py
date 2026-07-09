@@ -19,4 +19,7 @@ FLOW_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL, RUN_TOOL,
 COORD_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL]
 LEADER_TOOLS = [f"mcp__guide__{n}" for n in
                 ("create_project", "create_task", "set_goal", "complete_task", "deploy", "send_file",
-                 "vote", "meet", "parallel_work", "list_projects")]
+                 "vote", "meet", "parallel_work", "list_projects",
+                 # [파이프라인 §1·§4 — S1 도구(결정권자=구 리더 자리 승계)] 통합주기 1에서 등록만 되고
+                 # 허용목록 누락 → 라이브에서 훅이 '권한 밖 도구'로 거부하는 결함. S3가 접점 수선.
+                 "set_milestone", "set_subtask")]
