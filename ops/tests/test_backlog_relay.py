@@ -275,3 +275,130 @@ def test_관측실패가_규칙을_죽이지_않는다():
     b = r.submit(A, "프론트 카드")               # 로그가 죽어도 제출·전이는 정상
     r.pick(A, b.backlog_id, B)
     assert r.done(B, b.backlog_id).status == DONE
+
+
+# ══ 통합주기 2 — 위임축 배선 (실물 Milestone/SubTask + flow ckpt 동승) ═══════════
+
+import asyncio
+import types
+
+from system.rule.backlog import (active_subtask, on_subtask_wrapup, relay_for,
+                                 sync_completion, sync_delegation)
+from system.rule.milestone import Criterion, Milestone, SubTask
+
+
+def _pipe_flow():
+    """S1 실물(Milestone/SubTask)을 단 가짜 flow — 배선 함수가 만지는 표면만 갖춘다."""
+    ms = Milestone(ms_id="MS-1", goal="목표", criteria=[Criterion("조건", "run x")])
+    st = SubTask(st_id="MS-1/ST-1", goal="부분목표", criteria=[Criterion("조건", "run x")])
+    ms.subtasks.append(st)
+    ev = []
+    f = types.SimpleNamespace(milestones=[ms], backlog_relays={},
+                              log=lambda e, **k: ev.append((e, k)),
+                              _info=lambda x: f"봇{x}")
+    return f, st, ev
+
+
+def test_배선_플래그OFF는_전부_무동작(monkeypatch):
+    monkeypatch.delenv("ORGANT_PIPELINE", raising=False)
+    f, st, ev = _pipe_flow()
+    assert sync_delegation(f, A, B, "[백로그 B1] 뭐든") is None
+    sync_completion(f, B)
+    assert f.backlog_relays == {} and ev == []   # 릴레이 생성조차 없음 = 기존 동작 불변
+
+
+def test_배선_마커위임이_배분이_된다(monkeypatch):
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f, st, ev = _pipe_flow()
+    r = relay_for(f, st)
+    b = r.submit(A, "프론트 카드 컴포넌트")
+    assert sync_delegation(f, A, B, "[백로그 B1] 카드 컴포넌트 만들어줘") is None
+    assert b.status == IN_PROGRESS and b.assignee == B
+    assert B in st.participants and st.backlog_ids == ["B1"]   # S1 접점 동기
+    sync_completion(f, B)                                       # 실작업 인도 지점
+    assert b.status == DONE and r.turn_holder == B              # 배분권이 현장으로
+    assert [e for e, _ in ev if e in ("relay_pick", "backlog_done")] == ["relay_pick", "backlog_done"]
+
+
+def test_배선_어휘겹침으로도_매칭(monkeypatch):
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f, st, _ = _pipe_flow()
+    r = relay_for(f, st)
+    b = r.submit(A, "백엔드 저장 API 설계")
+    assert sync_delegation(f, A, C, "백엔드 저장 API 설계 맡아주세요 — 스키마부터") is None   # 마커 없이도
+    assert b.assignee == C
+    # 조사 변형 등으로 겹침이 60% 미달이면 매칭 안 됨 = 장부 밖 통과(안전한 저하 — 위임은 그대로 감).
+    # 정밀 경로는 [백로그 Bn] 마커. 이 경계는 test_배선_백로그밖_위임은_그대로_통과가 고정한다.
+
+
+def test_배선_턴규칙_남의_배분_거부(monkeypatch):
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f, st, _ = _pipe_flow()
+    r = relay_for(f, st)
+    b1 = r.submit(A, "프론트 카드")
+    b2 = r.submit(A, "백엔드 API")
+    assert sync_delegation(f, A, B, "[백로그 B1] 카드") is None
+    sync_completion(f, B)                        # 마무리자 = B(배분권)
+    msg = sync_delegation(f, C, D, "[백로그 B2] API")
+    assert msg and "배분권" in msg               # C의 지정 → 코칭 거부(위임 자체가 막힘)
+    assert b2.status == OPEN
+    assert sync_delegation(f, B, D, "[백로그 B2] API") is None   # 배분권자 B는 통과
+
+
+def test_배선_겹침방지_남의_진행분_위임_거부(monkeypatch):
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f, st, _ = _pipe_flow()
+    r = relay_for(f, st)
+    r.submit(A, "프론트 카드")
+    assert sync_delegation(f, A, B, "[백로그 B1] 카드") is None
+    msg = sync_delegation(f, A, C, "[백로그 B1] 카드")           # 같은 백로그를 다른 사람에게
+    assert msg and "손에 있습니다" in msg
+    assert sync_delegation(f, A, B, "[백로그 B1] 이어서") is None  # 같은 수행자 재전달은 통과
+
+
+def test_배선_백로그밖_위임은_그대로_통과(monkeypatch):
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f, st, ev = _pipe_flow()
+    r = relay_for(f, st)
+    r.submit(A, "프론트 카드")
+    assert sync_delegation(f, A, B, "배포 계정 설정 확인 부탁") is None   # 겹침 없음 → 장부 밖
+    assert r.get("B1").status == OPEN
+
+
+def test_배선_wrapup_정리와_장부요지(monkeypatch):
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f, st, _ = _pipe_flow()
+    r = relay_for(f, st)
+    r.submit(A, "프론트 카드")
+    r.submit(A, "백엔드 API")
+    sync_delegation(f, A, B, "[백로그 B1] 카드")
+    sync_completion(f, B)
+    st.iter_n = 1
+    summary = on_subtask_wrapup(f, st)           # dossier 없는 flow에서도 안전(정리는 진행)
+    assert "1 완료" in summary.replace("백로그 ", "") and "잔여 1" in summary
+    assert r.closed and r.get("B2").status == OPEN            # 정리 ≠ 완료 참칭
+    assert on_subtask_wrapup(f, st) == "정리할 백로그 없음"     # 재호출 안전
+
+
+def test_배선_ckpt_동승_왕복(monkeypatch):
+    """§9 — 체크포인트 빌더/복원 경로에 릴레이가 실제로 실리고 되살아난다(재시작 중간 재개)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.sys_recovery import checkpoint_open_task, restore_open_task
+    f, st, _ = _pipe_flow()
+    r = relay_for(f, st)
+    r.submit(A, "프론트 카드")
+    sync_delegation(f, A, B, "[백로그 B1] 카드")
+    sync_completion(f, B)                        # 턴 홀더 = B인 중간 상태
+    proj = {}
+    fake_sys = types.SimpleNamespace(projects={500: proj},
+                                     _task_snapshot=lambda fl, c: None,
+                                     _save_projects=lambda: None)
+    f.project_channel, f.current, f.file_owner = 500, None, None
+    checkpoint_open_task(fake_sys, f)
+    assert proj["backlog_relays"]["MS-1/ST-1"]["turn_holder"] == B
+    # 재시작: 새 flow에 복원 — open_task 없어도 릴레이는 독립 복원된다
+    f2 = types.SimpleNamespace(milestones=[], backlog_relays={})
+    asyncio.get_event_loop_policy()
+    assert asyncio.run(restore_open_task(fake_sys, f2, proj)) is None
+    r2 = f2.backlog_relays["MS-1/ST-1"]
+    assert r2.turn_holder == B and r2.get("B1").status == DONE

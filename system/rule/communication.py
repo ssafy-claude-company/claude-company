@@ -725,6 +725,14 @@ async def request(flow, me_id, role, args):
     _msg = _req_gate_offdomain(flow, to, kind, goal, body, me_is_leader)
     if _msg:
         return _ok(_msg)
+    # [마일스톤 파이프라인 §3 — 위임축 접점(S2, 통합주기 2)] Work 위임을 백로그 릴레이의 장부·턴
+    # 규칙에 맞춘다(배분권=마무리자·겹침 방지·participants/backlog_ids 동기). 플래그 OFF면 즉시
+    # None(기존 동작 불변) — 백로그와 무관한 위임도 그대로 통과(릴레이는 전면 강제가 아니라 장부).
+    if kind == Kind.WORK:
+        from .backlog import sync_delegation as _bl_sync
+        _msg = _bl_sync(flow, me_id, to, body)
+        if _msg:
+            return _ok(_msg)
     # Work Response → Accept/Redo (docs Communication.md §5). 이미 이 owner가 '완료 응답'까지 낸
     # 산출물을 같은 위임자가 또 Work로 보내면, 그건 '새 위임'이 아니라 직전 산출물의 Redo다.
     # → 새 프레임이 아니라 redo()로 처리한다(한계까지만, 초과 시 반복 위임 거부). 이로써 '되풀이
@@ -1014,6 +1022,10 @@ async def request(flow, me_id, role, args):
             flow.current.owner_incomplete = True
         if is_owner_work and owner_acted and _is_substantive(result):
             flow.current.owner_delivered = True   # 이 owner가 실작업+응답을 냈다 → complete_task 허용 근거
+            # [파이프라인 §3 — 위임축 접점(S2)] 실작업 인도 = 그 수행자의 백로그 마무리. 릴레이 장부
+            # done + 배분권이 그에게 이동(backlog_done 이벤트). 플래그 OFF·백로그 밖 위임이면 no-op.
+            from .backlog import sync_completion as _bl_done
+            _bl_done(flow, to)
             _ckpt(flow)              # [인도 사실 영속] 복구가 인도 핸드셰이크를 다시 요구하지 않게(마감 닫힘)
         # [B-09 Phase A — Task Dossier] Work 응답 전문([결과]/[변경]/[검증]/[리스크])을 REPORTS.md에
         # append(무절단 원본). 채팅 clip·스냅샷 result_so_far 500자 절단과 무관하게 보고 원문이 보존된다.
