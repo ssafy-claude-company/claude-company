@@ -529,6 +529,12 @@ async def complete_task(flow, role, args):
     g = flow.guide
     if flow.current is None:
         return _ok("오류: 진행 중인 Task가 없습니다.")
+    # [§5 마감 축 재편(S2) — 파이프라인 ON이면 판정자 교체: 리더의 열린 판단 → 완수조건 실증]
+    # OFF거나 마일스톤 미사용이면 None → 아래 기존 게이트 파이프라인 그대로(라이브 불변).
+    from .task_pipeline import pipeline_complete
+    _pl = await pipeline_complete(flow, role, args)
+    if _pl is not None:
+        return _ok(_pl)
     args = _merge_gate_args(args)   # [B-16] 마커 인자 → result 합성(기계적 동등)
     _msg = _gate_verified(flow)
     if _msg:

@@ -543,6 +543,43 @@ def _req_gate_owner_protect(flow, me_id, to, kind, body, args, tag):
     return None
 
 
+async def _escalate_convergence(flow):
+    """[회로차단기 발화 — §5 재배치(S2, 파이프라인 ON 분기)] 교차검증 임계 초과 미수렴의 처리.
+
+    OFF(기본): 종전 그대로 — loop_circuit_breaker 이벤트 + 사용자 채널에 '[수렴 경보 — 사람 판정]'.
+    ON: 수렴 경보를 **교착 신호로 재배치**(계약 §5) — deadlock_signal(kind=cross_check) 이벤트 +
+        프로젝트 채널에서 **결정권자 중재**(권한 ③)를 부른다. 사람이 아니라 결정권자가 1차 판정자다
+        (사람 에스컬레이트는 결정권자도 못 풀 때의 다음 층 — 기존 개입 경로 그대로 남아 있다).
+    호출부는 loop_escalated=True 세팅·_ckpt를 이미 한다(정지 게이트 _req_gate_loop_escalated 공용).
+    """
+    from .milestone import pipeline_on as _pl_on
+    if _pl_on():
+        if flow.log:
+            flow.log("deadlock_signal", kind="cross_check", task=flow.current.task_id,
+                     cross=flow.current.cross_checks)
+        try:
+            await flow.guide.post(
+                flow.project_channel or flow.user_channel, 0,
+                f"[교착 신호 — 결정권자 중재(권한 ③)] 이 Task가 교차검증 {flow.current.cross_checks}회에도 "
+                f"수렴하지 않습니다 — 같은 문제를 반복해 잡는 루프입니다. 결정권자({flow._info(flow.leader)})가 "
+                f"중재하세요: **① 현 상태 수용·마감(완수조건 실증 기준으로)** / **② 조건 재수립 회의** / "
+                f"**③ 방향 전환**. 중재 없이는 이 산출물에 Work를 더 보낼 수 없습니다.")
+        except Exception:
+            pass
+        return
+    if flow.log:
+        flow.log("loop_circuit_breaker", task=flow.current.task_id, cross=flow.current.cross_checks)
+    try:
+        await flow.guide.post(
+            flow.user_channel, 0,
+            f"[수렴 경보 — 사람 판정 필요] 이 Task가 교차검증을 {flow.current.cross_checks}회 했는데도 "
+            f"아직 안 닫힙니다. 봇들이 *같은 문제를 반복해 잡고* 있는데, 흔히 코드로 못 고치는 *한계*"
+            f"(플랫폼 제약 등)입니다 — 봇은 '해결 불가'를 스스로 판정 못 해 무한 검증합니다. 결정해주세요: "
+            f"**① 현 상태 수용·마감** / **② 다른 방향 제시**.")
+    except Exception:
+        pass
+
+
 def _req_gate_loop_escalated(flow, to, kind):
     """[게이트] 회로차단기 정지(2026-06-23 S1a 보강) — 경보는 '멈추게'도 해야 한다. loop_escalated가 켜졌는데도
     검증 cross-check Work가 또 들어오면(=사람이 아직 판정 안 함) 새 검증 워커를 띄우지 않는다. 종전
@@ -1182,17 +1219,7 @@ async def request(flow, me_id, role, args):
             if (flow.current.cross_checks >= _LOOP_ESCALATE_CROSS
                     and not getattr(flow.current, "loop_escalated", False)):
                 flow.current.loop_escalated = True
-                if flow.log:
-                    flow.log("loop_circuit_breaker", task=flow.current.task_id, cross=flow.current.cross_checks)
-                try:
-                    await flow.guide.post(
-                        flow.user_channel, 0,
-                        f"[수렴 경보 — 사람 판정 필요] 이 Task가 교차검증을 {flow.current.cross_checks}회 했는데도 "
-                        f"아직 안 닫힙니다. 봇들이 *같은 문제를 반복해 잡고* 있는데, 흔히 코드로 못 고치는 *한계*"
-                        f"(플랫폼 제약 등)입니다 — 봇은 '해결 불가'를 스스로 판정 못 해 무한 검증합니다. 결정해주세요: "
-                        f"**① 현 상태 수용·마감** / **② 다른 방향 제시**.")
-                except Exception:
-                    pass
+                await _escalate_convergence(flow)
                 _ckpt(flow)
         flow.req_results[dupkey] = result   # 같은 턴 병렬 중복요청이 재사용할 응답 캐시(동료 재호출 방지)
         return _ok(f"[{to} 응답] {_speech_clip(result, 4000)}{receipt}")
