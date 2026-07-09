@@ -116,6 +116,8 @@ from .rule.task import (_perceptual_essential, _wants_real_data,  # noqa: F401  
                         _has_real_dataset, _synthesizes_data, _is_verifier)
 # [마일스톤 파이프라인 — S1(PIPELINE_REWORK_2026-07-09)] 도구 표면·회의 설명 분기가 소비.
 from .rule.milestone import pipeline_on as _pipe_on, rule_set_milestone, rule_set_subtask
+from .rule.wrapup import (rule_e2e_finish, rule_e2e_open, rule_e2e_result,
+                          rule_e2e_scope)
 
 
 # [스태핑 커버리지 — 리더 흡수 차단(2026-06-19, 사용자: '전문가 분배 무조건, 리더는 자기 직군만')]
@@ -527,6 +529,47 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         async def send_file(args):
             return await _rule_send_file(flow, me_id, args)
         tools.append(send_file)
+
+    # [e2e 마무리 — S3 도구 표면(PIPELINE_REWORK §6)] 전 멤버 장착 — Task 경계 개시는 현장의 몫
+    # (마지막 작업자/QA, §3 관례와 동형). 플래그 ON에서만 등록(OFF 라이브는 도구 자체가 없다 — 동작
+    # 불변). 로직은 rule/wrapup.py(매체중립): 분모(체크리스트)·판정·복기는 구조가, 검사는 봇이.
+    if _pipe_on():
+        @tool("e2e_open",
+              "Task 경계(모든 마일스톤 done)에서 **전수 e2e 검증을 개시**한다 — 전 마일스톤의 완수조건"
+              "(최종 버전 재실증)과 사용자 원문이 검사 분모로 자동 조립돼 항목 id 목록이 반환된다. "
+              "개시 후: 산출물의 노출 표면을 e2e_scope로 추가하고, 각 항목을 실제 실행으로 검사해 "
+              "e2e_result로 제출하라.",
+              {})
+        async def e2e_open(args):
+            return _ok(rule_e2e_open(flow))
+        tools.append(e2e_open)
+
+        @tool("e2e_scope",
+              "e2e 분모 확장 — 산출물을 열어 파악한 **노출 표면**(surfaces: 페이지·라우트·API·명령, "
+              "한 줄에 하나)과 **주 사용 경로**(arcs: 실기동 관통 시나리오, 한 줄에 하나)를 제출한다. "
+              "추가된 항목 id가 반환된다 — 이 목록이 '전수'의 분모가 되므로 아는 표면을 빠뜨리지 마라.",
+              {"surfaces": str, "arcs": str})
+        async def e2e_scope(args):
+            return _ok(rule_e2e_scope(flow, args))
+        tools.append(e2e_scope)
+
+        @tool("e2e_result",
+              "e2e 항목 하나의 검사 결과 제출. item=항목 id(예: condition:1), ok=pass/fail, "
+              "observed=관측한 것 한 줄, evidence=**실행 증거**(run 출력·브라우저 확인 요지 — 증거 없는 "
+              "pass는 결함으로 판정된다).",
+              {"item": str, "ok": str, "observed": str, "evidence": str})
+        async def e2e_result(args):
+            return _ok(rule_e2e_result(flow, args))
+        tools.append(e2e_result)
+
+        @tool("e2e_finish",
+              "전 항목 제출 후 판정 — 전부 '증거 있는 pass'면 e2e_pass(Task 마무리 가능), 아니면 "
+              "e2e_fail: 결함 목록으로 복기 마일스톤이 자동 개설된다(결함 해소가 완수조건 초안, "
+              "확정은 회의). 미제출 항목은 '검사 안 됨' 결함이 된다.",
+              {})
+        async def e2e_finish(args):
+            return _ok(rule_e2e_finish(flow))
+        tools.append(e2e_finish)
 
     # [완료 권한 = 검수 역할(사용자 2026-07)] acceptance/'done' 판정은 QA의 일 — 종전엔 리더가 독점(complete_task
     # 리더 전용)했다. 리더의 역할은 기획·위임·조율이지 검수가 아니라, QA/PM이 '인수 PASS'로 판정해도 닫을 권한이
