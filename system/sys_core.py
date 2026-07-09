@@ -960,6 +960,19 @@ class Sys:
         '비동기 작업 중' 오인으로 폴링하며 이어가기 예산을 태우던 결함의 구조적 차단). 호출은 리더
         명의의 표준 request 파이프라인(베턴·게이트·기록·Discord 게시 동일)을 그대로 쓴다. 완성되면
         (owner_incomplete 해제) 결과 요약을 돌려줘 리더가 '판정'(검증·마감)만 하게 한다."""
+        # [§5 재배치 — S3(BRIEF-phys)] 파이프라인 ON: 미완 owner 재발사는 SYS의 몫이 아니라 **주기
+        # (iter) 이어가기**의 몫이다(§5 'SYS 집행 마감 → iter 검증 자동 판정으로 흡수'와 같은 축 —
+        # 진행은 사람도 SYS도 아니라 주기가 관할). S1 iter 구동부 접점은 시그니처 확정 전이라
+        # flow.iter_continue(flow, lead) 콜러블(S1 주입/테스트 mock)로 위임하고, 미주입이면 아무것도
+        # 하지 않는다(재발사 금지). 배포 실증=완료 인정 블록도 ON에선 완수조건 검증(§2)의 몫. OFF 불변.
+        if _ms_pipeline_on():
+            hook = getattr(flow, "iter_continue", None)
+            if callable(hook):
+                res = hook(flow, lead)
+                if hasattr(res, "__await__"):
+                    res = await res
+                return str(res or "")
+            return ""
         out = []
         # [활동 기반 — 진행 중인 긴 작업은 안 자름] n은 폭주 절대 안전망일 뿐(종전 24는 *진행 중인 대형
         # 작업*을 잘랐음 — P-010류, 목표=최대 품질과 모순). 무진행이면 아래 break가 즉시 잡으므로, 이 수는
@@ -1137,6 +1150,11 @@ class Sys:
         P-030/P-031 정지의 직접 원인: 리더가 owner에만 재위임하고 프론트·데이터·AI needs 방치 → 그 일이 아무
         에게도 안 감). 리더는 게이트 면제라 그 전문가에게 통과한다. _auto_delegate_owner와 같은 동기 회수 —
         결과를 리더가 판정만. 프롬프트 의존(무시되던) 제거하고 구조로 큐를 비운다. 같은 도메인은 1회만."""
+        # [§5 재배치 — S3(BRIEF-phys)] 파이프라인 ON: 교차도메인 막힘의 배분은 릴레이 ②응찰(S2)의 몫
+        # (§5 '_auto_coordinate → 릴레이 ②응찰로 흡수') — SYS가 리더 명의로 강제 배정하지 않는다.
+        # 큐는 비우지 않고 그대로 둔다: 여기서 비우면 항목이 조용히 유실된다(소비는 릴레이·현장). OFF 불변.
+        if _ms_pipeline_on():
+            return ""
         coord = list(getattr(flow, "pending_coordination", None) or [])
         if not coord or flow.comm.alive != lead or flow.comm.done:
             return ""
