@@ -101,6 +101,33 @@ def test_flow에_milestones_필드가_기본_빈값():
     assert f.milestones == []                  # 플래그 OFF 라이브에서 항상 빈 리스트(불변 보증)
 
 
+def test_도구는_플래그_ON에서만_등록(monkeypatch):
+    """[§12 이중수용] OFF 라이브엔 set_milestone/set_subtask 도구 자체가 없다 — 표면 불변."""
+    from system.guide_tools import make_guide_tools
+    f = _flow()
+    monkeypatch.delenv("ORGANT_PIPELINE", raising=False)
+    names_off = {t.name for t in make_guide_tools(f, 11, "leader")}
+    assert "set_milestone" not in names_off and "set_subtask" not in names_off
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    names_on = {t.name for t in make_guide_tools(f, 11, "leader")}
+    assert {"set_milestone", "set_subtask"} <= names_on
+
+
+def test_확정은_결정권자만_파싱과_게이트_경유(monkeypatch):
+    """[§1·§4] 마일스톤 확정 도구 — 결정권자 아닌 봇은 거부, '조건 | 실증절차' 줄 파싱, 게이트 경유."""
+    from system.rule.milestone import rule_set_milestone, rule_set_subtask
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()          # leader=11 (_flow의 Flow 생성 인자)
+    out = rule_set_milestone(f, 12, {"goal": "M1", "criteria": "a | run a"})
+    assert "결정권자" in out and not f.milestones            # 비결정권자 거부
+    out = rule_set_milestone(f, 11, {"goal": "M1", "criteria": "- 카운트 API | curl 확인\n버튼 UI | playwright 확인"})
+    assert "개설" in out and len(f.milestones[0].criteria) == 2   # 줄 파싱(불릿 관용)
+    out = rule_set_milestone(f, 11, {"goal": "M2", "criteria": "잘 동작해야 함"})
+    assert "거부" in out and len(f.milestones) == 1          # 소망형 — 등록 게이트가 막음
+    out = rule_set_subtask(f, 12, {"goal": "프론트 뼈대", "criteria": "index 로드 | curl -s /"})
+    assert "추가" in out and f.milestones[0].subtasks        # SubTask 추가는 현장 누구나(자발 참여)
+
+
 def test_체크포인트_동승과_복원_왕복(tmp_path):
     """[§9 최대 저장] checkpoint_open_task가 주기 상태를 프로젝트 레지스트리에 싣고,
     restore_open_task가 open_task 유무와 무관하게 되살린다(재시작 후 중간 재개의 실배선)."""

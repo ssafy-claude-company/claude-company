@@ -21,6 +21,7 @@ __all__ = [
     "gate_criteria", "open_milestone", "open_subtask",
     "iter_verify", "wrapup_done", "next_milestone", "ms_replan",
     "ms_to_dict", "ms_from_dict",
+    "parse_criteria_lines", "rule_set_milestone", "rule_set_subtask",
 ]
 
 
@@ -216,6 +217,61 @@ def ms_replan(flow, defects) -> Optional[Milestone]:
     if flow.log:
         flow.log("ms_replan", ms=ms.ms_id, defects=len(ds))
     return ms
+
+
+# ── 봇 도구 표면 (계약 §4 — 회의 수렴을 결정권자가 확정해 주기로 만든다) ─────────
+
+def parse_criteria_lines(text: str):
+    """봇이 쓴 조건 텍스트(한 줄 = '조건 | 실증절차')를 게이트 입력으로. 형식 오류는 게이트가 잡는다."""
+    out = []
+    for ln in str(text or "").splitlines():
+        ln = ln.strip().lstrip("-•* ").strip()
+        if not ln:
+            continue
+        d, _, v = ln.partition("|")
+        out.append({"desc": d.strip(), "verify": v.strip()})
+    return out
+
+
+def _is_decider(flow, me_id) -> bool:
+    """결정권자 판정 — 플래그 ON 세계에서 흐름의 To 수신자(구 리더 자리)가 결정권자로 축소 승계된다
+    (계약 §1: 권한은 수렴 확정·동률·교착 3개뿐 — 이 도구는 그중 '확정'의 표면이다)."""
+    return int(me_id) == int(getattr(flow, "leader", 0) or 0)
+
+
+def rule_set_milestone(flow, me_id, args) -> str:
+    """[결정권자 전용] 회의 수렴을 확정해 마일스톤 개설. 게이트 거부는 사유+처방을 그대로 반환."""
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    if not _is_decider(flow, me_id):
+        return ("등록 거부: 마일스톤 확정은 결정권자의 몫입니다 — 회의(meet)에서 조건을 수렴한 뒤 "
+                "결정권자가 등록합니다(당신은 회의에서 의견·응찰로 참여하세요).")
+    goal = str(args.get("goal") or "").strip()
+    if not goal:
+        return "등록 거부: goal(이 주기의 목표 한 줄)이 비었습니다."
+    entries = parse_criteria_lines(args.get("criteria"))
+    ms = open_milestone(flow, goal, entries, origin=str(args.get("origin") or ""))
+    if isinstance(ms, str):
+        return f"등록 거부: {ms}"
+    return (f"마일스톤 {ms.ms_id} 개설 — 목표: {goal[:60]} / 완수조건 {len(ms.criteria)}개. "
+            f"조건 충족(iter 검증)이 이 주기를 닫습니다. SubTask는 set_subtask로 추가하세요.")
+
+
+def rule_set_subtask(flow, me_id, args) -> str:
+    """진행 중 마일스톤에 SubTask 추가 — 주기 중에도 허용(계약 §2). 등록 게이트는 동일."""
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    ms = next_milestone(flow)
+    if ms is None:
+        return "추가 불가: 진행 중인 마일스톤이 없습니다 — set_milestone으로 주기를 먼저 여세요."
+    goal = str(args.get("goal") or "").strip()
+    if not goal:
+        return "등록 거부: goal이 비었습니다."
+    st = open_subtask(flow, ms, goal, parse_criteria_lines(args.get("criteria")))
+    if isinstance(st, str):
+        return f"등록 거부: {st}"
+    return (f"SubTask {st.st_id} 추가 — {goal[:60]} (마일스톤 {ms.ms_id}). "
+            f"참여는 자발입니다 — 백로그 제출로 참여하세요.")
 
 
 # ── 직렬화 (계약 §9 — 최대 저장: 체크포인트 동승·재시작 후 중간 재개) ─────────────

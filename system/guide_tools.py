@@ -114,6 +114,8 @@ def _chown_tree(path, uid, gid):
 # [Task Rule → rule/task.py] 완료·인수 검증 게이트는 원래 §7 설계대로 rule/task로 분리(guide_tools 병합 해체)
 from .rule.task import (_perceptual_essential, _wants_real_data,  # noqa: F401  [PJT/tests(test_sys)가 파사드에서 직접 import — 유지]
                         _has_real_dataset, _synthesizes_data, _is_verifier)
+# [마일스톤 파이프라인 — S1(PIPELINE_REWORK_2026-07-09)] 도구 표면·회의 설명 분기가 소비.
+from .rule.milestone import pipeline_on as _pipe_on, rule_set_milestone, rule_set_subtask
 
 
 # [스태핑 커버리지 — 리더 흡수 차단(2026-06-19, 사용자: '전문가 분배 무조건, 리더는 자기 직군만')]
@@ -428,6 +430,28 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return await _rule_set_goal(flow, me_id, role, args)
         tools.append(set_goal)
 
+        # [마일스톤 파이프라인 — S1 도구 표면(PIPELINE_REWORK_2026-07-09 §1·§2·§4)] 플래그 ON에서만
+        # 등록 — OFF 라이브는 도구 자체가 없다(동작 불변). 로직은 rule/milestone.py(매체중립).
+        if _pipe_on():
+            @tool("set_milestone",
+                  "회의(meet) 수렴을 확정해 **마일스톤**(Task의 큰 주기: 목표+완수조건)을 개설한다 — "
+                  "결정권자 전용. goal=이 주기의 목표 한 줄. criteria=완수조건 여러 줄, 한 줄에 "
+                  "'조건 | 실증절차'(run으로 확인 가능한 명령/방법). 소망형('잘 동작해야 함')·절차 없는 "
+                  "조건은 등록이 거부된다. **조건 충족(iter 검증)이 주기를 닫는다** — 사람이 아니라.",
+                  {"goal": str, "criteria": str})
+            async def set_milestone(args):
+                return _ok(rule_set_milestone(flow, me_id, args))
+            tools.append(set_milestone)
+
+            @tool("set_subtask",
+                  "진행 중 마일스톤에 SubTask를 추가한다(주기 중에도 가능). goal=단위 목표, "
+                  "criteria='조건 | 실증절차' 줄들(마일스톤과 같은 등록 게이트). 참여는 자발 — "
+                  "배정이 아니라 백로그 제출로 참여한다.",
+                  {"goal": str, "criteria": str})
+            async def set_subtask(args):
+                return _ok(rule_set_subtask(flow, me_id, args))
+            tools.append(set_subtask)
+
         @tool("vote",
               "팀 표결(구조적 합의): 선택지를 두고 멤버 전원의 선택+근거를 **동시에**(독립·앵커링 방지) "
               "수집·집계한다. question=안건, options='선택지1;선택지2;...', members=쉼표구분(비우면 현재 "
@@ -438,10 +462,14 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(vote)
 
         @tool("meet",
-              "라운드로빈 회의: 1라운드는 전원의 '독립 의견'을 동시에 수집하고(앵커링 방지), 2라운드부터 "
-              "서로의 발언을 보며 직렬로 토론한다(회의록 반환). topic=주제, members=쉼표구분(비우면 현재 "
-              "Task 팀 전원), rounds=라운드 수(기본 2). 1:1 중계 없이 실제 다자 토론을 구조화 — 회의록을 "
-              "보고 리더가 수렴·확정한다.",
+              ("완전 turn-taking 회의(§4): 소집자가 주제를 발제하면 매 발언권이 응찰([응찰: N])로 "
+               "돌아간다 — 강제 라운드 없음, 무응찰이면 종결 표결로 합의 종결. topic=주제, members="
+               "쉼표구분(비우면 현재 Task 팀 전원), rounds=발언 예산 배수(기본 2). 완수조건을 정하는 "
+               "회의라면, 수렴 뒤 결정권자가 set_milestone으로 확정한다.") if _pipe_on() else
+              ("라운드로빈 회의: 1라운드는 전원의 '독립 의견'을 동시에 수집하고(앵커링 방지), 2라운드부터 "
+               "서로의 발언을 보며 직렬로 토론한다(회의록 반환). topic=주제, members=쉼표구분(비우면 현재 "
+               "Task 팀 전원), rounds=라운드 수(기본 2). 1:1 중계 없이 실제 다자 토론을 구조화 — 회의록을 "
+               "보고 리더가 수렴·확정한다."),
               {"topic": str, "members": str, "rounds": str})
         async def meet(args):
             return _ok(await _rule_meet(flow, me_id, args))

@@ -141,22 +141,33 @@ async def meet(flow, me_id, args):
             return (f"[회의 1라운드 — 독립 의견] 주제: {topic}\n(이 라운드에선 동료 발언이 "
                     f"보이지 않습니다 — 앵커링 방지)\n당신({flow._info(m)})의 전문 관점 "
                     f"입장을 3~5줄(최대 1000자)로, 근거와 함께.")
-        for m, res, note in await _fork_collect(flow, me_id, members, body_r1):
-            cut = _speech_clip(res or note)   # 회의록·채널 발언은 같은 내용(기록 일치)
-            line = f"[1R] {flow._info(m) or m}: {cut}"
-            minutes.append(line)
-            _who = flow._info(m) or m
-            r1_full.append((_who, res or note))
-            last_full = (_who, res or note)
-            # [B-12] 매체 조건부: post_document 매체=200자+전문 ref / 폴백 매체=500자 clip.
-            await _say_speech(flow, m, "[회의 1R]", res or note)  # 본인 명의 발언
-            if res is not None and m in flow.current.team and m != flow.leader:
-                flow.current.participated.add(m)        # 회의 발언 = 실질 협의 인정
-        # [B-09 Phase A — Task Dossier] R1 종료 즉시 MINUTES.md에 전문 기록(append-only·무절단) —
-        # collab_notes 6,000자 head-keep이 '캡 도달 후 새 기록 통째 유실'하던 것의 내용 보존 원본.
-        dossier_append(flow, "MINUTES.md",
-                       f"## 회의 — {topic} [1R 독립의견]\n"
-                       + "\n".join(f"[1R] {w}: {t}" for w, t in r1_full))
+        # [마일스톤 파이프라인 §4 — 완전 turn-taking(2026-07-09 확정)] 강제 R1(전원 의무 발화) 폐지:
+        # 소집자 발제 후 첫 발화부터 응찰. 트레이드오프 관측(§8 민감 접근): R1은 발산(앵커링 방지)
+        # 장치였다 — 제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다.
+        from .milestone import pipeline_on as _ms_on
+        _no_r1 = _ms_on()
+        if not _no_r1:
+            for m, res, note in await _fork_collect(flow, me_id, members, body_r1):
+                cut = _speech_clip(res or note)   # 회의록·채널 발언은 같은 내용(기록 일치)
+                line = f"[1R] {flow._info(m) or m}: {cut}"
+                minutes.append(line)
+                _who = flow._info(m) or m
+                r1_full.append((_who, res or note))
+                last_full = (_who, res or note)
+                # [B-12] 매체 조건부: post_document 매체=200자+전문 ref / 폴백 매체=500자 clip.
+                await _say_speech(flow, m, "[회의 1R]", res or note)  # 본인 명의 발언
+                if res is not None and m in flow.current.team and m != flow.leader:
+                    flow.current.participated.add(m)        # 회의 발언 = 실질 협의 인정
+            # [B-09 Phase A — Task Dossier] R1 종료 즉시 MINUTES.md에 전문 기록(append-only·무절단) —
+            # collab_notes 6,000자 head-keep이 '캡 도달 후 새 기록 통째 유실'하던 것의 내용 보존 원본.
+            dossier_append(flow, "MINUTES.md",
+                           f"## 회의 — {topic} [1R 독립의견]\n"
+                           + "\n".join(f"[1R] {w}: {t}" for w, t in r1_full))
+        else:
+            minutes.append(f"[발제] {flow._info(me_id) or me_id}: {topic}")
+            dossier_append(flow, "MINUTES.md",
+                           f"## 회의 — {topic} [발제 — 완전 TT(§4): 강제 R1 없음]\n"
+                           f"{flow._info(me_id) or me_id}: {topic}")
         # ══ [1층 floor seam — R2+ 발언권 순환의 정책화(CA-Lab RFC-003 1층)] 토론의 발언 '순서'는
         # FloorPolicy가 정하고, 발언 1회의 실행(베턴 프레임·wake·회의록·게시·참여 인정)은 정책과
         # 무관한 단일 경로(_speech)다 — 베턴·점유 담보(Engagement·BusyInOtherFlow)는 그대로(1층은
@@ -302,11 +313,15 @@ async def meet(flow, me_id, args):
                          nxt=a.next, reason=(a.reason or "")[:40])
 
         st = FloorState(members)
-        for m in members[:-1]:
-            st.record(Turn(speaker=m, body="(1R)"))     # R1 발언을 침묵 장부에 반영(오퍼 공정성)
+        if not _no_r1:
+            for m in members[:-1]:
+                st.record(Turn(speaker=m, body="(1R)"))     # R1 발언을 침묵 장부에 반영(오퍼 공정성)
         policy = (make_floor("turn-taking") if tt
                   else make_floor("orchestrated", allocator=round_robin([m for _, m in schedule])))
-        await run_conversation(policy, st, Turn(speaker=members[-1], body="(1R 마지막 발언)"),
+        # [§4] 완전 TT의 시작 턴 = 소집자 발제(내용 발화가 아니라 주제 제시) — 이후 전 발언이 응찰.
+        _t0 = (Turn(speaker=me_id, body="(발제)") if _no_r1
+               else Turn(speaker=members[-1], body="(1R 마지막 발언)"))
+        await run_conversation(policy, st, _t0,
                                _speak, bid=(_bid if tt else None),
                                max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
         _flush_minutes()
