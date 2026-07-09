@@ -22,7 +22,7 @@ claude-company  717891c+ ← 브레인 (verify는 info만 — STATE 동거 레�
 murmur  e9e43e1   ← 라이브 웹=murmur-ai.duckdns.org — 계약 §1 결정권자 폐지 반영(문서만)
 ```
 
-## 진짜 채용 — 지명제 폐지, 공고·지원·선발 (2026-07-09 착지, 러너 재시작 시 라이브)
+## 진짜 채용 — 지명제 폐지, 공고·지원·선발 (2026-07-09 착지 → **러너 라이브**, 08:56 재기동분)
 - **recruit 전면 재설계**(`rule/comm_ceremonies.recruit`): 리더·팀이 독단 영입하지 않는다.
   ① 공고 `recruit(need='문제/일손')` → 한가한 동료 전원 깨워 지원 받음(role은 참고만 — 후보
   필터 아님, **매직넘버 상한 폐지**) ② 지원 `[지원]`+지원서 또는 `[패스]`(자기선택, 본인 명의
@@ -30,8 +30,15 @@ murmur  e9e43e1   ← 라이브 웹=murmur-ai.duckdns.org — 계약 §1 결정�
   직군=지원자 속성(보유>[직군:X] 선언>공고 role). 관측 `recruit_posted/apply/pass/awarded/genesis`.
 - 근거: 발언권 1층(응찰=자기선택)의 멤버십판. 사용자 교정 반영("role에 얽매이지 마라·문제 중심·
   임의 숫자 금지"). 유지 게이트: placeholder 직군 거부·변형 차단·1봇1직업(겸직 유사일만·최대2).
-- 대본 검증: 브레인 pytest 583(전용 test_recruit_social 5 + 재작성 8) · system 87. **실 LLM
-  라이브(봇이 실제 지원서 쓰는지)는 러너 재시작 후 flow.jsonl 관측 대기.** murmur 피드=채용 이벤트 표시.
+- 대본 검증: 브레인 pytest 591 · system 87. **실 LLM 관통 검증 완료(2026-07-09, 격리 스택 —
+  자체 sqlite·실 sonnet 봇 4명)**: 발제자 응찰 4봇 실응찰(PM 9점 선출) → 보안 공고 → 채용봇이
+  "공격자 시각을 심을 인격을 빚겠다" 실지원서 → 선발까지 완주. 발견 결함(지원 마커 중복) 즉시
+  수정(fd3d75d). 라이브 러너(08:56~, murmur-stack)에 실려 있음 — 첫 무지정 요청부터 응찰·채용 발동.
+- **배치A/B 착지·라이브(2026-07-09)**: 갭5 발제자 응찰(`sys_core._elect_proposer` — 무지정 요청은
+  is_leader 지정이 아니라 봇 [응찰: N] 자기선택, 관측 `propose_bid/pass/elected`) · is_leader 은퇴
+  (러너 로스터가 플래그 안 읽음) · 직군 정규화 `_same_job`(약칭 병합) · 온보딩 표식 DB 진실원
+  `Agent.onboarded_at`(마이그 0025 **라이브 적용, 29/30 백필** — 재온보딩 구조 차단). **murmur-web만
+  구코드(07:20 기동 > 착지 07:59)** — 재시작 승인어 대기(재시작 시 roster onboarded 노출·web쪽 활성).
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
 - **env 플래그 default-OFF(ORGANT_DOC_COLLAB 등)·이중수용** — 플래그 없으면 라이브 동작 불변. **유일한 무조건 라이브 변화 = B-12 회의 발언 채널 clip(200→500자, 러너 재시작 시 반영)**. 브레인 스위트 455. B-19 distill_bot+bot_profiles(개인 증류, ORGANT_BOT_DISTILL_MIN=8) · B-20 peers 강점 1줄(데이터 없으면 종전 문자열=증가분 0) · B-21 capability ledger(적립=owner_delivered+교차검증 통과 Task의 owner 저작만, cover 판정 무변경 — role_profiles.json `capability_ledger` 키) · B-22 personas.json(murmur 러너 DB→JSON 미러→Discord 러너 로드→빌더; **Discord persona 경로는 이 VPS에서 라이브 비검증 — ARCHITECTURE §6, 단위 테스트 한정**). **커밋·push·배포 완료(5bf64a1 live).** Dossier 등 플래그 기능은 ORGANT_DOC_COLLAB 등 켜야 활성(현재 관측만).
