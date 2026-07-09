@@ -5,11 +5,12 @@ import asyncio
 import json
 import os
 import re
-from ..protocol import Kind
+from ..protocol import Kind, Marker
+from .comm_engine import BusyInOtherFlow, CommError
 from .comm_helpers import (
     _JOB_SEP, _SPARE_LABEL, _add_members, _clarify_hold, _find_variant_job,
     _fork_collect, _group_of, _is_spare, _job_tokens, _jobs_of, _norm_job,
-    _resolve_members, _say,
+    _resolve_members, _say, _say_speech,
 )
 
 
@@ -265,29 +266,40 @@ async def parallel_work(flow, me_id, args):
 
 
 async def recruit(flow, me_id, role, args):
-    """[Communication Rule 로직] recruit — guide_tools에서 이관(평문 반환, @tool이 _ok 래핑)."""
+    """[Communication Rule 로직] recruit — **진짜 채용**(2026-07-09 사용자 설계).
+
+    지명제 폐지: 리더·팀이 동료를 독단으로 데려오지 않는다.
+      ① 공고 — recruit(role=직군, reason=무슨 일인지). 시스템이 후보(그 직군·유사 직군·예비,
+         타 흐름 점유 제외, ≤4)를 깨워 지원을 받는다.
+      ② 지원 — 후보 Organt가 스스로 정한다: [지원]+지원서(자기 경험 근거) 또는 [패스].
+         지원서는 본인 명의로 채널에 게시된다(과정 = 콘텐츠).
+      ③ 선발 — 공고자가 지원서를 읽고 recruit(member=지원자, reason=선발 사유)로 확정.
+         **지원하지 않은 봇의 지명은 거부**(독단 영입 차단 — 이 함수의 반전 지점).
+      유찰(후보 0·지원 0) = genesis 폴백: 그 직군 전문가를 신규 생성해 합류(채용 상속).
+    발언권 1층(응찰=자기선택)의 멤버십판 — 합류도 자기선택 + 사회적 선발.
+    유지 게이트: 범용 직군 금지·변형 직군 차단·1봇1직업(겸직 예외≤2)·일로 직업 획득(잠정 영속)·
+    연속실패 채용중단. 자기 직군 확정(예비 담당자, Task 전)은 채용이 아니라 정체성 확정 — 종전 유지.
+    """
     from .._util import _speech_clip, _react, _dbg
     from .task import _ckpt
     g = flow.guide
     role_name = (args.get("role") or "").strip()
     spec = (args.get("member") or "").strip()
+    reason = str(args.get("reason") or "").strip()
     # [전문화 정책 — 범용 직군 금지(사용자 결정)] 범용(풀스택 등)은 모든 일을 흡수해 전문 채용을
     # 억제하고(라이브: AI·서버·데이터가 한 봇에 22건 집중) 병렬의 병목이 된다. 전문 직군으로 나눠 뽑는다.
-    if role_name and any(g in _norm_job(role_name)
-                         for g in ("풀스택", "풀 스택", "fullstack", "full stack", "full-stack",
-                                   "제너럴", "generalist", "만능", "올라운드")):
+    if role_name and any(gw in _norm_job(role_name)
+                         for gw in ("풀스택", "풀 스택", "fullstack", "full stack", "full-stack",
+                                    "제너럴", "generalist", "만능", "올라운드")):
         return (f"채용 거부(전문화 정책): '{role_name}' 같은 범용 직군은 두지 않습니다 — 범용은 모든 "
-                   f"일을 흡수해 전문 채용을 막고 병렬의 병목이 됩니다(1봇 1직업 전문화가 회사 원칙). "
-                   f"필요한 전문 직군으로 나눠 뽑으세요(예: 백엔드 / 프론트엔드 / AI 엔지니어 / 데이터 엔지니어).")
-    # [직군 중복 생성 게이트 — 근본] recruit가 자유 텍스트 직군명을 받다 보니 흐름마다 변형 이름
-    # ('VFX 전문가' 있는데 'VFX 아티스트')으로 '같은 도메인 직군'이 새 Discord 역할로 계속 불어났다.
-    # 비교 풀은 현재 팀 라벨 + '서버의 커스텀 역할 전체'(직군 역할은 서버 영속이라, 토큰 유실/오프라인
-    # 봇의 직군도 보인다). 변형이 감지되면 생성하지 않고 멈춰 세운다 — 재사용(기존 이름 그대로)이나
-    # 명시적 신설(new_role='yes')은 에이전트가 정한다(시스템이 정답 이름을 정하는 하드코딩 아님).
+                f"일을 흡수해 전문 채용을 막고 병렬의 병목이 됩니다(1봇 1직업 전문화가 회사 원칙). "
+                f"필요한 전문 직군으로 나눠 뽑으세요(예: 백엔드 / 프론트엔드 / AI 엔지니어 / 데이터 엔지니어).")
+    # [직군 중복 생성 게이트 — 근본] 변형 이름('VFX 전문가' vs 'VFX 아티스트')로 같은 도메인 직군이
+    # 불어나는 것 차단 — 재사용(기존 이름)이나 명시 신설(new_role='yes')은 에이전트가 정한다.
     if role_name:
-        existing_jobs = {j for v in flow.bot_info.values()
-                         if v and not str(v).startswith(_SPARE_LABEL)
-                         for j in _jobs_of(v)}   # 겸직 라벨은 구성 직군으로 풀어 비교
+        existing_jobs = {j for vv in flow.bot_info.values()
+                         if vv and not str(vv).startswith(_SPARE_LABEL)
+                         for j in _jobs_of(vv)}
         fn_roles = getattr(g, "get_custom_role_names", None)
         if fn_roles and getattr(flow, "guild_id", None):
             try:
@@ -299,39 +311,30 @@ async def recruit(flow, me_id, role, args):
             if flow.log:
                 flow.log("recruit_variant_blocked", asked=role_name, existing=dup)
             return (f"직군 중복 의심으로 보류: '{role_name}'은(는) 이미 있는 직군 '{dup}'의 변형으로 "
-                       f"보입니다(같은 도메인을 다른 이름으로 또 만들면 직군이 계속 불어납니다). 같은 일이면 "
-                       f"role='{dup}' 그대로 다시 호출해 기존 직군으로 채용하세요. 정말 '{dup}'과(와) 다른 "
-                       f"일을 하는 새 직군이 필요하면 new_role='yes'를 함께 줘 명시적으로 신설하세요.")
+                    f"보입니다(같은 도메인을 다른 이름으로 또 만들면 직군이 계속 불어납니다). 같은 일이면 "
+                    f"role='{dup}' 그대로 다시 호출해 기존 직군으로 공고하세요. 정말 '{dup}'과(와) 다른 "
+                    f"일을 하는 새 직군이 필요하면 new_role='yes'를 함께 줘 명시적으로 신설하세요.")
     if flow.current is None:
-        # [예비 담당자 '자기 직군 우선'] Task 열기 전에 담당자가 자기 직군부터 정하는 건 허용한다 — 자기
-        # 자신 + role 지정일 때만. 이래야 '예비'인 채로 create_project/create_task를 열어 화면(상태블록·동료
-        # 프롬프트)에 '예비'로 박히는 걸 막는다(사용자가 본 '담당자가 예비로 들어옴'의 직접 원인). 다른 사람
-        # 채용 등은 종전대로 Task가 먼저 있어야 한다.
+        # [예비 담당자 '자기 직군 우선'] Task 열기 전에 담당자가 자기 직군부터 정하는 건 허용 — 자기
+        # 자신 + role 지정일 때만(채용이 아니라 정체성 확정). 그 외는 Task가 먼저 있어야 한다.
         self_pick = _resolve_members(spec, flow, flow.pool) if spec else []
         if role_name and ((not spec) or (self_pick and self_pick[0] == me_id)):
-            # 1봇 1직업: 이 분기는 '예비(무직)' 담당자용이다 — 이미 직군이 있는 봇이 자기 직군을
-            # 덮어쓰면(디자이너→게임 기획자) 전문화 기억이 영속 오염된다(라이브 관측). 같은 직군
-            # 재확인만 통과시키고, 다른 직군은 거부한다(필요하면 예비를 그 직군으로 뽑는 것).
             cur = (flow._info(me_id) or "").strip()
             new_label = role_name
             if cur and not _is_spare(flow, me_id):
                 cur_jobs = _jobs_of(cur)
                 if any(_norm_job(j) == _norm_job(role_name) for j in cur_jobs):
                     return (f"이미 '{role_name}' 직군을 보유하고 있습니다 — 그대로 진행하세요(변경 없음).")
-                # 겸직 예외(사용자 정책): ① 풀에 예비가 한 명도 없거나 ② 새 직군이 기존 직군과
-                # '비슷한 일'(도메인 토큰 공유)일 때만, **기존 직군을 유지한 채** 새 직군을 더한다
-                # (교체 아님 — 전문화 기억 보존). 봇당 최대 2개(직군 스택 누적 재발 방지). 그 외에는
-                # 1봇 1직업 원칙 — 예비를 그 직군으로 새로 뽑는 게 정도.
                 spares_left = [s for s in flow.pool if _is_spare(flow, s)]
                 similar = any(_job_tokens(j) & _job_tokens(role_name) for j in cur_jobs)
                 if spares_left and not similar:
                     return (f"자기 직군 추가 거부: 당신은 이미 '{cur}' 직군입니다 — **1봇 1직업** 원칙이라 "
-                               f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
-                               f"(전문화 보호). '{role_name}'이 필요하면 Task를 연 뒤 recruit(role='{role_name}')로 "
-                               f"'예비'를 그 직군으로 채용하세요(예비 {len(spares_left)}명).")
+                            f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
+                            f"(전문화 보호). '{role_name}'이 필요하면 Task를 연 뒤 recruit(role='{role_name}')로 "
+                            f"공고를 올려 지원을 받으세요(예비 {len(spares_left)}명).")
                 if len(cur_jobs) >= 2:
                     return (f"겸직 한도 초과: 당신은 이미 직군 2개('{cur}')를 보유하고 있습니다 — 봇당 "
-                               f"겸직은 최대 2개입니다. '{role_name}'은 예비나 다른 동료에게 맡기세요.")
+                            f"겸직은 최대 2개입니다. '{role_name}'은 공고를 올려 다른 동료가 맡게 하세요.")
                 new_label = f"{cur}{_JOB_SEP}{role_name}"
             flow.bot_info[me_id] = new_label
             if getattr(flow, "persist_role", None):
@@ -347,105 +350,246 @@ async def recruit(flow, me_id, role, args):
                     pass
             what = "겸직 추가" if _JOB_SEP in new_label else "확정"
             return (f"자기 직군 {what}: 당신(id {me_id})의 직군 = '{new_label}' — 한 직원으로 "
-                       f"참여합니다. 이어서 create_project → create_task로 팀을 꾸려 시작하세요.")
+                    f"참여합니다. 이어서 create_project → create_task로 팀을 꾸려 시작하세요.")
         return ("오류: 진행 중인 Task가 없습니다. 먼저 create_task로 Task를 여세요. (단 '예비' 담당자가 자기 "
-                   "직군을 정하는 recruit(member=자신, role=…)는 Task 전에도 됩니다 — 자기 직군부터 정하세요.)")
-    # 충원 루프 하드 차단: 최근 요청이 연속 2회+ 실패(시스템 일시불안정)면 채용을 막는다 — 지금 새로
-    # 뽑아도 같은 불안정으로 똑같이 실패한다('백엔드 6명' 사태의 구조적 차단; 안내가 아니라 거부).
-    # 기존 동료에게 다시 요청해 한 명이라도 응답이 오면 consec_fail이 리셋돼 다시 채용 가능.
+                "직군을 정하는 recruit(member=자신, role=…)는 Task 전에도 됩니다 — 자기 직군부터 정하세요.)")
+    # 충원 루프 하드 차단: 최근 요청 연속 2회+ 실패면 채용 중단(무한 충원 루프 방지 — '백엔드 6명' 사태).
     if getattr(flow, "consec_fail", 0) >= 2:
         return (f"채용 보류: 최근 요청이 연속 {flow.consec_fail}회 무응답/실패 — 시스템 일시 불안정입니다. "
-                   f"지금 새로 뽑아도 같이 실패하니 채용을 막습니다(무한 충원 루프 방지). 기존 동료에게 잠시 뒤 "
-                   f"다시 요청해 한 명이라도 응답이 오면 그때 충원하거나, 계속 안 되면 사용자에게 보고하고 멈추세요.")
-    cand = _resolve_members(spec, flow, flow.pool) if spec else []
-    if not cand:
-        # member 미지정(또는 못 찾음): 직군 채용이면 자동 선발.
-        spares = [m for m in flow.pool if _is_spare(flow, m) and m not in flow.project_team]
-        if role_name and spares:
-            cand = [spares[0]]
-        elif role_name:
-            # [예비 폐지 → genesis(사용자 설계 2026-07)] '예비 풀'은 폐지된 개념이다 — 뽑을 사람이 없다고
-            # 실패("예비 0명")하는 게 아니라, 그 직군 전문가를 **즉석 생성**한다(리크루터 genesis). 생성 봇은
-            # 이 recruit에서 바로 쓰게 pool·bot_info에 합류시키고, 인격·craft(온보딩·전수)는 sleep-loop
-            # 형성 사이클이 채운다(스튜디오 채용과 동형). 종전 dead-end는 리더가 넘길 전문가를 못 구해
-            # 교착시켰다(라이브 P-005: '예비 인력 0명이라 recruit 불가'로 배포 owner를 못 세워 무한 순환).
-            _mk = getattr(g, "create_agent", None)
-            _new = None
-            if _mk and getattr(flow, "user_channel", None):
-                try:
-                    # [채용 상속(사용자 규칙 2026-07-08)] recruiter=채용 요청 봇 — 신입의 모델·effort를
-                    # 채용자와 '같은 선'으로 복사 생성(상향은 스튜디오에서 사용자 직접 선택만).
-                    _new = await _mk(flow.user_channel, role_name, recruiter=me_id)   # user_channel=프로젝트 id
-                except Exception:
-                    _new = None
-            if _new:
-                _nid = int(_new)
-                if _nid not in flow.pool:
-                    flow.pool.append(_nid)
-                flow.bot_info[_nid] = role_name            # 생성 즉시 그 직군 전문가로 합류(DB도 role 보유)
-                cand = [_nid]
-                if flow.log:
-                    flow.log("recruit_genesis", role=role_name, new=_nid)
+                f"지금 새로 뽑아도 같이 실패하니 채용을 막습니다(무한 충원 루프 방지). 기존 동료에게 잠시 뒤 "
+                f"다시 요청해 한 명이라도 응답이 오면 그때 충원하거나, 계속 안 되면 사용자에게 보고하고 멈추세요.")
+
+    open_p = getattr(flow, "recruit_open", None)
+
+    # ── ③ 선발 확정(member=) — 지원자 중에서만 ────────────────────────────────
+    if spec:
+        cand = _resolve_members(spec, flow, flow.pool)
+        if not cand:
+            return (f"선발 불가: '{spec}'을(를) 풀에서 못 찾았습니다. 현재 풀: {flow._names(flow.pool)}")
+        mid = cand[0]
+        if mid == me_id:
+            return ("자기 자신은 채용 대상이 아닙니다 — 자기 직군 확정은 Task 열기 전에만 가능합니다.")
+        if mid in flow.current.team:
+            if not role_name:
+                return (f"{flow._info(mid) or mid}은(는) 이미 현재 Task 팀입니다 — 채용 불필요.")
+            # [팀 내 재배치·겸직 — 영입 아님] 이미 팀인 동료의 직군 추가는 공고 대상이 아니다(합류가
+            # 아니라 라벨 변경). 1봇1직업·겸직 예외(예비 0/유사 일)·한도 2는 그대로 강제.
+            cur = (flow._info(mid) or "").strip()
+            if cur and any(_norm_job(j) == _norm_job(role_name) for j in _jobs_of(cur)):
+                return (f"{flow._info(mid) or mid}은(는) 이미 '{role_name}' 직군을 보유 — 변경 없이 "
+                        f"그대로 진행하세요.")
+            tentative = False
+            if cur and not _is_spare(flow, mid):
+                cur_jobs = _jobs_of(cur)
+                spares_left = [s for s in flow.pool if _is_spare(flow, s)]
+                similar = any(_job_tokens(j) & _job_tokens(role_name) for j in cur_jobs)
+                if spares_left and not similar:
+                    return (f"겸직 거부: {cur}(id {mid})는 이미 '{cur}' 직군입니다 — **1봇 1직업** 원칙이라 "
+                            f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
+                            f"(전문화 보호). 필요하면 recruit(role='{role_name}')로 공고를 올려 지원을 받으세요.")
+                if len(cur_jobs) >= 2:
+                    return (f"겸직 한도 초과: {flow._info(mid) or mid}(id {mid})는 이미 직군 2개('{cur}') "
+                            f"보유 — 봇당 겸직은 최대 2개입니다.")
+                new_label = f"{cur}{_JOB_SEP}{role_name}"
             else:
-                return (f"채용 실패: '{role_name}' 전문가를 새로 생성하지 못했습니다(일시 오류) — 잠시 뒤 "
-                           f"다시 시도하거나 member로 기존 동료에게 맡기세요.")
-        else:
-            return (f"채용할 인력을 못 찾음 — member로 기존 동료(id/역할)를 지정하거나 role로 직군을 "
-                       f"적으세요. 현재 풀: {flow._names(flow.pool)}")
-    mid = cand[0]
-    # 예비(직군 미배정)는 'role=직군'을 줘야만 채용된다 — 말로만 배정 차단(직군은 구조적으로 부여).
-    if _is_spare(flow, mid) and not role_name:
-        return (f"채용 거부: {flow._info(mid) or mid}는 '예비'(직군 미배정)입니다 — role='직군명'을 함께 "
-                   f"지정해 어떤 직군으로 채용할지 정하세요(예: recruit(member='{mid}', role='게임 기획자')). "
-                   f"직군 없이는 합류·위임 불가(말로만 배정 금지 — 직군이 실제로 부여돼야 일을 맡길 수 있음).")
-    # [같은 직군 채용도 자유] role 중복/실패상태로 채용을 거부하지 않는다 — 반복 채용('백엔드 6명')의 진짜
-    # 원인은 '동료 무응답(서브프로세스 행)'이었고 그건 워커 턴 타임아웃으로 끊었다(8분 내 인프라실패 처리).
-    # 따라서 필요하면 같은 직군을 더 뽑아도 된다. '무응답=인프라'라는 판단·안내는 요청 실패 메시지로만 한다.
-    hired = ""
-    if role_name:
+                new_label = role_name
+                flow.tentative_roles[mid] = role_name      # 예비 팀원(리더 등) — 일로 획득 시 영속
+                tentative = True
+            flow.bot_info[mid] = new_label
+            if getattr(flow, "persist_role", None) and not tentative:
+                try:
+                    flow.persist_role(mid, new_label)
+                except Exception:
+                    pass
+            fn = getattr(g, "assign_job_role", None)
+            if fn and getattr(flow, "guild_id", None) and not tentative:
+                try:
+                    await fn(flow.guild_id, mid, new_label)
+                except Exception:
+                    pass
+            flow.current.status.group = _group_of(flow, flow.current.team)
+            what = "겸직 추가" if _JOB_SEP in new_label else "직군 부여"
+            return (f"{flow._info(mid) or mid} {what}(팀 내 재배치): '{new_label}'"
+                    + (f" (사유: {reason})" if reason else ""))
+        if not open_p:
+            return ("지명 채용은 폐지됐습니다(독단 영입 차단) — 동료가 필요하면 먼저 "
+                    "recruit(role='직군', reason='무슨 일을 하게 되는지')로 **필요를 공고**해 "
+                    "지원을 받으세요. 지원서가 돌아오면 그중에서 member=로 선발합니다.")
+        if mid not in open_p["applicants"]:
+            names = ", ".join(f"{flow._info(a) or a}(id {a})" for a in open_p["applicants"])
+            return (f"선발 불가: {flow._info(mid) or mid}은(는) 이 공고에 지원하지 않았습니다 — "
+                    f"지원자 중에서만 선발할 수 있습니다(독단 영입 차단). 지원자: {names or '없음'}")
+        role_for = open_p["role"]
+        joined = await _recruit_join(flow, mid, role_for, via="선발")
+        if joined is not None:
+            return joined                      # 게이트 거부 문구(겸직 등)
+        flow.recruit_open = None
+        if flow.log:
+            flow.log("recruit_awarded", role=role_for, to=mid, applicants=len(open_p["applicants"]))
+        await _say(flow, me_id, f"[채용 확정] {flow._info(mid) or mid} — '{role_for}' 공고 선발"
+                                + (f" (사유: {reason})" if reason else ""))
+        return (f"{flow._info(mid) or mid} 선발·합류 — '{role_for}' 공고에 대한 지원서 기준"
+                f"{('(사유: ' + reason + ')') if reason else ''}. 현재 팀: {flow._names(flow.current.team)}")
+
+    # ── ① 공고(role=) — 후보를 깨워 지원을 받는다 ─────────────────────────────
+    if not role_name:
+        return ("공고 방법: recruit(role='직군', reason='무슨 일을 하게 되는지')로 팀의 필요를 올리세요 — "
+                "시스템이 후보들에게 공고를 돌려 지원서를 모아 돌려줍니다. 동료 지목(member=)은 "
+                "지원자 선발 확정에만 씁니다.")
+    _hold = _clarify_hold(flow, me_id)
+    if _hold:
+        return _hold
+    if (any(not x.done() for x in getattr(flow, "inflight_tasks", ()))
+            and flow.comm.alive != me_id and not flow.comm.done):
+        return ("[대기] 직전 위임이 아직 진행 중입니다 — 공고는 그 결과를 받은 뒤 올리세요.")
+    if getattr(flow, "fork_active", 0) > 0:
+        return ("[대기] 다른 의견 수집이 진행 중입니다 — 그 결과를 받은 뒤 공고하세요(중첩 수집 금지).")
+    if flow.comm.done or flow.comm.alive != me_id:
+        return (f"지금은 공고할 수 없습니다(활성={flow.comm.alive}) — 진행 중인 요청의 응답을 받은 뒤 다시.")
+    if open_p:
+        await _say(flow, me_id, f"[채용 공고 교체] 종전 '{open_p['role']}' 공고를 닫고 새 공고를 올립니다.")
+        flow.recruit_open = None
+
+    # 후보: 그 직군 보유 > 유사 직군 > 예비(무직). 현재 팀·타 흐름 점유 제외, 상한 4.
+    eng, scope = flow.comm.engagement, flow.comm.scope
+
+    def _free(m):
+        return not (eng is not None and scope is not None and eng.busy_elsewhere(m, scope))
+
+    exact, similar, spare = [], [], []
+    for m in flow.pool:
+        if m == me_id or m in flow.current.team or not _free(m):
+            continue
+        info = (flow._info(m) or "").strip()
+        if _is_spare(flow, m) or not info:
+            spare.append(m)
+        elif any(_norm_job(j) == _norm_job(role_name) for j in _jobs_of(info)):
+            exact.append(m)
+        elif any(_job_tokens(j) & _job_tokens(role_name) for j in _jobs_of(info)):
+            similar.append(m)
+    cands = (exact + similar + spare)[:4]
+
+    posting = (f"[채용 공고] 직군: {role_name}" + (f" — {reason}" if reason else "")
+               + f"\n프로젝트: {getattr(flow, 'project_name', '') or '(미등록)'}"
+               + (f" · 현재 Task: {_speech_clip(flow.current.status.purpose or '', 80)}"
+                  if flow.current.status.purpose else ""))
+    await _say(flow, me_id, posting)
+    if flow.log:
+        flow.log("recruit_posted", role=role_name, candidates=len(cands))
+
+    applicants = {}
+    if cands:
+        flow.fork_active += 1          # 수집 중 중첩 방지(meet·fork와 같은 가드)
+        try:
+            for m in cands:
+                try:
+                    flow.comm.request(me_id, m, "recruit", Kind.INFO)
+                except BusyInOtherFlow:
+                    continue           # 공고 도는 사이 타 흐름이 데려감 — 그 후보만 건너뜀
+                except CommError:
+                    break              # 베턴 경합 — 수집 중단(지원 0으로 처리)
+                me_info = (flow._info(m) or "").strip()
+                body = (f"{posting}\n\n[지원 여부를 스스로 정하세요] 당신: "
+                        f"{me_info or '예비(직군 미정)'}."
+                        + (f" 선발되면 '{role_name}' 직군으로 채용됩니다(첫 실작업 시 확정)."
+                           if (_is_spare(flow, m) or not me_info) else "")
+                        + "\n맡고 싶으면 첫 줄에 [지원], 이어서 지원서(왜 당신인가 — 당신의 경험·"
+                          "기준에서 근거)를 4문장 이내로. 맡지 않겠으면 [패스] 한 줄만. "
+                          "지원해도 선발은 공고자가 지원서를 보고 정합니다.")
+                try:
+                    res = await flow.wake(m, body, Kind.INFO)
+                except Exception as e:
+                    res = f"(응답 실패: {e})"
+                try:
+                    flow.comm.respond(m, "accept", res)
+                except CommError:
+                    pass
+                if res and Marker.APPLY_RE.search(res):
+                    applicants[m] = res
+                    await _say_speech(flow, m, "[지원]", res)   # 지원서 = 본인 명의 공개 발화
+                    if flow.log:
+                        flow.log("recruit_apply", role=role_name, who=m)
+                else:
+                    if flow.log:
+                        flow.log("recruit_pass", role=role_name, who=m)
+        finally:
+            flow.fork_active -= 1
+
+    if not applicants:
+        # 유찰 → genesis 폴백(신규 채용 — 채용 상속). 신입은 지원 절차 없이 합류(신규 생성이므로).
+        await _say(flow, me_id, f"[채용] '{role_name}' 공고 유찰(후보 {len(cands)}·지원 0) — 신규 채용으로 전환합니다.")
+        _mk = getattr(g, "create_agent", None)
+        _new = None
+        if _mk and getattr(flow, "user_channel", None):
+            try:
+                # [채용 상속(사용자 규칙 2026-07-08)] recruiter=공고 봇 — 신입의 모델·effort를 같은 선으로.
+                _new = await _mk(flow.user_channel, role_name, recruiter=me_id)
+            except Exception:
+                _new = None
+        if not _new:
+            return (f"채용 실패: '{role_name}' 지원자가 없고 신규 생성도 실패했습니다(일시 오류) — "
+                    f"잠시 뒤 다시 공고하세요.")
+        nid = int(_new)
+        if nid not in flow.pool:
+            flow.pool.append(nid)
+        flow.bot_info[nid] = role_name
+        if flow.log:
+            flow.log("recruit_genesis", role=role_name, new=nid)
+        joined = await _recruit_join(flow, nid, role_name, via="genesis", fresh=True)
+        if joined is not None:
+            return joined
+        await _say(flow, me_id, f"[채용 확정] {flow._info(nid) or nid} — '{role_name}' 신규 채용(genesis)")
+        return (f"'{role_name}' 공고 유찰 → 신규 채용: {flow._info(nid) or nid} 합류. "
+                f"현재 팀: {flow._names(flow.current.team)}")
+
+    flow.recruit_open = {"role": role_name, "reason": reason,
+                         "applicants": dict(applicants)}
+    lines = [f"[채용 공고 '{role_name}'] 지원 {len(applicants)}건 — 지원서를 읽고 선발하세요:"]
+    for m, app in applicants.items():
+        lines.append(f"\n· {flow._info(m) or m}(id {m}):\n{_speech_clip(app, 600)}")
+    lines.append(f"\n선발 = recruit(member='<이름|id>', reason='선발 사유'). "
+                 f"모두 부적합하면 다시 공고(role=…)하거나 그대로 진행하세요 — "
+                 f"지원 안 한 동료의 지명은 불가합니다.")
+    return "\n".join(lines)
+
+
+async def _recruit_join(flow, mid, role_name, via="선발", fresh=False):
+    """합류 마무리(공통) — 직군 부여(겸직 게이트·잠정 영속)·팀 합류·스레드 멤버십.
+    거부 사유가 있으면 그 문구를 반환(합류 안 함), 성공이면 None."""
+    g = flow.guide
+    if not fresh:
+        # 예비/무직 → 그 직군으로 잠정 채용(일로 직업 획득 — 첫 실작업 시 영속)
         cur = flow._info(mid)
         if _is_spare(flow, mid) or not cur:
-            flow.bot_info[mid] = role_name                    # 예비/무직 → 그 직군으로 (런타임만, 이 흐름)
-            hired = f" — '{role_name}' 직군으로 채용(잠정 — 첫 실작업 시 영속)"
-            # [일로 직업 획득 — 영속 이연] 예비를 직군으로 뽑아도 *지금은 영속하지 않는다*(jobs.json·Discord
-            # 보류). 그 봇이 *첫 실작업(Write/Edit/run)*을 하는 순간에만 영속한다(권한 훅이 승격) — '직업=기억'을
-            # 문자 그대로. 끝까지 일 안 하면 영속 안 돼 다음 흐름에 예비로 사라진다(0-기억 직군 양산의 근본 차단).
-            # 충돌(같은 봇 이중채용)도 무해 — 둘 다 일 안 하면 둘 다 예비로 남는다.
+            flow.bot_info[mid] = role_name
             flow.tentative_roles[mid] = role_name
         elif not any(_norm_job(j) == _norm_job(role_name) for j in _jobs_of(cur)):
-            # 이미 다른 직군 보유 — 원칙은 **1봇 1직업**(새 직군은 예비를 뽑는 게 정도). 겸직은 사용자
-            # 정책의 예외 둘 중 하나일 때만: ① 풀에 예비가 한 명도 없음(어쩔 수 없음) ② 새 직군이
-            # 기존 직군과 '비슷한 일'(도메인 토큰 공유). 허용 시 교체가 아니라 **추가**다 — 기존 전문화
-            # 기억(주직군)을 유지한 채 부직군을 더하고, 봇당 최대 2개(직군 5~6개 스택 재발 방지).
+            # 이미 다른 직군 보유 — 1봇 1직업. 겸직은 예외 둘(예비 없음/유사 일)일 때만, 최대 2개.
             cur_jobs = _jobs_of(cur)
             spares_left = [s for s in flow.pool if _is_spare(flow, s)]
             similar = any(_job_tokens(j) & _job_tokens(role_name) for j in cur_jobs)
             if spares_left and not similar:
-                return (f"채용 거부: {cur}(id {mid})는 이미 '{cur}' 직군입니다 — **1봇 1직업** 원칙이라 "
-                           f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
-                           f"(전문화 기억 보호). '{role_name}'이 필요하면 recruit(role='{role_name}')로 "
-                           f"'예비'를 그 직군으로 새로 뽑으세요(예비 {len(spares_left)}명).")
+                return (f"선발 불가: {cur}(id {mid})는 이미 '{cur}' 직군입니다 — **1봇 1직업** 원칙이라 "
+                        f"무관한 직군('{role_name}') 겸직은 예비가 없거나 비슷한 일일 때만 허용됩니다"
+                        f"(전문화 기억 보호). 예비 지원자를 선발하거나 재공고하세요.")
             if len(cur_jobs) >= 2:
-                return (f"겸직 한도 초과: {flow._info(mid) or mid}(id {mid})는 이미 직군 2개('{cur}')를 "
-                           f"보유 — 봇당 겸직은 최대 2개입니다. '{role_name}'은 예비나 다른 동료에게 맡기세요.")
+                return (f"선발 불가(겸직 한도): {flow._info(mid) or mid}(id {mid})는 이미 직군 2개('{cur}') "
+                        f"보유 — 봇당 겸직은 최대 2개입니다. 다른 지원자를 선발하거나 재공고하세요.")
             new_label = f"{cur}{_JOB_SEP}{role_name}"
             flow.bot_info[mid] = new_label
-            hired = f" — '{role_name}' 겸직 추가(보유: {new_label})"
             if getattr(flow, "persist_role", None):
                 try:
                     flow.persist_role(mid, new_label)
                 except Exception:
                     pass
-        # 이미 그 직군을 보유하고 있으면 라벨 변경 없이 그대로 합류.
-        flow.current.status.group = _group_of(flow, flow.current.team)
-        # 이름은 그대로 두고 '직군 라벨 전체'를 Discord 역할(권한)로 동기화 — best-effort. 단 *잠정 채용*
-        # (예비→직군, 첫 실작업 전)은 보류한다 — 일로 획득하는 순간 SYS가 부여(영속 이연, 양산 차단).
-        fn = getattr(g, "assign_job_role", None)
-        if fn and getattr(flow, "guild_id", None) and mid not in flow.tentative_roles:
-            try:
-                await fn(flow.guild_id, mid, flow.bot_info.get(mid) or role_name)
-            except Exception:
-                pass
+    # 직군 라벨 → 매체 역할 동기(잠정 채용은 보류 — 일로 획득 시 SYS가 부여)
+    flow.current.status.group = _group_of(flow, flow.current.team)
+    fn = getattr(g, "assign_job_role", None)
+    if fn and getattr(flow, "guild_id", None) and mid not in flow.tentative_roles:
+        try:
+            await fn(flow.guild_id, mid, flow.bot_info.get(mid) or role_name)
+        except Exception:
+            pass
     if mid not in flow.project_team:
         flow.project_team.append(mid)
     if mid not in flow.current.team:
@@ -453,5 +597,4 @@ async def recruit(flow, me_id, role, args):
         flow.current.status.group = _group_of(flow, flow.current.team)
         await flow.refresh()
         await _add_members(g, flow.current.thread_id, [mid])   # 스레드에 합류(멤버십=팀)
-    return (f"{flow._info(mid) or mid} 합류{hired}(사유: {args.get('reason', '')}). "
-               f"현재 팀: {flow._names(flow.current.team)}")
+    return None

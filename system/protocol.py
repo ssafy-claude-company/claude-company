@@ -64,6 +64,7 @@ class Marker:
     CONTINUE = "계속"        # [계속: N] 종결 반대 = 발언 의무를 진 응찰(동형 강도)
     PASS = "패스"            # [패스] 발언권 포기
     END = "종료"             # [종료] 종결 찬성
+    APPLY = "지원"            # [지원] 채용 공고에 대한 지원 선언(+지원서 본문이 뒤따름)
     DELEGATED = "위임됨"      # [위임됨] 위임 접수 확인(시스템 발화)
     OFFDOMAIN = "직군밖"      # [직군밖] Work 반려 — 내 도메인이 아님
     EXPERIENCE = "경험"       # [경험] 보고 속 경험 적재 필드
@@ -72,6 +73,7 @@ class Marker:
     # 파싱 정본 정규식 — 소비처는 이걸 import해 쓴다(로컬 재정의 금지)
     BID_RE = re.compile(r"\[\s*(?:응찰|계속)\s*[:：]\s*([0-9])\s*\]")
     PASS_OR_END_RE = re.compile(r"^\[?\s*(패스|종료)\s*\]?\s*$")
+    APPLY_RE = re.compile(r"\[\s*지원\s*\]")
 
     # 진행 가시성(narrate)에서 '봇의 생각'이 아닌 메커니즘 발화로 거를 토큰들
     MECHANISM_TOKENS = ("응찰", "[패스", "[계속", "발언권", "[SYS 프로브")

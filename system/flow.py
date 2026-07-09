@@ -108,6 +108,8 @@ class Flow:
         self.persist_owner = None      # () -> None: file_owner를 proj에 써 영속(SYS가 주입)
         self.fork_kind = {}            # [fork 수집] 행위자→Kind: 프레임 없는 가지에도 선구현 게이트 적용
         self.fork_active = 0           # [fork 동시성 가드] 수집 진행 수 — 수집 중 신규 요청/수집은 [대기]
+        self.recruit_open = None       # [진짜 채용] 열린 공고 {role,reason,applicants:{mid:지원서},names} — 선발(member=)
+                                       #   확정의 검증 근거. 지원 안 한 봇 지명은 거부(독단 영입 차단).
         self.report_stash = {}         # [B-14 — report 도구(스태시형)] mid→구조화 보고 필드(result/changes/
                                        #   verify/risks/offdomain_role/experience/craft_standard). Response는
                                        #   여전히 턴 반환값 — 스태시는 기계 소비용(offdomain 인자>regex 우선,

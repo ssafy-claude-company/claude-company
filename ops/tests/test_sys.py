@@ -258,8 +258,8 @@ def test_run_백그라운드_프로세스_그룹째_정리():
 
 
 def test_recruit로_부족직군_풀인력_합류():
-    """담당자가 고른 팀에 없던 풀 인력도 recruit로 현재 Task에 합류시킬 수 있다(동적 충원) — 직군 보유자
-    (예비 아님)는 역할명만으로 합류한다('말로만 배정 차단'은 예비에만 적용)."""
+    """[진짜 채용] 지명 직행은 거부된다(독단 영입 차단) — 공고(role)를 올리면 그 직군 후보가
+    스스로 지원하고, 지원자를 member=로 선발해야 합류한다."""
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "A", 13: "B"})
     f.start_root("root")
@@ -267,8 +267,17 @@ def test_recruit로_부족직군_풀인력_합류():
     asyncio.run(t["create_project"].handler({"name": "p", "team": "12"}))   # 담당자가 팀을 12로 좁힘
     asyncio.run(t["create_task"].handler({"members": "12"}))                # 13은 팀 밖
     assert set(f.current.team) == {11, 12} and 13 not in f.current.team
-    asyncio.run(t["recruit"].handler({"member": "B", "reason": "부족"}))     # 역할명 'B'로 풀에서 합류
-    assert 13 in f.current.team
+    rno = asyncio.run(t["recruit"].handler({"member": "B", "reason": "부족"}))   # 지명 직행 → 거부
+    assert "폐지" in rno["content"][0]["text"] and 13 not in f.current.team
+
+    async def wake(to, b, k):
+        assert "[채용 공고]" in b and "지원" in b            # 후보가 공고문을 받는다
+        return "[지원] B 직군 실무 경험으로 바로 기여할 수 있습니다."
+    f.wake = wake
+    rp = asyncio.run(t["recruit"].handler({"role": "B", "reason": "B 일손 부족"}))
+    assert "지원 1건" in rp["content"][0]["text"]            # 13이 지원 → 지원서가 공고자에게
+    rs = asyncio.run(t["recruit"].handler({"member": "13", "reason": "지원서 근거 충분"}))
+    assert 13 in f.current.team and "선발" in rs["content"][0]["text"]
 
 
 def test_예비인력_새직군_런타임채용_말로만배정차단():
@@ -283,23 +292,34 @@ def test_예비인력_새직군_런타임채용_말로만배정차단():
     t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
     asyncio.run(t["create_task"].handler({"members": ""}))      # 담당자가 안 좁히면 프로젝트팀(예비 제외)
     assert set(f.current.team) == {11, 12} and 13 not in f.current.team   # 예비는 제외
-    # role 없이 예비 채용 시도 → 거부, 팀에 안 들어옴(말로만 배정 차단)
+    # 팀 밖 예비를 role 없이 지명 → 거부(지명 폐지 — 공고 절차 안내)
     rno = asyncio.run(t["recruit"].handler({"member": "13"}))
-    assert "거부" in rno["content"][0]["text"] and "예비" in rno["content"][0]["text"]
+    assert "폐지" in rno["content"][0]["text"]
     assert 13 not in f.current.team and f.bot_info[13] == "예비"
-    # 새 직군이 필요 → 예비를 '게임 기획자'로 실제 채용(member 미지정 → 예비 자동 선발)
+    # 새 직군 필요 → 공고. 예비 13이 지원, 14는 패스(자기선택) → 13 선발
+    async def wake_13(to, b, k):
+        if to == 13:
+            assert "게임 기획자" in b and "채용됩니다" in b   # 예비에겐 '선발 시 그 직군' 안내
+            return "[지원] 기획을 해보고 싶습니다 — 구조 잡는 일에 자신 있습니다."
+        return "[패스]"
+    f.wake = wake_13
     r = asyncio.run(t["recruit"].handler({"role": "게임 기획자", "reason": "기획 필요"}))
-    assert "직군으로 채용" in r["content"][0]["text"] and "게임 기획자" in r["content"][0]["text"]
-    hired = next(i for i in (13, 14) if f.bot_info[i] == "게임 기획자")
+    assert "지원 1건" in r["content"][0]["text"]
+    rs = asyncio.run(t["recruit"].handler({"member": "13", "reason": "지원 동기 명확"}))
+    assert "선발" in rs["content"][0]["text"]
+    hired = 13
     assert hired in f.current.team and f.bot_info[hired] == "게임 기획자"
-    # [일로 직업 획득 — 영속 이연] 채용 시점엔 *잠정*(런타임 라벨만) — 아직 영속(persist) 안 됨. 첫 실작업 때 영속.
+    # [일로 직업 획득 — 영속 이연] 선발 시점엔 *잠정*(런타임 라벨만) — 첫 실작업 때 영속.
     assert hired in f.tentative_roles and persisted.get(hired) is None
-    # 1봇 1직업: 이미 직군('게임 기획자') 있는 봇에 다른 직군 추가 → 거부(겸직 폐지), 직군 그대로
-    r2 = asyncio.run(t["recruit"].handler({"member": str(hired), "role": "레벨 디자이너"}))
-    assert "거부" in r2["content"][0]["text"] and "1봇 1직업" in r2["content"][0]["text"]
-    assert f.bot_info[hired] == "게임 기획자"
-    # 남은 예비를 'UX 디자이너'로 채용(예비 소진)
+    # 지원 안 한 동료의 선발은 불가(공고가 없거나 지원자가 아니면 거부)
+    r2 = asyncio.run(t["recruit"].handler({"member": "14", "role": "레벨 디자이너"}))
+    assert "폐지" in r2["content"][0]["text"] and f.bot_info[14] == "예비"
+    # 남은 예비(14)를 'UX 디자이너'로 — 공고 → 14 지원 → 선발
+    async def wake_14(to, b, k):
+        return "[지원] UX 관점 검증을 맡고 싶습니다."
+    f.wake = wake_14
     asyncio.run(t["recruit"].handler({"role": "UX 디자이너", "reason": "UX"}))
+    asyncio.run(t["recruit"].handler({"member": "14", "reason": "단독 지원"}))
     # [예비 폐지 → genesis(사용자 설계)] 예비 소진 뒤 새 직군 필요 → dead-end('못 찾음') 대신 그 직군
     # 전문가를 즉석 생성(create_agent)해 팀에 합류시킨다(리더가 넘길 전문가 없어 교착하던 것 해소).
     r3 = asyncio.run(t["recruit"].handler({"role": "사운드", "reason": "x"}))
@@ -321,8 +341,12 @@ def test_일로직업획득_채용은잠정_첫실작업에_영속승격():
     f.persist_role = lambda mid, role: persisted.__setitem__(mid, role)
     t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
     asyncio.run(t["create_task"].handler({"members": ""}))
-    # 예비 13을 게임 기획자로 채용 → 잠정(런타임 라벨만, 영속 X)
+    # 예비 13이 공고에 지원 → 선발 → 잠정(런타임 라벨만, 영속 X)
+    async def wake(to, b, k):
+        return "[지원] 기획 맡고 싶습니다."
+    f.wake = wake
     asyncio.run(t["recruit"].handler({"role": "게임 기획자", "reason": "x"}))
+    asyncio.run(t["recruit"].handler({"member": "13", "reason": "단독 지원"}))
     assert 13 in f.tentative_roles and persisted.get(13) is None    # 잠정·미영속
     assert f.bot_info[13] == "게임 기획자"                          # 런타임 라벨은 설정(이 흐름에서 활동 가능)
     # 13이 첫 실작업(run) → 권한 훅이 영속으로 승격
@@ -418,10 +442,14 @@ def test_같은직군_증원_자유채용_허용():
     t = {x.name: x for x in make_guide_tools(f, 11, "leader")}
     asyncio.run(t["create_project"].handler({"name": "p", "team": "12"}))   # 팀: 백엔드(11)+프론트(12)
     asyncio.run(t["create_task"].handler({"members": "12"}))
-    # 이미 프론트엔드(12)가 있어도 같은 직군 증원 → 허용
+    # 이미 프론트엔드(12)가 있어도 같은 직군 증원 공고 → 허용(지원자 선발로 합류)
+    async def wake(to, b, k):
+        return "[지원] 프론트 지원합니다." if to == 13 else "[패스]"
+    f.wake = wake
     r = asyncio.run(t["recruit"].handler({"role": "프론트엔드", "reason": "프론트 과중 — 증원"}))
-    assert "직군으로 채용" in r["content"][0]["text"]
-    hired = next(i for i in (13, 14) if f.bot_info[i] == "프론트엔드")
+    assert "지원 1건" in r["content"][0]["text"]
+    asyncio.run(t["recruit"].handler({"member": "13", "reason": "지원"}))
+    hired = 13
     assert hired in f.current.team and f.bot_info[hired] == "프론트엔드"      # 같은 직군 2명째 합류
 
 
@@ -1890,12 +1918,20 @@ def test_직군_변형생성_게이트_재사용유도와_명시적신설():
     r = asyncio.run(t["recruit"].handler({"role": "VFX 아티스트", "reason": "이펙트"}))
     assert "중복 의심" in r["content"][0]["text"] and "VFX 전문가" in r["content"][0]["text"]
     assert all(v != "VFX 아티스트" for v in f.bot_info.values())   # 변형 직군이 생기지 않음
-    # 기존 이름 그대로 → 재사용·증원 통과(같은 직군 채용 자유 정책 유지)
+    # 기존 이름 그대로 → 재사용·증원 공고 통과(같은 직군 채용 자유 정책 유지)
+    async def wake(to, b, k):
+        return "[지원] 이펙트 맡겠습니다." if to == 13 else "[패스]"
+    f.wake = wake
     r2 = asyncio.run(t["recruit"].handler({"role": "VFX 전문가", "reason": "증원"}))
-    assert "직군으로 채용" in r2["content"][0]["text"]
-    # 정말 다른 일을 하는 새 직군 → 명시적 신설(new_role='yes')로 통과
+    assert "지원 1건" in r2["content"][0]["text"]
+    asyncio.run(t["recruit"].handler({"member": "13", "reason": "지원"}))
+    assert f.bot_info[13] == "VFX 전문가"
+    # 정말 다른 일을 하는 새 직군 → 명시적 신설(new_role='yes')로 공고 통과
+    async def wake2(to, b, k):
+        return "[지원] 아트 리소스 쪽을 하고 싶습니다."
+    f.wake = wake2
     r3 = asyncio.run(t["recruit"].handler({"role": "VFX 아티스트", "new_role": "yes", "reason": "다른 일"}))
-    assert "직군으로 채용" in r3["content"][0]["text"]
+    assert "지원 1건" in r3["content"][0]["text"]
 
 
 def test_직군게이트_비교풀에_서버_커스텀역할_포함():
@@ -1913,9 +1949,12 @@ def test_직군게이트_비교풀에_서버_커스텀역할_포함():
     asyncio.run(t["create_task"].handler({"members": ""}))
     r = asyncio.run(t["recruit"].handler({"role": "VFX 디자이너", "reason": "이펙트"}))
     assert "중복 의심" in r["content"][0]["text"] and "VFX 전문가" in r["content"][0]["text"]
-    # '게임 기획자'는 서버에 이미 있는 이름 그대로 → '게임 비주얼 디자이너'와 토큰('게임')이 겹쳐도 통과
+    # '게임 기획자'는 서버에 이미 있는 이름 그대로 → 토큰이 겹쳐도 공고가 열린다(변형 차단 아님)
+    async def wake(to, b, k):
+        return "[지원] 기획 지원합니다." if to == 13 else "[패스]"
+    f.wake = wake
     r2 = asyncio.run(t["recruit"].handler({"role": "게임 기획자", "reason": "기획"}))
-    assert "직군으로 채용" in r2["content"][0]["text"]
+    assert "지원 1건" in r2["content"][0]["text"]
 
 
 # ── 타임아웃 결함 수정: 하트비트(일하는 워커 보호) + 인프라 타임아웃 '이어가기' ──────────────
@@ -4646,8 +4685,12 @@ def test_범용직군_채용은_정책으로_거부():
     for bad in ("풀스택 개발자", "Full-Stack Engineer", "만능 개발자"):
         r = asyncio.run(t["recruit"].handler({"role": bad, "member": "13"}))
         assert "채용 거부(전문화 정책)" in r["content"][0]["text"], bad
-    r = asyncio.run(t["recruit"].handler({"role": "AI 엔지니어", "member": "13"}))
-    assert "합류" in r["content"][0]["text"]                      # 전문 직군은 정상 채용
+    async def wake(to, b, k):
+        return "[지원] AI 파이프라인 경험 있습니다."
+    f.wake = wake
+    asyncio.run(t["recruit"].handler({"role": "AI 엔지니어", "reason": "모델 필요"}))
+    r = asyncio.run(t["recruit"].handler({"member": "13", "reason": "지원"}))
+    assert "합류" in r["content"][0]["text"]                      # 전문 직군은 공고·지원으로 정상 채용
 
 
 def test_신규요청은_같은이름이라도_신설_P번호명시만_재사용(tmp_path):
