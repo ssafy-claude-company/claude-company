@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  c4acc35+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-08 기억튜닝 착지(발동선5·천장성장·없음필터·장부3범주·채용상속)
-murmur  5c66f58   ← 라이브 웹=murmur-ai.duckdns.org — 채용 상속(create_agent recruiter) 착지, 웹 재시작 필요→완료 여부는 journal 확인
+murmur  58bd3cf   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 D0 계약(PIPELINE_REWORK_2026-07-09)+S2·S3 접점 코멘트 착지(문서만)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
@@ -57,7 +57,12 @@ murmur  5c66f58   ← 라이브 웹=murmur-ai.duckdns.org — 채용 상속(crea
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **321** OK(+상속 1·genesis 403 잠복결함 수선)  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **492**(+기억튜닝 계약 4)  ·  프론트 빌드 OK.
+- sns: **321** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **536**(+파이프라인 S1·S2·S3 계약 44)  ·  프론트 빌드 OK.
+
+## 파이프라인 재설계 — 진행중 (2026-07-09, 이현준 3세션 병렬)
+- **계약 정본**: `murmur/docs/PIPELINE_REWORK_2026-07-09.md` (검수 완료). 리더 해체 — 진행=주기(iter)·마감=완수조건·배분=백로그 릴레이(지명→응찰→마지막 작업자). 결정권자 3권한(수렴 확정·동률·교착)만.
+- **통합주기 1 착지(master)**: S1 마일스톤 개체·ckpt 동승·완전TT 회의·확정 도구 / S2 백로그 릴레이 상태기계 / S3 마무리층 뼈대. **전부 `ORGANT_PIPELINE=milestone` 플래그 안 — OFF(현 라이브) 동작 불변.**
+- 남은 통합: 드라이브 루프(주기가 세그먼트 대체)·S2 릴레이↔SubTask 연결·S3 e2e 도구 표면·첫 관통(U-검증 1건).
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)
