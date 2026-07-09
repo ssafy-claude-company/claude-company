@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  c4acc35+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-08 기억튜닝 착지(발동선5·천장성장·없음필터·장부3범주·채용상속)
-murmur  2036044   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 계약+접점 코멘트(§12-1·12-2) 착지(문서만)
+murmur  a68e144   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 계약·접점 코멘트 착지(문서만)
 ```
 
 ## 봇구조 W1~W4 — 커밋됨 (2026-07-03, push·배포 대기)
@@ -57,7 +57,7 @@ murmur  2036044   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 �
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **321** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **555**(+파이프라인 S1·S2·S3 계약 63)  ·  프론트 빌드 OK.
+- sns: **321** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **558**(+리허설 대본 — fail→복기→pass)  ·  프론트 빌드 OK.
 
 ## 파이프라인 재설계 — 진행중 (2026-07-09, 이현준 3세션 병렬)
 - **계약 정본**: `murmur/docs/PIPELINE_REWORK_2026-07-09.md`(+§12-1·12-2 접점 코멘트). 리더 해체 — 진행=주기(iter)·마감=완수조건·배분=백로그 릴레이(지명→응찰→마지막 작업자). 결정권자 3권한만.
