@@ -106,18 +106,48 @@ def format_defects(defects) -> str:
     return "\n".join(lines)
 
 
+def tallying_logger(flow, log_fn):
+    """[§8 관측 — 단일 관문 집계] flow.log 배선 지점(sys_core)에서 감싸, 흐름의 이벤트 수·토큰·
+    비용·시작시각을 flow.event_counts에 쌓는다. S2 제안("relay 이벤트는 이미 전부 방출 — 집계로
+    충분")의 구현: 이벤트 지점마다 카운터를 심는 대신 관문 하나에서 센다.
+
+    - 정본은 여전히 flow.jsonl(§9 — 상태는 이벤트로 재구축 가능). 이 집계는 e2e_* payload에
+      동승할 요약본이다.
+    - 원 log_fn의 계약(반환·예외)을 보존하고, 집계 실패는 로깅을 막지 않는다.
+    """
+    def _tally_log(event, **f):
+        try:
+            ec = getattr(flow, "event_counts", None)
+            if ec is None:
+                ec = {}
+                flow.event_counts = ec
+            ec.setdefault("_first_ts", time.time())
+            ec[event] = int(ec.get(event, 0)) + 1
+            if f.get("tokens_out"):
+                ec["_tokens_out_sum"] = int(ec.get("_tokens_out_sum", 0)) + int(f["tokens_out"] or 0)
+            if f.get("cost_usd"):
+                ec["_cost_usd_sum"] = float(ec.get("_cost_usd_sum", 0.0)) + float(f["cost_usd"] or 0)
+        except Exception:
+            pass
+        return log_fn(event, **f)
+    return _tally_log
+
+
 def overhead_snapshot(flow) -> dict:
     """§8 관측 — 소형 Task의 계층 오버헤드. 설계 개입 없이 데이터만 쌓는다(확정: '민감하게 접근').
 
-    flow에 카운터가 없으면 0 (S1/S2가 심는 카운터와 느슨 결합 — 없어도 죽지 않는다).
+    1순위 = flow.event_counts(tallying_logger 집계): iters=ms_iter_verify 수, 토큰·비용=turn_done
+    동승분 합, wall-clock=첫 이벤트부터. meetings=meet_open(S1이 회의 개시 이벤트를 내면 자동
+    집계 — 없으면 0). 2순위 = 레거시 flow 카운터(getattr). 둘 다 없으면 0 — 죽지 않는다.
     """
-    started = float(getattr(flow, "task_started_ts", 0) or 0)
+    ec = getattr(flow, "event_counts", None) or {}
+    started = float(ec.get("_first_ts") or getattr(flow, "task_started_ts", 0) or 0)
     return {
-        "meetings": int(getattr(flow, "meet_count", 0) or 0),
-        "iters": int(getattr(flow, "iter_count", 0) or 0),
+        "meetings": int(ec.get("meet_open", 0) or getattr(flow, "meet_count", 0) or 0),
+        "iters": int(ec.get("ms_iter_verify", 0) or getattr(flow, "iter_count", 0) or 0),
         "wallclock_s": round(time.time() - started, 1) if started else 0,
-        "tokens_out": int(getattr(flow, "tokens_out_sum", 0) or 0),
-        "cost_usd": round(float(getattr(flow, "cost_usd_sum", 0) or 0), 4),
+        "tokens_out": int(ec.get("_tokens_out_sum", 0) or getattr(flow, "tokens_out_sum", 0) or 0),
+        "cost_usd": round(float(ec.get("_cost_usd_sum", 0) or getattr(flow, "cost_usd_sum", 0) or 0), 4),
     }
 
 
@@ -180,8 +210,8 @@ def assemble_base_checklist(flow) -> list:
         for c in m.criteria:
             conds.append(f"{c.desc} | 재실증: {c.verify}")
             tags.append(m.ms_id)
-    origin = [s.strip() for s in re.split(r"[.\n]", str(getattr(flow, "task_origin", "") or ""))
-              if s.strip()]
+    origin_text = str(getattr(flow, "origin_request", "") or getattr(flow, "task_origin", "") or "")
+    origin = [s.strip() for s in re.split(r"[.\n]", origin_text) if s.strip()]
     cl = build_checklist(conditions=conds, origin_items=origin)
     for it in cl:
         if it["kind"] == KIND_CONDITION:
