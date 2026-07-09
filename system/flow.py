@@ -40,6 +40,9 @@ class Flow:
         # Milestone 목록. ORGANT_PIPELINE 미설정이면 빈 리스트로 남는다(동작 불변). 상태는 최대
         # 저장 원칙: rule/milestone.ms_to_dict로 체크포인트에 동승(재시작 후 중간 재개).
         self.milestones: list = []
+        # SubTask별 백로그 릴레이(st_id → rule/backlog.BacklogRelay). 같은 원칙 — 플래그 OFF면
+        # 빈 dict(동작 불변), 상태는 to_ckpt로 체크포인트 동승(§9 — 릴레이 중간부터 재개).
+        self.backlog_relays: dict = {}
         self._base = time.strftime("%H%M%S")
         self._n = 0
         self.done = False
