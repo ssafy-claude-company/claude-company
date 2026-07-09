@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  a3c5f43+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-09 진짜 채용 착지(공고→지원→선발, 문제 중심·매직넘버 폐지)
-murmur  9eaf79f   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 계약·접점(문서만)
+murmur  f321a46   ← 라이브 웹=murmur-ai.duckdns.org — §12-4 반영 기록(문서만)
 ```
 
 ## 진짜 채용 — 지명제 폐지, 공고·지원·선발 (2026-07-09 착지, 러너 재시작 시 라이브)
@@ -68,7 +68,7 @@ murmur  9eaf79f   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 �
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **321** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **584**(+§5 물리 재편 3축 계약)  ·  프론트 빌드 OK.
+- sns: **321** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **586**(+재협상 출구·게이트 강화)  ·  프론트 빌드 OK.
 
 ## 파이프라인 재설계 — 진행중 (2026-07-09, 이현준 3세션 병렬)
 - **계약 정본**: `murmur/docs/PIPELINE_REWORK_2026-07-09.md`(+§12-1·12-2 접점 코멘트). 리더 해체 — 진행=주기(iter)·마감=완수조건·배분=백로그 릴레이(지명→응찰→마지막 작업자). 결정권자 3권한만.
