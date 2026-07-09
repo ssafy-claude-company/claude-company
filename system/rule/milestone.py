@@ -11,6 +11,7 @@
 미설정이면 기존 파이프라인 동작 불변. 저장은 최대 저장(계약 §9): 모든 상태가 to_dict/from_dict로
 체크포인트에 동승하고, 전이마다 flow.log 이벤트로 재구축 가능해야 한다.
 """
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -144,6 +145,60 @@ def _ckpt(flow):
             fn()
         except Exception:
             pass
+    persist_ms_status(flow)   # [표면 미러] 모든 마일스톤 변이가 이 깔때기를 지난다 — 여기 한 곳만 훅
+
+
+def _cnt_active(criteria):
+    """(충족 수, 유효 수) — waived(사람 승인 포기)는 분모에서 제외(iter_verify와 같은 셈법)."""
+    act = [c for c in criteria if c.status != "waived"]
+    return sum(1 for c in act if c.passed), len(act)
+
+
+def ms_status_snapshot(flow):
+    """[표면 — BACKLOG H] 진행 중 마일스톤의 압축 현황. murmur HUD가 그대로 그리는 모양.
+    미완 마일스톤이 없으면 None(완료 = 표면에서 내려감)."""
+    ms = next((m for m in reversed(getattr(flow, "milestones", []) or []) if m.status != "done"), None)
+    if ms is None:
+        return None
+    met, total = _cnt_active(ms.criteria)
+    sts = []
+    for st in ms.subtasks[:12]:
+        st_met, st_total = _cnt_active(st.criteria)
+        sts.append({"g": st.goal[:80], "s": st.status, "met": st_met, "total": st_total})
+    return {"goal": ms.goal[:140], "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
+            "sts": sts, "ts": time.time()}
+
+
+def persist_ms_status(flow):
+    """마일스톤 현황을 상태파일(ms_status.json, 채널 키)로 미러 — 웹이 읽기 전용으로 서빙(HUD).
+    브리지 payload 확장 없이 같은 호스트 파일이 통로. ORGANT_PJT 미설정(테스트)이면 무동작,
+    실패는 흐름에 무해."""
+    try:
+        pjt = os.environ.get("ORGANT_PJT")
+        ch = getattr(flow, "user_channel", None)
+        if not pjt or ch is None:
+            return
+        d = os.path.join(pjt, "ops", "var", "organt_sns_state")
+        if not os.path.isdir(d):
+            return
+        path = os.path.join(d, "ms_status.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                cur = json.load(f)
+        except Exception:
+            cur = {}
+        snap = ms_status_snapshot(flow)
+        key = str(int(ch))
+        if snap:
+            cur[key] = snap
+        else:
+            cur.pop(key, None)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        pass
 
 
 def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
