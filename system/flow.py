@@ -36,6 +36,10 @@ class Flow:
         self.project_channel: Optional[int] = None
         self.tasks: List[TaskRef] = []
         self.current: Optional[TaskRef] = None
+        # [마일스톤 파이프라인(PIPELINE_REWORK_2026-07-09 §1·§9) — S1] Task를 큰 주기로 나누는
+        # Milestone 목록. ORGANT_PIPELINE 미설정이면 빈 리스트로 남는다(동작 불변). 상태는 최대
+        # 저장 원칙: rule/milestone.ms_to_dict로 체크포인트에 동승(재시작 후 중간 재개).
+        self.milestones: list = []
         self._base = time.strftime("%H%M%S")
         self._n = 0
         self.done = False
