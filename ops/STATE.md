@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  a3c5f43+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-09 진짜 채용 착지(공고→지원→선발, 문제 중심·매직넘버 폐지)
-murmur  a68e144   ← 라이브 웹=murmur-ai.duckdns.org — 채용 피드 매핑·RULE_SPEC §11 개정 착지(a68e144)
+murmur  9eaf79f   ← 라이브 웹=murmur-ai.duckdns.org — 파이프라인 계약·접점(문서만)
 ```
 
 ## 진짜 채용 — 지명제 폐지, 공고·지원·선발 (2026-07-09 착지, 러너 재시작 시 라이브)
@@ -68,12 +68,13 @@ murmur  a68e144   ← 라이브 웹=murmur-ai.duckdns.org — 채용 피드 매�
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **321** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **558**(+리허설 대본 — fail→복기→pass)  ·  프론트 빌드 OK.
+- sns: **321** OK  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **584**(+§5 물리 재편 3축 계약)  ·  프론트 빌드 OK.
 
 ## 파이프라인 재설계 — 진행중 (2026-07-09, 이현준 3세션 병렬)
 - **계약 정본**: `murmur/docs/PIPELINE_REWORK_2026-07-09.md`(+§12-1·12-2 접점 코멘트). 리더 해체 — 진행=주기(iter)·마감=완수조건·배분=백로그 릴레이(지명→응찰→마지막 작업자). 결정권자 3권한만.
 - **통합주기 3까지 착지(master)**: S1 개체·ckpt·완전TT 회의·확정 도구·결정권자 프레임·report_iter / S2 릴레이 상태기계+**위임축 배선(위임=배분)** / S3 e2e 아크·도구 4종·복기 실배선. SubTask iter↔백로그 정리 훅 접붙임(§12-1). 도구 등록↔허용목록(tool_names) 한 세트 규율(S3 발견 결함 → 회귀 가드 테스트). **전부 `ORGANT_PIPELINE=milestone` 안 — OFF(현 라이브) 불변.**
-- 다음: **첫 관통**(U-검증 1건 — 플래그 ON 라이브: 회의→조건→릴레이→iter→e2e) → 관측(§8) → default 전환 판단.
+- **§5 물리 재편 3축 착지(통합주기 5)**: 흐름 루프가 주기 관할(S1)·완수조건 실증이 마감(S2)·SYS 자동장치 ON 우회(S3). 이제 리더 해체가 코드로 완성 — 남은 건 **통째 관통**(U-검증 1건, 플래그 ON 격리 probe). 전부 OFF 불변.
+- **라이브-e2e 접점(§12-3, 운영 세션)**: RPG 실전 관측에서 갭 4건 등재 — 조건 '달성 불가' 출구 / 개입·질문의 주기 내 좌석 / 표면(murmur) 접기 문법 후속 / 조건 품질 게이트. 상보 장치 4종은 라이브 착지됨(3연속-실패 차단기 등) — 병합 시 의미 정합 확인.
 - 명령은 `verify.sh` 참조. venv=`/root/ClaudeCompany/.venv`(pytest·discord.py 설치됨).
 
 ## 완료 (2026-07-03 세션)
