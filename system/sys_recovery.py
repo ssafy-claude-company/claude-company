@@ -12,6 +12,7 @@ from typing import Optional
 from ._util import doc_collab_on, dossier_read, dossier_rel
 from .guide_tools import TaskRef
 from .protocol import TaskStatus
+from .rule.milestone import ms_from_dict, ms_to_dict   # [마일스톤 §9 — 체크포인트 동승]
 
 
 def _parse_goal_doc(text) -> dict:
@@ -146,6 +147,9 @@ def checkpoint_open_task(sys, flow) -> None:
                       if flow.current is not None else None)
     if getattr(flow, "file_owner", None) is not None:   # [소유 경계 영속] Task 전이마다 같이 저장
         p["file_owner"] = dict(flow.file_owner or {})
+    # [마일스톤 파이프라인 §9 — 최대 저장] 주기 상태(마일스톤·SubTask·조건·증거) 전부 동승 —
+    # 크래시·재시작 후 iter 중간부터 재개하는 토대. 플래그 OFF면 빈 리스트라 무비용.
+    p["milestones"] = [ms_to_dict(m) for m in (getattr(flow, "milestones", None) or [])]
     sys._save_projects()
 
 
@@ -154,6 +158,12 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     (owner)·팀을 재부착해 '이어가기'가 사용자가 Task명을 부르지 않아도 그 Task를 잇게 한다(담당자가
     판단해 이어감). 검증 누계는 0에서 시작(verified=False 등) → 완료 전 run 재검증을 강제. 되살린
     스냅샷을 반환(없으면 None)."""
+    # [마일스톤 §9 — 복원] 주기 상태는 open_task와 독립으로 되살린다(마일스톤만 있고 미완 Task가
+    # 없는 시점의 죽음도 복구). 손상 스냅샷은 빈 시작으로 저하 — 복구가 복구를 못 막게.
+    try:
+        flow.milestones = [ms_from_dict(d) for d in (proj.get("milestones") or [])]
+    except Exception:
+        flow.milestones = []
     snap = proj.get("open_task")
     if not snap:
         return None

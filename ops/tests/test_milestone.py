@@ -99,3 +99,26 @@ def test_직렬화_왕복_무손실_최대저장():
 def test_flow에_milestones_필드가_기본_빈값():
     f = _flow()
     assert f.milestones == []                  # 플래그 OFF 라이브에서 항상 빈 리스트(불변 보증)
+
+
+def test_체크포인트_동승과_복원_왕복(tmp_path):
+    """[§9 최대 저장] checkpoint_open_task가 주기 상태를 프로젝트 레지스트리에 싣고,
+    restore_open_task가 open_task 유무와 무관하게 되살린다(재시작 후 중간 재개의 실배선)."""
+    import asyncio
+    from types import SimpleNamespace
+    from system import sys_recovery
+
+    f = _flow()
+    f.project_channel = 500
+    ms = open_milestone(f, "M1", [{"desc": "a", "verify": "run a"}])
+    iter_verify(f, ms, [{"desc": "a", "passed": True, "evidence": "ok"}])
+    fake_sys = SimpleNamespace(projects={500: {}}, _save_projects=lambda: None,
+                               _task_snapshot=lambda flow, t: {})
+    sys_recovery.checkpoint_open_task(fake_sys, f)
+    saved = fake_sys.projects[500]["milestones"]
+    assert saved and saved[0]["status"] == "wrapup"            # 상태 그대로 동승
+    f2 = _flow()                                               # 재시작 후 새 흐름
+    out = asyncio.run(sys_recovery.restore_open_task(fake_sys, f2, fake_sys.projects[500]))
+    assert out is None                                         # open_task 없어도
+    assert len(f2.milestones) == 1 and f2.milestones[0].status == "wrapup"   # 주기 복원
+    assert f2.milestones[0].criteria[0].evidence == "ok"       # 증거까지 무손실
