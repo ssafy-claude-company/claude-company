@@ -248,6 +248,12 @@ class Flow:
             log.append((t, time.monotonic()))
             if len(log) > self._ACT_GUARD:         # 폭주 최후 방어 — 정상 흐름은 여기 안 닿음
                 del log[0:len(log) - self._ACT_GUARD]
+        # [💭 실황] 긴 LLM 턴 중엔 log 이벤트가 없어 미러가 안 돈다 — 생각·도구 활동이 곧
+        # 실황이므로 여기서도 미러(1s 스로틀, best-effort). 관측용 — 실패가 흐름을 못 막음.
+        try:
+            entity_status.mirror(self)
+        except Exception:
+            pass
 
     def _info(self, oid):
         return self.bot_info.get(oid, "")
