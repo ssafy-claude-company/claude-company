@@ -31,6 +31,9 @@ murmur  8f88911   ← 라이브 웹 — 피드 구조분리 완료(front feed/�
   부착, 구 마커(07-10 이전)는 제목 절두 폴백 — U-010 기존 3블록은 조건 칩 비활성(원천 부재).
 - 요지 추출 `_gist/_voteSum`(표결=집계+이유·회의=결론·보고=[결과] 줄·한국어 줄 우선)이 접힘 미리보기와
   백로그 행 공용. 다음 마일스톤 등록 시 조건 열람·충족 카운터 실측 확인 필요.
+- **자동 등록(2026-07-10 후속, 근본 수리)**: guide 매체 속성 `autoproject`(murmur=True) — SYS가
+  신규 흐름 픽업 시 create_project 규칙 자동 실행. 등록이 봇 판단이던 것이 미등록→체크포인트
+  조기반환→재시작마다 마일스톤 재생성(ch51 4회)의 뿌리. 관측 `project_autoregistered`.
 - **복구 체계 구멍 수리(2026-07-10, ch51 라이브 사인 — 봇 에스컬레이션 처방 채택)**: ① guide_tools
   leader 블록의 중복 deploy({name,command,url}) 재정의 제거(탈중앙화 leftover — leader 세션에서 정본
   deploy를 가려 'command required' 교착) ② rule/project.create_project 반쪽등록 복구(project_channel은
