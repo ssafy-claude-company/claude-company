@@ -189,7 +189,8 @@ def ms_status_snapshot(flow):
             bl.append({"id": b.backlog_id, "d": (b.body or "")[:60], "s": b.status, "a": a})
         # [백로그=계획 목록(2026-07-10, 사용자: '미리 만들어 두는 건데')] ST 완수조건 = 등록 순간부터
         # 존재하는 계획 단위 — 전 목록을 표면에 준다(passed=✓). 릴레이 bl은 담당·진행의 보강 데이터.
-        cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived"} for c in st.criteria[:15]]
+        cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
+               "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in st.criteria[:15]]
         sts.append({"g": st.goal[:80], "id": st.st_id, "s": st.status, "met": st_met, "total": st_total, "bl": bl, "cr": cr})
     return {"goal": ms.goal[:140], "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
             "sts": sts, "ts": time.time()}
