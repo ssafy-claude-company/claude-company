@@ -366,6 +366,16 @@ def sync_delegation(flow, me_id, to, body) -> Optional[str]:
     r = relay_for(flow, st)
     b = _match_backlog(r, body)
     if b is None:
+        # [백로그 의무화(2026-07-10, 사용자: 'SubTask 하위로 그냥 일하는 것처럼 보인다 — 아니어야지')]
+        # 장부 밖 Work 위임을 통과시키던 선택제가 계층(ST→백로그→작업)을 비웠다 — 매칭 없는 위임은
+        # 거부(마찰) 대신 **자동 제출**로 장부에 등재하고 그 위임을 곧 배분으로 만든다(장부=진실).
+        try:
+            b = r.submit(int(me_id), str(body or "")[:200], force=True)
+            r.pick(int(me_id), b.backlog_id, int(to))
+            st.participants.add(int(to)); st.participants.add(int(me_id))
+            st.backlog_ids = [x.backlog_id for x in r.backlogs]
+        except Exception:
+            pass
         return None
     if b.status == IN_PROGRESS:
         if b.assignee == int(to):
