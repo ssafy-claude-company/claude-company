@@ -554,6 +554,30 @@ def rule_report_iter(flow, me_id, args) -> str:
     if not results:
         return "results가 비었습니다 — 한 줄에 '조건 | pass/fail | 증거(run 출력 요지)'."
     obj = tgt or ms
+    # [백로그 의무화 2단(2026-07-10, 사용자)] 솔로 진행(위임 無)도 장부가 진실이도록 — 검증 제출된
+    # 조건 단위를 SubTask 릴레이에 소급 등재(pass=done, fail=in_progress 보유). 위임형은 1단(자동
+    # 제출)이 이미 등재하므로 매칭돼 중복 없음.
+    if tgt is not None:
+        try:
+            from .backlog import relay_for, _match_backlog, pipeline_on as _po
+            r = relay_for(flow, tgt)
+            for it in results:
+                d = str(it.get("desc") or "")[:120]
+                if not d:
+                    continue
+                b = _match_backlog(r, d)
+                if b is None:
+                    b = r.submit(int(me_id), d, force=True)
+                try:
+                    if b.status == "open":
+                        r.pick(int(me_id), b.backlog_id, int(me_id))
+                    if it.get("passed") and b.status != "done":
+                        r.done(int(me_id), b.backlog_id)
+                except Exception:
+                    pass
+            tgt.backlog_ids = [x.backlog_id for x in r.backlogs]
+        except Exception:
+            pass
     ok, note = iter_verify(flow, obj, results)
     if ok and tgt is not None:
         # [S2 접점(§12-1)] SubTask 조건 충족 → 잔여 백로그 정리 훅(wrapup_done **앞**) → 자동 종료.
