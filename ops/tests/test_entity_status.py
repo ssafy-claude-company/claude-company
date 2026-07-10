@@ -51,6 +51,12 @@ def test_mirror_stack_states_and_done(tmp_path, monkeypatch):
     pj = data["projects"]["42"]
     assert pj["active"] == 202
     assert len(pj["stack"]) == 2
+    # 💭 실황 생각 — activity_log 꼬리가 working 봇과 프로젝트에 실린다
+    f.note_activity(202, "💭 회귀 스위트부터 돌려 보자")
+    f.log("req_rejected", frm=1, to=2)               # FORCE 이벤트로 재미러
+    data = json.loads((d / "entity_status.json").read_text(encoding="utf-8"))
+    assert any("회귀 스위트" in a["t"] for a in data["projects"]["42"]["activity"])
+    assert any("회귀 스위트" in a["t"] for a in data["organts"]["202"]["activity"])
     assert pj["stack"][-1]["since"] > 0          # Frame.ts(관측 v2)
     assert data["organts"]["202"]["state"] == "working"
     assert data["organts"]["101"]["state"] == "waiting"

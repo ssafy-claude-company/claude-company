@@ -60,14 +60,25 @@ def snapshot(flow):
     def _is_bot(b):
         return isinstance(b, int) and b != origin
 
+    # [💭 실황 생각] flow.activity_log 꼬리 — 발화자 라벨이 텍스트에 박혀 있다(진행 가시성).
+    # mono_ts(monotonic)를 같은 프로세스 안에서 epoch로 근사 변환해 싣는다.
+    acts = []
+    try:
+        mono_now = time.monotonic()
+        for t, m in list(getattr(flow, "activity_log", []) or [])[-5:]:
+            acts.append({"t": str(t)[:140],
+                         "ts": round(time.time() - max(0.0, mono_now - float(m)), 1)})
+    except Exception:
+        acts = []
     project = {"active": int(alive) if _is_bot(alive) else None,
                "stack": stack, "task": task_id, "done": done,
-               "updated": time.time()}
+               "activity": acts, "updated": time.time()}
     organts = {}
     if not done:
         if _is_bot(alive):
             organts[str(alive)] = {
                 "state": "working", "pid": ch, "task": task_id, "waiting_on": None,
+                "activity": acts,
                 "since": (stack[-1]["since"] if stack else None)}
         for fr in stack:
             if _is_bot(fr["frm"]) and fr["frm"] != alive:
