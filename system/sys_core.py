@@ -1406,7 +1406,7 @@ class Sys:
         # 자식(SDK·guide.post)이 상속한다. ch53 라이브: 전 메시지 pipe=None이 그 증거.
         try:
             from .rule.milestone import _set_pipeline_ctx
-            _set_pipeline_ctx(flow)
+            _set_pipeline_ctx(flow, organt_id)
         except Exception:
             pass
         # 에이전트가 죽으면(SDK 메시지리더 크래시·서브프로세스 SIGTERM 등) 같은 세션으로 되살려 재시도.

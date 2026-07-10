@@ -149,12 +149,21 @@ def _ckpt(flow):
     _set_pipeline_ctx(flow)   # [소속 컨텍스트] 이후 이 흐름의 게시가 현재 ms/st ID를 달고 나간다
 
 
-def _set_pipeline_ctx(flow):
+def _set_pipeline_ctx(flow, me_id=None):
     try:
         from system.protocol import PIPELINE_CTX
         ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status != "done"), None)
         st = next((s for s in ms.subtasks if s.status != "done"), None) if ms else None
-        PIPELINE_CTX.set({"ms": ms.ms_id, "st": (st.st_id if st else None)} if ms else None)
+        bl = None
+        # [백로그 단위 태깅(2026-07-10, 사용자: '텍스트가 백로그 단위로')] 이 봇이 지금 물고 있는
+        # (in_progress·assignee=me) 백로그 id — 발언이 백로그 항목 밑으로 묶이는 근거.
+        if st is not None and me_id is not None:
+            r = (getattr(flow, "backlog_relays", None) or {}).get(st.st_id)
+            for b in (getattr(r, "backlogs", None) or []):
+                if b.status == "in_progress" and int(b.assignee or 0) == int(me_id):
+                    bl = b.backlog_id
+                    break
+        PIPELINE_CTX.set({"ms": ms.ms_id, "st": (st.st_id if st else None), "bl": bl} if ms else None)
     except Exception:
         pass
 
