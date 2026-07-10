@@ -18,7 +18,7 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  42fcd4e ← 브레인 — 2026-07-10 파이프라인 마커 ID 동봉+[조건 충족] 표면화(러너 라이브)
+claude-company  c263122 ← 브레인 — 2026-07-10 반쪽등록 복구+중복 deploy 제거+PIPELINE_CTX(러너 라이브)
 murmur  8289131   ← 라이브 웹=murmur-ai.duckdns.org — 마일스톤 피드 구조화(아래 2026-07-10 항목)
 ```
 
@@ -31,6 +31,13 @@ murmur  8289131   ← 라이브 웹=murmur-ai.duckdns.org — 마일스톤 피�
   부착, 구 마커(07-10 이전)는 제목 절두 폴백 — U-010 기존 3블록은 조건 칩 비활성(원천 부재).
 - 요지 추출 `_gist/_voteSum`(표결=집계+이유·회의=결론·보고=[결과] 줄·한국어 줄 우선)이 접힘 미리보기와
   백로그 행 공용. 다음 마일스톤 등록 시 조건 열람·충족 카운터 실측 확인 필요.
+- **복구 체계 구멍 수리(2026-07-10, ch51 라이브 사인 — 봇 에스컬레이션 처방 채택)**: ① guide_tools
+  leader 블록의 중복 deploy({name,command,url}) 재정의 제거(탈중앙화 leftover — leader 세션에서 정본
+  deploy를 가려 'command required' 교착) ② rule/project.create_project 반쪽등록 복구(project_channel은
+  섰는데 project_id=None이면 재호출이 등록만 마저 완료 — 종전엔 영구 차단). 미등록 흐름은
+  checkpoint_open_task가 조기 반환해 **마일스톤이 재시작마다 죽던 것**의 뿌리. ③ 발언 소속 태깅
+  PIPELINE_CTX(protocol, 계약 선언)로 피드가 ID 부착. 남은 갭: 등록 없는 흐름의 체크포인트는 여전히
+  skip(등록 의존) — 구조 분리는 후속.
 
 ## 진짜 채용 — 지명제 폐지, 공고·지원·선발 (2026-07-09 착지 → **러너 라이브**, 08:56 재기동분)
 - **recruit 전면 재설계**(`rule/comm_ceremonies.recruit`): 리더·팀이 독단 영입하지 않는다.

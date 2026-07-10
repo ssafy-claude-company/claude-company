@@ -73,16 +73,21 @@ async def create_project(flow, args):
     flow는 duck-typed(guide·guild_id·pool·leader·register_project·project_* 보유)."""
     from .communication import _resolve_members, _uniq
     g = flow.guide
-    if flow.project_channel is not None:
+    _half = flow.project_channel is not None and not getattr(flow, "project_id", None)
+    if flow.project_channel is not None and not _half:
         return (f"이미 project_channel={flow.project_channel} (project_id={flow.project_id}) — "
                 f"개입 중이면 create_project 말고 바로 작업하세요.")
+    # [반쪽등록 복구(2026-07-10, ch51 라이브)] 최초 호출이 채널 확보 후 등록 전에 중단되면 종전 가드가
+    # 재호출을 영구 차단 — 등록 없인 배포 슬롯도, Task/마일스톤 체크포인트 영속(재시작 복구)도 죽는다.
+    # 채널이 이미 있으면 재생성 없이 등록만 마저 완료한다(아래에서 채널 생성 분기).
     # [방어] 봇이 이름 앞에 'P-번호'를 끼워넣으면 떼어낸다 — 식별번호는 시스템(register_project)이
     # 자동 부여하는데, 포트폴리오 목록의 'P-NNN' 표기를 흉내 내 이름에 번호를 박으면 채널 이름이
     # 'P-021 …'이 되고 작업공간 폴더가 'p-021-p-021-…'로 번호가 중복된다. 번호는 시스템 몫이다.
     _raw = str(args.get("name") or "").strip()
     _clean = re.sub(r"^\s*[Pp]-\d+[\s:·\-–—.]*", "", _raw).strip()
     args["name"] = _clean or _raw
-    flow.project_channel = await g.create_project_channel(flow.guild_id, args["name"])
+    if not _half:
+        flow.project_channel = await g.create_project_channel(flow.guild_id, args["name"])
     # [작업공간 격리·신원] 폴더는 여기서 깎지 않는다 — 흐름은 시작부터 고유 임시 폴더(new-…)에서
     # 일했고, 아래 register_project가 그 폴더를 **식별번호 이름(p-00n-슬러그)으로 개명**해
     # 신원을 번호로 확정한다(리더 작명 충돌이 폴더·배포 수준에서 무해 — 사용자 제안).

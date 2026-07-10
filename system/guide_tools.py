@@ -245,7 +245,10 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "백로그 제출로 참여한다.",
               {"goal": str, "criteria": str})
         async def set_subtask(args):
-            return _ok(rule_set_subtask(flow, me_id, args))
+            from .rule.milestone import flush_pipeline_notes as _flush
+            _r = _ok(rule_set_subtask(flow, me_id, args))
+            await _flush(flow)
+            return _r
         tools.append(set_subtask)
 
         @tool("report_iter",
@@ -256,7 +259,10 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "넘어가고, 정리가 끝나면 wrapup='done'으로 닫는다. 마감은 사람이 아니라 조건이다.",
               {"results": str, "target": str, "wrapup": str})
         async def report_iter(args):
-            return _ok(rule_report_iter(flow, me_id, args))
+            from .rule.milestone import flush_pipeline_notes as _flush
+            _r = _ok(rule_report_iter(flow, me_id, args))
+            await _flush(flow)
+            return _r
         tools.append(report_iter)
 
         # [결정권자 폐지(2026-07-09, 사용자)] 확정=회의 종결 표결(가결 시 수렴안 자동 등록).
@@ -268,7 +274,10 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "소망형·실행 불가 조건은 등록이 거부된다. 조건 충족이 주기를 닫는다 — 사람이 아니라.",
               {"goal": str, "criteria": str})
         async def set_milestone(args):
-            return _ok(rule_set_milestone(flow, me_id, args))
+            from .rule.milestone import flush_pipeline_notes as _flush
+            _r = _ok(rule_set_milestone(flow, me_id, args))
+            await _flush(flow)
+            return _r
         tools.append(set_milestone)
 
         @tool("renegotiate_criterion",
@@ -277,7 +286,10 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "불가능한가. **사람 승인**이 오면 그 조건은 포기(waive)되고 나머지로 주기가 진행된다.",
               {"target": str, "reason": str})
         async def renegotiate_criterion(args):
-            return _ok(rule_renegotiate(flow, me_id, args))
+            from .rule.milestone import flush_pipeline_notes as _flush
+            _r = _ok(rule_renegotiate(flow, me_id, args))
+            await _flush(flow)
+            return _r
         tools.append(renegotiate_criterion)
 
     @tool("run",
@@ -531,17 +543,6 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(parallel_work)
 
 
-        @tool("deploy",
-              "검증을 마친 산출물을 공개 배포한다. name=영문 소문자·하이픈 서비스명. 라이브 URL 반환. "
-              "**그냥 배포하면 된다** — 보통은 name만 주면 회사 서버로 배포된다(Node 앱은 process.env.PORT, "
-              "또는 정적 public/·index.html). **특별한 배포 방법이 필요하면**(AWS·GCP·Fly·Vercel 등) "
-              "command에 그 배포 셸 명령을 주면 그대로 실행한다(예: 'aws s3 sync public/ s3://버킷', "
-              "'gcloud app deploy', 'flyctl deploy') — 금고에 넣어둔 자격증명은 환경변수로 자동 주입되고, "
-              "url에 결과 공개 주소를 주면 실응답까지 확인한다. 플랫폼을 미리 구분하지 마라. run 검증 뒤 호출.",
-              {"name": str, "command": str, "url": str})
-        async def deploy(args):
-            return await _rule_deploy(flow, args)
-        tools.append(deploy)
 
         @tool("list_projects",
               "회사가 진행/배포해 온 프로젝트 전체 목록(P-번호·이름·요약)을 조회 — 신규성 판단·중복 회피·"
