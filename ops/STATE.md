@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  717891c+ ← 브레인 (verify는 info만 — STATE 동거 레포라 순환) — 2026-07-09 파이프라인+갭5+채용 착지
-murmur  b32793b   ← 라이브 웹=murmur-ai.duckdns.org — 계약 §1 결정권자 폐지 반영(문서만)
+murmur  d6d5ec2   ← 라이브 웹=murmur-ai.duckdns.org — 계약 §1 결정권자 폐지 반영(문서만)
 ```
 
 ## 진짜 채용 — 지명제 폐지, 공고·지원·선발 (2026-07-09 착지 → **러너 라이브**, 08:56 재기동분)
