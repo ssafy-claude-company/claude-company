@@ -214,7 +214,21 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
     if flow.log:
         flow.log("ms_open", ms=ms.ms_id, goal=ms.goal[:80], criteria=len(ms.criteria),
                  replan=bool(origin.startswith("e2e:")))
+    # [조건 상세 동봉(2026-07-10)] 피드가 '조건 N' 칩에서 목록을 보여줄 수 있게 마커에 싣는다.
+    crit_lines = "\n".join(f"· {c.desc[:96]}" for c in ms.criteria[:30])
+    # [ID 동봉(2026-07-10)] 표면이 제목 절두 매칭(추측) 대신 ID로 정확히 부착·완수 매칭한다.
+    _pnote(flow, f"[마일스톤 시작] ({ms.ms_id}) {ms.goal[:120]} · 완수조건 {len(ms.criteria)}개"
+                 + (f"\n{crit_lines}" if crit_lines else ""))
     return ms
+
+
+def _pnote(flow, text):
+    """[파이프라인 생애주기 → 피드(2026-07-09, 사용자)] 마일스톤·SubTask·완수 등 과정 마커를 누적.
+    async 도구 래퍼가 flush_pipeline_notes로 채널에 게시(sync 함수는 await 못 하므로 누적만)."""
+    notes = getattr(flow, "_pipeline_notes", None)
+    if notes is None:
+        notes = flow._pipeline_notes = []
+    notes.append(str(text))
 
 
 def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
@@ -228,6 +242,7 @@ def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
     _ckpt(flow)
     if flow.log:
         flow.log("subtask_open", ms=ms.ms_id, st=st.st_id, goal=st.goal[:80])
+    _pnote(flow, f"[SubTask 개설] ({st.st_id}) {st.goal[:120]}")
     return st
 
 
@@ -244,6 +259,7 @@ def iter_verify(flow, obj, results):
     obj.iter_n += 1
     # [버그 A 교정] '진전'은 이번 iter에 새로 통과한 조건 유무 — 결과 적용 전 미충족 수를 기준선으로.
     _before = sum(1 for c in obj.criteria if not c.passed and c.status != "waived")
+    _passed0 = {c.desc for c in obj.criteria if c.passed}   # 신규 통과 식별 기준선
     by_desc = {c.desc: c for c in obj.criteria}
     for r in (results or []):
         d = str(r.get("desc") or "").strip()
@@ -257,6 +273,14 @@ def iter_verify(flow, obj, results):
     remain = [c.desc for c in obj.criteria if not c.passed and c.status != "waived"]
     kind = "ms" if isinstance(obj, Milestone) else "st"
     oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
+    # [조건 충족 표면화(2026-07-10)] 백로그의 실체(조건 충족 진행)를 피드가 그릴 수 있게 —
+    # 이번 iter에 '새로' 통과한 조건이 있을 때만 마커(도배 방지).
+    _after = len(remain)
+    if _after < _before:
+        _tot = sum(1 for c in obj.criteria if c.status != "waived")
+        _new_pass = [c.desc for c in obj.criteria if c.passed and c.desc not in _passed0]
+        _pnote(flow, f"[조건 충족] ({oid}) {_tot - _after}/{_tot} — "
+                     + " · ".join(d[:60] for d in _new_pass))
     if flow.log:
         flow.log("ms_iter_verify", kind=kind, id=oid, iter=obj.iter_n,
                  passed=len(obj.criteria) - len(remain), total=len(obj.criteria))
@@ -329,6 +353,7 @@ def approve_waiver(flow, obj, target: str, approve: bool = True) -> str:
     c.status = "waived" if approve else "active"
     oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
     if flow.log:
+        if approve: _pnote(flow, f"[조건 조정] '{c.desc[:40]}' 환경 제약으로 조정(사람 승인)")
         flow.log("criterion_waiver", id=oid, target=c.desc[:60], approved=bool(approve))
     _ckpt(flow)
     return (f"조건 '{c.desc[:40]}' {'포기 승인됨(waived) — 나머지 조건으로 주기 진행' if approve else '반려됨 — 다시 충족해야 함'}.")
@@ -341,6 +366,8 @@ def wrapup_done(flow, obj) -> str:
     obj.status = "done"
     _ckpt(flow)
     if flow.log:
+        _oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
+        _pnote(flow, f"[{'마일스톤 완수' if isinstance(obj, Milestone) else 'SubTask 완수'}] ({_oid}) {getattr(obj, 'goal', '')[:120]}")
         flow.log("ms_done" if isinstance(obj, Milestone) else "subtask_done",
                  id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""))
     return "done"
@@ -556,3 +583,18 @@ def ms_from_dict(d: dict) -> Milestone:
             backlog_ids=list(s.get("backlog_ids") or []), status=str(s.get("status") or "open"),
             iter_n=int(s.get("iter_n") or 0), iter_stuck=int(s.get("iter_stuck") or 0)))
     return ms
+
+
+async def flush_pipeline_notes(flow):
+    """누적된 파이프라인 생애주기 노트를 채널에 SYS 게시(sender 0) — 프론트가 흐름 마커로 렌더."""
+    notes = getattr(flow, "_pipeline_notes", None)
+    if not notes:
+        return
+    flow._pipeline_notes = []
+    ch = getattr(flow, "current", None)
+    tid = getattr(ch, "thread_id", None) or getattr(flow, "user_channel", None)
+    for t in notes:
+        try:
+            await flow.guide.post(int(tid), 0, t)
+        except Exception:
+            pass
