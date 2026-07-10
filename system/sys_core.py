@@ -1401,6 +1401,14 @@ class Sys:
                 task.cancel()
 
     async def run_turn(self, flow: Flow, organt_id, body, kind, role) -> str:
+        # [소속 태깅 수리(2026-07-10)] PIPELINE_CTX를 변이 시점(도구 핸들러=자식 태스크)에 set하면
+        # 그 태스크 종료와 함께 증발 — 턴을 스폰하는 이 지점(흐름 태스크)에서 매 턴 갱신해야
+        # 자식(SDK·guide.post)이 상속한다. ch53 라이브: 전 메시지 pipe=None이 그 증거.
+        try:
+            from .rule.milestone import _set_pipeline_ctx
+            _set_pipeline_ctx(flow)
+        except Exception:
+            pass
         # 에이전트가 죽으면(SDK 메시지리더 크래시·서브프로세스 SIGTERM 등) 같은 세션으로 되살려 재시도.
         # State는 organt_id별 파일에 영속되므로 새 인스턴스가 세션을 이어간다(전체 워크플로우 보호).
         flow.last_activity = time.monotonic()   # 진행 신호(턴 시작) — 무진행 워치독 갱신

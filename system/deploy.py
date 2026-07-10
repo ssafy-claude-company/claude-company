@@ -372,8 +372,15 @@ def _alloc_port(reg: dict, name: str) -> int:
         return int(cur)                     # 재배포는 같은 포트 재사용(게이트웨이 무변경)
     used = {int(e.get("port") or 0) for e in reg.values()}
     for p in range(_APPS_PORT_LO, _APPS_PORT_HI + 1):
-        if p not in used:
-            return p
+        if p in used:
+            continue
+        # [실점유 검사(2026-07-10)] 레지스트리 밖 점유(격리 테스트↔라이브 풀 교차, 레지스트리 유실)면
+        # 그 포트의 남의 앱을 '내 배포'로 검증하는 오판이 난다(라이브: e2e-demo가 p-010 4100 충돌).
+        import socket as _sk
+        with _sk.socket() as _s:
+            if _s.connect_ex(("127.0.0.1", p)) == 0:
+                continue
+        return p
     raise RuntimeError("앱 포트 대역(4100~4199) 소진 — 오래된 앱을 정리해야 합니다")
 
 
