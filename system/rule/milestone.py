@@ -287,11 +287,13 @@ def iter_verify(flow, obj, results):
     # [조건 충족 표면화(2026-07-10)] 백로그의 실체(조건 충족 진행)를 피드가 그릴 수 있게 —
     # 이번 iter에 '새로' 통과한 조건이 있을 때만 마커(도배 방지).
     _after = len(remain)
-    if _after < _before:
-        _tot = sum(1 for c in obj.criteria if c.status != "waived")
-        _new_pass = [c.desc for c in obj.criteria if c.passed and c.desc not in _passed0]
-        _pnote(flow, f"[조건 충족] ({oid}) {_tot - _after}/{_tot} — "
-                     + " · ".join(d[:60] for d in _new_pass))
+    _tot = sum(1 for c in obj.criteria if c.status != "waived")
+    _new_pass = [c.desc for c in obj.criteria if c.passed and c.desc not in _passed0]
+    # [iter 가시화(2026-07-10, 사용자: 'iter 시점이 시각적으로 보인다')] 매 검증마다 리듬 마커 —
+    # 피드가 단계 안을 iter 단위로 마디 짓는다(작업들 → 검증 결과 → 다음 iter).
+    _pnote(flow, f"[iter 검증] ({oid}) {obj.iter_n}차 — 충족 {_tot - _after}/{_tot}"
+                 + (" · 새 통과: " + " · ".join(d[:48] for d in _new_pass) if _new_pass else "")
+                 + (f" · 미충족 {_after}건" if _after else " · 전 조건 충족"))
     if flow.log:
         flow.log("ms_iter_verify", kind=kind, id=oid, iter=obj.iter_n,
                  passed=len(obj.criteria) - len(remain), total=len(obj.criteria))
