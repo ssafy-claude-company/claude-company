@@ -174,7 +174,6 @@ def ms_status_snapshot(flow):
     met, total = _cnt_active(ms.criteria)
     sts = []
     relays = getattr(flow, "backlog_relays", None) or {}
-    names = getattr(flow, "_names", None)
     for st in ms.subtasks[:12]:
         st_met, st_total = _cnt_active(st.criteria)
         # [백로그 표면화(2026-07-10, 사용자: '서브태스크마다 쌓아둔 백로그도 보여야지')] 릴레이 장부를
@@ -183,7 +182,8 @@ def ms_status_snapshot(flow):
         r = relays.get(st.st_id)
         for b in (getattr(r, "backlogs", None) or [])[:12]:
             try:
-                a = names([b.assignee]) if (names and b.assignee) else ""
+                _fmt = getattr(flow, "_info", None) or (lambda x: "")
+                a = str(_fmt(b.assignee) or "") if b.assignee else ""
             except Exception:
                 a = ""
             bl.append({"id": b.backlog_id, "d": (b.body or "")[:60], "s": b.status, "a": a})
