@@ -45,8 +45,9 @@ def snapshot(flow):
     stack = []
     for fr in list(getattr(comm, "open_requests", []) or []):
         try:
-            stack.append({"frm": int(fr.from_id), "to": int(fr.to_id),
-                          "kind": str(getattr(fr, "kind", "work")),
+            k = getattr(fr, "kind", "work")
+            k = str(getattr(k, "value", None) or k).replace("Kind.", "").lower()
+            stack.append({"frm": int(fr.from_id), "to": int(fr.to_id), "kind": k,
                           "since": float(getattr(fr, "ts", 0.0) or 0.0)})
         except (TypeError, ValueError):
             continue
