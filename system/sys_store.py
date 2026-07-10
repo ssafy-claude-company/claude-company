@@ -192,6 +192,9 @@ def register_project(sys, channel_id, name, workspace, leader, purpose="",
         if origin_msg and not p.get("origin_msg"):
             p["origin_msg"] = str(origin_msg)
             changed = True
+        if workspace and not p.get("workspace"):   # [백필] workspace 없이 등록된 반쪽 항목 복구
+            p["workspace"] = workspace
+            changed = True
         if changed:
             sys._save_projects()
         return p["id"]

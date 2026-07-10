@@ -1786,21 +1786,17 @@ class Sys:
         flow.checkpoint_task = lambda: self._checkpoint_open_task(flow)   # Task 전이마다 크래시-세이프 영속
         flow.persist_owner = lambda: self._save_file_owner(flow)          # [소유 경계] 새 파일 귀속 시 영속
         body = user_text
-        # [자동 등록(2026-07-10, 사용자: '문제 재발되지 않도록 근본 수정')] 채널=프로젝트인 매체(guide가
-        # autoproject 선언)에선 등록을 봇 판단에 맡기지 않는다 — 미등록이면 흐름 시작 시 SYS가 등록.
-        # 등록 없인 Task/마일스톤 체크포인트가 저장되지 않아(sys_recovery 조기 반환) 재시작마다
-        # 새 Task·새 마일스톤이 태어났다(ch51 라이브: 마일스톤 4회 재생성). 개입(proj)이면 이미 등록.
-        if proj is None and getattr(self.guide, "autoproject", False):
-            try:
-                from .rule.project import create_project as _rcp
-                await _rcp(flow, {"name": (user_text or "프로젝트").strip()[:40], "team": ""})
-                self._log("project_autoregistered", channel=int(channel_id),
-                          project=str(getattr(flow, "project_id", None)))
-            except Exception as _e:
-                self._log("project_autoregister_failed", channel=int(channel_id), error=str(_e)[:120])
         if proj:                                     # 기존 프로젝트 개입 — 맥락 유지(재생성 X)
             flow.project_channel = int(channel_id)   # 기존 채널 재사용 → create_project는 no-op
             flow.workspace = proj["workspace"]
+            if not flow.workspace:   # [반쪽 등록 방어] workspace 없는 등록부 — 격리 폴더 생성·백필
+                try:
+                    flow.workspace = os.path.join(self.workspace, scope_key)
+                    os.makedirs(flow.workspace, exist_ok=True)
+                except OSError:
+                    flow.workspace = self.workspace
+                proj["workspace"] = flow.workspace
+                self._save_projects()
             # [소유 경계 복원/시딩] 저장된 file_owner를 흐름에 싣고(복구에도 유지), 비어 있으면(추적 첫 시작)
             # audit 이력의 최초 작성자로 1회 시딩 — 기존 파일도 올바른 직군 소유로(분류 아닌 생성 기록 기반).
             flow.file_owner = dict(proj.get("file_owner") or {})
@@ -1913,6 +1909,17 @@ class Sys:
                 os.makedirs(flow.workspace, exist_ok=True)
             except OSError:
                 flow.workspace = self.workspace
+            # [자동 등록(2026-07-10, 사용자: '재발 않게 근본 수정')] 채널=프로젝트 매체(guide.autoproject)는
+            # 등록을 봇 판단에 맡기지 않는다 — workspace 확보 직후 SYS가 등록(미등록=체크포인트 조기반환
+            # =재시작마다 마일스톤 재생성의 뿌리, ch51 4회). ch52 사인: workspace 할당 '전' 등록은 금지.
+            if getattr(self.guide, "autoproject", False):
+                try:
+                    from .rule.project import create_project as _rcp
+                    await _rcp(flow, {"name": (user_text or "프로젝트").strip()[:40], "team": ""})
+                    self._log("project_autoregistered", channel=int(channel_id),
+                              project=str(getattr(flow, "project_id", None)))
+                except Exception as _e:
+                    self._log("project_autoregister_failed", channel=int(channel_id), error=str(_e)[:120])
             # [공급 원칙 — 유사 프로젝트 알림] 같은 요청의 재전송이 리더의 이름 짓기 운(한글/영문)에
             # 따라 '기존 이어가기 vs 신설'로 갈리던 비결정성(라이브: 동일 원문 → P-006 중복 신설).
             # 판단은 리더 몫, 정보는 구조가 — 신설 전에 알아야 할 사실을 결정 지점에 공급한다.
