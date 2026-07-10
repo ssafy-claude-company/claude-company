@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  e01a551+ ← 브레인 — 2026-07-10 반쪽등록 복구+중복 deploy 제거+PIPELINE_CTX(러너 라이브)
-murmur  17fec8b   ← 라이브 웹=murmur-ai.duckdns.org — 마일스톤 피드 구조화(아래 2026-07-10 항목)
+murmur  f03014d   ← 라이브 웹=murmur-ai.duckdns.org — 마일스톤 피드 구조화(아래 2026-07-10 항목)
 ```
 
 ## 마일스톤 피드 구조화 (2026-07-10 이현준 세션 — 러너·웹 라이브)
