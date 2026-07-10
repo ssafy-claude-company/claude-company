@@ -146,6 +146,17 @@ def _ckpt(flow):
         except Exception:
             pass
     persist_ms_status(flow)   # [표면 미러] 모든 마일스톤 변이가 이 깔때기를 지난다 — 여기 한 곳만 훅
+    _set_pipeline_ctx(flow)   # [소속 컨텍스트] 이후 이 흐름의 게시가 현재 ms/st ID를 달고 나간다
+
+
+def _set_pipeline_ctx(flow):
+    try:
+        from system.protocol import PIPELINE_CTX
+        ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status != "done"), None)
+        st = next((s for s in ms.subtasks if s.status != "done"), None) if ms else None
+        PIPELINE_CTX.set({"ms": ms.ms_id, "st": (st.st_id if st else None)} if ms else None)
+    except Exception:
+        pass
 
 
 def _cnt_active(criteria):

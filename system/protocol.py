@@ -9,6 +9,7 @@ Discord엔 구조화된 형식만 오간다. Discord가 주는 정보(From=보�
   Kind: Work|Info
   Body: ---
 """
+import contextvars
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -158,3 +159,8 @@ def parse(*, message_id, author_id, mention_ids: List[int], reply_to_id,
                        from_id=author_id, message_id=str(message_id))
 
     return None
+
+
+# [파이프라인 소속 컨텍스트(2026-07-10)] 흐름의 현재 마일스톤/SubTask — rule/milestone이 변이 때마다
+# 채우고, Guide 구현이 게시 payload에 실어 표면(피드)이 발언을 ID로 정확히 부착한다.
+PIPELINE_CTX = contextvars.ContextVar("organt_pipeline_ctx", default=None)

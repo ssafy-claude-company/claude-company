@@ -34,6 +34,15 @@ except Exception:
 # context를 복사하므로 각 동시 흐름이 자기 채널만 본다(시그니처·두뇌 무변경).
 ORIGIN_CHANNEL = contextvars.ContextVar("organt_origin_channel", default=None)
 
+def _pipe_payload():
+    """[소속 태깅] SYS가 채운 파이프라인 컨텍스트(protocol.PIPELINE_CTX) → 게시 payload."""
+    try:
+        from system.protocol import PIPELINE_CTX
+        ctx = PIPELINE_CTX.get()
+        return {"pipeline": dict(ctx)} if ctx else {}
+    except Exception:
+        return {}
+
 
 class MurmurGuide:
     """Rule ↔ 원격 SNS(guide_bridge) 전송기. 러너 프로세스 1개 안에서 Sys/Flow에 주입된다."""
@@ -146,7 +155,7 @@ class MurmurGuide:
         res = await self._post("/api/guide/ingest/", {
             "op": "post", "channel_id": int(ch), "thread_id": int(channel_id),
             "sender_id": int(sender_id or 0), "msg_type": "plain", "body": str(content),
-            "reply_to": (int(reply_to) if reply_to else None)})
+            "reply_to": (int(reply_to) if reply_to else None), "payload": _pipe_payload()})
         if int(sender_id or 0) != 0:
             self._track_last(ch, channel_id, res.get("msg_id"))   # 앵커=마지막 '봇' 발화 — SYS 게시([배포 결과] 등)에 의견이 달리는 어색함 방지(사용자)
         return str(res.get("msg_id"))
@@ -170,7 +179,7 @@ class MurmurGuide:
         res = await self._post("/api/guide/ingest/", {
             "op": "send_request", "channel_id": int(ch), "thread_id": int(thread_id),
             "sender_id": int(sender_id), "msg_type": "request",
-            "to_id": (int(to_id) if to_id else None), "kind": k, "body": str(body)})
+            "to_id": (int(to_id) if to_id else None), "kind": k, "body": str(body), "payload": _pipe_payload()})
         self._track_last(ch, thread_id, res.get("msg_id"))
         return str(res.get("msg_id"))
 
@@ -179,7 +188,7 @@ class MurmurGuide:
         res = await self._post("/api/guide/ingest/", {
             "op": "send_response", "channel_id": int(ch), "thread_id": int(thread_id),
             "sender_id": int(sender_id), "msg_type": "response",
-            "reply_to": (int(request_msg_id) if request_msg_id else None), "body": str(body)})
+            "reply_to": (int(request_msg_id) if request_msg_id else None), "body": str(body), "payload": _pipe_payload()})
         self._track_last(ch, thread_id, res.get("msg_id"))
         return str(res.get("msg_id"))
 

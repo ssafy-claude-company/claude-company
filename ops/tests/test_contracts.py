@@ -28,6 +28,7 @@ CONTRACT = {
     "system.protocol.Request": ["guide", "murmur"],
     "system.protocol.Response": ["guide", "murmur"],
     "system.protocol.parse": ["guide"],
+    "system.protocol.PIPELINE_CTX": ["guide"],   # 파이프라인 소속 컨텍스트(SYS가 채움 → Guide가 게시 payload에 동봉, 2026-07-10)
     "system.sys_core.Sys": ["guide", "murmur"],
     "system.sys_core.load_personas": ["guide"],
     "system.sys_core.save_personas": ["murmur"],

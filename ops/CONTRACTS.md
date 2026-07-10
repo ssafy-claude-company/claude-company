@@ -23,6 +23,7 @@
 | `system.sys_core.load_personas` / `save_personas` | system | guide / murmur |
 | `system.protocol.Kind·Request·Response·parse` | system | guide·murmur |
 | `system.protocol.Marker` | system | organt |
+| `system.protocol.PIPELINE_CTX` | system | guide | 파이프라인 소속(ms/st) 컨텍스트 — rule/milestone이 변이 깔때기(_ckpt)에서 채우고 Guide가 post/send_* payload `pipeline`으로 동봉(2026-07-10) |
 | `system.audit.AuditLog` | system | guide·murmur·organt |
 | `system.audit.make_post_tool_use_hook` | system | organt |
 | `system.permissions.make_pre_tool_use_hook` | system | organt |
