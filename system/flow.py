@@ -7,6 +7,7 @@ from .protocol import Kind
 from .tool_names import ORIGIN
 from .rule.communication import CommunicationManager
 from .rule.task import TaskRef
+from . import entity_status
 
 
 class Flow:
@@ -140,7 +141,9 @@ class Flow:
                                        #   다이제스트+MINUTES.md 참조로 dedup(ORGANT_DOC_COLLAB=1일 때만
                                        #   소비 — off면 종전 전문 재동봉 그대로). 재시작 시 리셋=전문 재push
                                        #   (안전한 방향의 과잉push — 스냅샷 영속 불필요).
-        self.log = None                # (event, **fields) 콜백 — SYS가 주입(flow.jsonl 영속)
+        self.log = None                # (event, **fields) 콜백 — SYS가 주입(flow.jsonl 영속).
+                                       #   주입 시 Flow가 관측 봉투로 감싼다(아래 log property —
+                                       #   pid·task 자동 부착 + 실황 미러. 계약 v2).
         # ── 계약 완결(M6, 2026-07-03): sys_core·rule/이 주입하던 유령속성을 여기 선언 ──
         #   전엔 선언 없이 5파일에 흩어져 할당돼, flow 계약을 알려면 크로스체크가 필요했다.
         #   기본값은 각 소비처의 getattr 기본값과 일치(동작 불변). 리스크 있는 2개는 유령 유지:
@@ -169,6 +172,44 @@ class Flow:
         self.projects_provider = None  # 프로젝트 목록 provider(SYS 주입)
         self.floor_mode = None         # [1층 floor seam] 대화 구조 정책명 덮어쓰기(None=env ORGANT_FLOOR —
                                        #   rule/floor.floor_mode가 해석; 회의·세그먼트 경계의 발언권 배분 정책)
+
+    # ── [관측 계약 v2 — 봉투는 Flow의 소유] ──────────────────────────────
+    # SYS가 주입하는 log 싱크를 Flow가 봉투로 감싼다: 모든 이벤트에 pid(채널)·task(현재 태스크)를
+    # 자동 부착하고(명시값 존중), 이벤트가 흐를 때마다 실황 미러(entity_status)를 갱신한다.
+    # property인 이유: 주입부(sys_core 등)를 고치지 않고 모든 주입 경로에 봉투를 보장하기 위함 —
+    # "개체 키 없는 trace 중심 로그"가 개체 단위 모니터링을 막던 구조 원인의 수선.
+    # (설계: murmur/docs/MONITORING_REDESIGN_2026-07-10.md §5)
+    @property
+    def log(self):
+        return self._log_sink
+
+    @log.setter
+    def log(self, sink):
+        if sink is None:
+            self._log_sink = None
+            return
+        flow = self
+
+        def _enveloped(event, **f):
+            if "pid" not in f and getattr(flow, "user_channel", None) is not None:
+                try:
+                    f["pid"] = int(flow.user_channel)
+                except (TypeError, ValueError):
+                    pass
+            if "task" not in f:
+                cur = getattr(flow, "current", None)
+                tid = str(getattr(cur, "task_id", "") or "") if cur is not None else ""
+                if tid:
+                    f["task"] = tid
+            try:
+                return sink(event, **f)
+            finally:
+                try:
+                    entity_status.mirror(flow, force=(event in entity_status.FORCE_EVENTS))
+                except Exception:
+                    pass
+
+        self._log_sink = _enveloped
 
     def start_root(self, root_id):
         self.root_id = str(root_id)

@@ -53,3 +53,43 @@ CSS 막대·인라인 SVG). 15s 폴링. 사이드바 admin 메뉴.
 - system/organt 방출 변경 → **organt-runner 재시작**(사용자 승인). murmur API/대시보드 → murmur-web
   재시작 + dist. ops 스크립트 → 배치. trace_id/seq/turn_done은 러너 재시작 후 신규 이벤트부터 적용
   (기존 로그는 봉투 없음 — 소비측이 결측 허용).
+
+---
+
+# 관측 계약 (v2) — 개체 단위 모니터링 (2026-07-10)
+
+> 설계: `murmur/docs/MONITORING_REDESIGN_2026-07-10.md`. v1은 시스템(거시) 단위였다 —
+> v2는 Organt·Project(개체) 단위를 가능케 하는 두 가지를 더한다. v1과 하위호환.
+
+## 봉투 확장 — pid·task (Flow가 주입)
+모든 flow 이벤트 봉투에 두 키가 추가된다(`system/flow.py`의 log property가 자동 부착):
+```json
+{ ..., "pid": 42, "task": "162313-1" }
+```
+- `pid` = 프로젝트(채널) id. `task` = 현재 태스크 id(없으면 생략). 명시값이 있으면 존중.
+- **예외**: `runner_boot.pid`는 v1의 '프로세스 id'(역사적 이름) — 소비측은 프로젝트 집계에서
+  `runner_boot`를 제외한다. 행위자 키는 이벤트별 기존 이름 유지(turn_done=`bot`,
+  floor=`who`/`nxt`, req=`frm`/`to`) — 소비측 매핑으로 흡수.
+- v2 이전 로그에는 pid·task가 없다 — 개체 집계는 v2 배포 시점부터.
+
+## 실황 미러 — entity_status.json (신규)
+러너가 흐름 이벤트마다(1s 스로틀, 상태전이 이벤트는 즉시) '지금' 상태를 미러한다
+(`system/entity_status.py` — ms_status.json 패턴의 일반화. 러너 메모리가 진실원):
+```json
+{ "projects": { "42": { "active": 202, "task": "1-1", "done": false,
+                         "stack": [{"frm":101,"to":202,"kind":"work","since":1783...}] } },
+  "organts":  { "202": { "state": "working|waiting", "pid": 42, "task": "1-1",
+                          "waiting_on": null, "since": 1783... } },
+  "updated": 1783... }
+```
+- 미러에 없는 봇 = 유휴(idle). 흐름 종료 시 그 프로젝트·소속 봇 항목은 제거된다.
+
+## 개체 드릴다운 API (murmur `/api/monitor/*`)
+| GET | 반환 | 가시성 |
+|---|---|---|
+| `/api/monitor/agent/<bot_id>/` | live(실황)·wakes·ok_rate·recent[]·floor(응찰)·quality(redo·반려)·growth | 공개(프로필의 연장). `diag`(비용·오류·재시도·토큰)는 **admin에게만** 동봉 |
+| `/api/monitor/project/<pid>/` | live(베턴·콜스택+이름)·tasks[]·convergence(경보·정체)·team·wakes_total | **채널 가시성**: public=누구나, private=active 멤버·admin. `cost_usd_total`은 멤버·admin에게만 |
+
+## 화면
+- 직원 페이지(AgentDetail): 실황 상태 칩 + 근황 수치(meta-row 흡수) + admin '운영 진단' 패널.
+- /monitor(admin): '프로젝트 상황판' 섹션 — 프로젝트 선택 → 콜스택·Task·수렴·팀·비용, 15s 폴링.

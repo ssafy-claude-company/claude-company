@@ -1,7 +1,8 @@
 """[M9 분할 — communication.py에서 추출] 베턴 엔진 클러스터:
 예외(CommError·RedoLimitExceeded·BusyInOtherFlow)·Engagement(전역 점유)·Frame(베턴 프레임)·CommunicationManager(단일활성 베턴 LIFO 상태기계).
 파사드 보존: communication.py가 재수출해 기존 import(tests·request/meet) 유지. 외부 의존 최소(Kind·dataclass)."""
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import List, Optional
 from ..protocol import Kind
 
@@ -73,6 +74,7 @@ class Frame:
     request_id: str
     kind: str
     body: str = ""        # [정밀 복구] 이 위임의 원문 — 전체 체인 영속·끊김 시 가장 깊은 워커를 원문으로 재개
+    ts: float = field(default_factory=time.time)   # [관측 v2] 프레임 생성 시각 — 실황 미러의 '언제부터' 근거
 
 
 class CommunicationManager:
