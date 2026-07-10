@@ -23,6 +23,7 @@ Sacks 3규칙 완성형 (§3 확정):
 판정과 같은 어휘 겹침(_body_overlap 재사용 — 도메인 하드코딩 없음).
 """
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -60,16 +61,20 @@ class Backlog:
     block_count: int = 0         # 차단 누적 — DEADLOCK_BLOCKS번째에 deadlock_signal
     block_reason: str = ""
     note: str = ""               # iter 정리 등 상태 밖 메모(상태 4종을 오염시키지 않는다)
+    ts_pick: float = 0.0         # [창 귀속(2026-07-10)] 선정 시각 — 이 시각부터의 대화가 이 백로그
+    ts_done: float = 0.0         # 완료/차단 시각 — 창의 끝
 
     def to_dict(self) -> dict:
         return {"backlog_id": self.backlog_id, "body": self.body, "submitter": int(self.submitter),
                 "status": self.status, "assignee": self.assignee, "block_count": self.block_count,
-                "block_reason": self.block_reason, "note": self.note}
+                "block_reason": self.block_reason, "note": self.note,
+                "ts_pick": self.ts_pick, "ts_done": self.ts_done}
 
     @staticmethod
     def from_dict(d: dict) -> "Backlog":
         return Backlog(backlog_id=str(d.get("backlog_id")), body=str(d.get("body") or ""),
                        submitter=int(d.get("submitter") or 0), status=str(d.get("status") or OPEN),
+                       ts_pick=float(d.get("ts_pick") or 0), ts_done=float(d.get("ts_done") or 0),
                        assignee=d.get("assignee"), block_count=int(d.get("block_count") or 0),
                        block_reason=str(d.get("block_reason") or ""), note=str(d.get("note") or ""))
 
@@ -156,6 +161,7 @@ class BacklogRelay:
         if b.status not in (OPEN, BLOCKED):
             raise BacklogError(f"{b.backlog_id}는 {b.status} — 지명은 open/blocked만 가능합니다.")
         b.status, b.assignee = IN_PROGRESS, int(assignee)
+        b.ts_pick = b.ts_pick or time.time()
         self._emit("relay_pick", backlog=b.backlog_id, by=int(picker), to=int(assignee),
                    revisit=b.block_count > 0)
         return b
@@ -202,6 +208,7 @@ class BacklogRelay:
         if b.status not in (OPEN, BLOCKED):
             raise BacklogError(f"{b.backlog_id}는 {b.status} — 동률 해소 대상이 아닙니다.")
         b.status, b.assignee = IN_PROGRESS, int(assignee)
+        b.ts_pick = b.ts_pick or time.time()
         self._emit("relay_pick", backlog=b.backlog_id, by=int(decider), to=int(assignee),
                    revisit=b.block_count > 0, tie_break=True)
         return b
@@ -219,6 +226,7 @@ class BacklogRelay:
         if b.status not in (OPEN, BLOCKED):
             raise BacklogError(f"{b.backlog_id}는 {b.status} — 지정 대상이 아닙니다.")
         b.status, b.assignee = IN_PROGRESS, int(assignee)
+        b.ts_pick = b.ts_pick or time.time()
         self._emit("relay_pass_to", backlog=b.backlog_id, by=int(last_worker), to=int(assignee),
                    reason="no_bids")
         return b
@@ -231,6 +239,7 @@ class BacklogRelay:
             raise BacklogError(f"{b.backlog_id}의 현재 수행자만 완료할 수 있습니다"
                                f"(현재: {b.status}/{b.assignee}).")
         b.status = DONE
+        b.ts_done = time.time()
         if note:
             b.note = str(note)[:300]
         self.turn_holder = int(worker)
@@ -250,6 +259,7 @@ class BacklogRelay:
         if b.status != IN_PROGRESS or b.assignee != int(worker):
             raise BacklogError(f"{b.backlog_id}의 현재 수행자만 차단을 선언할 수 있습니다.")
         b.status, b.block_count = BLOCKED, b.block_count + 1
+        b.ts_done = time.time()
         b.block_reason = str(reason or "")[:300]
         self.turn_holder = int(next_starter)
         self._emit("relay_block", backlog=b.backlog_id, by=int(worker), next=int(next_starter),

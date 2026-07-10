@@ -195,7 +195,9 @@ def ms_status_snapshot(flow):
                 a = str(_fmt(b.assignee) or "") if b.assignee else ""
             except Exception:
                 a = ""
-            bl.append({"id": b.backlog_id, "d": (b.body or "")[:60], "s": b.status, "a": a})
+            bl.append({"id": b.backlog_id, "d": (b.body or "")[:60], "s": b.status, "a": a,
+                       "aid": (str(b.assignee) if b.assignee else None),
+                       "t0": b.ts_pick or None, "t1": b.ts_done or None})
         # [백로그=계획 목록(2026-07-10, 사용자: '미리 만들어 두는 건데')] ST 완수조건 = 등록 순간부터
         # 존재하는 계획 단위 — 전 목록을 표면에 준다(passed=✓). 릴레이 bl은 담당·진행의 보강 데이터.
         cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
