@@ -181,10 +181,6 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         flow.unanswered_questions = None
     try:
         flow.milestones = [ms_from_dict(d) for d in (proj.get("milestones") or [])]
-        if flow.milestones:
-            # [표면 미러] 복원 직후 1회 — 다음 변이까지 HUD가 빈 화면으로 기다리지 않게(재시작 지연 제거).
-            from .rule.milestone import persist_ms_status
-            persist_ms_status(flow)
     except Exception:
         flow.milestones = []
     # [백로그 릴레이 §9 — 복원] 마일스톤과 같은 독립 복원(릴레이만 있는 시점의 죽음도 복구).
@@ -195,6 +191,14 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
                                for sid, d in (proj.get("backlog_relays") or {}).items()}
     except Exception:
         flow.backlog_relays = {}
+    if flow.milestones:
+        # [표면 미러] 복원 직후 1회 — HUD 공백 제거. **릴레이 복원 뒤**여야 한다(장부 복원 전에 쓰면
+        # 빈 백로그로 스냅샷을 덮는다 — ch53 라이브: 스냅샷 bl 전부 소실 사인, 2026-07-10).
+        try:
+            from .rule.milestone import persist_ms_status
+            persist_ms_status(flow)
+        except Exception:
+            pass
     snap = proj.get("open_task")
     if not snap:
         return None
