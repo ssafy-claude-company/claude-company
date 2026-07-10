@@ -173,10 +173,22 @@ def ms_status_snapshot(flow):
         return None
     met, total = _cnt_active(ms.criteria)
     sts = []
+    relays = getattr(flow, "backlog_relays", None) or {}
+    names = getattr(flow, "_names", None)
     for st in ms.subtasks[:12]:
         st_met, st_total = _cnt_active(st.criteria)
-        sts.append({"g": st.goal[:80], "s": st.status, "met": st_met, "total": st_total})
-    return {"goal": ms.goal[:140], "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
+        # [백로그 표면화(2026-07-10, 사용자: '서브태스크마다 쌓아둔 백로그도 보여야지')] 릴레이 장부를
+        # 상태로 미러 — 피드가 단계 폴더에 B1✓·B2▶담당… 칩으로 그린다(채팅 행 아님).
+        bl = []
+        r = relays.get(st.st_id)
+        for b in (getattr(r, "backlogs", None) or [])[:12]:
+            try:
+                a = names([b.assignee]) if (names and b.assignee) else ""
+            except Exception:
+                a = ""
+            bl.append({"id": b.backlog_id, "d": (b.body or "")[:60], "s": b.status, "a": a})
+        sts.append({"g": st.goal[:80], "id": st.st_id, "s": st.status, "met": st_met, "total": st_total, "bl": bl})
+    return {"goal": ms.goal[:140], "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
             "sts": sts, "ts": time.time()}
 
 
