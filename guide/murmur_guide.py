@@ -81,6 +81,10 @@ class MurmurGuide:
         except Exception:
             return None
 
+    # [매체 속성] murmur는 채널=프로젝트(create_project_channel이 origin 반환) — SYS가 흐름 시작 시
+    # 자동 등록해도 안전(디스코드처럼 새 채널을 만드는 매체는 미선언 → 자동 등록 안 함).
+    autoproject = True
+
     def set_origin(self, channel_id):
         """[배달 계약] 이 요청의 origin 채널을 task-로컬로 — 뒤이어 create_task되는 흐름이 이 채널로 라우팅(동시 안전)."""
         ORIGIN_CHANNEL.set(int(channel_id))

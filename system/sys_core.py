@@ -985,7 +985,21 @@ class Sys:
                                       f"[마감 대기] 완주 중인 작업 {len(tasks)}건의 결과를 회수한 뒤 마감합니다 — 새 요청은 그 뒤 처리됩니다.")
             except Exception:
                 pass
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # [무한 대기 가드(2026-07-09, 사용자: "흐름 멈춤")] gather에 타임아웃이 없어 위임 태스크
+            # 하나가 안 끝나면(자식 프로세스 사망·detach 미해소) 흐름 전체가 영구 정지했다(라이브:
+            # ch49 await_inflight n=1로 10분+ 멎음, 자식=0). 턴 타임아웃×1.5 상한으로 끊고, 못 끝낸
+            # 위임은 실패로 처리해 리더가 재위임/우회하게 한다(무진행 워치독보다 확정적).
+            _cap = int(getattr(self, "turn_timeout", 600) or 600) * 3 // 2
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True), timeout=_cap)
+            except asyncio.TimeoutError:
+                for _t in tasks:
+                    if not _t.done():
+                        _t.cancel()
+                self._log("inflight_drain_timeout", n=len(tasks), cap=_cap)
+                results = [asyncio.TimeoutError(f"위임 회수 {_cap}s 초과 — 강제 종료")
+                           for _ in tasks]
             # [위임 실패 가시화(2026-06, 사용자)] 인플라이트 위임 턴이 예외로 죽으면 종전엔 gather가
             # 조용히 삼켜(return_exceptions) 리더가 결과도 에러도 못 받고 무진행으로 멎어 잘렸다(라이브:
             # 배승우→진서우 VFX 위임이 세션도 못 만들고 죽은 뒤 흐름 자동중단). 예외를 ① 로그로 남기고
@@ -1768,6 +1782,18 @@ class Sys:
         flow.checkpoint_task = lambda: self._checkpoint_open_task(flow)   # Task 전이마다 크래시-세이프 영속
         flow.persist_owner = lambda: self._save_file_owner(flow)          # [소유 경계] 새 파일 귀속 시 영속
         body = user_text
+        # [자동 등록(2026-07-10, 사용자: '문제 재발되지 않도록 근본 수정')] 채널=프로젝트인 매체(guide가
+        # autoproject 선언)에선 등록을 봇 판단에 맡기지 않는다 — 미등록이면 흐름 시작 시 SYS가 등록.
+        # 등록 없인 Task/마일스톤 체크포인트가 저장되지 않아(sys_recovery 조기 반환) 재시작마다
+        # 새 Task·새 마일스톤이 태어났다(ch51 라이브: 마일스톤 4회 재생성). 개입(proj)이면 이미 등록.
+        if proj is None and getattr(self.guide, "autoproject", False):
+            try:
+                from .rule.project import create_project as _rcp
+                await _rcp(flow, {"name": (user_text or "프로젝트").strip()[:40], "team": ""})
+                self._log("project_autoregistered", channel=int(channel_id),
+                          project=str(getattr(flow, "project_id", None)))
+            except Exception as _e:
+                self._log("project_autoregister_failed", channel=int(channel_id), error=str(_e)[:120])
         if proj:                                     # 기존 프로젝트 개입 — 맥락 유지(재생성 X)
             flow.project_channel = int(channel_id)   # 기존 채널 재사용 → create_project는 no-op
             flow.workspace = proj["workspace"]
