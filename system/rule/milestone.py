@@ -177,12 +177,22 @@ def _cnt_active(criteria):
 def ms_status_snapshot(flow):
     """[표면 — BACKLOG H] 진행 중 마일스톤의 압축 현황. murmur HUD가 그대로 그리는 모양.
     미완 마일스톤이 없으면 None(완료 = 표면에서 내려감)."""
-    ms = next((m for m in reversed(getattr(flow, "milestones", []) or []) if m.status != "done"), None)
-    if ms is None:
+    # [이력형 미러(2026-07-10, 사용자: '백로그 왜 다 없앴어')] 활성 하나만 담던 것을 전 마일스톤으로 —
+    # 완수 주기의 조건·백로그·증거가 표면에서 내려가지 않는다(복기 주기와 공존).
+    all_ms = list(getattr(flow, "milestones", []) or [])
+    if not all_ms:
         return None
+    out_list = []
+    relays = getattr(flow, "backlog_relays", None) or {}
+    for ms in all_ms[-6:]:
+        out_list.append(_ms_one(flow, ms, relays))
+    cur = next((m for m in reversed(out_list) if m["status"] != "done"), out_list[-1])
+    return {**cur, "list": out_list, "ts": time.time()}
+
+
+def _ms_one(flow, ms, relays):
     met, total = _cnt_active(ms.criteria)
     sts = []
-    relays = getattr(flow, "backlog_relays", None) or {}
     for st in ms.subtasks[:12]:
         st_met, st_total = _cnt_active(st.criteria)
         # [백로그 표면화(2026-07-10, 사용자: '서브태스크마다 쌓아둔 백로그도 보여야지')] 릴레이 장부를
@@ -204,7 +214,7 @@ def ms_status_snapshot(flow):
                "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in st.criteria[:15]]
         sts.append({"g": st.goal[:80], "id": st.st_id, "s": st.status, "met": st_met, "total": st_total, "bl": bl, "cr": cr})
     return {"goal": ms.goal[:140], "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
-            "sts": sts, "ts": time.time()}
+            "sts": sts}
 
 
 def persist_ms_status(flow):
