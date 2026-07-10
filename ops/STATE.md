@@ -19,7 +19,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  e01a551+ ← 브레인 — 2026-07-10 반쪽등록 복구+중복 deploy 제거+PIPELINE_CTX(러너 라이브)
-murmur  8f88911   ← 라이브 웹 — 피드 구조분리 완료(front feed/모듈+MilestoneBlock/BotAvatar/FeedBlock, back feed_live/feed_assembly). 마커 신계약 실증(조건목록·충족 1/9 렌더)
+murmur  7e8d181   ← 라이브 웹 — 피드 구조분리+마커 신계약 실증(세부는 murmur git log)
 ```
 
 ## 마일스톤 피드 구조화 (2026-07-10 이현준 세션 — 러너·웹 라이브)
