@@ -1760,11 +1760,15 @@ class Sys:
                                          origin_msg=root_id or "",      # 원요청 링크(부팅 복구의 개입 라우팅 근거)
                                          reuse_ok=reuse_ok)
             p0 = self.projects.get(int(ch))
-            if p0 is not None and status_mid and not p0.get("origin_status"):
+            try:
+                _smid, _sch, _st0 = status_mid, status_ch, status_t0
+            except NameError:      # [자동 등록] 계기판 게시 전 호출되면 아직 미할당 — 시초 기록만 생략
+                _smid = _sch = _st0 = None
+            if p0 is not None and _smid and not p0.get("origin_status"):
                 # [시초 계기판 영속] 원요청의 상태 메시지(채널·id·시작 시각)를 프로젝트에 기록 —
                 # 졸업 재개가 새 계기판을 달지 않고 이 시초를 되살린다(사용자 설계).
-                p0["origin_status"] = {"channel": status_ch, "id": str(status_mid),
-                                       "started": int(time.time() - (time.monotonic() - status_t0))}
+                p0["origin_status"] = {"channel": _sch, "id": str(_smid),
+                                       "started": int(time.time() - (time.monotonic() - _st0))}
                 self._save_projects()
             p = self.projects.get(int(ch))
             if p and p.get("workspace"):
