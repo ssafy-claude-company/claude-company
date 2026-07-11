@@ -6,7 +6,8 @@
       "murmur/docs/ARCHITECTURE.md",
       "CLAUDE.md 캐논: User ⇄ 매체 ⇄ SYS ⇄ Organt"
     ],
-    "note": "globs = 접두 매칭(최장 우선: system/rule/은 rule이 가짐). 집계 엣지는 뷰어가 실제 import에서 자동 계산."
+    "note": "globs = 접두 매칭(최장 우선: system/rule/은 rule이 가짐). 집계 엣지는 뷰어가 실제 import에서 자동 계산.",
+    "axis": "열 = 캐논 축(CLAUDE.md): 사람 → 창(표면) → 투영·전송 → 세계(법칙) → 존재"
   },
   "nodes": [
     {
@@ -15,8 +16,8 @@
       "one": "방향·의뢰만 — No Work. 창을 통해 조직을 본다",
       "src": "PHILOSOPHY §2",
       "globs": [],
-      "x": 0.06,
-      "y": 0.42
+      "stage": 0,
+      "order": 0
     },
     {
       "id": "murmur-front",
@@ -26,8 +27,8 @@
       "globs": [
         "murmur/frontend/"
       ],
-      "x": 0.24,
-      "y": 0.28
+      "stage": 1,
+      "order": 0
     },
     {
       "id": "murmur-back",
@@ -37,8 +38,8 @@
       "globs": [
         "murmur/backend/"
       ],
-      "x": 0.42,
-      "y": 0.55
+      "stage": 2,
+      "order": 0
     },
     {
       "id": "guide",
@@ -49,8 +50,8 @@
         "guide/",
         "ops/organt_discord/"
       ],
-      "x": 0.58,
-      "y": 0.3
+      "stage": 2,
+      "order": 1
     },
     {
       "id": "sys",
@@ -60,8 +61,8 @@
       "globs": [
         "system/"
       ],
-      "x": 0.62,
-      "y": 0.62
+      "stage": 3,
+      "order": 0
     },
     {
       "id": "rule",
@@ -71,8 +72,8 @@
       "globs": [
         "system/rule/"
       ],
-      "x": 0.8,
-      "y": 0.72
+      "stage": 3,
+      "order": 1
     },
     {
       "id": "organt",
@@ -82,8 +83,8 @@
       "globs": [
         "organt/"
       ],
-      "x": 0.86,
-      "y": 0.38
+      "stage": 4,
+      "order": 0
     },
     {
       "id": "dev",
@@ -94,8 +95,8 @@
         "ops/dev/",
         "murmur/scripts/"
       ],
-      "x": 0.2,
-      "y": 0.78
+      "stage": 1,
+      "order": 1
     }
   ],
   "edges": [
@@ -143,5 +144,12 @@
       "label": "코드에 피드백",
       "both": true
     }
+  ],
+  "stages": [
+    "사람",
+    "창 (표면)",
+    "투영·전송",
+    "세계 (법칙)",
+    "존재"
   ]
 }
