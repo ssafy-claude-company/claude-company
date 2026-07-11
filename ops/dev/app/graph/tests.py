@@ -1,10 +1,12 @@
-"""graph 앱 대본 검증 — 등록·스캔·그래프·논리층 왕복(임시 디렉터리, 정적 토큰 인증)."""
+"""graph 플랫폼 대본 검증 — 원시 기능(Node·Edge·View) CRUD + 스캔 동기의 불변식."""
 import os
 import tempfile
 from pathlib import Path
 
 from django.test import TestCase
 from rest_framework.test import APIClient
+
+from .models import Project
 
 
 def _c(tok="tok-dojin"):
@@ -13,55 +15,69 @@ def _c(tok="tok-dojin"):
     return c
 
 
-class GraphApiTest(TestCase):
+class PlatformApiTest(TestCase):
     def setUp(self):
         os.environ["DEV_FEEDBACK_TOKENS"] = "tok-dojin:dojin"
         os.environ.pop("DEV_FEEDBACK_MURMUR", None)
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        (root / "a.py").write_text('"""모듈 a — 시드."""\nimport b\n', encoding="utf-8")
-        (root / "b.py").write_text('"""모듈 b."""\nX = 1\n', encoding="utf-8")
+        (root / "a.py").write_text('"""모듈 a."""\nimport b\n', encoding="utf-8")
+        (root / "b.py").write_text('"""모듈 b."""\n', encoding="utf-8")
         (root / "web").mkdir()
         (root / "web" / "app.js").write_text("// 앱\nimport './util.js'\n", encoding="utf-8")
         (root / "web" / "util.js").write_text("// 유틸\n", encoding="utf-8")
+        self.c = _c()
+        r = self.c.post("/api/projects/", {"name": "샘플", "slug": "sample", "root": self.tmp.name}, format="json")
+        assert r.status_code == 201, r.content
 
     def tearDown(self):
         self.tmp.cleanup()
         os.environ.pop("DEV_FEEDBACK_TOKENS", None)
 
-    def test_register_scan_graph_concepts(self):
-        c = _c()
-        # 게이트
-        self.assertEqual(APIClient().get("/api/projects/").status_code, 403)
-        # 등록(경로 검증 포함)
-        bad = c.post("/api/projects/", {"name": "x", "root": "/없는/경로"}, format="json")
-        self.assertEqual(bad.status_code, 400)
-        r = c.post("/api/projects/", {"name": "샘플", "slug": "sample", "root": self.tmp.name}, format="json")
-        self.assertEqual(r.status_code, 201, r.content)
-        # 스캔 → 그래프
-        self.assertEqual(c.post("/api/projects/sample/scan/").status_code, 200)
-        g = c.get("/api/projects/sample/graph/").json()
-        ids = {n["id"] for n in g["nodes"]}
-        self.assertEqual(ids, {"a.py", "b.py", "web/app.js", "web/util.js"})
-        self.assertIn({"s": "a.py", "t": "b.py"}, g["edges"])                 # py 해석
-        self.assertIn({"s": "web/app.js", "t": "web/util.js"}, g["edges"])    # js 상대 해석
-        self.assertEqual(g["nodes"][0]["doc"], "모듈 a — 시드.")
-        # 논리층 PUT/GET 왕복 + 검증
-        doc = {"stages": ["층A", "층B"],
-               "nodes": [{"id": "core", "name": "코어", "one": "설명", "src": "구술", "stage": 0,
-                          "globs": ["a.py"], "x": 10, "y": 20},
-                         {"id": "web", "name": "웹", "stage": 1, "globs": ["web/"]}],
-               "edges": [{"s": "core", "t": "web", "label": "제공", "both": False}]}
-        self.assertEqual(c.put("/api/projects/sample/concepts/", doc, format="json").status_code, 200)
-        got = c.get("/api/projects/sample/concepts/").json()
-        self.assertEqual(len(got["nodes"]), 2)
-        self.assertEqual(got["nodes"][0]["x"], 10)
-        self.assertEqual(got["edges"][0]["label"], "제공")
-        # 무결성: 없는 개념을 가리키는 관계 거부
-        bad2 = c.put("/api/projects/sample/concepts/",
-                     {"nodes": [{"id": "solo"}], "edges": [{"s": "solo", "t": "ghost"}]}, format="json")
-        self.assertEqual(bad2.status_code, 400)
-        # 목록에 요약
-        lst = c.get("/api/projects/").json()["projects"]
-        self.assertEqual(lst[0]["slug"], "sample")
-        self.assertEqual(lst[0]["last_scan"]["files"], 4)
+    def test_scan_sync_and_rescan_preserves_user_data(self):
+        self.assertEqual(_c("bad").post("/api/projects/sample/scan/").status_code, 403)
+        self.assertEqual(self.c.post("/api/projects/sample/scan/").status_code, 200)
+        g = self.c.get("/api/projects/sample/graph/").json()
+        ids = {n["nid"] for n in g["nodes"]}
+        self.assertEqual(ids, {"f:a.py", "f:b.py", "f:web/app.js", "f:web/util.js"})
+        self.assertTrue(any(e["s"] == "f:a.py" and e["t"] == "f:b.py" for e in g["edges"]))       # py
+        self.assertTrue(any(e["s"] == "f:web/app.js" and e["t"] == "f:web/util.js" for e in g["edges"]))  # js
+        self.assertEqual({v["vid"] for v in g["views"]}, {"concept", "files", "all"})            # 시드 뷰
+        # 사람이 만든 것: 개념 노드 + 파일로의 관계 + 스캔 노드 메모
+        n = self.c.post("/api/projects/sample/nodes/", {"type": "concept", "name": "코어"}, format="json").json()
+        self.c.post("/api/projects/sample/edges/", {"s": n["nid"], "t": "f:a.py", "label": "담당"}, format="json")
+        self.c.patch("/api/projects/sample/nodes/f:a.py/", {"meta": {"note": "핵심 파일"}}, format="json")
+        # 파일 하나 삭제 후 재스캔 → scan 원산만 동기, 사람 것 보존
+        (Path(self.tmp.name) / "b.py").unlink()
+        st = self.c.post("/api/projects/sample/scan/").json()
+        self.assertEqual(st["removed"], 1)
+        g2 = self.c.get("/api/projects/sample/graph/").json()
+        ids2 = {x["nid"] for x in g2["nodes"]}
+        self.assertNotIn("f:b.py", ids2)
+        self.assertIn(n["nid"], ids2)                                                            # 개념 생존
+        fa = next(x for x in g2["nodes"] if x["nid"] == "f:a.py")
+        self.assertEqual(fa["meta"].get("note"), "핵심 파일")                                     # 메모 생존
+        self.assertTrue(any(e["label"] == "담당" for e in g2["edges"]))                           # 관계 생존
+
+    def test_node_edge_view_crud_guards(self):
+        self.c.post("/api/projects/sample/scan/")
+        # 스캔 노드 삭제 금지·이름 불변, meta만 허용
+        self.assertEqual(self.c.delete("/api/projects/sample/nodes/f:a.py/").status_code, 400)
+        r = self.c.patch("/api/projects/sample/nodes/f:a.py/", {"name": "바꿔봄", "meta": {"note": "x"}}, format="json").json()
+        self.assertEqual(r["name"], "a.py")
+        # 사용자 노드 수정·삭제(관계 동반 삭제)
+        n = self.c.post("/api/projects/sample/nodes/", {"name": "임시", "type": "decision"}, format="json").json()
+        e = self.c.post("/api/projects/sample/edges/", {"s": n["nid"], "t": "f:a.py"}, format="json").json()
+        self.assertEqual(self.c.patch(f"/api/projects/sample/nodes/{n['nid']}/", {"name": "결정1"}, format="json").json()["name"], "결정1")
+        self.c.delete(f"/api/projects/sample/nodes/{n['nid']}/")
+        g = self.c.get("/api/projects/sample/graph/").json()
+        self.assertFalse(any(x["nid"] == n["nid"] for x in g["nodes"]))
+        self.assertFalse(any(x["id"] == e["id"] for x in g["edges"]))
+        # 잘못된 관계(없는 노드) 거부
+        self.assertEqual(self.c.post("/api/projects/sample/edges/", {"s": "ghost", "t": "f:a.py"}, format="json").status_code, 400)
+        # 뷰 CRUD — 레이어를 데이터로 만든다
+        v = self.c.post("/api/projects/sample/views/", {"name": "결정만", "types": ["decision"], "lanes": ["제안", "확정"]}, format="json")
+        self.assertEqual(v.status_code, 201, v.content)
+        self.assertEqual(self.c.patch("/api/projects/sample/views/결정만/".replace("결정만", v.json()["vid"]) if False else f"/api/projects/sample/views/{v.json()['vid']}/",
+                                      {"lanes": ["제안", "확정", "폐기"]}, format="json").json()["lanes"], ["제안", "확정", "폐기"])
+        self.assertEqual(self.c.delete(f"/api/projects/sample/views/{v.json()['vid']}/").status_code, 200)

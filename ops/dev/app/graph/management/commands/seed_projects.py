@@ -11,9 +11,10 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand
 
-from graph.models import Concept, ConceptEdge, Project
+from graph.models import Edge, Node, Project, ScanRun, View
 from graph.scanner import scan
-from graph.models import ScanRun
+from graph.sync import sync_scan
+from graph.views import ensure_default_views
 
 ROOT = Path("/root/ClaudeCompany")
 
@@ -49,32 +50,34 @@ class Command(BaseCommand):
 
     def _ensure(self, slug, name, root, skips):
         p, made = Project.objects.get_or_create(slug=slug, defaults={"name": name, "root": root, "skips": skips})
+        ensure_default_views(p)
         if made or not p.scans.filter(ok=True).exists():
             data = scan(p.root, p.skips)
-            ScanRun.objects.create(project=p, ok=True, data=data, stats={
-                "files": data["meta"]["counts"]["nodes"], "edges": data["meta"]["counts"]["edges"],
-                "secs": data["meta"]["secs"], "truncated": data["meta"]["truncated"]})
+            st = sync_scan(p, data)
+            ScanRun.objects.create(project=p, ok=True, data=data, stats=st)
             self.stdout.write(f"{slug}: 등록+스캔 {data['meta']['counts']}")
         else:
             self.stdout.write(f"{slug}: 이미 있음")
 
     def _absorb_logical(self):
-        """옛 손시드 logical.json → claude-company 논리층(비어 있을 때만)."""
+        """옛 손시드 logical.json → 개념 노드(type=concept)로 흡수(개념이 하나도 없을 때만)."""
         p = Project.objects.filter(slug="claude-company").first()
         src = ROOT / "ops" / "dev" / "static" / "logical.json"
-        if not p or p.concepts.exists() or not src.exists():
+        if not p or p.nodes.filter(type="concept").exists() or not src.exists():
             return
         d = json.loads(src.read_text())
-        p.stages = d.get("stages") or []
-        p.save(update_fields=["stages"])
+        stages = d.get("stages") or []
         for n in d["nodes"]:
-            Concept.objects.create(project=p, cid=n["id"], name=n["name"], one=n.get("one", ""),
-                                   src=n.get("src", ""), stage=n.get("stage", 0), order=n.get("order", 0),
-                                   globs=n.get("globs", []))
+            lane = stages[n.get("stage", 0)] if 0 <= n.get("stage", 0) < len(stages) else ""
+            Node.objects.create(project=p, nid=n["id"], type="concept", origin="user", name=n["name"],
+                                meta={k: v for k, v in {"desc": n.get("one", ""), "src": n.get("src", ""),
+                                                        "lane": lane, "globs": n.get("globs", [])}.items() if v})
         for e in d["edges"]:
-            ConceptEdge.objects.create(project=p, s=e["s"], t=e["t"], label=e.get("label", ""),
-                                       both=bool(e.get("both")))
-        self.stdout.write(f"논리층 흡수: 개념 {p.concepts.count()} · 관계 {p.concept_edges.count()}")
+            Edge.objects.create(project=p, s=e["s"], t=e["t"], label=e.get("label", ""),
+                                both=bool(e.get("both")), origin="user")
+        View.objects.update_or_create(project=p, vid="concept",
+                                      defaults={"name": "개념", "types": ["concept"], "lanes": stages, "order": 0})
+        self.stdout.write(f"논리층 흡수: 개념 {p.nodes.filter(type='concept').count()} · 관계 {p.edges.filter(origin='user').count()}")
 
     def _migrate_pins(self):
         try:

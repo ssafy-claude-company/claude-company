@@ -9,15 +9,16 @@ murmur·claude-company 전용 도구가 아니다. **claude company가 만드는
 | 경로 | 무엇 |
 |---|---|
 | `/` | 프로젝트 목록·등록·재스캔 |
-| `/p/<slug>/` | 프로젝트 지도 — 논리 레이어(편집 가능) ⇄ 소스 레이어(d3 force) |
+| `/p/<slug>/` | 프로젝트 지도 — 뷰(레이어) 생성·전환, 더블클릭=노드, 패널=편집·관계, 레인 드래그 재배정 |
 | `/p/<slug>/feedback` | 프로젝트 백로그 · `/feedback` 전체 백로그 |
-| `/api/projects/…` | 등록·스캔·그래프·논리층(PUT=UI 편집 저장) |
+| `/api/projects/…` | 등록·스캔·그래프 + nodes/edges/views CRUD(화면의 모든 편집이 이 API) |
 | `/api/feedback/…` | 피드백(이식 계약 — service=프로젝트 슬러그) |
 
 ## 구조
 
-- `app/graph/` — Project·ScanRun(스냅샷 JSON)·Concept·ConceptEdge + 범용 스캐너(py ast·js/vue
-  상대 import, 언어 하드코딩 없음) + API. `app/feedback/` — murmur에서 이식한 피드백 앱.
+- `app/graph/` — **플랫폼 원시: Node(타입 자유)·Edge(관계)·View(레이어=데이터)** + Project·
+  ScanRun(이력) + 범용 스캐너. 스캔은 원시의 소비자(파일=Node origin=scan, import=Edge) —
+  재스캔은 scan-원산만 동기하고 사람이 만든 노드·관계·메모·좌표는 불변. `app/feedback/` — 피드백 앱.
 - `static/` — index·map·backlog(페이지 자산) + fb.js(모든 요소 핀 레이어) + vendor/d3.
   `logical.json`은 **시드 전용**(seed_projects가 1회 흡수 — 이후 정본은 DB).
 - 인증: admin 토큰(정적 env 또는 murmur `/api/me` 위임). DB: sqlite `ops/var/devfeedback.sqlite3`.
@@ -31,5 +32,5 @@ app/manage.py test graph feedback                     # 대본 검증
 app/manage.py feedback_backlog / feedback_resolve …   # 피드백 처리 루프(전 프로젝트 공용)
 ```
 
-논리층은 지도 화면의 **논리 편집** 모드에서 만든다(개념·관계·소스 매핑·축) — 저장은 API로
-DB에 영속. 코드가 바뀌면 화면의 **재스캔** 버튼(또는 scan API).
+구조(레이어·축·타입)는 코드에 없다 — 전부 화면에서 만든다: [+ 뷰]로 레이어, 더블클릭으로
+노드, 패널에서 관계·설명·레인·소스 매핑. 코드가 바뀌면 **재스캔**(사람 것 보존 동기).
