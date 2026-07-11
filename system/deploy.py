@@ -393,7 +393,10 @@ def _pid_alive(pid) -> bool:
 
 
 def _stop_app(entry: dict) -> None:
-    """기존 프로세스 그룹 종료(TERM→2s→KILL). setsid로 띄워 pgid=pid — 자식까지 함께 정리."""
+    """기존 앱 종료 — transient 유닛이면 systemctl stop, 레거시 pid면 프로세스 그룹 종료."""
+    d = entry.get("dir")
+    if d:
+        subprocess.run(["systemctl", "stop", _app_unit(Path(d))], capture_output=True)
     pid = entry.get("pid")
     if not pid or not _pid_alive(pid):
         return
@@ -424,13 +427,40 @@ def _copy_workspace(ws: Path, dst: Path) -> None:
             shutil.copy2(item, to)
 
 
+def _app_unit(appdir: Path) -> str:
+    import re as _re
+    return "organt-app-" + _re.sub(r"[^a-zA-Z0-9-]", "-", appdir.name)[:50]
+
+
 def _spawn_app(appdir: Path, port: int, start_cmd: str) -> int:
-    """앱을 detached(새 세션)로 기동 — 러너와 수명 분리. stdout/err → app.log."""
-    log = open(appdir / "app.log", "ab")
-    p = subprocess.Popen(start_cmd, shell=True, cwd=str(appdir),
-                         env={**os.environ, "PORT": str(port), "NODE_ENV": "production"},
-                         stdout=log, stderr=log, start_new_session=True)
-    return p.pid
+    """[수명 분리 근본 수리(2026-07-11)] start_new_session은 세션만 분리하고 **cgroup은 러너 소속** —
+    systemctl restart organt-runner(KillMode=control-group)가 배포 앱을 함께 죽였다(ch53 라이브:
+    '외부에서 죽는' 유령 크래시 5회의 진범). transient systemd 유닛으로 기동해 러너와 완전 분리하고
+    Restart=on-failure로 자가복구(watchdog)까지 얻는다."""
+    unit = _app_unit(appdir)
+    subprocess.run(["systemctl", "reset-failed", unit], capture_output=True)
+    subprocess.run(["systemctl", "stop", unit], capture_output=True)
+    r = subprocess.run(["systemd-run", "--unit", unit, "--collect",
+                        "-p", "Restart=on-failure", "-p", "RestartSec=2",
+                        "-p", f"WorkingDirectory={appdir}",
+                        "-p", f"Environment=PORT={port}", "-p", "Environment=NODE_ENV=production",
+                        "-p", f"StandardOutput=append:{appdir}/app.log",
+                        "-p", f"StandardError=append:{appdir}/app.log",
+                        "/bin/sh", "-c", start_cmd], capture_output=True, text=True)
+    if r.returncode != 0:
+        # systemd 불가 환경(테스트 컨테이너 등) 폴백 — 종전 방식
+        log = open(appdir / "app.log", "ab")
+        p2 = subprocess.Popen(start_cmd, shell=True, cwd=str(appdir),
+                              env={**os.environ, "PORT": str(port), "NODE_ENV": "production"},
+                              stdout=log, stderr=log, start_new_session=True)
+        return p2.pid
+    for _ in range(20):
+        out = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", unit],
+                             capture_output=True, text=True).stdout.strip()
+        if out and out != "0":
+            return int(out)
+        time.sleep(0.2)
+    return 0
 
 
 def _local_health(port: int, tries: int = 20) -> Optional[int]:
