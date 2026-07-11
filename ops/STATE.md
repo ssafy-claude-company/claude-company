@@ -20,7 +20,7 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  e01a551+ ← 브레인 — 2026-07-10 반쪽등록 복구+중복 deploy 제거+PIPELINE_CTX(러너 라이브)
-murmur  c11f3ae   ← 라이브 웹 — 앱 게이트웨이(/apps 프록시) 신설
+murmur  42ead56   ← 라이브 웹 — 앱 게이트웨이·지금표시·개입 재수용(세부 git log)
 ```
 
 ## 마일스톤 피드 구조화 (2026-07-10 이현준 세션 — 러너·웹 라이브)
