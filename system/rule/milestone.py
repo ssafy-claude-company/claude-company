@@ -13,6 +13,7 @@
 """
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -133,8 +134,18 @@ def _verify_is_executable(v: str) -> bool:
 # ── 생성 ───────────────────────────────────────────────────────────────────────
 
 def _mk_criteria(entries) -> List[Criterion]:
-    return [Criterion(desc=str(e["desc"]).strip(), verify=str(e["verify"]).strip())
-            if isinstance(e, dict) else e for e in entries]
+    out = []
+    for e in entries:
+        if not isinstance(e, dict):
+            out.append(e)
+            continue
+        d, v = str(e["desc"]).strip(), str(e["verify"]).strip()
+        # [desc 정규화(2026-07-12)] '1'·'2' 같은 무의미 desc는 어떤 표면에도 못 그려지고
+        # iter 결과 매칭도 못 받는다(ch53 9차 공회전) — verify 요지를 desc로 승격.
+        if v and (d.isdigit() or len(d) < 4):
+            d = re.sub(r"^(run|read|grep)\s*:\s*", "", v, flags=re.I)[:60]
+        out.append(Criterion(desc=d, verify=v))
+    return out
 
 
 def _ckpt(flow):
@@ -317,14 +328,46 @@ def iter_verify(flow, obj, results):
     _before = sum(1 for c in obj.criteria if not c.passed and c.status != "waived")
     _passed0 = {c.desc for c in obj.criteria if c.passed}   # 신규 통과 식별 기준선
     by_desc = {c.desc: c for c in obj.criteria}
+    # [매칭 견고화(2026-07-12)] desc 완전일치만 인정 + 불일치 무통보 폐기가 9차 공회전(ch53 ST-1,
+    # 조건 desc가 '1'·'2'로 등록된 판)의 진범 — 성실한 제출이 한 번도 착지 못했다.
+    # 완전일치 → 정규화 포함 → 서수(결과 desc 선두 숫자=조건 desc) → 토큰 겹침(verify 본문 포함)
+    # 순으로 착지시키고, 그래도 못 찾으면 '조용히 버리는' 대신 미매칭으로 집계해 봇에게 되돌려준다.
+    def _norm(s):
+        return re.sub(r"\s+", "", str(s or "").lower())
+
+    def _toks(s):
+        return set(re.findall(r"[a-z0-9가-힣_/.:-]{2,}", str(s or "").lower()))
+
+    _unclaimed = [c for c in obj.criteria if not c.passed and c.status != "waived"]
+    _unmatched = []
     for r in (results or []):
         d = str(r.get("desc") or "").strip()
         c = by_desc.get(d)
         if c is None:
+            nd = _norm(d)
+            c = next((x for x in _unclaimed if _norm(x.desc)
+                      and (_norm(x.desc) in nd or nd in _norm(x.desc))), None)
+        if c is None:
+            m = re.match(r"^\s*(?:조건\s*)?(\d{1,2})\b", d)
+            if m:
+                c = next((x for x in _unclaimed if x.desc.strip() == m.group(1)), None)
+        if c is None and _unclaimed:
+            rt = _toks(d) | _toks(r.get("evidence"))
+            best = max(_unclaimed, key=lambda x: len(rt & (_toks(x.desc) | _toks(x.verify))))
+            _ov = rt & (_toks(best.desc) | _toks(best.verify))
+            if len(_ov) >= 4:      # 우연 겹침 차단 임계 — 명령/경로 토큰 4개 이상 공유 시 동일 조건으로 본다
+                c = best
+        if c is None:
+            _unmatched.append(d[:60])
             continue
+        if c in _unclaimed:
+            _unclaimed.remove(c)   # 결과 여러 건이 같은 조건을 중복 점유하지 않게
         ev = str(r.get("evidence") or "").strip()
         if bool(r.get("passed")) and ev:
             c.passed, c.evidence = True, ev[:400]
+    if _unmatched and flow.log:
+        flow.log("iter_result_unmatched", id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""),
+                 n=len(_unmatched), descs=_unmatched[:4])
     # [조건 재협상 #1] waived(사람 승인 포기) 조건은 '충족'처럼 제외 — 미충족 목록에 안 남는다.
     remain = [c.desc for c in obj.criteria if not c.passed and c.status != "waived"]
     kind = "ms" if isinstance(obj, Milestone) else "st"
@@ -361,6 +404,11 @@ def iter_verify(flow, obj, results):
         obj.iter_stuck += 1
     _ckpt(flow)
     note = "미충족: " + " · ".join(d[:40] for d in remain)
+    if _unmatched:
+        # 매칭 실패를 봇에게 되돌린다 — 조용한 폐기가 공회전의 뿌리였다. 조건 desc 원문을 그대로 준다.
+        note += ("\n[결과 " + str(len(_unmatched)) + "건 미착지 — desc 불일치] report_iter의 results[].desc는 "
+                 "아래 조건 desc를 **토씨 그대로** 복사해 쓰세요: "
+                 + " / ".join("'" + c.desc[:50] + "'" for c in obj.criteria if not c.passed and c.status != "waived"))
     if obj.iter_stuck >= _STUCK_LIMIT:
         if flow.log:
             flow.log("ms_iter_stuck", kind=kind, id=oid, iter=obj.iter_n, stuck=obj.iter_stuck)
