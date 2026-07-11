@@ -175,7 +175,7 @@ function drawLinks(){
     const path=document.createElementNS(NS,'path');path.setAttribute('d',p.d)
     path.setAttribute('class','lk'+(l.origin==='ai'?' ai':'')+(selLink===l.id?' sel':''))
     eg.appendChild(path);eg.appendChild(hit)
-    if(l.label){const t=document.createElementNS(NS,'text');t.setAttribute('x',p.mx);t.setAttribute('y',p.my-5)
+    if(l.label){const t=document.createElementNS(NS,'text');t.setAttribute('x',p.mx);t.setAttribute('y',p.my-14)
       t.setAttribute('text-anchor','middle');t.setAttribute('class','lklb');t.textContent=l.label
       t.addEventListener('dblclick',e=>{e.stopPropagation();editLinkLabel(l)})
       eg.appendChild(t)}
