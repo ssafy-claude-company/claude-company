@@ -30,6 +30,17 @@ svg:active{cursor:grabbing}
 .cg-node.faded{opacity:.13}
 svg.far .cg-node text{display:none}                 /* 축소 시 라벨 숨김 — 가독(Thask 방식) */
 svg.far .cg-area{font-size:26px}
+.lg-node{cursor:pointer}
+.lg-node rect{fill:#171722;stroke-width:1.6}
+.lg-node.nofile rect{stroke-dasharray:5 4}
+.lg-node:hover rect{stroke-width:2.6}
+.lg-node.sel rect{fill:rgba(123,120,240,.14);stroke-width:2.8}
+.lg-node text.nm{font-size:14px;font-weight:700;fill:var(--text)}
+.lg-node text.st{font-size:10px;fill:var(--text3)}
+path.lgedge{fill:none;stroke:var(--accent);stroke-opacity:.5;stroke-width:1.6;pointer-events:none}
+path.lgagg{fill:none;stroke:#8b8b99;stroke-opacity:.22;pointer-events:none}
+text.lglb{font-size:10.5px;fill:var(--text2)}
+text.lgn{font-size:9.5px;fill:var(--text3)}
 path.edge{fill:none;stroke:#8b8b99;stroke-opacity:.14;stroke-width:1;pointer-events:none}
 path.edge.cross{stroke:var(--accent);stroke-opacity:.34;stroke-width:1.2}
 path.edge.hot{stroke:var(--accent);stroke-opacity:.95;stroke-width:1.8}
@@ -50,11 +61,13 @@ path.edge.faded{stroke-opacity:.04}
     <h1>코드 지도</h1><span class="meta" id="meta">로딩…</span>
   </div>
   <div class="tools">
+    <span id="crumb" class="meta"></span>
+    <button id="layerBtn">소스 레이어</button>
     <input id="q" type="text" placeholder="파일·경로 검색" />
     <button id="fit">전체 보기</button>
   </div>
 </header>
-<p class="hint">연결(import)이 배치를 만든다 — 가까이 붙은 파일이 실제로 엮인 파일. 클릭 = 연결·설명 · 드래그 = 이동 · 휠 = 확대 · 우하단 📌 = 아무 요소에나 피드백 핀 · <a href="./">백로그</a></p>
+<p class="hint" id="hint">논리 레이어 — 정본에서 도출한 개념과 캐논 관계. 개념 클릭 = 설명·소스 드릴다운 · 우하단 📌 = 아무 요소(개념 포함)에나 피드백 핀 · <a href="./">백로그</a></p>
 <div id="wrap">
   <svg id="svg"></svg>
   <aside id="panel"></aside>
@@ -133,7 +146,7 @@ function render(){
   svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`)
   svg.classList.toggle('far',S.vb.w>1750)
   const f=S.sel
-  const m=S.q?new Set(S.data.nodes.filter(n=>n.id.toLowerCase().includes(S.q)).map(n=>n.id)):null
+  const m=S.q?new Set(S.data.nodes.filter(n=>n.id.toLowerCase().includes(S.q)).map(n=>n.id)):(S.conceptSet||null)
   S.areaLb.forEach(l=>svg.appendChild(el('text',{x:l.x,y:l.y,class:'cg-area','text-anchor':'middle',fill:AREA_C[l.a]||'#999'},l.a)))
   S.data.edges.forEach(e=>{
     const cross=byId[e.s].area!==byId[e.t].area
@@ -183,20 +196,105 @@ svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClien
 function fit(){const r=svg.getBoundingClientRect();const sc=Math.min(r.width/S.W,r.height/S.H)
   S.vb={x:0,y:0,w:r.width/sc,h:r.height/sc};render();window.FBPins&&FBPins.refresh()}
 
+/* ══ 논리 레이어 — 정본 도출 개념(logical.json) + 실제 import 자동 집계 ══ */
+let LG=null                                    // logical.json
+const conceptOf=(fid)=>{                       // 파일 → 개념(최장 접두 매칭)
+  let best=null,len=-1
+  LG.nodes.forEach(c=>c.globs.forEach(g=>{if(fid.startsWith(g)&&g.length>len){best=c.id;len=g.length}}))
+  return best
+}
+function lgStats(){                            // 개념별 파일수·LOC·개념간 실제 import 수
+  const st={},agg={}
+  LG.nodes.forEach(c=>st[c.id]={files:0,loc:0})
+  S.data.nodes.forEach(n=>{const c=conceptOf(n.id);if(c){st[c].files++;st[c].loc+=n.loc}})
+  S.data.edges.forEach(e=>{const a=conceptOf(e.s),b=conceptOf(e.t)
+    if(a&&b&&a!==b){const k=a+'→'+b;agg[k]=(agg[k]||0)+1}})
+  return {st,agg}
+}
+function lgRender(){
+  svg.innerHTML=''
+  svg.classList.remove('far')
+  const r=svg.getBoundingClientRect(), W=r.width,Hh=r.height
+  svg.setAttribute('viewBox',`0 0 ${W} ${Hh}`)
+  const {st,agg}=lgStats()
+  const P=Object.fromEntries(LG.nodes.map(c=>[c.id,{x:c.x*W,y:c.y*Hh}]))
+  const NW=170,NH=52
+  const lineTo=(a,b)=>{const dx=P[b].x-P[a].x,dy=P[b].y-P[a].y,d=Math.sqrt(dx*dx+dy*dy)||1
+    const bow=Math.min(d*.12,34),nx=-dy/d,ny=dx/d
+    return {d:`M ${P[a].x} ${P[a].y} Q ${(P[a].x+P[b].x)/2+nx*bow} ${(P[a].y+P[b].y)/2+ny*bow} ${P[b].x} ${P[b].y}`,
+            mx:(P[a].x+P[b].x)/2+nx*bow*.6,my:(P[a].y+P[b].y)/2+ny*bow*.6}}
+  // 자동 집계 엣지(실제 import — 캐논에 없는 흐름도 정직하게 보임)
+  Object.entries(agg).forEach(([k,n])=>{const [a,b]=k.split('→')
+    if(LG.edges.some(e=>(e.s===a&&e.t===b)||(e.both&&e.s===b&&e.t===a)))return
+    const l=lineTo(a,b)
+    svg.appendChild(el('path',{d:l.d,class:'lgagg','stroke-width':Math.min(1+n*.15,4)}))
+    svg.appendChild(el('text',{x:l.mx,y:l.my,class:'lgn','text-anchor':'middle'},'import '+n))})
+  // 캐논 엣지(정본 관계 — 라벨)
+  LG.edges.forEach(e=>{const l=lineTo(e.s,e.t)
+    const n=(agg[e.s+'→'+e.t]||0)+(e.both?(agg[e.t+'→'+e.s]||0):0)
+    svg.appendChild(el('path',{d:l.d,class:'lgedge','stroke-width':Math.min(1.4+n*.1,4),
+      'stroke-dasharray':e.both?'':'7 4'}))
+    svg.appendChild(el('text',{x:l.mx,y:l.my-3,class:'lglb','text-anchor':'middle'},e.label+(n?` · ${n}`:'')))})
+  // 개념 노드
+  LG.nodes.forEach(c=>{const p=P[c.id],s2=st[c.id]
+    const g=el('g',{id:'lg-'+c.id,class:'lg-node'+(S.sel===c.id?' sel':'')+(s2.files?'':' nofile'),'data-lg':c.id})
+    g.appendChild(el('rect',{x:p.x-NW/2,y:p.y-NH/2,width:NW,height:NH,rx:13,stroke:'#7b78f0'}))
+    g.appendChild(el('text',{x:p.x,y:p.y-3,class:'nm','text-anchor':'middle'},c.name))
+    g.appendChild(el('text',{x:p.x,y:p.y+15,class:'st','text-anchor':'middle'},s2.files?`${s2.files}파일 · ${(s2.loc/1000).toFixed(1)}k줄`:'코드 밖(사람)'))
+    svg.appendChild(g)})
+}
+function lgPanel(){
+  const p=$('#panel');const c=S.sel&&LG.nodes.find(n=>n.id===S.sel)
+  if(!c){p.style.display='none';return}
+  const {st}=lgStats()
+  const files=S.data.nodes.filter(n=>conceptOf(n.id)===c.id).sort((a,b)=>b.loc-a.loc).slice(0,7)
+  p.style.display='block'
+  p.innerHTML=`<div class="head"><span>${c.name}</span><button class="x">×</button></div>
+    <div class="path">${c.src} · ${st[c.id].files}파일</div>
+    <div class="doc">${c.one}</div>
+    ${c.globs.length?`<button id="drill" style="margin:2px 0 8px">소스 레이어에서 펼치기 →</button>`:''}
+    ${files.length?'<div class="t">큰 파일</div>'+files.map(f=>`<a data-j="${f.id}">${f.id} · ${f.loc}줄</a>`).join(''):''}`
+  p.querySelector('.x').onclick=()=>{S.sel=null;lgRender();lgPanel()}
+  const d=p.querySelector('#drill'); if(d)d.onclick=()=>enterSource(c)
+  p.querySelectorAll('a[data-j]').forEach(a=>a.onclick=()=>{enterSource(c);setTimeout(()=>{jump(a.dataset.j)},30)})
+}
+function enterSource(concept){
+  S.layer='source'; S.sel=null; S.concept=concept||null
+  S.q=concept?'':S.q
+  $('#q').value=''
+  if(concept){S.q='';S.conceptSet=new Set(S.data.nodes.filter(n=>conceptOf(n.id)===concept.id).map(n=>n.id))}
+  else S.conceptSet=null
+  ui(); fit()
+}
+function enterLogic(){S.layer='logic';S.sel=null;S.concept=null;S.conceptSet=null;ui();lgRender();lgPanel();window.FBPins&&FBPins.refresh()}
+function ui(){
+  $('#layerBtn').textContent=S.layer==='logic'?'소스 레이어':'논리 레이어'
+  $('#crumb').textContent=S.layer==='logic'?'논리':'논리 > 소스'+(S.concept?` > ${S.concept.name}`:'')
+  $('#hint').firstChild.textContent=S.layer==='logic'
+    ?'논리 레이어 — 정본에서 도출한 개념과 캐논 관계. 개념 클릭 = 설명·소스 드릴다운 · 우하단 📌 = 아무 요소에나 피드백 핀 · '
+    :'소스 레이어 — 연결(import)이 배치를 만든다. 클릭 = 연결·설명 · 드래그 = 이동 · 휠 = 확대 · '
+}
+
 /* ══ 부트 ══ */
 async function boot(){
-  const r=await fetch('./codegraph.json',{cache:'no-cache'})
-  S.data=await r.json()
+  const [r1,r2]=await Promise.all([fetch('./codegraph.json',{cache:'no-cache'}),fetch('../static/logical.json',{cache:'no-cache'})])
+  S.data=await r1.json(); LG=await r2.json()
+  S.layer='logic'
   S.data.nodes.forEach(n=>byId[n.id]=n)
   S.data.edges.forEach(e=>{(out[e.s]=out[e.s]||[]).push(e.t);(inn[e.t]=inn[e.t]||[]).push(e.s)})
   forceLayout(S.data.nodes,S.data.edges)
-  $('#meta').textContent=`${S.data.meta.counts.nodes}개 파일 · 연결 ${S.data.meta.counts.edges} · ${S.data.meta.generated_at} 기준`
-  fit()
-  $('#q').addEventListener('input',e=>{S.q=e.target.value.trim().toLowerCase();render()})
-  $('#fit').onclick=fit
-  svg.addEventListener('click',e=>{const g=e.target.closest('.cg-node');if(g)pick(g.dataset.path)})
+  $('#meta').textContent=`개념 ${LG.nodes.length} · 파일 ${S.data.meta.counts.nodes} · 연결 ${S.data.meta.counts.edges} · ${S.data.meta.generated_at} 기준`
+  ui(); lgRender()
+  $('#q').addEventListener('input',e=>{S.q=e.target.value.trim().toLowerCase();if(S.layer==='source')render()})
+  $('#fit').onclick=()=>{S.layer==='logic'?lgRender():fit()}
+  $('#layerBtn').onclick=()=>{S.layer==='logic'?enterSource(null):enterLogic()}
+  svg.addEventListener('click',e=>{
+    const lg=e.target.closest('.lg-node')
+    if(lg){S.sel=S.sel===lg.dataset.lg?null:lg.dataset.lg;lgRender();lgPanel();window.FBPins&&FBPins.refresh();return}
+    const g=e.target.closest('.cg-node');if(g)pick(g.dataset.path)})
+  window.addEventListener('resize',()=>{if(S.layer==='logic')lgRender()})
 }
-boot().catch(e=>{$('#meta').textContent='codegraph.json 로드 실패 — scan.py 먼저 실행: '+e.message})
+boot().catch(e=>{$('#meta').textContent='데이터 로드 실패 — scan.py 실행·logical.json 확인: '+e.message})
 </script>
 </body>
 </html>

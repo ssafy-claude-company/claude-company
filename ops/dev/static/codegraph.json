@@ -1,10 +1,10 @@
 {
  "meta": {
-  "generated_at": "2026-07-11 03:04:28",
+  "generated_at": "2026-07-11 04:39:49",
   "root": "/root/ClaudeCompany",
   "heads": {
-   "claude-company": "b7e5f1c",
-   "murmur": "9666b7b"
+   "claude-company": "e219400",
+   "murmur": "80c9f22"
   },
   "areas": [
    "system",
@@ -16,8 +16,8 @@
    "murmur/scripts"
   ],
   "counts": {
-   "nodes": 153,
-   "edges": 343
+   "nodes": 172,
+   "edges": 352
   },
   "excluded": "ops/tests·migrations·e2e·dist 등은 지도에서 제외(구조 노이즈) — 없음이 아니라 안 그린 것"
  },
@@ -118,7 +118,7 @@
    "area": "system",
    "dir": "system",
    "kind": "py",
-   "loc": 2526,
+   "loc": 2547,
    "doc": "SYS — Organt 주도 + P2P Communication."
   },
   {
@@ -226,7 +226,7 @@
    "area": "system",
    "dir": "system/rule",
    "kind": "py",
-   "loc": 674,
+   "loc": 695,
    "doc": "[Rule — 마일스톤 파이프라인, S1 구조층] PIPELINE_REWORK_2026-07-09 §1·§2·§6의 구현."
   },
   {
@@ -390,6 +390,177 @@
    "kind": "py",
    "loc": 701,
    "doc": "런타임 엔트리포인트 — SYS를 가동한다."
+  },
+  {
+   "id": "ops/dev/migrate_from_murmur.py",
+   "label": "migrate_from_murmur.py",
+   "area": "ops",
+   "dir": "ops/dev",
+   "kind": "py",
+   "loc": 50,
+   "doc": "murmur postgres → dev sqlite로 피드백 데이터 1회 이사(멱등 — id 존재 시 skip)."
+  },
+  {
+   "id": "ops/dev/scan.py",
+   "label": "scan.py",
+   "area": "ops",
+   "dir": "ops/dev",
+   "kind": "py",
+   "loc": 218,
+   "doc": "codegraph scan — ClaudeCompany 코드 구조를 그래프 JSON으로 뽑는다. (dev 도구 — 제품 아님)"
+  },
+  {
+   "id": "ops/dev/app/manage.py",
+   "label": "manage.py",
+   "area": "ops",
+   "dir": "ops/dev/app",
+   "kind": "py",
+   "loc": 7,
+   "doc": ""
+  },
+  {
+   "id": "ops/dev/app/config/__init__.py",
+   "label": "__init__.py",
+   "area": "ops",
+   "dir": "ops/dev/app/config",
+   "kind": "py",
+   "loc": 0,
+   "doc": ""
+  },
+  {
+   "id": "ops/dev/app/config/settings.py",
+   "label": "settings.py",
+   "area": "ops",
+   "dir": "ops/dev/app/config",
+   "kind": "py",
+   "loc": 45,
+   "doc": "dev 피드백 서비스 설정 — murmur에서 이식한 feedback 앱의 독립 호스트."
+  },
+  {
+   "id": "ops/dev/app/config/urls.py",
+   "label": "urls.py",
+   "area": "ops",
+   "dir": "ops/dev/app/config",
+   "kind": "py",
+   "loc": 41,
+   "doc": "dev 서비스 URL — /(백로그) · /codegraph/(코드 지도) · /static/ · /api/feedback/."
+  },
+  {
+   "id": "ops/dev/app/config/wsgi.py",
+   "label": "wsgi.py",
+   "area": "ops",
+   "dir": "ops/dev/app/config",
+   "kind": "py",
+   "loc": 6,
+   "doc": ""
+  },
+  {
+   "id": "ops/dev/app/feedback/__init__.py",
+   "label": "__init__.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 0,
+   "doc": ""
+  },
+  {
+   "id": "ops/dev/app/feedback/apps.py",
+   "label": "apps.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 7,
+   "doc": ""
+  },
+  {
+   "id": "ops/dev/app/feedback/auth.py",
+   "label": "auth.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 63,
+   "doc": "인증 어댑터 — feedback 앱이 호스트 서비스와 접촉하는 유일한 지점(이식 계약)."
+  },
+  {
+   "id": "ops/dev/app/feedback/models.py",
+   "label": "models.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 65,
+   "doc": "피드백 어노테이션 서비스 — 화면 요소에 핀 코멘트를 달고(open) AI가 처리하고(resolved)"
+  },
+  {
+   "id": "ops/dev/app/feedback/tests.py",
+   "label": "tests.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 145,
+   "doc": "feedback 앱 테스트 — admin 게이트·핀 생성·상호 가시성·상태 기계·AI 처리 경로."
+  },
+  {
+   "id": "ops/dev/app/feedback/tests_dev.py",
+   "label": "tests_dev.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 71,
+   "doc": "dev 호스트 대본 검증 — 정적 토큰 어댑터 + API 왕복(생성·목록·상태기계·댓글)."
+  },
+  {
+   "id": "ops/dev/app/feedback/urls.py",
+   "label": "urls.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 12,
+   "doc": "feedback URL — 호스트 서비스가 include(\"feedback.urls\")로 얹는다(이식 지점 2/2)."
+  },
+  {
+   "id": "ops/dev/app/feedback/views.py",
+   "label": "views.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback",
+   "kind": "py",
+   "loc": 171,
+   "doc": "피드백 API — 전 엔드포인트 admin 전용(어댑터 resolve_admin이 판정)."
+  },
+  {
+   "id": "ops/dev/app/feedback/management/__init__.py",
+   "label": "__init__.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback/management",
+   "kind": "py",
+   "loc": 0,
+   "doc": ""
+  },
+  {
+   "id": "ops/dev/app/feedback/management/commands/__init__.py",
+   "label": "__init__.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback/management/commands",
+   "kind": "py",
+   "loc": 0,
+   "doc": ""
+  },
+  {
+   "id": "ops/dev/app/feedback/management/commands/feedback_backlog.py",
+   "label": "feedback_backlog.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback/management/commands",
+   "kind": "py",
+   "loc": 35,
+   "doc": "feedback_backlog — AI 세션이 피드백 백로그를 보는 1급 경로."
+  },
+  {
+   "id": "ops/dev/app/feedback/management/commands/feedback_resolve.py",
+   "label": "feedback_resolve.py",
+   "area": "ops",
+   "dir": "ops/dev/app/feedback/management/commands",
+   "kind": "py",
+   "loc": 39,
+   "doc": "feedback_resolve — AI가 피드백을 판단하고 노트를 남기는 1급 경로."
   },
   {
    "id": "ops/organt_discord/__init__.py",
@@ -604,7 +775,7 @@
    "area": "murmur/backend",
    "dir": "murmur/backend/sns",
    "kind": "py",
-   "loc": 286,
+   "loc": 287,
    "doc": "[분리(2026-07-10)] 채널 타임라인 조립 — 봇 협업 이벤트+사람 코멘트 병합, 라이브 상태 계산."
   },
   {
@@ -622,7 +793,7 @@
    "area": "murmur/backend",
    "dir": "murmur/backend/sns",
    "kind": "py",
-   "loc": 590,
+   "loc": 595,
    "doc": "guide_bridge — 두뇌(러너)가 HTTPS로 SNS 매체에 말하는 입·출구 (Phase 2: REST SnsGuide)."
   },
   {
@@ -1234,7 +1405,7 @@
    "area": "murmur/frontend",
    "dir": "murmur/frontend/src/components",
    "kind": "vue",
-   "loc": 257,
+   "loc": 280,
    "doc": "[마일스톤 블록(2026-07-10 분리)] 파이프라인 구조 표면 — 헤더(goal·조건·상태) → 폴더(협의/단계/진행)"
   },
   {
@@ -1261,7 +1432,7 @@
    "area": "murmur/frontend",
    "dir": "murmur/frontend/src/feed",
    "kind": "js",
-   "loc": 284,
+   "loc": 292,
    "doc": "[피드 2차 조립(2026-07-10 분리)] 표시 항목 → 최종 구조(섹션·과정·마일스톤 블록·행)."
   },
   {
@@ -1270,7 +1441,7 @@
    "area": "murmur/frontend",
    "dir": "murmur/frontend/src/feed",
    "kind": "js",
-   "loc": 193,
+   "loc": 194,
    "doc": "[피드 1차 조립(2026-07-10 분리)] 원시 메시지 → 표시 항목(그룹·회의/표결·작업·날짜·마커)."
   },
   {
@@ -1768,6 +1939,42 @@
   {
    "s": "guide/murmur_guide.py",
    "t": "system/protocol.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/management/commands/feedback_backlog.py",
+   "t": "murmur/backend/feedback/models.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/management/commands/feedback_resolve.py",
+   "t": "murmur/backend/feedback/models.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/tests.py",
+   "t": "ops/dev/app/feedback/models.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/tests_dev.py",
+   "t": "ops/dev/app/feedback/models.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/urls.py",
+   "t": "ops/dev/app/feedback/__init__.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/urls.py",
+   "t": "ops/dev/app/feedback/views.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/views.py",
+   "t": "ops/dev/app/feedback/auth.py"
+  },
+  {
+   "s": "ops/dev/app/feedback/views.py",
+   "t": "ops/dev/app/feedback/models.py"
+  },
+  {
+   "s": "ops/dev/migrate_from_murmur.py",
+   "t": "murmur/backend/feedback/models.py"
   },
   {
    "s": "ops/organt_discord/main.py",
