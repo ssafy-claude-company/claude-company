@@ -152,7 +152,7 @@ def _ckpt(flow):
 def _set_pipeline_ctx(flow, me_id=None):
     try:
         from system.protocol import PIPELINE_CTX
-        ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status != "done"), None)
+        ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
         st = next((s for s in ms.subtasks if s.status != "done"), None) if ms else None
         bl = None
         # [백로그 단위 태깅(2026-07-10, 사용자: '텍스트가 백로그 단위로')] 이 봇이 지금 물고 있는
@@ -186,7 +186,7 @@ def ms_status_snapshot(flow):
     relays = getattr(flow, "backlog_relays", None) or {}
     for ms in all_ms[-6:]:
         out_list.append(_ms_one(flow, ms, relays))
-    cur = next((m for m in reversed(out_list) if m["status"] != "done"), out_list[-1])
+    cur = next((m for m in reversed(out_list) if m["status"] not in ("done", "superseded")), out_list[-1])
     return {**cur, "list": out_list, "ts": time.time()}
 
 
@@ -257,6 +257,14 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
     ms = Milestone(ms_id=f"MS-{int(time.time() * 1000) % 10**9}-{len(flow.milestones) + 1}",
                    goal=str(goal or "").strip(), criteria=_mk_criteria(criteria_entries),
                    origin=str(origin or "").strip())
+    # [직렬 강제(2026-07-11, 사용자: '중단되고 새로 열려버렸고')] 미완 주기 공존 금지 — 새 주기가
+    # 열리면 이전 미완은 superseded로 닫는다(활성 판정·태깅·스냅샷이 새 주기를 가리키게).
+    for _old in flow.milestones:
+        if _old.status not in ("done", "superseded"):
+            _old.status = "superseded"
+            _pnote(flow, f"[마일스톤 대체] ({_old.ms_id}) {_old.goal[:80]}")
+            if flow.log:
+                flow.log("ms_superseded", ms=_old.ms_id, by=ms.ms_id)
     flow.milestones.append(ms)
     _ckpt(flow)
     if flow.log:
@@ -426,7 +434,7 @@ def wrapup_done(flow, obj) -> str:
 def next_milestone(flow) -> Optional[Milestone]:
     """다음 진행 대상 — 미완(done 아님) 첫 마일스톤. 진행을 사람이 아니라 주기가 관할한다."""
     for ms in flow.milestones:
-        if ms.status != "done":
+        if ms.status not in ("done", "superseded"):
             return ms
     return None
 
