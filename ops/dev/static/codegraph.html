@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>코드 지도 — ClaudeCompany</title>
+<style>
+/* dev 도구. 유기적 그래프: 연결(import)이 배치를 만든다 — 힘 기반(결정론), 목록 아님. */
+:root{--bg:#0d0d12;--bg2:#16161d;--line:#26262f;--text:#e8e8ef;--text2:#b9b9c6;--text3:#8b8b99;--accent:#7b78f0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,'Apple SD Gothic Neo',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px 6px;flex-wrap:wrap}
+h1{margin:0;font-size:16px}
+.meta{font-size:11.5px;color:var(--text3)}
+.tools{display:flex;align-items:center;gap:10px}
+input[type=text]{width:210px;padding:6px 10px;font-size:12.5px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--text)}
+button{padding:6px 10px;font-size:12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--text2);cursor:pointer}
+.hint{margin:0 16px 8px;font-size:11.5px;color:var(--text3)}
+.hint a{color:var(--accent)}
+#wrap{position:relative;flex:1;min-height:0;margin:0 16px 12px;border:1px solid var(--line);border-radius:12px;background:radial-gradient(circle at 30% 20%,rgba(123,120,240,.05),transparent 60%),#101016;overflow:hidden}
+svg{width:100%;height:100%;cursor:grab;display:block}
+svg:active{cursor:grabbing}
+.cg-area{font-size:15px;font-weight:800;opacity:.9}
+.cg-node{cursor:pointer}
+.cg-node rect{fill:#171720;stroke-width:1.2;transition:opacity .12s}
+.cg-node:hover rect{stroke-width:2.2}
+.cg-node text{font-size:10.5px;fill:var(--text);pointer-events:none}
+.cg-node.sel rect{stroke-width:2.6;fill:rgba(123,120,240,.16)}
+.cg-node.rel rect{fill:rgba(123,120,240,.09)}
+.cg-node.faded{opacity:.13}
+svg.far .cg-node text{display:none}                 /* 축소 시 라벨 숨김 — 가독(Thask 방식) */
+svg.far .cg-area{font-size:26px}
+path.edge{fill:none;stroke:#8b8b99;stroke-opacity:.14;stroke-width:1;pointer-events:none}
+path.edge.cross{stroke:var(--accent);stroke-opacity:.34;stroke-width:1.2}
+path.edge.hot{stroke:var(--accent);stroke-opacity:.95;stroke-width:1.8}
+path.edge.faded{stroke-opacity:.04}
+#panel{position:absolute;top:10px;right:10px;width:300px;max-height:calc(100% - 20px);overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:none}
+#panel .head{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:700}
+#panel .path{font-size:11px;color:var(--text3);margin:2px 0 8px;word-break:break-all}
+#panel .doc{font-size:12.5px;color:var(--text2);margin:0 0 10px;white-space:pre-wrap}
+#panel .t{font-size:11px;font-weight:700;color:var(--text3);margin:8px 0 4px}
+#panel a{display:block;font-size:11.5px;color:var(--text2);padding:2px 0;cursor:pointer;word-break:break-all;text-decoration:none}
+#panel a:hover{color:var(--accent)}
+#panel .x{background:none;border:none;font-size:15px;color:var(--text3);cursor:pointer;padding:0}
+</style>
+</head>
+<body>
+<header>
+  <div style="display:flex;align-items:baseline;gap:10px">
+    <h1>코드 지도</h1><span class="meta" id="meta">로딩…</span>
+  </div>
+  <div class="tools">
+    <input id="q" type="text" placeholder="파일·경로 검색" />
+    <button id="fit">전체 보기</button>
+  </div>
+</header>
+<p class="hint">연결(import)이 배치를 만든다 — 가까이 붙은 파일이 실제로 엮인 파일. 클릭 = 연결·설명 · 드래그 = 이동 · 휠 = 확대 · 우하단 📌 = 아무 요소에나 피드백 핀 · <a href="./">백로그</a></p>
+<div id="wrap">
+  <svg id="svg"></svg>
+  <aside id="panel"></aside>
+</div>
+<script>window.FB_SERVICE='codegraph'</script>
+<script src="../static/fb.js" onerror="this.remove()"></script>
+<script>
+/* ══ 상태 ══ */
+const S={data:null,sel:null,q:'',vb:{x:0,y:0,w:1200,h:800},W:2000,H:1400,areaLb:[]}
+const AREA_C={'system':'#7b78f0','organt':'#58b7ff','guide':'#4fd1a5','ops':'#c9a86a','murmur/backend':'#e08bb8','murmur/frontend':'#f0c86a','murmur/scripts':'#9aa3b2'}
+const $=(s)=>document.querySelector(s)
+const svg=$('#svg'), NS='http://www.w3.org/2000/svg'
+const slug=(id)=>'cg-'+id.replace(/[^a-zA-Z0-9]+/g,'-')
+const byId={}, out={}, inn={}
+
+/* ══ 결정론 해시(레이아웃이 로드마다 같게 — Math.random 금지) ══ */
+const H=(s)=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0)/4294967296}
+
+/* ══ 힘 기반 배치 — 반발(전쌍) + 스프링(엣지) + 영역 중력. 동기 실행(153노드 규모). ══ */
+function forceLayout(nodes,edges){
+  const areas=[...new Set(nodes.map(n=>n.area))]
+  const cnt=Object.fromEntries(areas.map(a=>[a,nodes.filter(n=>n.area===a).length]))
+  const RING=760
+  const AC={}
+  areas.forEach((a,i)=>{const ang=2*Math.PI*i/areas.length-Math.PI/2;AC[a]={x:Math.cos(ang)*RING,y:Math.sin(ang)*RING*0.72}})
+  nodes.forEach(n=>{
+    const c=AC[n.area], r=Math.sqrt(cnt[n.area])*30
+    const a=H(n.id)*2*Math.PI, rr=Math.sqrt(H(n.id+'#'))*r
+    n.x=c.x+Math.cos(a)*rr; n.y=c.y+Math.sin(a)*rr; n.vx=0; n.vy=0
+  })
+  const idx=Object.fromEntries(nodes.map(n=>[n.id,n]))
+  const REP=2900, ITER=320
+  for(let t=0;t<ITER;t++){
+    const alpha=1-t/ITER, temp=26*alpha+1.5
+    for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){   // 반발
+      const a=nodes[i],b=nodes[j]
+      let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy
+      if(d2<1){dx=(H(a.id+j)-0.5);dy=(H(b.id+i)-0.5);d2=dx*dx+dy*dy}
+      if(d2>240000)continue
+      const f=REP/d2, d=Math.sqrt(d2)
+      a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f
+    }
+    edges.forEach(e=>{                                                   // 스프링(연결이 끌어당김)
+      const a=idx[e.s],b=idx[e.t]
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1
+      const rest=a.area===b.area?110:330, k=a.area===b.area?0.045:0.010
+      const f=k*(d-rest)
+      a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f
+    })
+    nodes.forEach(n=>{                                                   // 영역 중력 + 적분
+      const c=AC[n.area]
+      n.vx+=(c.x-n.x)*0.016; n.vy+=(c.y-n.y)*0.016
+      const v=Math.sqrt(n.vx*n.vx+n.vy*n.vy)||1, cap=Math.min(v,temp)
+      n.x+=n.vx/v*cap; n.y+=n.vy/v*cap; n.vx*=0.32; n.vy*=0.32
+    })
+  }
+  // 좌표 정규화(+여백) — 정규화 후 실제 좌표로 영역 라벨(무게중심) 계산
+  const mx=Math.min(...nodes.map(n=>n.x))-140, my=Math.min(...nodes.map(n=>n.y))-110
+  nodes.forEach(n=>{n.x-=mx;n.y-=my})
+  S.W=Math.max(...nodes.map(n=>n.x))+180; S.H=Math.max(...nodes.map(n=>n.y))+130
+  S.areaLb=areas.map(a=>{const g=nodes.filter(n=>n.area===a)
+    return {a,x:g.reduce((s,n)=>s+n.x,0)/g.length,y:Math.min(...g.map(n=>n.y))-42}})
+}
+
+/* ══ 렌더 ══ */
+const el=(t,at,tx)=>{const e=document.createElementNS(NS,t);for(const k in at)e.setAttribute(k,at[k]);if(tx!=null)e.textContent=tx;return e}
+const pillW=(n)=>Math.min(Math.max(n.label.length*6.1+16,42),150)
+function edgePath(e){
+  const a=byId[e.s],b=byId[e.t]
+  const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1
+  const nx=-dy/d,ny=dx/d,bow=Math.min(d*0.14,40)                       // 살짝 휜 곡선(겹침 완화)
+  return `M ${a.x} ${a.y} Q ${(a.x+b.x)/2+nx*bow} ${(a.y+b.y)/2+ny*bow} ${b.x} ${b.y}`
+}
+function render(){
+  svg.innerHTML=''
+  svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`)
+  svg.classList.toggle('far',S.vb.w>1750)
+  const f=S.sel
+  const m=S.q?new Set(S.data.nodes.filter(n=>n.id.toLowerCase().includes(S.q)).map(n=>n.id)):null
+  S.areaLb.forEach(l=>svg.appendChild(el('text',{x:l.x,y:l.y,class:'cg-area','text-anchor':'middle',fill:AREA_C[l.a]||'#999'},l.a)))
+  S.data.edges.forEach(e=>{
+    const cross=byId[e.s].area!==byId[e.t].area
+    const touch=f&&(e.s===f||e.t===f)
+    const faded=(f&&!touch)||(m&&!(m.has(e.s)||m.has(e.t)))
+    svg.appendChild(el('path',{d:edgePath(e),class:'edge'+(touch?' hot':cross?' cross':'')+(faded?' faded':'')}))
+  })
+  S.data.nodes.forEach(n=>{
+    const rel=f&&(n.id===f||(out[f]||[]).includes(n.id)||(inn[f]||[]).includes(n.id))
+    const g=el('g',{id:slug(n.id),class:'cg-node'+(S.sel===n.id?' sel':'')+(rel&&n.id!==f?' rel':'')+(((m&&!m.has(n.id))||(f&&!rel))?' faded':''),'data-path':n.id})
+    const w=pillW(n)
+    g.appendChild(el('rect',{x:n.x-w/2,y:n.y-11,width:w,height:22,rx:11,stroke:AREA_C[n.area]||'#999'}))
+    g.appendChild(el('text',{x:n.x,y:n.y+3.5,'text-anchor':'middle'},n.label))
+    svg.appendChild(g)
+  })
+}
+
+/* ══ 선택·패널 ══ */
+function pick(id){S.sel=S.sel===id?null:id;render();panel();window.FBPins&&FBPins.refresh()}
+function jump(id){S.sel=id;const n=byId[id];S.vb.x=n.x-S.vb.w/2;S.vb.y=n.y-S.vb.h/2;render();panel();window.FBPins&&FBPins.refresh()}
+function panel(){
+  const p=$('#panel');const n=S.sel&&byId[S.sel]
+  if(!n){p.style.display='none';return}
+  p.style.display='block'
+  const li=(arr,t)=>arr&&arr.length?`<div class="t">${t} (${arr.length})</div>`+arr.map(x=>`<a data-j="${x}">${x}</a>`).join(''):''
+  p.innerHTML=`<div class="head"><span>${n.label}</span><button class="x">×</button></div>
+  <div class="path">${n.id} · ${n.loc}줄 · 연결 ${(out[n.id]||[]).length+(inn[n.id]||[]).length}</div>
+  <div class="doc">${(n.doc||'(파일 설명 없음)').replace(/</g,'&lt;')}</div>
+  ${li(out[n.id],'이 파일이 쓰는 것')}${li(inn[n.id],'이 파일을 쓰는 곳')}`
+  p.querySelector('.x').onclick=()=>{S.sel=null;render();panel()}
+  p.querySelectorAll('a[data-j]').forEach(a=>a.onclick=()=>jump(a.dataset.j))
+}
+
+/* ══ 팬/줌 ══ */
+let drag=null
+svg.addEventListener('mousedown',e=>{if(e.target.closest('.cg-node'))return;drag={x:e.clientX,y:e.clientY}})
+window.addEventListener('mousemove',e=>{if(!drag)return;const r=svg.getBoundingClientRect()
+  S.vb.x-=(e.clientX-drag.x)*(S.vb.w/r.width);S.vb.y-=(e.clientY-drag.y)*(S.vb.h/r.height);drag={x:e.clientX,y:e.clientY}
+  svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`);window.FBPins&&FBPins.refresh()})
+window.addEventListener('mouseup',()=>drag=null)
+svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect()
+  const k=e.deltaY>0?1.12:1/1.12,nw=Math.min(Math.max(S.vb.w*k,300),S.W*2)
+  const mx=S.vb.x+((e.clientX-r.left)/r.width)*S.vb.w,my=S.vb.y+((e.clientY-r.top)/r.height)*S.vb.h
+  S.vb={x:mx-(mx-S.vb.x)*nw/S.vb.w,y:my-(my-S.vb.y)*nw/S.vb.w,w:nw,h:nw*r.height/r.width}
+  svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`)
+  svg.classList.toggle('far',S.vb.w>1750);window.FBPins&&FBPins.refresh()},{passive:false})
+function fit(){const r=svg.getBoundingClientRect();const sc=Math.min(r.width/S.W,r.height/S.H)
+  S.vb={x:0,y:0,w:r.width/sc,h:r.height/sc};render();window.FBPins&&FBPins.refresh()}
+
+/* ══ 부트 ══ */
+async function boot(){
+  const r=await fetch('./codegraph.json',{cache:'no-cache'})
+  S.data=await r.json()
+  S.data.nodes.forEach(n=>byId[n.id]=n)
+  S.data.edges.forEach(e=>{(out[e.s]=out[e.s]||[]).push(e.t);(inn[e.t]=inn[e.t]||[]).push(e.s)})
+  forceLayout(S.data.nodes,S.data.edges)
+  $('#meta').textContent=`${S.data.meta.counts.nodes}개 파일 · 연결 ${S.data.meta.counts.edges} · ${S.data.meta.generated_at} 기준`
+  fit()
+  $('#q').addEventListener('input',e=>{S.q=e.target.value.trim().toLowerCase();render()})
+  $('#fit').onclick=fit
+  svg.addEventListener('click',e=>{const g=e.target.closest('.cg-node');if(g)pick(g.dataset.path)})
+}
+boot().catch(e=>{$('#meta').textContent='codegraph.json 로드 실패 — scan.py 먼저 실행: '+e.message})
+</script>
+</body>
+</html>
