@@ -9,7 +9,7 @@
 ## 라이브 (2026-07-03 VPS 단일화 — Render 폐기)
 - **웹: https://murmur-ai.duckdns.org** (VPS). nginx(TLS, Let's Encrypt 자동갱신) → gunicorn `murmur-web` systemd(127.0.0.1:8000) → Django. SPA+API 한 서비스.
 - **DB: 로컬 Postgres**(`murmur` DB, DATABASE_URL=`/root/ClaudeCompany/.dburl`). 영속 — 재시작해도 데이터 유지. 웹 env=`/etc/murmur-web.env`.
-- **dev 메타 서비스(2026-07-11 라이브)**: https://murmur-ai.duckdns.org/dev/ — **공유 캔버스 제품** — (사람의 간단한 인터랙션+스케치)+(AI의 문서화/시각화). 프로젝트당 캔버스 여러 장(`/dev/p/<slug>/c/<cid>/`), 더블클릭 스티키·● 연결선·Del/Undo·핀. AI는 같은 items/links API(origin=ai)로 되그림(4초 폴링). 지도/뷰/파일 표면 폐지 — 스캐너·Node/Edge는 AI 후방 근거. 등재 9개 = claude-company·murmur + 봇 산출물 7(p-001~p-010). systemd `dev-web`(gunicorn 8100)·nginx `/dev/`·sqlite `ops/var/devfeedback.sqlite3`·인증=murmur `/api/me` 위임. 상세=`ops/dev/README.md`. **잔여: murmur PR #12(피드백 앱 제거·클라 전환) 사용자 병합 → 병합 후 pull+빌드+murmur-web 재시작.**
+- **atelier(2026-07-11 독립 분리)**: 사람+AI 공유 캔버스 플랫폼 — **별개 제품**(자체 레포 `/root/atelier`·venv·sqlite·systemd `atelier`). murmur와의 연결은 선택적 로그인 브리지(/api/me 위임)뿐. 접속: 기존 `/dev/` 경로(nginx가 8100 프록시) — 자기 도메인은 사용자 지정 대기(sslip 인증서는 게이트로 미발급). 워크스페이스 자동복제 폐지(등록=사람/Organt 선택, 현재 claude-company·murmur 예제 2개). claude-company의 ops/dev는 제거됨.
 - 러너: systemd `organt-runner` → `--remote http://127.0.0.1:8000` | **nginx가 외부 /api/guide/* 403 차단(H3): 러너만 로컬 직결로 사용.**(같은 호스트 로컬). ORGANT_GUIDE_TOKEN은 웹 env와 일치.
 - **배포 방식(Render API 아님!)**: 백엔드 변경 → `systemctl restart murmur-web`. 프론트 변경 → `cd murmur/frontend && npm run build`(gunicorn이 dist 서빙). 마이그레이션 → env 걸고 `manage.py migrate`. VPS 체크아웃(`/root/ClaudeCompany`)이 곧 소스라 git pull 불필요(여기서 편집).
 - Render 웹서비스(srv-d8tnrdog4nts73d4gcfg)는 **미사용**(러너가 안 봄) — 정지/삭제 가능. 단 *봇이 만든 프로젝트 배포*(deploy.py)는 여전히 Render API 사용(별개).
