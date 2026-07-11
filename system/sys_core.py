@@ -1850,6 +1850,7 @@ class Sys:
                     f"  · Purpose: {resumed.get('purpose') or '(미정)'}\n"
                     f"  · Goal: {resumed.get('goal') or '(미정)'}\n"
                     f"  · 지금까지(직전 보고): {(resumed.get('result_so_far') or '(기록 없음)')[:200]}\n"
+                    + _ms_continuation_note(flow) +
                     f"→ 사용자의 요청이 이 Task의 연장이면(대개 그렇습니다) **새 Task를 또 열지 말고 이 Task를 이어서** "
                     f"끝내세요: 남은 부분을 owner에게 request(Work)로 맡기고(이미 정해진 팀·owner 존중 — 가로채 혼자 "
                     f"마무리 금지), run으로 검증한 뒤 complete_task로 **이 블록**을 마감하세요. 만약 사용자가 **명백히 "
@@ -2524,3 +2525,23 @@ class Sys:
                                             root_id=request.message_id,
                                             attachments=getattr(request, "attachments", None),
                                             elect=elect)
+
+
+def _ms_continuation_note(flow) -> str:
+    """[정밀 복구(2026-07-11, 사용자: '10번 재시작하면 마일스톤 10번 열려?')] 재개 주입에 미완 주기의
+    이어가기 정보를 동봉 — 재개 팀이 주기 존재를 몰라 '승계' 명목의 새 주기를 열던 것의 근본 차단
+    (set_milestone 게이트는 2차 방어)."""
+    try:
+        ms = next((m for m in (getattr(flow, "milestones", None) or [])
+                   if m.status not in ("done", "superseded")), None)
+        if ms is None:
+            return ""
+        met = sum(1 for c in ms.criteria if c.passed)
+        tot = sum(1 for c in ms.criteria if c.status != "waived")
+        remain = " · ".join(c.desc[:40] for c in ms.criteria if not c.passed and c.status != "waived")[:240]
+        return (f"  · **진행 중 마일스톤 {ms.ms_id}** — {ms.goal[:60]} (충족 {met}/{tot}, iter {ms.iter_n})\n"
+                f"    미충족: {remain or '(없음 — wrapup 정리 후 종료)'}\n"
+                f"    → 새 주기를 열지 말고 **이 주기를 이어가세요**: report_iter로 검증을 잇고, "
+                f"단위가 필요하면 set_subtask, 환경상 불가 조건은 renegotiate_criterion.\n")
+    except Exception:
+        return ""
