@@ -80,3 +80,44 @@ class View(models.Model):
     class Meta:
         unique_together = [("project", "vid")]
         ordering = ["order", "id"]
+
+
+class Canvas(models.Model):
+    """그려지는 판 — 프로젝트에 여러 장. 사람과 AI가 같은 판에 그린다."""
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="canvases")
+    cid = models.SlugField()
+    name = models.CharField(max_length=120, default="캔버스")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("project", "cid")]
+        ordering = ["id"]
+
+
+class Item(models.Model):
+    """캔버스 객체 — sticky(메모)·box(프레임). 폼 없는 직접 조작이 전제라 스키마는 단순하게.
+    origin: user=사람 스케치, ai=AI의 문서화/시각화(같은 API로 그린다)."""
+    canvas = models.ForeignKey(Canvas, on_delete=models.CASCADE, related_name="items")
+    kind = models.CharField(max_length=16, default="sticky")   # sticky | box
+    text = models.TextField(blank=True)
+    x = models.FloatField(default=0)
+    y = models.FloatField(default=0)
+    w = models.FloatField(default=180)
+    h = models.FloatField(default=100)
+    origin = models.CharField(max_length=10, default="user", db_index=True)
+    meta = models.JSONField(default=dict, blank=True)          # 근거 링크·색 등(자유)
+    z = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["z", "id"]
+
+
+class Link(models.Model):
+    """연결선 — 객체에서 객체로(도형 가장자리 핸들 드래그). 라벨은 동사."""
+    canvas = models.ForeignKey(Canvas, on_delete=models.CASCADE, related_name="links")
+    s = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="out_links")
+    t = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="in_links")
+    label = models.CharField(max_length=120, blank=True)
+    origin = models.CharField(max_length=10, default="user")

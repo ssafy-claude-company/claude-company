@@ -35,7 +35,7 @@ def _proj(p):
     last = p.scans.first()
     return {"slug": p.slug, "name": p.name, "root": p.root, "skips": p.skips,
             "nodes": p.nodes.count(), "user_nodes": p.nodes.filter(origin="user").count(),
-            "views": p.views.count(),
+            "views": p.views.count(), "canvases": p.canvases.count(),
             "last_scan": ({"at": last.created_at.strftime("%Y-%m-%d %H:%M"), "ok": last.ok, **last.stats}
                           if last else None)}
 

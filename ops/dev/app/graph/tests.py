@@ -81,3 +81,40 @@ class PlatformApiTest(TestCase):
         self.assertEqual(self.c.patch("/api/projects/sample/views/결정만/".replace("결정만", v.json()["vid"]) if False else f"/api/projects/sample/views/{v.json()['vid']}/",
                                       {"lanes": ["제안", "확정", "폐기"]}, format="json").json()["lanes"], ["제안", "확정", "폐기"])
         self.assertEqual(self.c.delete(f"/api/projects/sample/views/{v.json()['vid']}/").status_code, 200)
+
+
+class CanvasApiTest(TestCase):
+    """캔버스 — 사람과 AI가 같은 판에 그리는 계약."""
+
+    def setUp(self):
+        os.environ["DEV_FEEDBACK_TOKENS"] = "tok-dojin:dojin"
+        os.environ.pop("DEV_FEEDBACK_MURMUR", None)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.c = _c()
+        self.c.post("/api/projects/", {"name": "샘플", "slug": "sample", "root": self.tmp.name}, format="json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+        os.environ.pop("DEV_FEEDBACK_TOKENS", None)
+
+    def test_canvas_flow(self):
+        # 캔버스 생성(한글 이름 → ASCII cid 자동)
+        cv = self.c.post("/api/projects/sample/canvases/", {"name": "설계 보드"}, format="json").json()
+        cid = cv["cid"]
+        # 사람 스티키 + AI 스티키 + 연결(라벨)
+        a = self.c.post(f"/api/projects/sample/canvases/{cid}/items/", {"kind": "sticky", "text": "요청", "x": 0, "y": 0}, format="json").json()
+        b = self.c.post(f"/api/projects/sample/canvases/{cid}/items/", {"kind": "box", "text": "AI 문서화", "origin": "ai", "x": 300, "y": 0}, format="json").json()
+        self.assertEqual(b["origin"], "ai")
+        l = self.c.post(f"/api/projects/sample/canvases/{cid}/links/", {"s": a["id"], "t": b["id"], "label": "흘러감"}, format="json")
+        self.assertEqual(l.status_code, 201, l.content)
+        # 이동·텍스트 수정(낙관 패치)
+        self.assertEqual(self.c.patch(f"/api/projects/sample/canvases/{cid}/items/{a['id']}/", {"x": 50, "text": "요청 v2"}, format="json").json()["x"], 50)
+        # objects 스냅샷
+        o = self.c.get(f"/api/projects/sample/canvases/{cid}/objects/").json()
+        self.assertEqual((len(o["items"]), len(o["links"])), (2, 1))
+        # 삭제 캐스케이드: 객체 지우면 연결도
+        self.c.delete(f"/api/projects/sample/canvases/{cid}/items/{a['id']}/")
+        o2 = self.c.get(f"/api/projects/sample/canvases/{cid}/objects/").json()
+        self.assertEqual((len(o2["items"]), len(o2["links"])), (1, 0))
+        # 잘못된 kind·타 캔버스 연결 거부
+        self.assertEqual(self.c.post(f"/api/projects/sample/canvases/{cid}/items/", {"kind": "circle"}, format="json").status_code, 400)

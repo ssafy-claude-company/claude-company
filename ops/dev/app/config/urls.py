@@ -37,7 +37,8 @@ def _static(request, name):
 
 urlpatterns = [
     path("", _page("index.html")),
-    path("p/<slug:slug>/", _page("map.html")),
+    path("p/<slug:slug>/", _page("project.html")),          # 캔버스 허브
+    path("p/<slug:slug>/c/<slug:cid>/", _page("canvas.html")),
     path("p/<slug:slug>/feedback", _page("backlog.html")),
     path("feedback", _page("backlog.html")),
     path("api/projects/", include("graph.urls")),
