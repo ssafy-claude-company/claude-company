@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>코드 지도 — ClaudeCompany</title>
 <style>
-/* dev 도구 — murmur 제품 아님. 단일 파일(의존 0), 다크 고정. */
+/* dev 도구. 유기적 그래프: 연결(import)이 배치를 만든다 — 힘 기반(결정론), 목록 아님. */
 :root{--bg:#0d0d12;--bg2:#16161d;--line:#26262f;--text:#e8e8ef;--text2:#b9b9c6;--text3:#8b8b99;--accent:#7b78f0}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,'Apple SD Gothic Neo',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
@@ -14,28 +14,26 @@ h1{margin:0;font-size:16px}
 .meta{font-size:11.5px;color:var(--text3)}
 .tools{display:flex;align-items:center;gap:10px}
 input[type=text]{width:210px;padding:6px 10px;font-size:12.5px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--text)}
-label.tgl{display:flex;gap:5px;align-items:center;font-size:12px;color:var(--text2);cursor:pointer}
 button{padding:6px 10px;font-size:12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--text2);cursor:pointer}
-button.on{border-color:var(--accent);color:var(--accent)}
 .hint{margin:0 16px 8px;font-size:11.5px;color:var(--text3)}
+.hint a{color:var(--accent)}
 #wrap{position:relative;flex:1;min-height:0;margin:0 16px 12px;border:1px solid var(--line);border-radius:12px;background:radial-gradient(circle at 30% 20%,rgba(123,120,240,.05),transparent 60%),#101016;overflow:hidden}
 svg{width:100%;height:100%;cursor:grab;display:block}
 svg:active{cursor:grabbing}
-.cg-area{font-size:13px;font-weight:700}
-.cg-dir{font-size:10.5px;fill:var(--text3)}
+.cg-area{font-size:15px;font-weight:800;opacity:.9}
 .cg-node{cursor:pointer}
-.cg-node rect{fill:var(--bg2);stroke-width:1.1}
-.cg-node:hover rect{stroke-width:2}
-.cg-node text.lb{font-size:11.5px;fill:var(--text)}
-.cg-node text.loc{font-size:9.5px;fill:var(--text3);text-anchor:end}
-.cg-node.sel rect{stroke-width:2.2;fill:rgba(123,120,240,.14)}
-.cg-node.rel rect{fill:rgba(123,120,240,.08)}
-.cg-node.faded{opacity:.18}
-path.edge{fill:none;stroke:rgba(139,139,153,.5);stroke-width:1;pointer-events:none}
-path.edge.cross{stroke:rgba(123,120,240,.55);stroke-width:1.3}
-path.edge.dim{stroke:rgba(139,139,153,.16)}
-path.edge.hot{stroke:#7b78f0;stroke-width:1.8}
-/* 사이드 패널 */
+.cg-node rect{fill:#171720;stroke-width:1.2;transition:opacity .12s}
+.cg-node:hover rect{stroke-width:2.2}
+.cg-node text{font-size:10.5px;fill:var(--text);pointer-events:none}
+.cg-node.sel rect{stroke-width:2.6;fill:rgba(123,120,240,.16)}
+.cg-node.rel rect{fill:rgba(123,120,240,.09)}
+.cg-node.faded{opacity:.13}
+svg.far .cg-node text{display:none}                 /* 축소 시 라벨 숨김 — 가독(Thask 방식) */
+svg.far .cg-area{font-size:26px}
+path.edge{fill:none;stroke:#8b8b99;stroke-opacity:.14;stroke-width:1;pointer-events:none}
+path.edge.cross{stroke:var(--accent);stroke-opacity:.34;stroke-width:1.2}
+path.edge.hot{stroke:var(--accent);stroke-opacity:.95;stroke-width:1.8}
+path.edge.faded{stroke-opacity:.04}
 #panel{position:absolute;top:10px;right:10px;width:300px;max-height:calc(100% - 20px);overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:none}
 #panel .head{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:700}
 #panel .path{font-size:11px;color:var(--text3);margin:2px 0 8px;word-break:break-all}
@@ -44,17 +42,6 @@ path.edge.hot{stroke:#7b78f0;stroke-width:1.8}
 #panel a{display:block;font-size:11.5px;color:var(--text2);padding:2px 0;cursor:pointer;word-break:break-all;text-decoration:none}
 #panel a:hover{color:var(--accent)}
 #panel .x{background:none;border:none;font-size:15px;color:var(--text3);cursor:pointer;padding:0}
-/* 핀 레이어 */
-.pin{position:absolute;width:22px;height:22px;border-radius:50% 50% 50% 4px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.5);transform:translate(-4px,-20px);z-index:5}
-.pin.resolved{background:#3f8f5f}
-#fbform,#fbthread{position:absolute;z-index:6;width:270px;background:var(--bg);border:1px solid var(--accent);border-radius:10px;padding:10px;display:none}
-#fbform textarea{width:100%;height:64px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--text);font:12.5px/1.5 inherit;padding:6px;resize:vertical}
-#fbform .row,#fbthread .row{display:flex;gap:6px;justify-content:flex-end;margin-top:6px}
-#fbthread .body{font-size:12.5px;white-space:pre-wrap;margin:4px 0 6px}
-#fbthread .cm{font-size:11.5px;color:var(--text2);border-top:1px solid var(--line);padding:5px 0}
-#fbthread .st{font-size:10.5px;color:var(--text3)}
-#fbthread input{width:100%;padding:5px 8px;font-size:12px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--text)}
-.badge{font-size:10px;color:var(--text3);margin-left:6px}
 </style>
 </head>
 <body>
@@ -64,189 +51,150 @@ path.edge.hot{stroke:#7b78f0;stroke-width:1.8}
   </div>
   <div class="tools">
     <input id="q" type="text" placeholder="파일·경로 검색" />
-    <label class="tgl"><input id="all" type="checkbox" /> 모든 연결</label>
     <button id="fit">전체 보기</button>
-    <button id="fbmode" title="켠 뒤 노드를 클릭하면 핀+코멘트">📌 피드백 모드</button>
   </div>
 </header>
-<p class="hint">클릭 = 파일의 연결·설명 · 드래그 = 이동 · 휠 = 확대 · 📌 모드에서 노드 클릭 = 피드백 핀. 핀 목록·처리는 <a href="./" style="color:var(--accent)">백로그</a>.</p>
+<p class="hint">연결(import)이 배치를 만든다 — 가까이 붙은 파일이 실제로 엮인 파일. 클릭 = 연결·설명 · 드래그 = 이동 · 휠 = 확대 · 우하단 📌 = 아무 요소에나 피드백 핀 · <a href="./">백로그</a></p>
 <div id="wrap">
   <svg id="svg"></svg>
   <aside id="panel"></aside>
-  <div id="pins"></div>
-  <div id="fbform"><textarea id="fbtext" placeholder="이 파일/구조에 대한 피드백…"></textarea><div class="row"><button id="fbcancel">취소</button><button id="fbsave" class="on">핀 저장</button></div></div>
-  <div id="fbthread"></div>
 </div>
+<script>window.FB_SERVICE='codegraph'</script>
+<script src="../static/fb.js" onerror="this.remove()"></script>
 <script>
-/* ══ 데이터·상태 ══ */
-const S = { data:null, pos:{}, heads:[], areas:[], W:0, H:0, sel:null, hover:null, q:'', all:false,
-            vb:{x:0,y:0,w:1200,h:800}, fbMode:false, pins:[], draftNode:null }
-const AREA_C = {'system':'#7b78f0','organt':'#58b7ff','guide':'#4fd1a5','ops':'#c9a86a','murmur/backend':'#e08bb8','murmur/frontend':'#f0c86a','murmur/scripts':'#9aa3b2'}
-const COL_W=236, NODE_W=196, ROW_H=26, HEAD_H=30, PAD=28
+/* ══ 상태 ══ */
+const S={data:null,sel:null,q:'',vb:{x:0,y:0,w:1200,h:800},W:2000,H:1400,areaLb:[]}
+const AREA_C={'system':'#7b78f0','organt':'#58b7ff','guide':'#4fd1a5','ops':'#c9a86a','murmur/backend':'#e08bb8','murmur/frontend':'#f0c86a','murmur/scripts':'#9aa3b2'}
 const $=(s)=>document.querySelector(s)
 const svg=$('#svg'), NS='http://www.w3.org/2000/svg'
 const slug=(id)=>'cg-'+id.replace(/[^a-zA-Z0-9]+/g,'-')
-
-/* ══ 피드백 API(이식 계약) — murmur 백엔드, service=codegraph ══ */
-const FB = {
-  service:'codegraph',
-  route: location.pathname,                             // 어디에 마운트되든 그 경로가 route
-  base: '../api/feedback/',                             // 같은 dev 서비스의 API — /dev/ 프록시든 직결이든 상대경로로 동작
-  token(){ let t=localStorage.getItem('organt_token'); if(!t){ t=prompt('murmur admin 토큰(organt_token)'); if(t) localStorage.setItem('organt_token',t) } return t||'' },
-  hdr(){ return {'Authorization':'Token '+this.token(),'Content-Type':'application/json'} },
-  async list(){ const r=await fetch(`${this.base}?service=${this.service}&route=${encodeURIComponent(this.route)}`,{headers:this.hdr()}); if(!r.ok) throw new Error(r.status); return (await r.json()).items||[] },
-  async create(p){ const r=await fetch(this.base,{method:'POST',headers:this.hdr(),body:JSON.stringify({...p,service:this.service})}); if(!r.ok) throw new Error(r.status); return r.json() },
-  async detail(id){ const r=await fetch(`${this.base}${id}/`,{headers:this.hdr()}); if(!r.ok) throw new Error(r.status); return r.json() },
-  async comment(id,body){ const r=await fetch(`${this.base}${id}/comments/`,{method:'POST',headers:this.hdr(),body:JSON.stringify({body})}); if(!r.ok) throw new Error(r.status); return r.json() },
-}
-
-/* ══ 레이아웃 ══ */
-function layout(){
-  S.areas=S.data.meta.areas.filter(a=>S.data.nodes.some(n=>n.area===a))
-  let W=0,H=0
-  S.areas.forEach((a,ci)=>{
-    const x=PAD+ci*COL_W; let y=PAD+34, last=null
-    S.data.nodes.filter(n=>n.area===a).forEach(n=>{
-      if(n.dir!==last){ S.heads.push({x,y,text:(n.dir==='.'?a:n.dir)+'/',area:a}); y+=HEAD_H; last=n.dir }
-      S.pos[n.id]={x,y}; y+=ROW_H
-    })
-    W=Math.max(W,x+NODE_W+PAD); H=Math.max(H,y+PAD)
-  })
-  S.W=W; S.H=H
-}
 const byId={}, out={}, inn={}
-function index(){ S.data.nodes.forEach(n=>byId[n.id]=n); S.data.edges.forEach(e=>{(out[e.s]=out[e.s]||[]).push(e.t);(inn[e.t]=inn[e.t]||[]).push(e.s)}) }
+
+/* ══ 결정론 해시(레이아웃이 로드마다 같게 — Math.random 금지) ══ */
+const H=(s)=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0)/4294967296}
+
+/* ══ 힘 기반 배치 — 반발(전쌍) + 스프링(엣지) + 영역 중력. 동기 실행(153노드 규모). ══ */
+function forceLayout(nodes,edges){
+  const areas=[...new Set(nodes.map(n=>n.area))]
+  const cnt=Object.fromEntries(areas.map(a=>[a,nodes.filter(n=>n.area===a).length]))
+  const RING=760
+  const AC={}
+  areas.forEach((a,i)=>{const ang=2*Math.PI*i/areas.length-Math.PI/2;AC[a]={x:Math.cos(ang)*RING,y:Math.sin(ang)*RING*0.72}})
+  nodes.forEach(n=>{
+    const c=AC[n.area], r=Math.sqrt(cnt[n.area])*30
+    const a=H(n.id)*2*Math.PI, rr=Math.sqrt(H(n.id+'#'))*r
+    n.x=c.x+Math.cos(a)*rr; n.y=c.y+Math.sin(a)*rr; n.vx=0; n.vy=0
+  })
+  const idx=Object.fromEntries(nodes.map(n=>[n.id,n]))
+  const REP=2900, ITER=320
+  for(let t=0;t<ITER;t++){
+    const alpha=1-t/ITER, temp=26*alpha+1.5
+    for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){   // 반발
+      const a=nodes[i],b=nodes[j]
+      let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy
+      if(d2<1){dx=(H(a.id+j)-0.5);dy=(H(b.id+i)-0.5);d2=dx*dx+dy*dy}
+      if(d2>240000)continue
+      const f=REP/d2, d=Math.sqrt(d2)
+      a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f
+    }
+    edges.forEach(e=>{                                                   // 스프링(연결이 끌어당김)
+      const a=idx[e.s],b=idx[e.t]
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1
+      const rest=a.area===b.area?110:330, k=a.area===b.area?0.045:0.010
+      const f=k*(d-rest)
+      a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f
+    })
+    nodes.forEach(n=>{                                                   // 영역 중력 + 적분
+      const c=AC[n.area]
+      n.vx+=(c.x-n.x)*0.016; n.vy+=(c.y-n.y)*0.016
+      const v=Math.sqrt(n.vx*n.vx+n.vy*n.vy)||1, cap=Math.min(v,temp)
+      n.x+=n.vx/v*cap; n.y+=n.vy/v*cap; n.vx*=0.32; n.vy*=0.32
+    })
+  }
+  // 좌표 정규화(+여백) — 정규화 후 실제 좌표로 영역 라벨(무게중심) 계산
+  const mx=Math.min(...nodes.map(n=>n.x))-140, my=Math.min(...nodes.map(n=>n.y))-110
+  nodes.forEach(n=>{n.x-=mx;n.y-=my})
+  S.W=Math.max(...nodes.map(n=>n.x))+180; S.H=Math.max(...nodes.map(n=>n.y))+130
+  S.areaLb=areas.map(a=>{const g=nodes.filter(n=>n.area===a)
+    return {a,x:g.reduce((s,n)=>s+n.x,0)/g.length,y:Math.min(...g.map(n=>n.y))-42}})
+}
 
 /* ══ 렌더 ══ */
-function el(tag,attrs,text){ const e=document.createElementNS(NS,tag); for(const k in attrs)e.setAttribute(k,attrs[k]); if(text!=null)e.textContent=text; return e }
+const el=(t,at,tx)=>{const e=document.createElementNS(NS,t);for(const k in at)e.setAttribute(k,at[k]);if(tx!=null)e.textContent=tx;return e}
+const pillW=(n)=>Math.min(Math.max(n.label.length*6.1+16,42),150)
+function edgePath(e){
+  const a=byId[e.s],b=byId[e.t]
+  const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1
+  const nx=-dy/d,ny=dx/d,bow=Math.min(d*0.14,40)                       // 살짝 휜 곡선(겹침 완화)
+  return `M ${a.x} ${a.y} Q ${(a.x+b.x)/2+nx*bow} ${(a.y+b.y)/2+ny*bow} ${b.x} ${b.y}`
+}
 function render(){
   svg.innerHTML=''
   svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`)
-  S.areas.forEach(a=>svg.appendChild(el('text',{x:S.pos[firstOf(a)]?.x??PAD,y:PAD+14,class:'cg-area',fill:AREA_C[a]||'#999'},a)))
-  S.heads.forEach(h=>svg.appendChild(el('text',{x:h.x,y:h.y+18,class:'cg-dir'},h.text)))
+  svg.classList.toggle('far',S.vb.w>1750)
   const f=S.sel
-  S.data.edges.forEach(e=>{
-    const cross=byId[e.s].area!==byId[e.t].area, touch=f&&(e.s===f||e.t===f)
-    if(!(touch||(S.all?true:cross)))return
-    svg.appendChild(el('path',{d:edgePath(e),class:'edge '+(touch?'hot':cross?'cross':'dim')}))
-  })
   const m=S.q?new Set(S.data.nodes.filter(n=>n.id.toLowerCase().includes(S.q)).map(n=>n.id)):null
+  S.areaLb.forEach(l=>svg.appendChild(el('text',{x:l.x,y:l.y,class:'cg-area','text-anchor':'middle',fill:AREA_C[l.a]||'#999'},l.a)))
+  S.data.edges.forEach(e=>{
+    const cross=byId[e.s].area!==byId[e.t].area
+    const touch=f&&(e.s===f||e.t===f)
+    const faded=(f&&!touch)||(m&&!(m.has(e.s)||m.has(e.t)))
+    svg.appendChild(el('path',{d:edgePath(e),class:'edge'+(touch?' hot':cross?' cross':'')+(faded?' faded':'')}))
+  })
   S.data.nodes.forEach(n=>{
-    const p=S.pos[n.id]
     const rel=f&&(n.id===f||(out[f]||[]).includes(n.id)||(inn[f]||[]).includes(n.id))
     const g=el('g',{id:slug(n.id),class:'cg-node'+(S.sel===n.id?' sel':'')+(rel&&n.id!==f?' rel':'')+(((m&&!m.has(n.id))||(f&&!rel))?' faded':''),'data-path':n.id})
-    g.appendChild(el('rect',{x:p.x,y:p.y,width:NODE_W,height:ROW_H-5,rx:6,stroke:AREA_C[n.area]||'#999'}))
-    g.appendChild(el('text',{x:p.x+9,y:p.y+14.5,class:'lb'},n.label))
-    g.appendChild(el('text',{x:p.x+NODE_W-9,y:p.y+14.5,class:'loc'},n.loc))
-    svg.appendChild(g)   // 클릭은 svg 위임(재렌더에도 안정), hover 강조는 CSS로만 — 클릭 유실 방지
+    const w=pillW(n)
+    g.appendChild(el('rect',{x:n.x-w/2,y:n.y-11,width:w,height:22,rx:11,stroke:AREA_C[n.area]||'#999'}))
+    g.appendChild(el('text',{x:n.x,y:n.y+3.5,'text-anchor':'middle'},n.label))
+    svg.appendChild(g)
   })
-}
-function firstOf(a){ const n=S.data.nodes.find(n=>n.area===a); return n&&n.id }
-function edgePath(e){
-  const s=S.pos[e.s],t=S.pos[e.t]; if(!s||!t)return''
-  const sy=s.y+ROW_H/2-2, ty=t.y+ROW_H/2-2
-  if(s.x===t.x){ const b=Math.min(70,16+Math.abs(sy-ty)*.12); return `M ${s.x} ${sy} C ${s.x-b} ${sy}, ${t.x-b} ${ty}, ${t.x} ${ty}` }
-  const sx=s.x<t.x?s.x+NODE_W:s.x, tx=s.x<t.x?t.x:t.x+NODE_W, mx=(sx+tx)/2
-  return `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ty}, ${tx} ${ty}`
 }
 
 /* ══ 선택·패널 ══ */
-function pick(id){ S.sel=S.sel===id?null:id; render(); panel(); placePins() }
-function jump(id){ S.sel=id; S.vb.x=S.pos[id].x-S.vb.w/2+NODE_W/2; S.vb.y=S.pos[id].y-S.vb.h/2; render(); panel(); placePins() }
+function pick(id){S.sel=S.sel===id?null:id;render();panel();window.FBPins&&FBPins.refresh()}
+function jump(id){S.sel=id;const n=byId[id];S.vb.x=n.x-S.vb.w/2;S.vb.y=n.y-S.vb.h/2;render();panel();window.FBPins&&FBPins.refresh()}
 function panel(){
-  const p=$('#panel'); const n=S.sel&&byId[S.sel]
+  const p=$('#panel');const n=S.sel&&byId[S.sel]
   if(!n){p.style.display='none';return}
   p.style.display='block'
   const li=(arr,t)=>arr&&arr.length?`<div class="t">${t} (${arr.length})</div>`+arr.map(x=>`<a data-j="${x}">${x}</a>`).join(''):''
-  p.innerHTML=`<div class="head"><span>${n.label}</span><button class="x" onclick="S.sel=null;render();panel();placePins()">×</button></div>
-  <div class="path">${n.id} · ${n.loc}줄</div><div class="doc">${(n.doc||'(파일 설명 없음)').replace(/</g,'&lt;')}</div>
+  p.innerHTML=`<div class="head"><span>${n.label}</span><button class="x">×</button></div>
+  <div class="path">${n.id} · ${n.loc}줄 · 연결 ${(out[n.id]||[]).length+(inn[n.id]||[]).length}</div>
+  <div class="doc">${(n.doc||'(파일 설명 없음)').replace(/</g,'&lt;')}</div>
   ${li(out[n.id],'이 파일이 쓰는 것')}${li(inn[n.id],'이 파일을 쓰는 곳')}`
+  p.querySelector('.x').onclick=()=>{S.sel=null;render();panel()}
   p.querySelectorAll('a[data-j]').forEach(a=>a.onclick=()=>jump(a.dataset.j))
 }
 
 /* ══ 팬/줌 ══ */
 let drag=null
-svg.addEventListener('mousedown',e=>{ if(e.target.closest('.cg-node'))return; drag={x:e.clientX,y:e.clientY} })
-window.addEventListener('mousemove',e=>{ if(!drag)return; const r=svg.getBoundingClientRect()
-  S.vb.x-=(e.clientX-drag.x)*(S.vb.w/r.width); S.vb.y-=(e.clientY-drag.y)*(S.vb.h/r.height); drag={x:e.clientX,y:e.clientY}
-  svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`); placePins() })
+svg.addEventListener('mousedown',e=>{if(e.target.closest('.cg-node'))return;drag={x:e.clientX,y:e.clientY}})
+window.addEventListener('mousemove',e=>{if(!drag)return;const r=svg.getBoundingClientRect()
+  S.vb.x-=(e.clientX-drag.x)*(S.vb.w/r.width);S.vb.y-=(e.clientY-drag.y)*(S.vb.h/r.height);drag={x:e.clientX,y:e.clientY}
+  svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`);window.FBPins&&FBPins.refresh()})
 window.addEventListener('mouseup',()=>drag=null)
-svg.addEventListener('wheel',e=>{ e.preventDefault(); const r=svg.getBoundingClientRect()
-  const k=e.deltaY>0?1.12:1/1.12, nw=Math.min(Math.max(S.vb.w*k,320),S.W*2.2)
-  const mx=S.vb.x+((e.clientX-r.left)/r.width)*S.vb.w, my=S.vb.y+((e.clientY-r.top)/r.height)*S.vb.h
-  S.vb={x:mx-(mx-S.vb.x)*nw/S.vb.w, y:my-(my-S.vb.y)*nw/S.vb.w, w:nw, h:nw*r.height/r.width}
-  svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`); placePins() },{passive:false})
-function fit(){ const r=svg.getBoundingClientRect(); const sc=Math.min(r.width/S.W,r.height/S.H,1)
-  S.vb={x:0,y:0,w:r.width/sc,h:r.height/sc}; render(); placePins() }
-
-/* ══ 핀 레이어(자체) — 셀렉터 계약: 노드 고정 #id ══ */
-async function loadPins(){ try{ S.pins=(await FB.list()).filter(p=>p.status!=='closed') }catch(e){ S.pins=[]; console.warn('핀 목록 실패',e) } placePins() }
-function placePins(){
-  const box=$('#pins'); box.innerHTML=''
-  const wr=$('#wrap').getBoundingClientRect()
-  S.pins.forEach((it,i)=>{
-    const el=document.querySelector(it.selector); if(!el)return
-    const r=el.getBoundingClientRect(); if(!r.width&&!r.height)return
-    const d=document.createElement('div')
-    d.className='pin'+(it.status!=='open'?' resolved':'')
-    d.style.left=(r.left-wr.left+r.width*(parseFloat(it.pos_x)||0)/100)+'px'
-    d.style.top=(r.top-wr.top+r.height*(parseFloat(it.pos_y)||0)/100)+'px'
-    d.textContent=i+1; d.title=it.body
-    d.onclick=(ev)=>{ev.stopPropagation();openThread(it,ev)}
-    box.appendChild(d)
-  })
-}
-function openForm(n,ev){
-  S.draftNode=n
-  const f=$('#fbform'), wr=$('#wrap').getBoundingClientRect()
-  f.style.display='block'; f.style.left=Math.min(ev.clientX-wr.left,wr.width-290)+'px'; f.style.top=(ev.clientY-wr.top+10)+'px'
-  $('#fbtext').value=''; $('#fbtext').focus()
-  f.dataset.px=ev.clientX; f.dataset.py=ev.clientY
-}
-async function savePin(){
-  const n=S.draftNode; if(!n)return
-  const g=document.getElementById(slug(n.id)), r=g.getBoundingClientRect()
-  const px=((+$('#fbform').dataset.px-r.left)/r.width*100).toFixed(2)
-  const py=((+$('#fbform').dataset.py-r.top)/r.height*100).toFixed(2)
-  const body=$('#fbtext').value.trim(); if(!body)return
-  try{
-    await FB.create({route:FB.route,selector:'#'+slug(n.id),element_label:'파일: '+n.id,
-      anchor_text:n.id.slice(0,160),pos_x:px,pos_y:py,body})
-    $('#fbform').style.display='none'; loadPins()
-  }catch(e){ alert('핀 저장 실패: '+e.message+' (admin 토큰 확인)') }
-}
-async function openThread(it,ev){
-  const t=$('#fbthread'), wr=$('#wrap').getBoundingClientRect()
-  t.style.display='block'; t.style.left=Math.min(ev.clientX-wr.left,wr.width-290)+'px'; t.style.top=(ev.clientY-wr.top+8)+'px'
-  t.innerHTML='로딩…'
-  let d=it; try{ d=await FB.detail(it.id) }catch(e){}
-  t.innerHTML=`<div class="st">#${d.id} · ${d.author||''} · ${d.status_label||d.status}</div>
-    <div class="body">${(d.body||'').replace(/</g,'&lt;')}</div>
-    ${(d.comments||[]).map(c=>`<div class="cm"><span class="st">${c.author||''}</span> ${(c.body||'').replace(/</g,'&lt;')}</div>`).join('')}
-    ${d.resolution?`<div class="cm"><span class="st">처리 노트</span> ${(d.resolution).replace(/</g,'&lt;')}</div>`:''}
-    <input id="cmt" placeholder="댓글…" /><div class="row"><button onclick="$('#fbthread').style.display='none'">닫기</button></div>`
-  t.querySelector('#cmt').addEventListener('keydown',async(e)=>{
-    if(e.key==='Enter'&&e.target.value.trim()){ try{ await FB.comment(d.id,e.target.value.trim()); openThread(it,ev) }catch(err){ alert('댓글 실패') } }
-  })
-}
+svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect()
+  const k=e.deltaY>0?1.12:1/1.12,nw=Math.min(Math.max(S.vb.w*k,300),S.W*2)
+  const mx=S.vb.x+((e.clientX-r.left)/r.width)*S.vb.w,my=S.vb.y+((e.clientY-r.top)/r.height)*S.vb.h
+  S.vb={x:mx-(mx-S.vb.x)*nw/S.vb.w,y:my-(my-S.vb.y)*nw/S.vb.w,w:nw,h:nw*r.height/r.width}
+  svg.setAttribute('viewBox',`${S.vb.x} ${S.vb.y} ${S.vb.w} ${S.vb.h}`)
+  svg.classList.toggle('far',S.vb.w>1750);window.FBPins&&FBPins.refresh()},{passive:false})
+function fit(){const r=svg.getBoundingClientRect();const sc=Math.min(r.width/S.W,r.height/S.H)
+  S.vb={x:0,y:0,w:r.width/sc,h:r.height/sc};render();window.FBPins&&FBPins.refresh()}
 
 /* ══ 부트 ══ */
 async function boot(){
   const r=await fetch('./codegraph.json',{cache:'no-cache'})
   S.data=await r.json()
-  layout(); index()
+  S.data.nodes.forEach(n=>byId[n.id]=n)
+  S.data.edges.forEach(e=>{(out[e.s]=out[e.s]||[]).push(e.t);(inn[e.t]=inn[e.t]||[]).push(e.s)})
+  forceLayout(S.data.nodes,S.data.edges)
   $('#meta').textContent=`${S.data.meta.counts.nodes}개 파일 · 연결 ${S.data.meta.counts.edges} · ${S.data.meta.generated_at} 기준`
-  fit(); loadPins()
+  fit()
   $('#q').addEventListener('input',e=>{S.q=e.target.value.trim().toLowerCase();render()})
-  $('#all').addEventListener('change',e=>{S.all=e.target.checked;render()})
   $('#fit').onclick=fit
-  $('#fbmode').onclick=()=>{S.fbMode=!S.fbMode;$('#fbmode').classList.toggle('on',S.fbMode)}
-  svg.addEventListener('click',(e)=>{ const g=e.target.closest('.cg-node'); if(!g)return
-    const n=byId[g.dataset.path]; S.fbMode?openForm(n,e):pick(n.id) })
-  $('#fbsave').onclick=savePin
-  $('#fbcancel').onclick=()=>$('#fbform').style.display='none'
-  document.addEventListener('click',e=>{ if(!e.target.closest('#fbthread')&&!e.target.closest('.pin'))$('#fbthread').style.display='none' })
-  window.addEventListener('resize',()=>placePins())
+  svg.addEventListener('click',e=>{const g=e.target.closest('.cg-node');if(g)pick(g.dataset.path)})
 }
 boot().catch(e=>{$('#meta').textContent='codegraph.json 로드 실패 — scan.py 먼저 실행: '+e.message})
 </script>

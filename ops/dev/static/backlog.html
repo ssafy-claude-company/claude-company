@@ -122,5 +122,7 @@ window.del=async(id)=>{if(!confirm('#'+id+' 삭제?'))return;try{await jsend(API
 $('#svc').addEventListener('change',e=>{S.svc=e.target.value;renderTabs();renderList()})
 load()
 </script>
+<script>window.FB_SERVICE='dev'</script>
+<script src="./static/fb.js"></script>
 </body>
 </html>

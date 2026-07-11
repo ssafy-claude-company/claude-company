@@ -20,10 +20,22 @@ def _file(name, ctype):
     return view
 
 
+_CT = {".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
+       ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8"}
+
+
+def _static(request, name):
+    """static/ 평면 파일 서빙 — <str:name>은 /를 못 담아 디렉터리 탈출 불가."""
+    p = STATIC_DIR / name
+    if "/" in name or not p.is_file():
+        raise Http404(name)
+    return FileResponse(open(p, "rb"), content_type=_CT.get(p.suffix, "application/octet-stream"))
+
+
 urlpatterns = [
     path("", _file("backlog.html", "text/html; charset=utf-8")),
     path("codegraph/", _file("codegraph.html", "text/html; charset=utf-8")),
-    path("static/codegraph.json", _file("codegraph.json", "application/json; charset=utf-8")),
     path("codegraph/codegraph.json", _file("codegraph.json", "application/json; charset=utf-8")),   # 페이지 상대참조(./codegraph.json)용 별칭
+    path("static/<str:name>", _static),   # fb.js·codegraph.json 등 — static/ 평면 파일만(경로 조작 불가)
     path("api/feedback/", include("feedback.urls")),
 ]

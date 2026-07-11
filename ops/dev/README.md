@@ -13,8 +13,14 @@ ops/dev/
   migrate_from_murmur.py  # murmur pg → sqlite 피드백 데이터 1회 이사(멱등)
   app/                    # Django: config + feedback 앱(murmur에서 이식)
   static/backlog.html     # / — 피드백 백로그(대기·처리됨·완료, 서비스 필터)
-  static/codegraph.html   # /codegraph/ — 코드 지도(그래프 + 핀)
+  static/codegraph.html   # /codegraph/ — 코드 지도(힘 기반 그래프)
+  static/fb.js            # 공용 핀 레이어 — 페이지의 모든 요소에 핀(murmur fbdom 셀렉터 이식)
 ```
+
+- **지도 배치 = 힘 기반(결정론)**: 연결(import)이 위치를 만든다 — 가까움 = 실제로 엮임.
+  해시 시드라 로드마다 같은 그림. 축소하면 라벨을 숨겨 형태만 보인다.
+- **핀은 모든 요소에**: 노드뿐 아니라 지도·백로그 페이지의 어떤 컴포넌트든 📌 모드에서 클릭해
+  핀을 단다(백로그 자체 핀은 service=dev).
 
 - **DB**: sqlite `ops/var/devfeedback.sqlite3` (env `DEV_FEEDBACK_DB`).
 - **인증**(feedback/auth.py — 이식 계약의 어댑터): ①`DEV_FEEDBACK_TOKENS="토큰:handle,…"`(자립)
