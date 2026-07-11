@@ -93,10 +93,17 @@
   const tg = $('#fbToggle'), hl = $('#fbHl'), pinBox = $('#fbPins'), draft = $('#fbDraft'), thread = $('#fbThread')
 
   /* ── 핀 표시(전 상태 — 완료만 제외) ── */
+  let _opened = false
   async function load() {
     try { items = ((await jget(`${API}?service=${SERVICE}&route=${encodeURIComponent(ROUTE)}`)).items || []).filter((i) => i.status !== 'closed') }
     catch (e) { items = [] }
     place()
+    if (_fbq && !_opened) {
+      const it = items.find((i) => String(i.id) === _fbq)
+      if (it) { _opened = true; mode = true; tg.classList.add('on'); place()
+        setTimeout(() => { const el = findBySel(it.selector); const r = el && el.getBoundingClientRect()
+          openThread(it, { clientX: r ? r.left + r.width / 2 : 300, clientY: r ? r.top + 20 : 200 }) }, 250) }
+    }
   }
   function place() {
     pinBox.innerHTML = ''
@@ -121,6 +128,8 @@
   window.addEventListener('scroll', refresh, true)
   window.addEventListener('resize', refresh)
   window.FBPins = { refresh, reload: load }                    // 페이지(팬/줌 등)가 재측정을 부를 수 있게
+  // 백로그 '화면에서 보기' → ?fb=<id> 로 오면 그 핀을 열어 준다(기능 간 유기 연결)
+  const _fbq = new URLSearchParams(location.search).get('fb')
 
   /* ── 모드: 요소 피킹 ── */
   tg.onclick = () => { mode = !mode; tg.classList.toggle('on', mode); hl.style.display = 'none'; place() }

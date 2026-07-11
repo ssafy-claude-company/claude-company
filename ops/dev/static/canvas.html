@@ -62,7 +62,7 @@ button:hover{color:var(--text)}
 .lk.sel{stroke:var(--accent);stroke-width:2.4}
 .lkhit{stroke:transparent;stroke-width:14;fill:none;pointer-events:stroke;cursor:pointer}
 .lklb{font-size:11px;fill:var(--text2);paint-order:stroke;stroke:#101014;stroke-width:3px;cursor:pointer}
-#ghost{position:absolute;pointer-events:none;display:none}
+#ghost{position:absolute;pointer-events:none;display:none;overflow:visible}
 .marquee{position:absolute;border:1px solid var(--accent);background:rgba(123,120,240,.08);display:none;z-index:20}
 .toast{position:fixed;top:56px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--ai);border-radius:9px;padding:6px 14px;font-size:12px;opacity:0;transition:opacity .25s;z-index:40;pointer-events:none}
 .toast.show{opacity:1}
@@ -97,9 +97,10 @@ button:hover{color:var(--text)}
   <button data-tool="sticky" title="스티키 — 클릭해 놓고 바로 타이핑 (S)">▣</button>
   <button data-tool="box" title="박스(묶음) — 드래그로 그리기 (R)">▢</button>
   <button id="undoB" title="되돌리기 (Ctrl+Z)">↺</button>
+  <button id="fitB" title="전체 보기 (1)">⛶</button>
 </div>
 <span class="bar" id="zoombar">100%</span>
-<div id="hint">더블클릭=스티키 · 가장자리 ●을 끌면 연결선 · 휠=이동, Ctrl+휠=줌 · Del=삭제 · 📌=피드백 핀(AI에게 시키기)</div>
+<div id="hint">더블클릭=스티키(박스 안도) · ● 끌면 연결선 · 스페이스+드래그=이동 · Ctrl+휠=줌 · ⛶=전체 · Del=삭제 · 📌=AI에게 시키기</div>
 <div class="toast" id="toast"></div>
 <script>
 const M=location.pathname.match(/^(.*?)p\/([^/]+)\/c\/([^/]+)\/$/)
@@ -123,7 +124,7 @@ const applyVP=()=>{world.style.transform=`translate(${VP.x}px,${VP.y}px) scale($
 const toWorld=(cx,cy)=>[(cx-VP.x)/VP.k,(cy-VP.y)/VP.k]
 
 /* ══ 상태 ══ */
-let ITEMS={},LINKS={},SEL=new Set(),selLink=null,TOOL='select'
+let ITEMS={},LINKS={},SEL=new Set(),selLink=null,TOOL='select',HOLD=false,SPACE=false
 const dirty={}                                    // id → pending patch(디바운스)
 let undoStack=[]
 const pushUndo=(op)=>{undoStack.push(op);if(undoStack.length>40)undoStack.shift()}
@@ -225,21 +226,35 @@ function wire(d,id){
     if(e.target.classList.contains('cn')||e.target.classList.contains('hd'))return
     if(document.activeElement===body)return
     if(TOOL!=='select')return
-    e.stopPropagation()
+    e.stopPropagation();HOLD=true
     const it=ITEMS[id]
     if(!SEL.has(id))select([id],e.shiftKey)
-    const grp=[...SEL].map(i=>({i,x:ITEMS[i].x,y:ITEMS[i].y}))
+    let ids=[...SEL]
+    if(ids.length===1&&it.kind==='box'){                 // 박스는 위에 놓인 것들을 함께 데려간다
+      const bh=document.getElementById('it'+id).offsetHeight
+      Object.values(ITEMS).forEach(o=>{if(o.id!==id&&o.kind!=='box'){
+        const oh=document.getElementById('it'+o.id)?.offsetHeight||o.h
+        const cx=o.x+o.w/2,cy=o.y+oh/2
+        if(cx>it.x&&cx<it.x+it.w&&cy>it.y&&cy<it.y+bh)ids.push(o.id)}})}
+    const grp=ids.map(i=>({i,x:ITEMS[i].x,y:ITEMS[i].y}))
     const [sx,sy]=[e.clientX,e.clientY];let moved=false
     const mv=(ev)=>{const dx=(ev.clientX-sx)/VP.k,dy=(ev.clientY-sy)/VP.k
       if(Math.abs(dx)+Math.abs(dy)>1)moved=true
       grp.forEach(g=>{const t=ITEMS[g.i];t.x=g.x+dx;t.y=g.y+dy;el(t)});drawLinks()}
-    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up)
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);HOLD=false
       if(moved)grp.forEach(g=>{pushUndo({t:'move',id:g.i,from:{x:g.x,y:g.y}});patch(g.i,{x:ITEMS[g.i].x,y:ITEMS[g.i].y})})
       window.FBPins&&FBPins.refresh()}
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up)
   })
   // 더블클릭=인라인 편집
-  d.addEventListener('dblclick',(e)=>{e.stopPropagation()
+  d.addEventListener('dblclick',async(e)=>{e.stopPropagation()
+    const it=ITEMS[id]
+    if(it.kind==='box'){
+      const r=stage.getBoundingClientRect();const [wx,wy]=toWorld(e.clientX-r.left,e.clientY-r.top)
+      if(wy-it.y>44){                                   // 몸통 → 박스 안에 스티키
+        const nit=await createItem({kind:'sticky',x:wx-90,y:wy-22,text:''})
+        select([nit.id]);const nb=document.getElementById('it'+nit.id).querySelector('.body')
+        nb.contentEditable='true';nb.focus();return}}
     body.contentEditable='true';body.focus()
     document.getSelection().selectAllChildren(body)})
   body.addEventListener('blur',()=>{body.contentEditable='false'
@@ -247,19 +262,19 @@ function wire(d,id){
     if(ITEMS[id]&&ITEMS[id].text!==t){ITEMS[id].text=t;patch(id,{text:t})}})
   body.addEventListener('keydown',(e)=>{if(e.key==='Escape')body.blur();e.stopPropagation()})
   // 리사이즈(SE 핸들)
-  d.querySelector('.hd.se').addEventListener('pointerdown',(e)=>{e.stopPropagation()
+  d.querySelector('.hd.se').addEventListener('pointerdown',(e)=>{e.stopPropagation();HOLD=true
     const it=ITEMS[id];const [sx,sy]=[e.clientX,e.clientY];const [w0,h0]=[it.w,it.h]
     const mv=(ev)=>{it.w=Math.max(70,w0+(ev.clientX-sx)/VP.k);it.h=Math.max(44,h0+(ev.clientY-sy)/VP.k);el(it);drawLinks()}
-    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);patch(id,{w:it.w,h:it.h})}
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);HOLD=false;patch(id,{w:it.w,h:it.h})}
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up)})
   // 연결 핸들(●) 드래그 → 다른 객체 위에서 놓으면 연결선
-  d.querySelectorAll('.cn').forEach(cn=>cn.addEventListener('pointerdown',(e)=>{e.stopPropagation()
+  d.querySelectorAll('.cn').forEach(cn=>cn.addEventListener('pointerdown',(e)=>{e.stopPropagation();HOLD=true
     const g=$('#ghost'),gp=$('#gpath');g.style.display='block'
     const it=ITEMS[id];const ah=document.getElementById('it'+id).offsetHeight
     const from={x:it.x+it.w/2,y:it.y+ah/2}
     const mv=(ev)=>{const [wx,wy]=toWorld(ev.clientX-stage.getBoundingClientRect().left,ev.clientY-stage.getBoundingClientRect().top)
       gp.setAttribute('d',`M ${from.x} ${from.y} L ${wx} ${wy}`)}
-    const up=async(ev)=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up)
+    const up=async(ev)=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);HOLD=false
       g.style.display='none'
       const tEl=document.elementFromPoint(ev.clientX,ev.clientY)?.closest('.it')
       if(tEl&&tEl.id!=='it'+id){const tid=+tEl.id.slice(2)
@@ -292,6 +307,12 @@ stage.addEventListener('pointerdown',(e)=>{
         const b=document.getElementById('it'+box.id).querySelector('.body');b.contentEditable='true';b.focus()}
       setTool('select')}
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);return}
+  // 팬: 스페이스 누른 채 드래그 또는 휠버튼 드래그
+  if(SPACE||e.button===1){e.preventDefault()
+    const [sx,sy]=[e.clientX,e.clientY];const [vx,vy]=[VP.x,VP.y]
+    const mv=(ev)=>{VP.x=vx+(ev.clientX-sx);VP.y=vy+(ev.clientY-sy);applyVP()}
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up)}
+    window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);return}
   // select 도구: 빈 곳 드래그=마키, 클릭=선택 해제
   const mq=$('#marq');const [sx,sy]=[e.clientX,e.clientY];let moved=false
   const mv=(ev)=>{moved=true
@@ -316,15 +337,28 @@ stage.addEventListener('wheel',(e)=>{e.preventDefault()
   applyVP()},{passive:false})
 
 /* ══ 도구·키 ══ */
+function fit(){
+  const its=Object.values(ITEMS);const r=stage.getBoundingClientRect()
+  if(!its.length){VP={x:60,y:60,k:1};applyVP();return}
+  const xs=its.map(i=>i.x),ys=its.map(i=>i.y)
+  const xe=its.map(i=>i.x+i.w),ye=its.map(i=>i.y+(document.getElementById('it'+i.id)?.offsetHeight||i.h))
+  const bx=Math.min(...xs)-70,by=Math.min(...ys)-70,bw=Math.max(...xe)-bx+70,bh=Math.max(...ye)-by+70
+  const k=Math.min(r.width/bw,r.height/bh,1.15)
+  VP={k,x:(r.width-bw*k)/2-bx*k,y:(r.height-bh*k)/2-by*k};applyVP()
+}
 function setTool(t){TOOL=t;stage.className='tool-'+t
   document.querySelectorAll('#toolbar [data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t))}
 document.querySelectorAll('#toolbar [data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool))
 $('#undoB').onclick=undo
+$('#fitB').onclick=fit
+document.addEventListener('keyup',(e)=>{if(e.code==='Space'){SPACE=false;stage.style.cursor=''}})
 document.addEventListener('keydown',(e)=>{
   if(document.activeElement?.isContentEditable||document.activeElement?.tagName==='INPUT')return
   if(e.key==='v'||e.key==='V')setTool('select')
   if(e.key==='s'||e.key==='S')setTool('sticky')
   if(e.key==='r'||e.key==='R')setTool('box')
+  if(e.key==='1')fit()
+  if(e.code==='Space'){SPACE=true;stage.style.cursor='grab';e.preventDefault()}
   if((e.key==='z'||e.key==='Z')&&(e.ctrlKey||e.metaKey)){e.preventDefault();undo()}
   if(e.key==='Delete'||e.key==='Backspace'){
     if(selLink){const l=LINKS[selLink];pushUndo({t:'reLink',l});C(`/links/${selLink}/`,'DELETE').catch(()=>{});delete LINKS[selLink];selLink=null;drawLinks();return}
@@ -334,6 +368,7 @@ document.addEventListener('keydown',(e)=>{
 /* ══ AI 되그림 폴링 — 다른 손(AI·세션)이 그린 것이 나타난다 ══ */
 let lastSync=0
 async function sync(){
+  if(HOLD||document.activeElement?.isContentEditable)return   // 조작·편집 중엔 서버가 손을 못 대게
   try{
     const d=await C('/objects/')
     const localIds=new Set(Object.keys(ITEMS).map(Number))
@@ -371,7 +406,7 @@ async function boot(){
   const d=await C('/objects/')
   d.items.forEach(it=>ITEMS[it.id]=it)
   d.links.forEach(l=>LINKS[l.id]=l)
-  render();applyVP();lastSync=Date.now()
+  render();fit();lastSync=Date.now()
 }
 boot().catch(e=>toast('로드 실패: '+e.message))
 </script>

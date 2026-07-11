@@ -104,8 +104,7 @@ async function openDetail(id){
   S.sel=id;renderList()
   const D=$('#detail');D.style.display='block';D.innerHTML='로딩…'
   let d;try{d=await jget(API+id+'/')}catch(e){D.innerHTML='실패 '+e.message;return}
-  const pinLink=d.service==='murmur'?`<a class="map" style="padding:3px 8px" href="${esc(d.route)}?fb=${d.id}" target="_blank">화면에서 보기</a>`
-    :`<a class="map" style="padding:3px 8px" href="${BASE}p/${esc(d.service)}/">지도에서 보기</a>`
+  const pinLink=`<a class="map" style="padding:3px 8px" href="${esc(d.route)}?fb=${d.id}" target="_blank">${d.service==='murmur'?'화면':'캔버스'}에서 보기</a>`
   const acts=[]
   if(ACTED.includes(d.status))acts.push(`<button onclick="act(${d.id},'closed')">완료(닫기)</button>`)
   if(d.status!=='open')acts.push(`<button onclick="act(${d.id},'open')">재오픈</button>`)
