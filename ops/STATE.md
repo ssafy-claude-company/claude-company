@@ -9,6 +9,7 @@
 ## 라이브 (2026-07-03 VPS 단일화 — Render 폐기)
 - **웹: https://murmur-ai.duckdns.org** (VPS). nginx(TLS, Let's Encrypt 자동갱신) → gunicorn `murmur-web` systemd(127.0.0.1:8000) → Django. SPA+API 한 서비스.
 - **DB: 로컬 Postgres**(`murmur` DB, DATABASE_URL=`/root/ClaudeCompany/.dburl`). 영속 — 재시작해도 데이터 유지. 웹 env=`/etc/murmur-web.env`.
+- **dev 도구(2026-07-11 라이브)**: https://murmur-ai.duckdns.org/dev/ — 피드백 백로그(+코드 지도 `/dev/codegraph/`). systemd `dev-web`(gunicorn 127.0.0.1:8100) · nginx `/dev/` 프록시 · DB=sqlite `ops/var/devfeedback.sqlite3` · 인증=murmur `/api/me` 위임(admin 토큰 그대로). murmur pg의 피드백 25건 이사 완료(멱등 스크립트 `ops/dev/migrate_from_murmur.py`). **잔여: murmur PR #12(피드백 앱 제거·클라 전환) 사용자 병합 → 병합 후 pull+빌드+murmur-web 재시작.**
 - 러너: systemd `organt-runner` → `--remote http://127.0.0.1:8000` | **nginx가 외부 /api/guide/* 403 차단(H3): 러너만 로컬 직결로 사용.**(같은 호스트 로컬). ORGANT_GUIDE_TOKEN은 웹 env와 일치.
 - **배포 방식(Render API 아님!)**: 백엔드 변경 → `systemctl restart murmur-web`. 프론트 변경 → `cd murmur/frontend && npm run build`(gunicorn이 dist 서빙). 마이그레이션 → env 걸고 `manage.py migrate`. VPS 체크아웃(`/root/ClaudeCompany`)이 곧 소스라 git pull 불필요(여기서 편집).
 - Render 웹서비스(srv-d8tnrdog4nts73d4gcfg)는 **미사용**(러너가 안 봄) — 정지/삭제 가능. 단 *봇이 만든 프로젝트 배포*(deploy.py)는 여전히 Render API 사용(별개).
