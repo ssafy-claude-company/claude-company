@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """codegraph scan — ClaudeCompany 코드 구조를 그래프 JSON으로 뽑는다. (dev 도구 — 제품 아님)
 
-`ops/codegraph/index.html`(코드 지도) 뷰어의 데이터 생산자. 파일 = 노드, import = 엣지.
+`ops/dev/static/codegraph.html`(코드 지도) 뷰어의 데이터 생산자. 파일 = 노드, import = 엣지.
 사용자는 코드를 파일로 읽지 않는다 — 이 그래프가 코드에 피드백을 찍는 표면이 된다.
 
 사용:
-  python3 ops/codegraph/scan.py                          # root=ClaudeCompany, out=ops/codegraph/codegraph.json
-  python3 ops/codegraph/scan.py --root <경로> --out <경로>
+  python3 ops/dev/scan.py                                # root=ClaudeCompany, out=ops/dev/static/codegraph.json
+  python3 ops/dev/scan.py --root <경로> --out <경로>
 
 설계 메모:
 - 파이썬은 ast로 import를 해석(패키지 루트 = ClaudeCompany, murmur/backend 두 곳).
@@ -171,8 +171,8 @@ def repo_head(path: Path):
 def main():
     ap = argparse.ArgumentParser()
     here = Path(__file__).resolve()
-    ap.add_argument("--root", default=str(here.parents[2]))  # ops/codegraph → ClaudeCompany
-    ap.add_argument("--out", default=str(here.parent / "codegraph.json"))
+    ap.add_argument("--root", default=str(here.parents[2]))  # ops/dev → ClaudeCompany
+    ap.add_argument("--out", default=str(here.parent / "static" / "codegraph.json"))
     args = ap.parse_args()
     root = Path(args.root).resolve()
 

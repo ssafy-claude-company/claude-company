@@ -69,7 +69,7 @@ path.edge.hot{stroke:#7b78f0;stroke-width:1.8}
     <button id="fbmode" title="켠 뒤 노드를 클릭하면 핀+코멘트">📌 피드백 모드</button>
   </div>
 </header>
-<p class="hint">클릭 = 파일의 연결·설명 · 드래그 = 이동 · 휠 = 확대 · 📌 모드에서 노드 클릭 = 피드백 핀. 핀 처리·백로그는 murmur /feedback(service=codegraph).</p>
+<p class="hint">클릭 = 파일의 연결·설명 · 드래그 = 이동 · 휠 = 확대 · 📌 모드에서 노드 클릭 = 피드백 핀. 핀 목록·처리는 <a href="./" style="color:var(--accent)">백로그</a>.</p>
 <div id="wrap">
   <svg id="svg"></svg>
   <aside id="panel"></aside>
@@ -91,10 +91,10 @@ const slug=(id)=>'cg-'+id.replace(/[^a-zA-Z0-9]+/g,'-')
 const FB = {
   service:'codegraph',
   route: location.pathname,                             // 어디에 마운트되든 그 경로가 route
-  base: '/api/feedback/',                               // 같은 오리진 서빙 전제(다르면 아래 토큰과 함께 조정)
+  base: '../api/feedback/',                             // 같은 dev 서비스의 API — /dev/ 프록시든 직결이든 상대경로로 동작
   token(){ let t=localStorage.getItem('organt_token'); if(!t){ t=prompt('murmur admin 토큰(organt_token)'); if(t) localStorage.setItem('organt_token',t) } return t||'' },
   hdr(){ return {'Authorization':'Token '+this.token(),'Content-Type':'application/json'} },
-  async list(){ const r=await fetch(`${this.base}?service=${this.service}&route=${encodeURIComponent(this.route)}`,{headers:this.hdr()}); if(!r.ok) throw new Error(r.status); return r.json() },
+  async list(){ const r=await fetch(`${this.base}?service=${this.service}&route=${encodeURIComponent(this.route)}`,{headers:this.hdr()}); if(!r.ok) throw new Error(r.status); return (await r.json()).items||[] },
   async create(p){ const r=await fetch(this.base,{method:'POST',headers:this.hdr(),body:JSON.stringify({...p,service:this.service})}); if(!r.ok) throw new Error(r.status); return r.json() },
   async detail(id){ const r=await fetch(`${this.base}${id}/`,{headers:this.hdr()}); if(!r.ok) throw new Error(r.status); return r.json() },
   async comment(id,body){ const r=await fetch(`${this.base}${id}/comments/`,{method:'POST',headers:this.hdr(),body:JSON.stringify({body})}); if(!r.ok) throw new Error(r.status); return r.json() },
@@ -180,7 +180,7 @@ function fit(){ const r=svg.getBoundingClientRect(); const sc=Math.min(r.width/S
   S.vb={x:0,y:0,w:r.width/sc,h:r.height/sc}; render(); placePins() }
 
 /* ══ 핀 레이어(자체) — 셀렉터 계약: 노드 고정 #id ══ */
-async function loadPins(){ try{ S.pins=await FB.list() }catch(e){ S.pins=[]; console.warn('핀 목록 실패',e) } placePins() }
+async function loadPins(){ try{ S.pins=(await FB.list()).filter(p=>p.status!=='closed') }catch(e){ S.pins=[]; console.warn('핀 목록 실패',e) } placePins() }
 function placePins(){
   const box=$('#pins'); box.innerHTML=''
   const wr=$('#wrap').getBoundingClientRect()
@@ -188,7 +188,7 @@ function placePins(){
     const el=document.querySelector(it.selector); if(!el)return
     const r=el.getBoundingClientRect(); if(!r.width&&!r.height)return
     const d=document.createElement('div')
-    d.className='pin'+(it.status==='resolved'||it.status==='confirmed'?' resolved':'')
+    d.className='pin'+(it.status!=='open'?' resolved':'')
     d.style.left=(r.left-wr.left+r.width*(parseFloat(it.pos_x)||0)/100)+'px'
     d.style.top=(r.top-wr.top+r.height*(parseFloat(it.pos_y)||0)/100)+'px'
     d.textContent=i+1; d.title=it.body
