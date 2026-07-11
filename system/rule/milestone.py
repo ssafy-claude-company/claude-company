@@ -495,6 +495,19 @@ def rule_set_milestone(flow, me_id, args) -> str:
     goal = str(args.get("goal") or "").strip()
     if not goal:
         return "등록 거부: goal(이 주기의 목표 한 줄)이 비었습니다."
+    # [정밀 복구 게이트(2026-07-11, 사용자: '대체 말고 기존 걸 바로 이어가야지')] 미완 주기가 있으면
+    # 새 주기 개설 금지 — 승계·재편성이라는 이름의 중복 개설이 태깅·기록·화면을 갈랐다(ch53 라이브).
+    _open = next((m for m in (getattr(flow, "milestones", None) or [])
+                  if m.status not in ("done", "superseded")), None)
+    # 계획 단계(iter 0 — 아직 검증 전)의 다음 주기 큐잉은 허용(계약: 주기 복수 사전 확정).
+    # 금지 대상은 '검증이 돌던 주기를 버리고 갈아타기'(iter>0 미완 존재)다.
+    if _open is not None and getattr(_open, "iter_n", 0) > 0:
+        _met, _tot = _cnt_active(_open.criteria)
+        _remain = " · ".join(c.desc[:40] for c in _open.criteria if not c.passed and c.status != "waived")
+        return (f"등록 거부: 미완 주기 {_open.ms_id}(충족 {_met}/{_tot})가 진행 중입니다 — 새 주기를 열지 말고 "
+                f"**그 주기를 이어가세요**(정밀 복구 원칙). 미충족: {_remain[:200] or '(없음 — wrapup 정리 후 종료)'}. "
+                f"report_iter(대상 지정 가능)로 검증을 잇고, 단위가 필요하면 set_subtask로 그 주기 안에 여세요. "
+                f"조건이 환경상 불가면 renegotiate_criterion이 출구입니다.")
     entries = parse_criteria_lines(args.get("criteria"))
     ms = open_milestone(flow, goal, entries, origin=str(args.get("origin") or ""))
     if isinstance(ms, str):
