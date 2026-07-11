@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     "django.contrib.auth",                              # DRF가 요구하는 최소(세션·admin 미사용)
     "rest_framework",
     "feedback",
+    "graph",
 ]
 
 MIDDLEWARE = ["django.middleware.common.CommonMiddleware"]
