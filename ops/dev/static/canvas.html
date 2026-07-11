@@ -136,8 +136,9 @@ function el(it){
     d=document.createElement('div');d.id='it'+it.id;d.className='it'
     d.innerHTML=`<span class="who">AI</span><div class="body" spellcheck="false"></div>
       <span class="hd se"></span><span class="cn r"></span><span class="cn l"></span><span class="cn t"></span><span class="cn b"></span>`
-    itemsEl.appendChild(d);wire(d,it.id)
+    itemsEl.appendChild(d);d.dataset.id=it.id;wire(d)
   }
+  d.dataset.id=it.id
   d.className=`it ${it.kind} ${it.origin==='ai'?'ai':''} ${SEL.has(it.id)?'sel':''}`
   d.style.left=it.x+'px';d.style.top=it.y+'px';d.style.width=it.w+'px'
   d.style.height=(it.kind==='box'?it.h+'px':'auto')
@@ -149,6 +150,7 @@ function el(it){
 }
 function edgePath(l){
   const a=ITEMS[l.s],b=ITEMS[l.t];if(!a||!b)return ''
+  const rev=Object.values(LINKS).some(o=>o!==l&&o.s===l.t&&o.t===l.s)   // 역방향 쌍이면 서로 반대로 휘어 라벨 분리
   const ah=document.getElementById('it'+a.id)?.offsetHeight||a.h
   const bh=document.getElementById('it'+b.id)?.offsetHeight||b.h
   const ac={x:a.x+a.w/2,y:a.y+ah/2},bc={x:b.x+b.w/2,y:b.y+bh/2}
@@ -156,7 +158,10 @@ function edgePath(l){
     if(Math.abs(dx)*hh>Math.abs(dy)*it.w)return {x:it.x+(dx>0?it.w:0),y:it.y+hh/2}
     return {x:it.x+it.w/2,y:it.y+(dy>0?hh:0)}}
   const p1=pt(a,ah,bc),p2=pt(b,bh,ac)
-  const mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2
+  let mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2
+  if(rev){const dx=p2.x-p1.x,dy=p2.y-p1.y,d=Math.sqrt(dx*dx+dy*dy)||1
+    const sgn=(l.s<l.t?1:-1);mx+=-dy/d*18*sgn;my+=dx/d*18*sgn
+    return {d:`M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`,mx,my}}
   return {d:`M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`,mx,my}
 }
 function drawLinks(){
@@ -178,22 +183,52 @@ function drawLinks(){
 }
 function render(){Object.values(ITEMS).forEach(el);drawLinks();window.FBPins&&FBPins.refresh()}
 
-/* ══ 저장(낙관적 — 즉시 반영, 뒤로 디바운스) ══ */
-let saveT={}
+/* ══ 저장 — 전부 낙관적: 화면 먼저, 네트워크는 뒤에서(임시 음수 id → 스왑) ══ */
+let saveT={},tmpSeq=-1
+const idMap={}                                              // 임시 id → 실 id 약속(스왑 후에도 유효)
+const ready=(id)=>id>0?Promise.resolve(id):(idMap[id]||Promise.resolve(id))
+function swapId(old,real){
+  const it=ITEMS[old];if(!it)return
+  delete ITEMS[old];it.id=real;delete it._p;ITEMS[real]=it
+  const d=document.getElementById('it'+old);if(d){d.id='it'+real;d.dataset.id=real}
+  if(SEL.has(old)){SEL.delete(old);SEL.add(real)}
+  Object.values(LINKS).forEach(l=>{if(l.s===old)l.s=real;if(l.t===old)l.t=real})
+  undoStack.forEach(op=>{if(op.id===old)op.id=real})
+  if(dirty[old]){const q=dirty[old];delete dirty[old];clearTimeout(saveT[old]);patch(real,q)}
+}
 function patch(id,body){Object.assign(dirty[id]=dirty[id]||{},body)
   clearTimeout(saveT[id])
-  saveT[id]=setTimeout(async()=>{const b=dirty[id];delete dirty[id]
-    try{await C(`/items/${id}/`,'PATCH',b)}catch(e){toast('저장 실패')}},450)}
-async function createItem(body){
-  const it=await C('/items/','POST',body)
-  ITEMS[it.id]=it;el(it);pushUndo({t:'delItem',id:it.id});return it}
-async function delItem(id){
+  const fire=async()=>{
+    if(!(id in dirty))return                       // 스왑이 실 id로 옮겨감
+    if(id<0){saveT[id]=setTimeout(fire,300);return} // 아직 스왑 전 — 대기
+    const b=dirty[id];delete dirty[id]
+    try{await C(`/items/${id}/`,'PATCH',b)}catch(e){toast('저장 실패')}}
+  saveT[id]=setTimeout(fire,450)}
+function createItem(body){
+  const it={id:tmpSeq--,kind:body.kind||'sticky',text:body.text||'',x:body.x||0,y:body.y||0,
+    w:body.w||(body.kind==='box'?320:180),h:body.h||(body.kind==='box'?220:100),
+    origin:body.origin||'user',meta:body.meta||{},z:body.kind==='box'?0:1}
+  ITEMS[it.id]=it;el(it)
+  idMap[it.id]=(it._p=C('/items/','POST',body).then(real=>{
+    const tid=it.id;const localText=it.text,lx=it.x,ly=it.y,lw=it.w,lh=it.h
+    swapId(tid,real.id)
+    // 스왑 사이 사용자가 만진 것(타이핑·이동·리사이즈)을 서버에 반영
+    const diff={}
+    if(localText!==real.text)diff.text=localText
+    if(lx!==real.x||ly!==real.y){diff.x=lx;diff.y=ly}
+    if(lw!==real.w||lh!==real.h){diff.w=lw;diff.h=lh}
+    if(Object.keys(diff).length)patch(real.id,diff)
+    return real.id
+  }).catch(()=>{toast('생성 실패');delete ITEMS[it.id];document.getElementById('it'+it.id)?.remove()}))
+  pushUndo({t:'delItem',id:it.id})
+  return it}
+function delItem(id){
   const it=ITEMS[id];if(!it)return
   const ls=Object.values(LINKS).filter(l=>l.s===id||l.t===id)
-  await C(`/items/${id}/`,'DELETE').catch(()=>{})
   ls.forEach(l=>delete LINKS[l.id])
   delete ITEMS[id];document.getElementById('it'+id)?.remove()
-  pushUndo({t:'reItem',it,ls});drawLinks()}
+  pushUndo({t:'reItem',it,ls});drawLinks()
+  ready(id).then(rid=>C(`/items/${rid}/`,'DELETE')).catch(()=>{})}
 async function undo(){
   const op=undoStack.pop();if(!op)return
   if(op.t==='delItem'){await C(`/items/${op.id}/`,'DELETE').catch(()=>{});delete ITEMS[op.id];document.getElementById('it'+op.id)?.remove()}
@@ -212,14 +247,18 @@ function editLinkLabel(l){
   const inp=document.createElement('input')
   inp.value=l.label||'';inp.style.cssText=`position:absolute;left:${p.mx-70}px;top:${p.my-30}px;width:140px;z-index:9;background:var(--panel);border:1px solid var(--accent);border-radius:6px;color:var(--text);padding:4px 8px;font-size:12px;text-align:center`
   world.appendChild(inp);inp.focus();inp.select()
-  const done=async(ok)=>{if(ok){l.label=inp.value.trim();drawLinks();await C(`/links/${l.id}/`,'PATCH',{label:l.label}).catch(()=>toast('저장 실패'))}
+  let closed=false
+  const done=async(ok)=>{if(closed)return;closed=true
+    if(ok){l.label=inp.value.trim();drawLinks()
+      if(l.id>0)await C(`/links/${l.id}/`,'PATCH',{label:l.label}).catch(()=>toast('저장 실패'))}
     inp.remove()}
   inp.addEventListener('keydown',e=>{if(e.key==='Enter')done(true);if(e.key==='Escape')done(false)})
   inp.addEventListener('blur',()=>done(true))
 }
 
 /* ══ 객체 상호작용: 이동·리사이즈·연결·인라인 편집 ══ */
-function wire(d,id){
+function wire(d){
+  const gid=()=>+d.dataset.id
   const body=d.querySelector('.body')
   // 이동(그랩) — 편집 중이 아닐 때
   d.addEventListener('pointerdown',(e)=>{
@@ -227,12 +266,12 @@ function wire(d,id){
     if(document.activeElement===body)return
     if(TOOL!=='select')return
     e.stopPropagation();HOLD=true
-    const it=ITEMS[id]
-    if(!SEL.has(id))select([id],e.shiftKey)
+    const it=ITEMS[gid()]
+    if(!SEL.has(gid()))select([gid()],e.shiftKey)
     let ids=[...SEL]
     if(ids.length===1&&it.kind==='box'){                 // 박스는 위에 놓인 것들을 함께 데려간다
-      const bh=document.getElementById('it'+id).offsetHeight
-      Object.values(ITEMS).forEach(o=>{if(o.id!==id&&o.kind!=='box'){
+      const bh=document.getElementById('it'+gid()).offsetHeight
+      Object.values(ITEMS).forEach(o=>{if(o.id!==gid()&&o.kind!=='box'){
         const oh=document.getElementById('it'+o.id)?.offsetHeight||o.h
         const cx=o.x+o.w/2,cy=o.y+oh/2
         if(cx>it.x&&cx<it.x+it.w&&cy>it.y&&cy<it.y+bh)ids.push(o.id)}})}
@@ -248,59 +287,66 @@ function wire(d,id){
   })
   // 더블클릭=인라인 편집
   d.addEventListener('dblclick',async(e)=>{e.stopPropagation()
-    const it=ITEMS[id]
+    const it=ITEMS[gid()]
     if(it.kind==='box'){
       const r=stage.getBoundingClientRect();const [wx,wy]=toWorld(e.clientX-r.left,e.clientY-r.top)
       if(wy-it.y>44){                                   // 몸통 → 박스 안에 스티키
-        const nit=await createItem({kind:'sticky',x:wx-90,y:wy-22,text:''})
+        const nit=createItem({kind:'sticky',x:wx-90,y:wy-22,text:''})
         select([nit.id]);const nb=document.getElementById('it'+nit.id).querySelector('.body')
         nb.contentEditable='true';nb.focus();return}}
     body.contentEditable='true';body.focus()
     document.getSelection().selectAllChildren(body)})
   body.addEventListener('blur',()=>{body.contentEditable='false'
     const t=body.innerText.replace(/\n{3,}/g,'\n\n')
-    if(ITEMS[id]&&ITEMS[id].text!==t){ITEMS[id].text=t;patch(id,{text:t})}})
+    if(ITEMS[gid()]&&ITEMS[gid()].text!==t){ITEMS[gid()].text=t;patch(gid(),{text:t})}})
   body.addEventListener('keydown',(e)=>{if(e.key==='Escape')body.blur();e.stopPropagation()})
   // 리사이즈(SE 핸들)
   d.querySelector('.hd.se').addEventListener('pointerdown',(e)=>{e.stopPropagation();HOLD=true
-    const it=ITEMS[id];const [sx,sy]=[e.clientX,e.clientY];const [w0,h0]=[it.w,it.h]
+    const it=ITEMS[gid()];const [sx,sy]=[e.clientX,e.clientY];const [w0,h0]=[it.w,it.h]
     const mv=(ev)=>{it.w=Math.max(70,w0+(ev.clientX-sx)/VP.k);it.h=Math.max(44,h0+(ev.clientY-sy)/VP.k);el(it);drawLinks()}
-    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);HOLD=false;patch(id,{w:it.w,h:it.h})}
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);HOLD=false;patch(gid(),{w:it.w,h:it.h})}
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up)})
   // 연결 핸들(●) 드래그 → 다른 객체 위에서 놓으면 연결선
   d.querySelectorAll('.cn').forEach(cn=>cn.addEventListener('pointerdown',(e)=>{e.stopPropagation();HOLD=true
     const g=$('#ghost'),gp=$('#gpath');g.style.display='block'
-    const it=ITEMS[id];const ah=document.getElementById('it'+id).offsetHeight
+    const it=ITEMS[gid()];const ah=document.getElementById('it'+gid()).offsetHeight
     const from={x:it.x+it.w/2,y:it.y+ah/2}
     const mv=(ev)=>{const [wx,wy]=toWorld(ev.clientX-stage.getBoundingClientRect().left,ev.clientY-stage.getBoundingClientRect().top)
       gp.setAttribute('d',`M ${from.x} ${from.y} L ${wx} ${wy}`)}
     const up=async(ev)=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);HOLD=false
       g.style.display='none'
       const tEl=document.elementFromPoint(ev.clientX,ev.clientY)?.closest('.it')
-      if(tEl&&tEl.id!=='it'+id){const tid=+tEl.id.slice(2)
-        try{const l=await C('/links/','POST',{s:id,t:tid});LINKS[l.id]=l;pushUndo({t:'delLink',id:l.id});drawLinks();editLinkLabel(l)}catch(err){toast(err.message)}}}
+      if(tEl&&tEl.id!=='it'+gid()){const tid=+tEl.id.slice(2)
+        const l={id:tmpSeq--,s:gid(),t:tid,label:'',origin:'user'}
+        LINKS[l.id]=l;drawLinks();editLinkLabel(l)
+        Promise.all([ready(l.s),ready(tid)]).then(([rs,rt])=>C('/links/','POST',{s:rs,t:rt,label:l.label}))
+          .then(real=>{const old=l.id;delete LINKS[old];l.id=real.id
+            if(l.label&&l.label!==real.label)C(`/links/${real.id}/`,'PATCH',{label:l.label}).catch(()=>{})
+            LINKS[real.id]=l;undoStack.forEach(op=>{if(op.t==='delLink'&&op.id===old)op.id=real.id});drawLinks()})
+          .catch(()=>{toast('연결 실패');delete LINKS[l.id];drawLinks()})
+        pushUndo({t:'delLink',id:l.id})}}
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up)}))
 }
 
 /* ══ 무대 상호작용: 생성·마키·팬·줌 ══ */
-stage.addEventListener('dblclick',async(e)=>{
+stage.addEventListener('dblclick',(e)=>{
   if(e.target.closest('.it'))return
   const r=stage.getBoundingClientRect();const [x,y]=toWorld(e.clientX-r.left,e.clientY-r.top)
-  const it=await createItem({kind:'sticky',x:x-90,y:y-24,text:''})
+  const it=createItem({kind:'sticky',x:x-90,y:y-24,text:''})
   select([it.id]);const b=document.getElementById('it'+it.id).querySelector('.body')
   b.contentEditable='true';b.focus()
 })
 stage.addEventListener('pointerdown',(e)=>{
   if(e.target.closest('.it')||e.target.closest('#toolbar'))return
   const r=stage.getBoundingClientRect()
-  if(TOOL==='sticky'){(async()=>{const [x,y]=toWorld(e.clientX-r.left,e.clientY-r.top)
-    const it=await createItem({kind:'sticky',x:x-90,y:y-24,text:''})
+  if(TOOL==='sticky'){const [x,y]=toWorld(e.clientX-r.left,e.clientY-r.top)
+    const it=createItem({kind:'sticky',x:x-90,y:y-24,text:''})
     select([it.id]);setTool('select')
-    const b=document.getElementById('it'+it.id).querySelector('.body');b.contentEditable='true';b.focus()})();return}
+    const b=document.getElementById('it'+it.id).querySelector('.body');b.contentEditable='true';b.focus();return}
   if(TOOL==='box'){
     const [x0,y0]=toWorld(e.clientX-r.left,e.clientY-r.top);let box=null
-    const mv=async(ev)=>{const [x,y]=toWorld(ev.clientX-r.left,ev.clientY-r.top)
-      if(!box){box=await createItem({kind:'box',x:Math.min(x0,x),y:Math.min(y0,y),w:10,h:10,text:''});select([box.id])}
+    const mv=(ev)=>{const [x,y]=toWorld(ev.clientX-r.left,ev.clientY-r.top)
+      if(!box){box=createItem({kind:'box',x:Math.min(x0,x),y:Math.min(y0,y),w:10,h:10,text:''});select([box.id])}
       Object.assign(box,{x:Math.min(x0,x),y:Math.min(y0,y),w:Math.max(60,Math.abs(x-x0)),h:Math.max(50,Math.abs(y-y0))});el(box)}
     const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up)
       if(box){patch(box.id,{x:box.x,y:box.y,w:box.w,h:box.h})
@@ -378,7 +424,7 @@ async function sync(){
       if(!cur){ITEMS[it.id]=it;el(it);if(it.origin==='ai'&&lastSync)toast('AI가 캔버스에 그렸어요')}
       else if(!dirty[it.id]&&!editing&&JSON.stringify([cur.x,cur.y,cur.w,cur.h,cur.text])!==JSON.stringify([it.x,it.y,it.w,it.h,it.text])){ITEMS[it.id]=it;el(it)}
       localIds.delete(it.id)})
-    localIds.forEach(id=>{if(!dirty[id]){delete ITEMS[id];document.getElementById('it'+id)?.remove()}})
+    localIds.forEach(id=>{if(id>0&&!dirty[id]){delete ITEMS[id];document.getElementById('it'+id)?.remove()}})
     LINKS={};d.links.forEach(l=>LINKS[l.id]=l)
     drawLinks();lastSync=Date.now()
   }catch(e){}
@@ -402,7 +448,7 @@ $('#cnew').addEventListener('click',async()=>{
 
 /* ══ 부트 ══ */
 async function boot(){
-  await loadTop()
+  loadTop().catch(()=>{})                     // 상단바는 뒤에서 — 첫 화면은 객체부터
   const d=await C('/objects/')
   d.items.forEach(it=>ITEMS[it.id]=it)
   d.links.forEach(l=>LINKS[l.id]=l)
