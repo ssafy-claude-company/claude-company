@@ -46,7 +46,24 @@ class Command(BaseCommand):
                 slug = slugify(d.name)[:40] or d.name[:8]   # URL 컨버터는 ASCII — 한글은 떨어져 나감(p-005 등 접두는 유일)
                 self._ensure(slug=slug, name=f"봇 산출물 — {d.name}", root=str(d), skips=[])
         self._absorb_logical()
+        self._ensure_canvases()
         self._migrate_pins()
+
+    def _ensure_canvases(self):
+        from graph.models import Canvas, Item, Link
+        for p in Project.objects.all():
+            c, made = Canvas.objects.get_or_create(project=p, cid="main", defaults={"name": "메인"})
+            if p.slug == "claude-company" and not c.items.exists():
+                # AI의 첫 되그림 — 이 캔버스가 무엇인지 그 자체로 보여주는 최소 다이어그램(지워도 됨)
+                b1 = Item.objects.create(canvas=c, kind="sticky", origin="ai", x=80, y=120, w=230,
+                    text="여기는 사람+AI 공유 캔버스.\n더블클릭=메모 · ● 드래그=연결 · 📌=AI에게 시키기.\n이 메모는 지워도 됩니다.")
+                s1 = Item.objects.create(canvas=c, kind="sticky", origin="ai", x=420, y=100, w=170, text="네 스케치·핀")
+                s2 = Item.objects.create(canvas=c, kind="sticky", origin="ai", x=680, y=100, w=170, text="세션·봇의 작업")
+                s3 = Item.objects.create(canvas=c, kind="sticky", origin="ai", x=550, y=250, w=190, text="AI가 여기 되그림(문서화)")
+                Link.objects.create(canvas=c, s=s1, t=s2, label="백로그로", origin="ai")
+                Link.objects.create(canvas=c, s=s2, t=s3, label="결과", origin="ai")
+                Link.objects.create(canvas=c, s=s3, t=s1, label="확인·재스케치", origin="ai")
+                self.stdout.write("메인 캔버스에 AI 안내 다이어그램")
 
     def _ensure(self, slug, name, root, skips):
         p, made = Project.objects.get_or_create(slug=slug, defaults={"name": name, "root": root, "skips": skips})

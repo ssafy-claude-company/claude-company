@@ -65,9 +65,9 @@ async function load(){
   $('#list').innerHTML=ps.map(p=>`<div class="card">
     <h3><a href="./p/${p.slug}/">${esc(p.name)}</a></h3>
     <div class="path">${esc(p.root)}</div>
-    <div class="stats">${p.last_scan?`${p.last_scan.files}파일 · 스캔 ${p.last_scan.at}${p.last_scan.truncated?' · <span class="err">상한 잘림</span>':''}`:'아직 스캔 없음'} · 노드 ${p.nodes}(사람 ${p.user_nodes}) · 뷰 ${p.views}</div>
+    <div class="stats">캔버스 ${p.canvases} · ${p.last_scan?`${p.last_scan.files}파일 스캔됨`:'스캔 없음'}</div>
     <div class="acts">
-      <a href="./p/${p.slug}/"><button class="pri">지도 열기</button></a>
+      <a href="./p/${p.slug}/"><button class="pri">캔버스</button></a>
       <a href="./p/${p.slug}/feedback"><button>백로그</button></a>
       <button onclick="rescan('${p.slug}',this)">재스캔</button>
       <button onclick="del('${p.slug}')">제거</button>
