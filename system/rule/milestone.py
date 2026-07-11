@@ -501,7 +501,13 @@ def rule_set_milestone(flow, me_id, args) -> str:
                   if m.status not in ("done", "superseded")), None)
     # 계획 단계(iter 0 — 아직 검증 전)의 다음 주기 큐잉은 허용(계약: 주기 복수 사전 확정).
     # 금지 대상은 '검증이 돌던 주기를 버리고 갈아타기'(iter>0 미완 존재)다.
-    if _open is not None and getattr(_open, "iter_n", 0) > 0:
+    _worked = _open is not None and (getattr(_open, "iter_n", 0) > 0
+                or any(getattr(st, "iter_n", 0) > 0 or st.status == "done" for st in _open.subtasks)
+                or any(c.passed for c in _open.criteria))
+    if flow.log and _open is not None:
+        flow.log("ms_gate_check", open_ms=_open.ms_id, iter_n=_open.iter_n,
+                 worked=bool(_worked), sts=len(_open.subtasks))
+    if _worked:
         _met, _tot = _cnt_active(_open.criteria)
         _remain = " · ".join(c.desc[:40] for c in _open.criteria if not c.passed and c.status != "waived")
         return (f"등록 거부: 미완 주기 {_open.ms_id}(충족 {_met}/{_tot})가 진행 중입니다 — 새 주기를 열지 말고 "
