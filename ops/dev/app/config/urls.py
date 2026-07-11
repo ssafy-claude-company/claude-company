@@ -25,9 +25,9 @@ _CT = {".js": "text/javascript; charset=utf-8", ".json": "application/json; char
 
 
 def _static(request, name):
-    """static/ 평면 파일 서빙 — <str:name>은 /를 못 담아 디렉터리 탈출 불가."""
-    p = STATIC_DIR / name
-    if "/" in name or not p.is_file():
+    """static/ 파일 서빙(vendor/ 하위 포함) — resolve 후 STATIC_DIR 내부인지 검증(.. 탈출 차단)."""
+    p = (STATIC_DIR / name).resolve()
+    if not str(p).startswith(str(STATIC_DIR.resolve()) + "/") or not p.is_file():
         raise Http404(name)
     return FileResponse(open(p, "rb"), content_type=_CT.get(p.suffix, "application/octet-stream"))
 
@@ -36,6 +36,6 @@ urlpatterns = [
     path("", _file("backlog.html", "text/html; charset=utf-8")),
     path("codegraph/", _file("codegraph.html", "text/html; charset=utf-8")),
     path("codegraph/codegraph.json", _file("codegraph.json", "application/json; charset=utf-8")),   # 페이지 상대참조(./codegraph.json)용 별칭
-    path("static/<str:name>", _static),   # fb.js·codegraph.json 등 — static/ 평면 파일만(경로 조작 불가)
+    path("static/<path:name>", _static),   # fb.js·vendor/d3 등 — resolve로 static/ 밖 탈출 차단
     path("api/feedback/", include("feedback.urls")),
 ]
