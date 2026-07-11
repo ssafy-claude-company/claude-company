@@ -164,22 +164,30 @@ function edgePath(l){
     return {d:`M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`,mx,my}}
   return {d:`M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`,mx,my}
 }
+const _lkEls={}                                   // id → {path,hit,lb} 재사용(증분 렌더)
 function drawLinks(){
-  eg.innerHTML=''
+  const NS='http://www.w3.org/2000/svg'
+  const live=new Set()
   Object.values(LINKS).forEach(l=>{
     const p=edgePath(l);if(!p)return
-    const NS='http://www.w3.org/2000/svg'
-    const hit=document.createElementNS(NS,'path');hit.setAttribute('d',p.d);hit.setAttribute('class','lkhit')
-    hit.addEventListener('click',e=>{e.stopPropagation();selectLink(l.id)})
-    hit.addEventListener('dblclick',e=>{e.stopPropagation();editLinkLabel(l)})
-    const path=document.createElementNS(NS,'path');path.setAttribute('d',p.d)
-    path.setAttribute('class','lk'+(l.origin==='ai'?' ai':'')+(selLink===l.id?' sel':''))
-    eg.appendChild(path);eg.appendChild(hit)
-    if(l.label){const t=document.createElementNS(NS,'text');t.setAttribute('x',p.mx);t.setAttribute('y',p.my-14)
-      t.setAttribute('text-anchor','middle');t.setAttribute('class','lklb');t.textContent=l.label
-      t.addEventListener('dblclick',e=>{e.stopPropagation();editLinkLabel(l)})
-      eg.appendChild(t)}
+    live.add(l.id)
+    let e=_lkEls[l.id]
+    if(!e){
+      e=_lkEls[l.id]={path:document.createElementNS(NS,'path'),hit:document.createElementNS(NS,'path'),lb:document.createElementNS(NS,'text')}
+      e.hit.setAttribute('class','lkhit')
+      e.hit.addEventListener('click',ev=>{ev.stopPropagation();selectLink(l.id)})
+      e.hit.addEventListener('dblclick',ev=>{ev.stopPropagation();editLinkLabel(LINKS[l.id]||l)})
+      e.lb.setAttribute('text-anchor','middle');e.lb.setAttribute('class','lklb')
+      e.lb.addEventListener('dblclick',ev=>{ev.stopPropagation();editLinkLabel(LINKS[l.id]||l)})
+      eg.appendChild(e.path);eg.appendChild(e.hit);eg.appendChild(e.lb)
+    }
+    e.path.setAttribute('d',p.d);e.hit.setAttribute('d',p.d)
+    e.path.setAttribute('class','lk'+(l.origin==='ai'?' ai':'')+(selLink===l.id?' sel':''))
+    if(l.label){e.lb.textContent=l.label;e.lb.setAttribute('x',p.mx);e.lb.setAttribute('y',p.my-14);e.lb.style.display=''}
+    else e.lb.style.display='none'
   })
+  Object.keys(_lkEls).forEach(id=>{if(!live.has(+id)){const e=_lkEls[id]
+    e.path.remove();e.hit.remove();e.lb.remove();delete _lkEls[id]}})
 }
 function render(){Object.values(ITEMS).forEach(el);drawLinks();window.FBPins&&FBPins.refresh()}
 
@@ -265,7 +273,8 @@ function wire(d){
     if(e.target.classList.contains('cn')||e.target.classList.contains('hd'))return
     if(document.activeElement===body)return
     if(TOOL!=='select')return
-    e.stopPropagation();HOLD=true
+    e.stopPropagation();e.preventDefault();HOLD=true
+    try{d.setPointerCapture(e.pointerId)}catch(_){}
     const it=ITEMS[gid()]
     if(!SEL.has(gid()))select([gid()],e.shiftKey)
     let ids=[...SEL]
@@ -277,9 +286,13 @@ function wire(d){
         if(cx>it.x&&cx<it.x+it.w&&cy>it.y&&cy<it.y+bh)ids.push(o.id)}})}
     const grp=ids.map(i=>({i,x:ITEMS[i].x,y:ITEMS[i].y}))
     const [sx,sy]=[e.clientX,e.clientY];let moved=false
+    let raf=0
     const mv=(ev)=>{const dx=(ev.clientX-sx)/VP.k,dy=(ev.clientY-sy)/VP.k
       if(Math.abs(dx)+Math.abs(dy)>1)moved=true
-      grp.forEach(g=>{const t=ITEMS[g.i];t.x=g.x+dx;t.y=g.y+dy;el(t)});drawLinks()}
+      grp.forEach(g=>{const t=ITEMS[g.i];t.x=g.x+dx;t.y=g.y+dy
+        const d2=document.getElementById('it'+g.i)
+        if(d2){d2.style.left=t.x+'px';d2.style.top=t.y+'px'}})
+      cancelAnimationFrame(raf);raf=requestAnimationFrame(drawLinks)}
     const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);HOLD=false
       if(moved)grp.forEach(g=>{pushUndo({t:'move',id:g.i,from:{x:g.x,y:g.y}});patch(g.i,{x:ITEMS[g.i].x,y:ITEMS[g.i].y})})
       window.FBPins&&FBPins.refresh()}
