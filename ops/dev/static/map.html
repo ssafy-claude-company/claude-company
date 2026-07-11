@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>지도 — dev</title>
+<script src="../../static/vendor/d3.v7.min.js"></script>
+<style>
+:root{--bg:#0d0d12;--bg2:#16161d;--line:#26262f;--text:#e8e8ef;--text2:#b9b9c6;--text3:#8b8b99;--accent:#7b78f0;--ok:#3f8f5f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 system-ui,'Apple SD Gothic Neo',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px 8px;flex-wrap:wrap}
+h1{margin:0;font-size:16px}
+h1 a{color:var(--text3);text-decoration:none;font-weight:400}
+.meta{font-size:11.5px;color:var(--text3)}
+.tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+input[type=text]{width:180px;padding:6px 10px;font-size:12.5px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--text)}
+button{padding:6px 10px;font-size:12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;color:var(--text2);cursor:pointer}
+button.on{border-color:var(--accent);color:var(--accent)}
+button:disabled{opacity:.5;cursor:wait}
+#wrap{position:relative;flex:1;min-height:0;margin:0 16px 12px;border:1px solid var(--line);border-radius:12px;background:#101016;overflow:hidden}
+svg{width:100%;height:100%;display:block;cursor:grab}
+svg:active{cursor:grabbing}
+.stage-line{stroke:var(--line);stroke-dasharray:3 6}
+.stage-name{font-size:12px;font-weight:700;fill:var(--text3);letter-spacing:.06em}
+.lg-node{cursor:grab}
+.lg-node rect{fill:#171722;stroke:var(--accent);stroke-width:1.6}
+.lg-node.nofile rect{stroke-dasharray:5 4}
+.lg-node:hover rect{filter:brightness(1.35)}
+.lg-node.sel rect{fill:rgba(123,120,240,.15);stroke-width:2.6}
+.lg-node.dim{opacity:.25}
+.lg-node .nm{font-size:13.5px;font-weight:700;fill:var(--text)}
+.lg-node .st{font-size:10px;fill:var(--text3)}
+.lgedge{fill:none;stroke:var(--accent);stroke-opacity:.55}
+.lgedge.agg{stroke:#8b8b99;stroke-opacity:.25}
+.lglb{font-size:10.5px;fill:var(--text2);paint-order:stroke;stroke:#101016;stroke-width:3px}
+.lglb.agg{fill:var(--text3)}
+.cg-node{cursor:grab}
+.cg-node rect{fill:#171720;stroke-width:1.2}
+.cg-node:hover rect{stroke-width:2.2}
+.cg-node.sel rect{stroke-width:2.6;fill:rgba(123,120,240,.16)}
+.cg-node.rel rect{fill:rgba(123,120,240,.09)}
+.cg-node.faded{opacity:.13}
+.cg-node text{font-size:10.5px;fill:var(--text);pointer-events:none}
+g.far .cg-node text{display:none}
+.edge{fill:none;stroke:#8b8b99;stroke-opacity:.14;stroke-width:1;pointer-events:none}
+.edge.cross{stroke:var(--accent);stroke-opacity:.34;stroke-width:1.2}
+.edge.hot{stroke:var(--accent);stroke-opacity:.95;stroke-width:1.8}
+.edge.faded{stroke-opacity:.04}
+.cg-area{font-size:15px;font-weight:800;opacity:.9}
+#panel{position:absolute;top:10px;right:10px;width:310px;max-height:calc(100% - 20px);overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:none}
+#panel .head{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:700}
+#panel .path{font-size:11px;color:var(--text3);margin:2px 0 8px;word-break:break-all}
+#panel .doc{font-size:12.5px;color:var(--text2);margin:0 0 10px;white-space:pre-wrap}
+#panel .t{font-size:11px;font-weight:700;color:var(--text3);margin:8px 0 4px}
+#panel a{display:block;font-size:11.5px;color:var(--text2);padding:2px 0;cursor:pointer;word-break:break-all;text-decoration:none}
+#panel a:hover{color:var(--accent)}
+#panel .x{background:none;border:none;font-size:15px;color:var(--text3);cursor:pointer;padding:0}
+#panel input,#panel textarea,#panel select{width:100%;padding:5px 8px;font-size:12px;background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--text);margin:2px 0 6px}
+#panel textarea{height:56px;resize:vertical;font-family:inherit}
+#panel .lbl{font-size:10.5px;color:var(--text3)}
+#panel .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+#legend{position:absolute;left:10px;bottom:10px;background:rgba(13,13,18,.92);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:11px;color:var(--text2);max-width:330px}
+#legend b{color:var(--text)}
+#legend .li{display:flex;gap:7px;align-items:center;margin-top:3px}
+#legend .sw{flex:none;width:22px;height:0;border-top:2px solid var(--accent)}
+#legend .sw.agg{border-top:2px solid #8b8b99;opacity:.5}
+#legend .sw.box{width:14px;height:9px;border:1.4px solid var(--accent);border-radius:3px}
+#legend .sw.dash{border-style:dashed}
+#empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--text3)}
+.toast{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:var(--bg);border:1px solid var(--ok);color:var(--text);border-radius:9px;padding:6px 14px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div style="display:flex;align-items:baseline;gap:10px">
+    <h1><a href="../../">프로젝트</a> › <span id="pname">지도</span></h1>
+    <span class="meta" id="meta">로딩…</span>
+  </div>
+  <div class="tools">
+    <span id="crumb" class="meta"></span>
+    <button id="layerBtn">소스 레이어</button>
+    <button id="editBtn">논리 편집</button>
+    <button id="addBtn" style="display:none">+ 새 개념</button>
+    <input id="q" type="text" placeholder="파일·경로 검색" />
+    <button id="fit">전체 보기</button>
+    <button id="scanBtn" title="루트 재스캔">재스캔</button>
+    <a href="./feedback"><button>백로그</button></a>
+  </div>
+</header>
+<div id="wrap">
+  <svg id="svg"></svg>
+  <div id="empty"></div>
+  <aside id="panel"></aside>
+  <div id="legend"></div>
+  <div class="toast" id="toast"></div>
+</div>
+<script>
+/* 프로젝트 슬러그·베이스 — /dev/p/<slug>/ 든 /p/<slug>/ 든 동작 */
+const M=location.pathname.match(/^(.*?)p\/([^/]+)\/$/)
+const BASE=M?M[1]:'/', SLUG=M?M[2]:''
+window.FB_SERVICE=SLUG||'dev'
+window.FB_API=BASE+'api/feedback/'
+</script>
+<script src="../../static/fb.js" onerror="this.remove()"></script>
+<script>
+/* ══ 공통 ══ */
+const S={layer:'logic',sel:null,q:'',concept:null,conceptSet:null,edit:false}
+const AREA_C=d3.scaleOrdinal(['#7b78f0','#e08bb8','#f0c86a','#4fd1a5','#58b7ff','#c9a86a','#9aa3b2','#c76a6a'])
+const slug=(id)=>'cg-'+id.replace(/[^a-zA-Z0-9]+/g,'-')
+const byId={},out={},inn={}
+let DATA=null,LG=null
+const T={get(){let t=localStorage.getItem('organt_token');if(!t){t=prompt('admin 토큰(organt_token)');if(t)localStorage.setItem('organt_token',t)}return t||''}}
+const api=async(u,m,b)=>{const r=await fetch(u,{method:m||'GET',headers:{'Authorization':'Token '+T.get(),'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined})
+  if(!r.ok)throw Object.assign(new Error((await r.json().catch(()=>({}))).detail||r.status),{code:r.status});return r.json()}
+const toast=(m)=>{const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1400)}
+const svg=d3.select('#svg'), root=svg.append('g')
+const pinsKick=()=>{window.FBPins&&FBPins.refresh()}
+const zoom=d3.zoom().scaleExtent([0.25,3]).on('zoom',(ev)=>{root.attr('transform',ev.transform);root.classed('far',ev.transform.k<0.62);pinsKick()})
+svg.call(zoom).on('dblclick.zoom',null)
+
+/* ══ 논리층 문서 저장(PUT — 위치·편집 전부 플랫폼에 영속) ══ */
+let putT=0
+const lgDoc=()=>({stages:LG.stages,nodes:LG.nodes.map(n=>({id:n.id,name:n.name,one:n.one,src:n.src,stage:n.stage,order:n.order,globs:n.globs,x:n.x,y:n.y})),edges:LG.edges})
+function lgPut(now){clearTimeout(putT)
+  const go=async()=>{try{await api(`${BASE}api/projects/${SLUG}/concepts/`,'PUT',lgDoc());toast('논리층 저장됨')}catch(e){alert('저장 실패: '+e.message)}}
+  now?go():putT=setTimeout(go,600)}
+
+/* ══ 매핑·집계 ══ */
+const conceptOf=(fid)=>{let best=null,len=-1
+  LG.nodes.forEach(c=>(c.globs||[]).forEach(g=>{if(fid.startsWith(g)&&g.length>len){best=c.id;len=g.length}}))
+  return best}
+function lgStats(){const st={},agg={}
+  LG.nodes.forEach(c=>st[c.id]={files:0,loc:0})
+  ;(DATA?.nodes||[]).forEach(n=>{const c=conceptOf(n.id);if(c){st[c].files++;st[c].loc+=n.loc}})
+  ;(DATA?.edges||[]).forEach(e=>{const a=conceptOf(e.s),b=conceptOf(e.t)
+    if(a&&b&&a!==b){const k=a+'→'+b;agg[k]=(agg[k]||0)+1}})
+  return {st,agg}}
+
+/* ══ 논리 레이어 ══ */
+const NW=172,NH=54
+function lgDefaultPos(){const r=svg.node().getBoundingClientRect(),cols=LG.stages.length||1,colW=r.width/cols
+  const by={};LG.nodes.forEach(n=>{(by[n.stage]=by[n.stage]||[]).push(n)})
+  Object.values(by).forEach(list=>{list.sort((a,b)=>(a.order||0)-(b.order||0))
+    list.forEach((n,i)=>{if(n.x==null||n.y==null){n.x=colW*(n.stage+0.5);n.y=r.height*(i+1)/(list.length+1)+40}})})}
+function lgEdgeD(d){const a=LG.byId[d.s],b=LG.byId[d.t]
+  const dx=b.x-a.x,dy=b.y-a.y,dd=Math.sqrt(dx*dx+dy*dy)||1,bow=Math.min(dd*.12,34)
+  return `M ${a.x} ${a.y} Q ${(a.x+b.x)/2-dy/dd*bow} ${(a.y+b.y)/2+dx/dd*bow} ${b.x} ${b.y}`}
+const lgLbPos=(d)=>{const a=LG.byId[d.s],b=LG.byId[d.t]
+  const dx=b.x-a.x,dy=b.y-a.y,dd=Math.sqrt(dx*dx+dy*dy)||1,bow=Math.min(dd*.12,34)
+  return [(a.x+b.x)/2-dy/dd*bow*.7,(a.y+b.y)/2+dx/dd*bow*.7-3]}
+function lgRender(){
+  root.selectAll('*').remove()
+  document.getElementById('empty').style.display='none'
+  const r=svg.node().getBoundingClientRect(),cols=LG.stages.length||1,colW=r.width/cols
+  LG.stages.forEach((nm,i)=>{
+    root.append('text').attr('class','stage-name').attr('x',colW*(i+0.5)).attr('y',26).attr('text-anchor','middle').text(nm)
+    if(i)root.append('line').attr('class','stage-line').attr('x1',colW*i).attr('x2',colW*i).attr('y1',12).attr('y2',r.height-12)})
+  if(!LG.nodes.length){const e=document.getElementById('empty');e.style.display='flex'
+    e.innerHTML=`<div>논리층이 비어 있다 — 이 프로젝트의 개념을 정의해 소스 위에 얹자.</div><button class="on" onclick="startEditFirst()">논리 편집 시작</button>`;legend();return}
+  const {st,agg}=lgStats()
+  const canon=LG.edges.map(e=>({...e,kind:'canon',n:(agg[e.s+'→'+e.t]||0)+(e.both?(agg[e.t+'→'+e.s]||0):0)}))
+  const auto=Object.entries(agg).filter(([k])=>{const [a,b]=k.split('→')
+      return !LG.edges.some(e=>(e.s===a&&e.t===b)||(e.both&&e.s===b&&e.t===a))})
+    .map(([k,n])=>{const [a,b]=k.split('→');return {s:a,t:b,kind:'agg',n,label:'import '+n}})
+  const EE=[...auto,...canon]
+  const eSel=root.selectAll('path.lgedge').data(EE).join('path')
+    .attr('class',d=>'lgedge'+(d.kind==='agg'?' agg':'')).attr('stroke-width',d=>Math.min(1.3+d.n*.12,4))
+    .attr('stroke-dasharray',d=>d.kind==='canon'&&!d.both?'7 4':null)
+  const lSel=root.selectAll('text.lglb').data(EE).join('text')
+    .attr('class',d=>'lglb'+(d.kind==='agg'?' agg':'')).attr('text-anchor','middle')
+    .text(d=>d.kind==='canon'?d.label+(d.n?` · ${d.n}`:''):d.label)
+  const place=()=>{eSel.attr('d',lgEdgeD);lSel.attr('x',d=>lgLbPos(d)[0]).attr('y',d=>lgLbPos(d)[1])}
+  const nSel=root.selectAll('g.lg-node').data(LG.nodes,d=>d.id).join(enter=>{
+      const g=enter.append('g')
+      g.append('rect').attr('rx',13).attr('width',NW).attr('height',NH)
+      g.append('text').attr('class','nm').attr('text-anchor','middle')
+      g.append('text').attr('class','st').attr('text-anchor','middle')
+      return g})
+    .attr('id',d=>'lg-'+d.id)
+    .attr('class',d=>{const rel=S.sel&&(d.id===S.sel||LG.edges.some(e=>(e.s===S.sel&&e.t===d.id)||(e.t===S.sel&&e.s===d.id)))
+      return 'lg-node'+(S.sel===d.id?' sel':'')+((st[d.id]||{}).files?'':' nofile')+(S.sel&&!rel?' dim':'')})
+  nSel.select('rect').attr('x',d=>d.x-NW/2).attr('y',d=>d.y-NH/2)
+  nSel.select('.nm').attr('x',d=>d.x).attr('y',d=>d.y-3).text(d=>d.name)
+  nSel.select('.st').attr('x',d=>d.x).attr('y',d=>d.y+15)
+    .text(d=>(st[d.id]||{}).files?`${st[d.id].files}파일 · ${(st[d.id].loc/1000).toFixed(1)}k줄`:'코드 매핑 없음')
+  nSel.call(d3.drag()
+    .on('drag',(ev,d)=>{d.x=ev.x;d.y=ev.y
+      const g=d3.select('#lg-'+d.id)
+      g.select('rect').attr('x',d.x-NW/2).attr('y',d.y-NH/2)
+      g.selectAll('text').attr('x',d.x);g.select('.nm').attr('y',d.y-3);g.select('.st').attr('y',d.y+15)
+      place();pinsKick()})
+    .on('end',(ev,d)=>{if(ev.dx||ev.dy||true)lgPut()}))
+  nSel.on('click',(ev,d)=>{if(ev.defaultPrevented)return
+    S.sel=S.sel===d.id?null:d.id;lgRender();lgPanel();pinsKick()})
+  place();legend()
+}
+window.startEditFirst=()=>{S.edit=true;ui()
+  const cid=prompt('첫 개념 id(소문자-하이픈, 예: core)');if(!cid)return
+  addConcept(cid)}
+function addConcept(cid){
+  cid=(cid||'').trim().toLowerCase()
+  if(!/^[a-z0-9][a-z0-9-]*$/.test(cid))return alert('id 형식: 소문자·숫자·하이픈')
+  if(LG.byId[cid])return alert('이미 있는 id')
+  const r=svg.node().getBoundingClientRect()
+  const n={id:cid,name:cid,one:'',src:'',stage:0,order:LG.nodes.length,globs:[],x:r.width/2,y:r.height/2}
+  LG.nodes.push(n);LG.byId[cid]=n
+  S.sel=cid;lgRender();lgPanel();lgPut()
+}
+function lgPanel(){
+  const p=d3.select('#panel'),c=S.sel&&LG.byId[S.sel]
+  if(!c||S.layer!=='logic'){if(S.layer==='logic')p.style('display','none');return}
+  const {st}=lgStats()
+  const files=(DATA?.nodes||[]).filter(n=>conceptOf(n.id)===c.id).sort((a,b)=>b.loc-a.loc).slice(0,7)
+  if(!S.edit){
+    p.style('display','block').html(`
+      <div class="head"><span>${c.name}</span><button class="x">×</button></div>
+      <div class="path">근거: ${c.src||'—'} · ${(st[c.id]||{}).files||0}파일</div>
+      <div class="doc">${c.one||'(설명 없음)'}</div>
+      ${(c.globs||[]).length?'<button id="drill" style="margin:2px 0 8px">소스 레이어에서 펼치기 →</button>':''}
+      ${files.length?'<div class="t">큰 파일</div>'+files.map(f=>`<a data-j="${f.id}">${f.id} · ${f.loc}줄</a>`).join(''):''}`)
+    p.select('.x').on('click',()=>{S.sel=null;lgRender();lgPanel()})
+    p.select('#drill').on('click',()=>enterSource(c))
+    p.selectAll('a[data-j]').on('click',function(){const id=this.dataset.j;enterSource(c);setTimeout(()=>srcSelect(id),80)})
+    return
+  }
+  // ── 편집 모드: 개념 폼 + 관계 편집 ──
+  const eds=LG.edges.map((e,i)=>({...e,i})).filter(e=>e.s===c.id||e.t===c.id)
+  const others=LG.nodes.filter(n=>n.id!==c.id)
+  p.style('display','block').html(`
+    <div class="head"><span>편집: ${c.id}</span><button class="x">×</button></div>
+    <div class="lbl">이름</div><input id="e-name" value="${c.name.replace(/"/g,'&quot;')}" />
+    <div class="lbl">한 줄 설명</div><textarea id="e-one">${c.one||''}</textarea>
+    <div class="lbl">근거(정본·구술)</div><input id="e-src" value="${(c.src||'').replace(/"/g,'&quot;')}" />
+    <div class="lbl">열(축)</div><select id="e-stage">${LG.stages.map((s2,i)=>`<option value="${i}" ${i===c.stage?'selected':''}>${i} · ${s2}</option>`).join('')}</select>
+    <div class="lbl">소스 매핑(경로 접두, 줄당 1개)</div><textarea id="e-globs">${(c.globs||[]).join('\n')}</textarea>
+    <div class="row"><button class="on" id="e-save">저장</button><button id="e-del">개념 삭제</button></div>
+    <div class="t">관계</div>
+    ${eds.map(e=>`<div style="font-size:11.5px;display:flex;gap:6px;align-items:center;margin:2px 0">
+      <span style="flex:1">${e.s} ${e.both?'⇄':'→'} ${e.t} · ${e.label||'(라벨 없음)'}</span><button data-de="${e.i}">삭제</button></div>`).join('')||'<span class="lbl">없음</span>'}
+    <div class="lbl" style="margin-top:6px">관계 추가 — ${c.id} → 대상</div>
+    <select id="e-to">${others.map(o=>`<option value="${o.id}">${o.id}</option>`).join('')}</select>
+    <input id="e-label" placeholder="동사 라벨(예: 표출을 시킨다)" />
+    <label style="font-size:11px"><input id="e-both" type="checkbox" /> 양방향(⇄)</label>
+    <div class="row"><button id="e-add">관계 추가</button></div>`)
+  p.select('.x').on('click',()=>{S.sel=null;lgRender();lgPanel()})
+  p.select('#e-save').on('click',()=>{
+    c.name=document.getElementById('e-name').value.trim()||c.id
+    c.one=document.getElementById('e-one').value.trim()
+    c.src=document.getElementById('e-src').value.trim()
+    c.stage=+document.getElementById('e-stage').value
+    c.globs=document.getElementById('e-globs').value.split('\n').map(s2=>s2.trim()).filter(Boolean)
+    lgRender();lgPanel();lgPut(true)})
+  p.select('#e-del').on('click',()=>{if(!confirm(c.id+' 삭제? (관계 동반 삭제)'))return
+    LG.nodes=LG.nodes.filter(n=>n.id!==c.id);delete LG.byId[c.id]
+    LG.edges=LG.edges.filter(e=>e.s!==c.id&&e.t!==c.id)
+    S.sel=null;lgRender();lgPanel();lgPut(true)})
+  p.selectAll('button[data-de]').on('click',function(){LG.edges.splice(+this.dataset.de,1);lgRender();lgPanel();lgPut(true)})
+  p.select('#e-add').on('click',()=>{
+    LG.edges.push({s:c.id,t:document.getElementById('e-to').value,
+      label:document.getElementById('e-label').value.trim(),both:document.getElementById('e-both').checked})
+    lgRender();lgPanel();lgPut(true)})
+}
+
+/* ══ 소스 레이어(d3 force) ══ */
+let sim=null
+function srcRender(){
+  root.selectAll('*').remove()
+  document.getElementById('empty').style.display='none'
+  if(!DATA||!DATA.nodes.length){const e=document.getElementById('empty');e.style.display='flex'
+    e.innerHTML=`<div>스캔 데이터가 없다.</div><button class="on" onclick="doScan()">지금 스캔</button>`;return}
+  const r=svg.node().getBoundingClientRect(),w=r.width,h=r.height
+  const areas=[...new Set(DATA.nodes.map(n=>n.area))]
+  const AC={};areas.forEach((a,i)=>{const ang=2*Math.PI*i/areas.length-Math.PI/2
+    AC[a]={x:w/2+Math.cos(ang)*w*.30,y:h/2+Math.sin(ang)*h*.30}})
+  const HH=(s2)=>{let x=2166136261;for(let i=0;i<s2.length;i++){x^=s2.charCodeAt(i);x=Math.imul(x,16777619)}return (x>>>0)/4294967296}
+  DATA.nodes.forEach(n=>{if(!n._init){const c=AC[n.area]
+    n.x=c.x+(HH(n.id)-.5)*160;n.y=c.y+(HH(n.id+'#')-.5)*160;n._init=1}})
+  const links=DATA.edges.map(e=>({source:e.s,target:e.t}))
+  const eSel=root.append('g').selectAll('path').data(links).join('path').attr('class','edge')
+  const aLb=root.append('g').selectAll('text').data(areas).join('text')
+    .attr('class','cg-area').attr('text-anchor','middle').attr('fill',a=>AREA_C(a)).text(a=>a)
+  const nSel=root.append('g').selectAll('g').data(DATA.nodes,d=>d.id).join(enter=>{
+      const g=enter.append('g');g.append('rect').attr('rx',11).attr('height',22)
+      g.append('text').attr('text-anchor','middle');return g})
+    .attr('id',d=>slug(d.id)).attr('class','cg-node').attr('data-path',d=>d.id)
+  nSel.select('rect').attr('width',d=>d._w=Math.min(Math.max(d.label.length*6.1+16,42),150)).attr('stroke',d=>AREA_C(d.area))
+  nSel.select('text').text(d=>d.label)
+  if(sim)sim.stop()
+  sim=d3.forceSimulation(DATA.nodes)
+    .force('link',d3.forceLink(links).id(d=>d.id).distance(l=>byId[l.source.id].area===byId[l.target.id].area?70:240).strength(.25))
+    .force('charge',d3.forceManyBody().strength(-160).distanceMax(420))
+    .force('collide',d3.forceCollide().radius(d=>d._w/2+8))
+    .force('ax',d3.forceX(d=>AC[d.area].x).strength(.08))
+    .force('ay',d3.forceY(d=>AC[d.area].y).strength(.10))
+    .alpha(0.9).alphaDecay(0.035)
+  const curve=(d)=>{const a=d.source,b=d.target
+    const dx=b.x-a.x,dy=b.y-a.y,dd=Math.sqrt(dx*dx+dy*dy)||1,bow=Math.min(dd*.14,40)
+    return `M ${a.x} ${a.y} Q ${(a.x+b.x)/2-dy/dd*bow} ${(a.y+b.y)/2+dx/dd*bow} ${b.x} ${b.y}`}
+  sim.on('tick',()=>{eSel.attr('d',curve)
+    nSel.select('rect').attr('x',d=>d.x-d._w/2).attr('y',d=>d.y-11)
+    nSel.select('text').attr('x',d=>d.x).attr('y',d=>d.y+3.5)
+    areas.forEach(a=>{const g=DATA.nodes.filter(n=>n.area===a)
+      AC[a]._lx=d3.mean(g,n=>n.x);AC[a]._ly=d3.min(g,n=>n.y)-30})
+    aLb.attr('x',a=>AC[a]._lx).attr('y',a=>AC[a]._ly)})
+  sim.on('end',pinsKick)
+  nSel.call(d3.drag()
+    .on('start',(ev,d)=>{if(!ev.active)sim.alphaTarget(.25).restart();d.fx=d.x;d.fy=d.y})
+    .on('drag',(ev,d)=>{d.fx=ev.x;d.fy=ev.y})
+    .on('end',(ev,d)=>{if(!ev.active)sim.alphaTarget(0);d.fx=null;d.fy=null;pinsKick()}))
+  nSel.on('click',(ev,d)=>{if(ev.defaultPrevented)return;srcSelect(d.id)})
+  srcPaint();legend()
+}
+function srcPaint(){
+  const f=S.sel
+  const m=S.q?new Set(DATA.nodes.filter(n=>n.id.toLowerCase().includes(S.q)).map(n=>n.id)):(S.conceptSet||null)
+  root.selectAll('g.cg-node').attr('class',d=>{
+    const rel=f&&(d.id===f||(out[f]||[]).includes(d.id)||(inn[f]||[]).includes(d.id))
+    return 'cg-node'+(S.sel===d.id?' sel':'')+(rel&&d.id!==f?' rel':'')+(((m&&!m.has(d.id))||(f&&!rel))?' faded':'')})
+  root.selectAll('path.edge').attr('class',d=>{
+    const cross=byId[d.source.id].area!==byId[d.target.id].area
+    const touch=f&&(d.source.id===f||d.target.id===f)
+    const faded=(f&&!touch)||(m&&!(m.has(d.source.id)||m.has(d.target.id)))
+    return 'edge'+(touch?' hot':cross?' cross':'')+(faded?' faded':'')})
+}
+function srcSelect(id){S.sel=S.sel===id?null:id;srcPaint();srcPanel();pinsKick()}
+function srcPanel(){
+  const p=d3.select('#panel'),n=S.sel&&byId[S.sel]
+  if(!n){p.style('display','none');return}
+  const li=(arr,t)=>arr&&arr.length?`<div class="t">${t} (${arr.length})</div>`+arr.map(x=>`<a data-j="${x}">${x}</a>`).join(''):''
+  p.style('display','block').html(`
+    <div class="head"><span>${n.label}</span><button class="x">×</button></div>
+    <div class="path">${n.id} · ${n.loc}줄 · 연결 ${(out[n.id]||[]).length+(inn[n.id]||[]).length}</div>
+    <div class="doc">${(n.doc||'(파일 설명 없음)').replace(/</g,'&lt;')}</div>
+    ${li(out[n.id],'이 파일이 쓰는 것')}${li(inn[n.id],'이 파일을 쓰는 곳')}`)
+  p.select('.x').on('click',()=>{S.sel=null;srcPaint();srcPanel()})
+  p.selectAll('a[data-j]').on('click',function(){srcSelect(this.dataset.j)})
+}
+
+/* ══ 전환·범례·스캔·부트 ══ */
+function enterSource(concept){
+  S.layer='source';S.sel=null;S.concept=concept||null
+  S.conceptSet=concept?new Set((DATA?.nodes||[]).filter(n=>conceptOf(n.id)===concept.id).map(n=>n.id)):null
+  d3.select('#q').property('value','');S.q=''
+  ui();svg.transition().duration(200).call(zoom.transform,d3.zoomIdentity);srcRender();pinsKick()
+}
+function enterLogic(){
+  S.layer='logic';S.sel=null;S.concept=null;S.conceptSet=null
+  if(sim)sim.stop()
+  ui();svg.transition().duration(200).call(zoom.transform,d3.zoomIdentity);lgRender();lgPanel();pinsKick()
+}
+function ui(){
+  d3.select('#layerBtn').text(S.layer==='logic'?'소스 레이어':'논리 레이어')
+  d3.select('#editBtn').classed('on',S.edit).style('display',S.layer==='logic'?null:'none')
+  d3.select('#addBtn').style('display',S.edit&&S.layer==='logic'?null:'none')
+  d3.select('#crumb').text(S.layer==='logic'?(S.edit?'논리(편집)':'논리'):'논리 › 소스'+(S.concept?` › ${S.concept.name}`:''))
+}
+function legend(){
+  const L=d3.select('#legend')
+  if(S.layer==='logic')L.html(`<b>이 층의 기준</b> — 열 = 이 프로젝트의 논리 축(편집 가능). 노드 = 사람이 정의한 개념(근거는 카드), 소스는 경로 매핑으로 붙는다.
+    <div class="li"><span class="sw"></span>선언한 관계(동사 라벨 · 숫자=실제 import)</div>
+    <div class="li"><span class="sw agg"></span>자동 집계 — 선언 안 했는데 코드에 있는 의존</div>
+    <div class="li"><span class="sw box dash"></span>코드 매핑 없는 개념</div>`)
+  else L.html(`<b>이 층의 기준</b> — 파일=노드, import=엣지(스캐너 자동). 연결이 배치를 만든다.
+    <div class="li"><span class="sw agg"></span>같은 영역 import</div>
+    <div class="li"><span class="sw"></span>영역을 건너는 import</div>
+    드래그=이동 · 휠=줌 · 클릭=연결·설명`)
+}
+window.doScan=async()=>{const b=document.getElementById('scanBtn');b.disabled=true;b.textContent='스캔 중…'
+  try{const r2=await api(`${BASE}api/projects/${SLUG}/scan/`,'POST')
+    toast(`스캔 완료 — ${r2.files}파일`);await loadGraph()
+    S.layer==='logic'?lgRender():srcRender()}
+  catch(e){alert('스캔 실패: '+e.message)}
+  b.disabled=false;b.textContent='재스캔'}
+async function loadGraph(){
+  try{DATA=await api(`${BASE}api/projects/${SLUG}/graph/`)}
+  catch(e){DATA=null;if(e.code!==404)throw e}
+  Object.keys(byId).forEach(k=>delete byId[k]);Object.keys(out).forEach(k=>delete out[k]);Object.keys(inn).forEach(k=>delete inn[k])
+  if(DATA){DATA.nodes.forEach(n=>byId[n.id]=n)
+    DATA.edges.forEach(e=>{(out[e.s]=out[e.s]||[]).push(e.t);(inn[e.t]=inn[e.t]||[]).push(e.s)})}
+  d3.select('#meta').text(DATA?`개념 ${LG?LG.nodes.length:0} · 파일 ${DATA.meta.counts.nodes} · 연결 ${DATA.meta.counts.edges} · ${DATA.meta.generated_at} 기준${DATA.meta.truncated?' · 상한 잘림':''}`:'스캔 없음')
+}
+async function boot(){
+  if(!SLUG){d3.select('#meta').text('프로젝트 경로가 아니다(/p/<slug>/)');return}
+  const info=await api(`${BASE}api/projects/${SLUG}/`).catch(()=>null)
+  d3.select('#pname').text(info?info.name:SLUG)
+  document.title=`${SLUG} — 지도`
+  const cs=await api(`${BASE}api/projects/${SLUG}/concepts/`)
+  LG={stages:cs.stages,nodes:cs.nodes,edges:cs.edges}
+  LG.byId=Object.fromEntries(LG.nodes.map(n=>[n.id,n]))
+  await loadGraph()
+  lgDefaultPos()
+  ui();LG.nodes.length?lgRender():(S.layer='logic',lgRender())
+  d3.select('#q').on('input',function(){S.q=this.value.trim().toLowerCase();if(S.layer==='source')srcPaint()})
+  d3.select('#fit').on('click',()=>svg.transition().duration(200).call(zoom.transform,d3.zoomIdentity))
+  d3.select('#layerBtn').on('click',()=>S.layer==='logic'?enterSource(null):enterLogic())
+  d3.select('#editBtn').on('click',()=>{S.edit=!S.edit;ui();lgPanel()})
+  d3.select('#addBtn').on('click',()=>addConcept(prompt('새 개념 id(소문자-하이픈)')))
+  d3.select('#scanBtn').on('click',doScan)
+  window.addEventListener('resize',()=>{if(S.layer==='logic')lgRender()})
+}
+boot().catch(e=>{d3.select('#meta').text('로드 실패: '+e.message+' — admin 토큰 확인')})
+</script>
+</body>
+</html>

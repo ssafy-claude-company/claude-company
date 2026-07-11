@@ -46,7 +46,7 @@ main{display:flex;gap:14px;padding:0 18px 18px;align-items:flex-start}
   <div><h1>피드백 백로그 <span class="sub">dev — murmur·코드지도 공용(service 구분)</span></h1></div>
   <div class="tools">
     <select id="svc"><option value="">모든 서비스</option></select>
-    <a class="map" href="./codegraph/">코드 지도 →</a>
+    <a class="map" id="maplink" href="../">지도 →</a>
   </div>
 </header>
 <div class="tabs" id="tabs"></div>
@@ -56,10 +56,13 @@ main{display:flex;gap:14px;padding:0 18px 18px;align-items:flex-start}
 </main>
 <script>
 const $=(s)=>document.querySelector(s)
-const API='./api/feedback/'
+// /feedback(전체) 또는 /p/<slug>/feedback(프로젝트) 어디서든 동작
+const MM=location.pathname.match(/^(.*?)(?:p\/([^/]+)\/)?feedback$/)
+const BASE=MM?MM[1]:'./', PSLUG=MM&&MM[2]?MM[2]:''
+const API=BASE+'api/feedback/'
 const T={ get(){ let t=localStorage.getItem('organt_token'); if(!t){t=prompt('admin 토큰(organt_token)');if(t)localStorage.setItem('organt_token',t)} return t||'' } }
 const hdr=()=>({'Authorization':'Token '+T.get(),'Content-Type':'application/json'})
-const S={tab:'open',svc:'',all:[],sel:null}
+const S={tab:'open',svc:PSLUG,all:[],sel:null}
 // 상태(라운드2): open=대기 · resolved/rejected/deferred=처리됨(회신) · closed=완료
 const ACTED=['resolved','rejected','deferred']
 const TABS=[['open','대기'],['acted','처리됨'],['closed','완료']]
@@ -101,8 +104,8 @@ async function openDetail(id){
   S.sel=id;renderList()
   const D=$('#detail');D.style.display='block';D.innerHTML='로딩…'
   let d;try{d=await jget(API+id+'/')}catch(e){D.innerHTML='실패 '+e.message;return}
-  const pinLink=d.service==='codegraph'?`<a class="map" style="padding:3px 8px" href="./codegraph/">지도에서 보기</a>`
-    :`<a class="map" style="padding:3px 8px" href="${esc(d.route)}?fb=${d.id}" target="_blank">화면에서 보기</a>`
+  const pinLink=d.service==='murmur'?`<a class="map" style="padding:3px 8px" href="${esc(d.route)}?fb=${d.id}" target="_blank">화면에서 보기</a>`
+    :`<a class="map" style="padding:3px 8px" href="${BASE}p/${esc(d.service)}/">지도에서 보기</a>`
   const acts=[]
   if(ACTED.includes(d.status))acts.push(`<button onclick="act(${d.id},'closed')">완료(닫기)</button>`)
   if(d.status!=='open')acts.push(`<button onclick="act(${d.id},'open')">재오픈</button>`)
@@ -120,9 +123,12 @@ async function openDetail(id){
 window.act=async(id,status)=>{try{await jsend(API+id+'/','PATCH',{status})}catch(e){alert('실패 '+e.message)};S.sel=null;$('#detail').style.display='none';load()}
 window.del=async(id)=>{if(!confirm('#'+id+' 삭제?'))return;try{await jsend(API+id+'/','DELETE')}catch(e){alert('실패 '+e.message)};S.sel=null;$('#detail').style.display='none';load()}
 $('#svc').addEventListener('change',e=>{S.svc=e.target.value;renderTabs();renderList()})
+if(!PSLUG)document.getElementById('maplink').href=BASE   // 전체 백로그 → 프로젝트 목록으로
 load()
 </script>
-<script>window.FB_SERVICE='dev'</script>
-<script src="./static/fb.js"></script>
+<script>
+window.FB_SERVICE='dev';window.FB_API=API
+const _fb=document.createElement('script');_fb.src=BASE+'static/fb.js';document.body.appendChild(_fb)   // BASE 상대(프로젝트 백로그에서도 로드)
+</script>
 </body>
 </html>

@@ -1,39 +1,35 @@
-# dev 서비스 — 피드백 + 코드 지도 (제품 아님)
+# dev — 메타 서비스 (프로젝트 지도·논리층·피드백 플랫폼)
 
-피드백 기능과 코드 지도를 murmur 제품에서 분리한 **개발 영역 서비스**다(2026-07-11 사용자 지시
-"피드백 기능 합쳐서 외부로 빼버려"). murmur는 화면의 핀 오버레이(클라이언트)만 남기고,
-백엔드·백로그·코드지도는 전부 여기서 산다.
+murmur·claude-company 전용 도구가 아니다. **claude company가 만드는 모든 product**(봇 산출물
+포함)를 등록해 같은 능력을 얹는 플랫폼이다: 스캔→코드 지도, 논리(추상) 레이어, 모든 요소
+피드백 핀. 데이터는 전부 DB — 정적 파일·일회용 스크립트 없음(2026-07-11 사용자 방향).
 
-## 구성
+## 표면
 
+| 경로 | 무엇 |
+|---|---|
+| `/` | 프로젝트 목록·등록·재스캔 |
+| `/p/<slug>/` | 프로젝트 지도 — 논리 레이어(편집 가능) ⇄ 소스 레이어(d3 force) |
+| `/p/<slug>/feedback` | 프로젝트 백로그 · `/feedback` 전체 백로그 |
+| `/api/projects/…` | 등록·스캔·그래프·논리층(PUT=UI 편집 저장) |
+| `/api/feedback/…` | 피드백(이식 계약 — service=프로젝트 슬러그) |
+
+## 구조
+
+- `app/graph/` — Project·ScanRun(스냅샷 JSON)·Concept·ConceptEdge + 범용 스캐너(py ast·js/vue
+  상대 import, 언어 하드코딩 없음) + API. `app/feedback/` — murmur에서 이식한 피드백 앱.
+- `static/` — index·map·backlog(페이지 자산) + fb.js(모든 요소 핀 레이어) + vendor/d3.
+  `logical.json`은 **시드 전용**(seed_projects가 1회 흡수 — 이후 정본은 DB).
+- 인증: admin 토큰(정적 env 또는 murmur `/api/me` 위임). DB: sqlite `ops/var/devfeedback.sqlite3`.
+
+## 운영
+
+```bash
+bash ops/dev/run.sh                                   # 기동(systemd dev-web이 이걸 실행)
+app/manage.py seed_projects                           # 초기 시드(멱등) — 봇 산출물 자동 등재
+app/manage.py test graph feedback                     # 대본 검증
+app/manage.py feedback_backlog / feedback_resolve …   # 피드백 처리 루프(전 프로젝트 공용)
 ```
-ops/dev/
-  run.sh                  # 기동: 127.0.0.1:8100 (nginx /dev/ 프록시 대상)
-  scan.py                 # 코드 지도 데이터 재생성 → static/codegraph.json
-  migrate_from_murmur.py  # murmur pg → sqlite 피드백 데이터 1회 이사(멱등)
-  app/                    # Django: config + feedback 앱(murmur에서 이식)
-  static/backlog.html     # / — 피드백 백로그(대기·처리됨·완료, 서비스 필터)
-  static/codegraph.html   # /codegraph/ — 코드 지도(힘 기반 그래프)
-  static/fb.js            # 공용 핀 레이어 — 페이지의 모든 요소에 핀(murmur fbdom 셀렉터 이식)
-```
 
-- **지도 배치 = 힘 기반(결정론)**: 연결(import)이 위치를 만든다 — 가까움 = 실제로 엮임.
-  해시 시드라 로드마다 같은 그림. 축소하면 라벨을 숨겨 형태만 보인다.
-- **핀은 모든 요소에**: 노드뿐 아니라 지도·백로그 페이지의 어떤 컴포넌트든 📌 모드에서 클릭해
-  핀을 단다(백로그 자체 핀은 service=dev).
-
-- **DB**: sqlite `ops/var/devfeedback.sqlite3` (env `DEV_FEEDBACK_DB`).
-- **인증**(feedback/auth.py — 이식 계약의 어댑터): ①`DEV_FEEDBACK_TOKENS="토큰:handle,…"`(자립)
-  ②`DEV_FEEDBACK_MURMUR=http://127.0.0.1:8000`이면 murmur `/api/me/`에 위임 — 브라우저의
-  murmur admin 토큰(organt_token)이 그대로 통한다(같은 오리진 /dev/ 서빙 전제).
-- **service 격리**: murmur 화면 핀 = `murmur`, 코드 지도 핀 = `codegraph`. 백로그는 통합 뷰(`?service=all`).
-
-## 운영 루프 (변경 없음 — 호스트만 이사)
-
-admin이 핀 → 세션이 `app/manage.py feedback_backlog`로 읽고 고침 → `feedback_resolve <id> --note …`
-→ admin이 백로그에서 완료(닫기). 코드가 바뀌면 `python3 ops/dev/scan.py`로 지도 갱신.
-
-## 검증 기록 (2026-07-11)
-
-대본: `manage.py test feedback` 12개(dev 2 통과 + murmur 통합 10 skip — 이식 계약상 정상).
-실기동: sqlite + 정적 토큰으로 8199 기동, 실 API로 핀 생성·처리·댓글·백로그·지도 렌더 확인.
+논리층은 지도 화면의 **논리 편집** 모드에서 만든다(개념·관계·소스 매핑·축) — 저장은 API로
+DB에 영속. 코드가 바뀌면 화면의 **재스캔** 버튼(또는 scan API).
