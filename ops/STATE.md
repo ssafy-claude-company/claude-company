@@ -19,8 +19,8 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  e01a551+ ← 브레인 — 2026-07-10 반쪽등록 복구+중복 deploy 제거+PIPELINE_CTX(러너 라이브)
-murmur  42ead56   ← 라이브 웹 — 앱 게이트웨이·지금표시·개입 재수용(세부 git log)
+claude-company  87c015a+ ← 브레인 — 2026-07-12 e2e 회계 수리: iter 매칭 견고화·조기 done 차단·send_response·배포링크 보장(러너 라이브)
+murmur  a014081   ← 라이브 웹 — bare path 301·완수블록 무한흡수 수리·say→개입 배선·카운터 봇단위(세부 git log)
 ```
 
 ## 마일스톤 피드 구조화 (2026-07-10 이현준 세션 — 러너·웹 라이브)
