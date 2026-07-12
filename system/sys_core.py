@@ -2183,6 +2183,24 @@ class Sys:
         # 리더의 반환값 = 사용자에게 가는 Response(=보고). origin 프레임을 닫아 시작점 복귀.
         # [사용자 중지는 피드에 평문 안 남김] 취소는 상태(live_status '중지됨')로 보이니 별도 알림 메시지를
         # 채널에 안 올린다 — 종전엔 "(사용자가 작업을 중지했습니다…)"가 봇 평문으로 떠 피드가 지저분했다.
+        # [산출물 링크 보장(2026-07-12, 사용자: '배포 링크 언급 안 한 이유')] 사용자는 라이브에서만
+        # 확인한다 — 봇 보고가 게이트 회계에 치우쳐 링크를 빼먹어도 SYS가 결정적으로 붙인다.
+        # flow.deployed(이 흐름의 배포 결과 문자열) 우선, 재개 흐름(체크포인트에 미탑재)은 앱 레지스트리 폴백.
+        try:
+            _url = None
+            _m = re.search(r"https?://\S+", str(getattr(flow, "deployed", "") or ""))
+            if _m:
+                _url = _m.group(0).rstrip(".,)`")
+            else:
+                from .guide_tools import deploy_service_name
+                from .deploy import _apps_base_url, _load_registry
+                _nm = deploy_service_name(flow)
+                if _nm and _nm in (_load_registry() or {}):
+                    _url = f"{_apps_base_url()}/{_nm}/"
+            if _url and _url not in (result or ""):
+                result = (result or "") + f"\n\n[배포 링크] {_url}"
+        except Exception:
+            pass
         if not getattr(flow, "cancelled", False) and not _resume_cut:
             try:
                 # [마감 보고 정식화(2026-07-12)] format_response 평문은 디스코드 와이어 포맷 유물 —
@@ -2212,6 +2230,11 @@ class Sys:
         # (허위 완료 금지 — owner가 실제로 안 끝냈을 수 있으므로 '완료'로 둔갑시키지 않음).
         # 동시에, 그 미완 Task를 프로젝트 레지스트리에 스냅샷으로 남겨 '다음 개입'에서 같은 Task로
         # 되살릴 수 있게 한다(사용자가 Task명 안 불러도 '더 진행해'가 그 Task를 잇게 — 근본 구조).
+        # [정밀 복구 — 조기 done 차단(2026-07-12)] 흐름이 Task 미완인 채 반환했는지 reap이 알 수 있게
+        # 채널별 플래그를 남긴다 — 미완이면 요청을 done으로 닫지 않고 unpick으로 되살려 이어간다.
+        if not hasattr(self, "_flow_open_task"):
+            self._flow_open_task = {}
+        self._flow_open_task[int(flow.user_channel or 0)] = flow.current is not None
         open_task_snap = None
         if flow.current is not None:
             flow.current.status.status = "중단"
@@ -2372,7 +2395,7 @@ class Sys:
         *결정*하고, 매체 실행은 guide가 *구현*한다(추상↔구현). 러너/리스너는 Sys(guide,builder) 만들고
         이 run()만 부르면 됨 — 진입이 얇아진다(폴링·pick 로직은 여기·Guide로 이관)."""
         import traceback
-        inflight, seen, cut_resumes, last_beat = {}, set(), {}, 0.0
+        inflight, seen, cut_resumes, cont_pickups, last_beat = {}, set(), {}, {}, 0.0
         last_roster = 0.0   # [런타임 합류] 로스터 리프레시 throttle(30s) — 신규 채용 봇 즉시 합류·형성
         log.info("요청 폴링 시작(동시 처리 — 상한 %d)", cap)
         # [수면 — 기억 증류 라이브화] 자기증류(경험→직무·개인 기준 압축)를 브레인 실행 루프에 배선한다.
@@ -2416,8 +2439,21 @@ class Sys:
                         del inflight[_mid]
                         try:
                             _info["task"].result()
-                            await guide.pick(_mid, done=True)
-                            log.info("✓ 처리 완료: msg_id=%s", _mid)
+                            # [정밀 복구 — 조기 done 차단(2026-07-12)] Task 미완인 채 흐름이 정상 반환하면
+                            # 종전엔 무조건 done — 요청이 닫혀 이어갈 운반체가 사라졌다(ch53 929가 반나절
+                            # 일찍 done, 운영자 수동 요청이 없었으면 판이 조용히 죽었음). 미완이면 unpick으로
+                            # 같은 요청을 되살려 다음 픽이 잇는다(상한 3회 — 무한 재픽 차단, 초과 시 정직 done).
+                            _open = getattr(self, "_flow_open_task", {}).pop(int(_info["ch"]), False)
+                            _cn = cont_pickups.get(_mid, 0)
+                            if _open and _cn < 3:
+                                cont_pickups[_mid] = _cn + 1
+                                seen.discard(_mid)
+                                await guide.pick(_mid, unpick=True)
+                                self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
+                                log.info("↻ Task 미완 — 같은 요청 재픽 예약(%d/3): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
+                            else:
+                                await guide.pick(_mid, done=True)
+                                log.info("✓ 처리 완료: msg_id=%s", _mid)
                         except asyncio.CancelledError:
                             log.info("■ 중지됨: msg_id=%s", _mid)
                         except Exception as _e:
