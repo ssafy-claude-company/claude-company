@@ -2185,8 +2185,15 @@ class Sys:
         # 채널에 안 올린다 — 종전엔 "(사용자가 작업을 중지했습니다…)"가 봇 평문으로 떠 피드가 지저분했다.
         if not getattr(flow, "cancelled", False) and not _resume_cut:
             try:
-                await self.guide.post(flow.user_channel, lead, format_response(result),
-                                      reply_to=flow.root_id)
+                # [마감 보고 정식화(2026-07-12)] format_response 평문은 디스코드 와이어 포맷 유물 —
+                # murmur에선 '[Response] Body:' 원문이 일반 채팅으로 노출되고 요청 카드에 답변이
+                # 안 붙는다(ch53 1290·1452, 사용자: "마지막 보고가 없어"). 구조 경로가 있으면 그걸로.
+                _sr = getattr(self.guide, "send_response", None)
+                if _sr is not None and getattr(flow, "root_id", None):
+                    await _sr(flow.user_channel, lead, flow.root_id, result)
+                else:
+                    await self.guide.post(flow.user_channel, lead, format_response(result),
+                                          reply_to=flow.root_id)
             except Exception as e:
                 self._log("final_post_failed", err=str(e)[:80])
         self._close_flow(flow, lead, result)
