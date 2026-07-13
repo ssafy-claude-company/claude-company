@@ -392,6 +392,14 @@ def sync_delegation(flow, me_id, to, body) -> Optional[str]:
     r = relay_for(flow, st)
     b = _match_backlog(r, body)
     if b is None:
+        # [재발송 합류(2026-07-13, 사용자: '어떻게 백로그가 늘어났지')] 끊김 재전송(TimeoutError 등)이
+        # 어휘 겹침을 못 넘어 새 항목으로 중복 등재되던 것 — 재발송 신호가 있고 같은 수행자의
+        # in_progress 항목이 있으면 그 항목에 합류(장부 무변화).
+        if re.search(r"재발송|재전송|다시\s*보냅|재요청", str(body or "")[:200]):
+            _prev = [x for x in r.backlogs if x.status == IN_PROGRESS and int(x.assignee or 0) == int(to)]
+            if _prev:
+                return None
+    if b is None:
         # [백로그 의무화(2026-07-10, 사용자: 'SubTask 하위로 그냥 일하는 것처럼 보인다 — 아니어야지')]
         # 장부 밖 Work 위임을 통과시키던 선택제가 계층(ST→백로그→작업)을 비웠다 — 매칭 없는 위임은
         # 거부(마찰) 대신 **자동 제출**로 장부에 등재하고 그 위임을 곧 배분으로 만든다(장부=진실).
