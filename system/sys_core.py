@@ -779,7 +779,10 @@ class Sys:
                   bidders=len(bids))
         try:
             _names = " · ".join(f"{self.bot_info.get(m, m)}({s0})" for s0, m, _ in bids)
-            await self.guide.post(int(channel_id), 0, f"[참여 확정] 응찰 {len(bids)}명 — {_names} · 첫 주자: {self.bot_info.get(winner[1], winner[1])}")
+            await self.guide.post(int(channel_id), 0,
+                f"[참여 확정] 응찰 {len(bids)}명 — {_names} · 1번 턴: {self.bot_info.get(winner[1], winner[1])}\n"
+                f"(첫 협의 의제: 원문에 필요한 직군이 이 구성에 다 있는지 점검 — 부족하면 recruit 공고, "
+                f"지원자 없으면 신규 채용이 자동으로 이어집니다.)")
         except Exception:
             pass
         return (winner[1], joined)
