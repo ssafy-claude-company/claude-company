@@ -745,14 +745,23 @@ class Sys:
         def _jkey2(mid):
             t = _jt(str(self.bot_info.get(mid, "")))
             return frozenset(t) if t else frozenset({str(mid)})
+        def _jnorm(mid):
+            return "".join(str(self.bot_info.get(mid, "")).lower().split())
+        def _same_group(mid, key, norms):
+            # 토큰 겹침 또는 정규화 포함(프론트⊂프론트엔드, 기획⊂게임기획자) = 같은 직군 계열
+            if _jkey2(mid) & key:
+                return True
+            n = _jnorm(mid)
+            return any(n and m and (n in m or m in n) for m in norms)
         _groups = []
         for mid in cands:
             for g in _groups:
-                if _jkey2(mid) & g[0]:
+                if _same_group(mid, g[0], g[2]):
                     g[1].append(mid)
+                    g[2].append(_jnorm(mid))
                     break
             else:
-                _groups.append((_jkey2(mid), [mid]))
+                _groups.append((_jkey2(mid), [mid], [_jnorm(mid)]))
         cands = [m for _, members in _groups for m in members[:2]]   # 대표+차순위만 후보 순회
         _asked_jobs = set()
         bids = []
@@ -806,17 +815,13 @@ class Sys:
         # [팀 비대 차단 복원(2026-07-13, 사용자: '중복 직군·과도 인원 — 트레이드오프')] 응찰은 전원
         # 자유, 확정은 **직군당 최고 응찰 1명**(협의 비용∝인원² — 같은 직군 중복은 게이트 비용만 키움).
         # 탈락 응찰자는 후보 대기 명단으로 기록 — 판 중간 채용 공고 시 우선 지원 대상.
-        from .rule.comm_ceremonies import _job_tokens
-        def _jkey(mid):
-            toks = _job_tokens(str(self.bot_info.get(mid, "")))
-            return frozenset(toks) if toks else frozenset({str(mid)})
-        joined, standby, _seen_jobs = [], [], []
+        joined, standby, _seen = [], [], []          # _seen: (tokens, norm)
         for s0, mid, _ in bids:
-            jk = _jkey(mid)
-            if any(jk & prev for prev in _seen_jobs):     # 직군 토큰 겹침 = 같은/유사 직군
-                standby.append(mid)
+            jk, jn = _jkey2(mid), _jnorm(mid)
+            if any((jk & t) or (jn and n and (jn in n or n in jn)) for t, n in _seen):
+                standby.append(mid)                       # 같은/유사 직군 — 최고점에게 양보
             else:
-                _seen_jobs.append(jk)
+                _seen.append((jk, jn))
                 joined.append(mid)
         self._log("propose_elected", channel=channel_id, who=winner[1], score=winner[0],
                   bidders=len(bids))
