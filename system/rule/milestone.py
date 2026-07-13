@@ -108,6 +108,12 @@ def gate_criteria(entries) -> Optional[str]:
             return (f"조건 '{d[:40]}'의 verify가 실행 가능한 형태가 아닙니다: '{v[:40]}' — "
                     f"run으로 돌릴 명령(curl/pytest/npm/python/grep/localhost/포트/파일경로 등)이나 "
                     f"측정 기준(수치·= > < %·회·초·개)을 넣으세요. '확인한다'류 서술은 불가.")
+        # [로드맵 오용 차단(2026-07-13, 라이브 U-015: 조건에 M0~M3 로드맵)] 조건은 검증 단위지
+        # 하위 마일스톤이 아니다 — 주기 로드맵은 마일스톤 여러 개(계획 큐잉)로.
+        import re as _re
+        if _re.match(r"^M\d+\b", d) or "owner=" in d:
+            return (f"조건 '{d[:40]}'은(는) 로드맵/배정 표기입니다 — 완수조건은 '검증 가능한 사실' 단위입니다. "
+                    f"주기 계획(M0·M1…)은 set_milestone을 여러 번 불러 마일스톤으로 큐잉하고, 담당은 백로그 배분으로 정하세요.")
         key = d.lower()
         if key in seen:
             return f"조건 '{d[:40]}'이 중복입니다 — 합치거나 구체화하세요."

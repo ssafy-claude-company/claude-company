@@ -179,6 +179,25 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                                  f"(시도한 경로: {path}) — 영역 밖 파일은 Read로 참고만 하고, 필요한 변경은 "
                                  f"보고의 [리스크/요청] 항목으로 알리세요(겹침 방지가 병렬의 전제).")
 
+        # 2.7) [백로그 선점 게이트 — 파일 경로(2026-07-13, 사용자: '백로그 0인데 작업이 돈다')]
+        #      run만 잠그니 Write/Edit(SDK)로 도는 작업이 장부 밖 — 활성 단계의 장부가 열려 있으면
+        #      집지 않은 행위자의 산출물 쓰기를 거부한다(.collab는 위에서 이미 차단, 문서 열람은 자유).
+        if tool in ("Write", "Edit") and flow is not None and actor is not None:
+            try:
+                from .rule.milestone import pipeline_on as _po
+                if _po():
+                    _ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
+                    _st = next((x for x in _ms.subtasks if x.status != "done"), None) if _ms else None
+                    _r = (getattr(flow, "backlog_relays", None) or {}).get(_st.st_id) if _st else None
+                    if _st is not None and not (_r is not None and any(
+                            b.status == "in_progress" and int(b.assignee or 0) == int(actor) for b in _r.backlogs)):
+                        audit.record("tool_denied", actor=actor, role=role, tool=tool,
+                                     reason="백로그 미선점", tool_use_id=tool_use_id)
+                        return _deny(f"[백로그 선점 필요] 단계({_st.st_id})가 열려 있으면 산출물 작성도 백로그 단위입니다 — "
+                                     f"pick_backlog(기존 id 또는 desc='이번에 할 일')로 집은 뒤 쓰세요. 집지 않은 작업은 장부·대화에 남지 않습니다.")
+            except Exception:
+                pass
+
         # 3) 구현(Write/Edit)은 'Work 위임 맥락'에서만 — 협의(Info)로 깨워진 동료의 선구현 차단.
         #    나를 깨운 베턴 프레임(top, to=나)이 Work면 통과, Info면 거부. → 리더(origin Work)·
         #    Work 위임받은 owner는 구현 가능, Info 협의 중 동료는 '제안(Response)'만. 구조적으로
