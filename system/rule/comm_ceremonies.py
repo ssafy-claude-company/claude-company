@@ -99,10 +99,12 @@ async def vote(flow, me_id, args):
             from .._util import dossier_append
             dossier_append(flow, "MINUTES.md",
                            f"## 표결 — {question}\n{board}\n" + "\n".join(full_lines))
+        import time as _t
+        flow.last_vote = {"topic": str(question)[:120], "ts": _t.time()}   # [선발 표결 게이트]의 근거
         return (f"[표결 집계 — 도메인(관점) 단위] {question}\n{board}\n\n[각자의 선택·근거]\n"
                    + "\n".join(reasons)
                    + "\n\n(집계는 **도메인 단위** — 같은 직군 N명의 같은 선택은 동질 모델이라 1관점으로 "
-                   + "합산(봇 수가 아니라 다른 관점 수). 참고일 뿐, 최종 판정은 당신(리더).)")
+                   + "합산(봇 수가 아니라 다른 관점 수). 참고일 뿐, 최종 판정은 소집자인 당신.)")
 
     inner = asyncio.ensure_future(_run_vote())
     flow.inflight_tasks.add(inner)
@@ -203,7 +205,7 @@ async def parallel_work(flow, me_id, args):
              f"**당신의 쓰기 영역(리스): {files_txt}** — 이 파일들에만 씁니다. 다른 가지가 다른 "
              f"영역을 동시 작업 중이므로 영역 밖은 Read 참고만 하고, 필요한 변경은 보고의 "
              f"[리스크]에 적으세요. 동료 재위임은 불가(병렬 가지) — 막히면 막힌 지점을 보고하면 "
-             f"리더가 직렬로 풉니다. 직군 밖이면 첫 줄 `[직군밖] 필요직군` 반려.\n"
+             f"소집자가 직렬로 풉니다. 직군 밖이면 첫 줄 `[직군밖] 필요직군` 반려.\n"
              f"직접 구현하고 run으로 검증한 뒤, 보고 계약([결과]/[변경]/[검증]/[리스크])으로 간결히.\n"
              f"[요청 맥락] {body}")
         if notes:
@@ -389,6 +391,17 @@ async def recruit(flow, me_id, role, args):
         if not cand:
             return (f"선발 불가: '{spec}'을(를) 풀에서 못 찾았습니다. 현재 풀: {flow._names(flow.pool)}")
         mid = cand[0]
+        # [선발 표결(2026-07-13, 사용자: '최종 선발은 표를 통하던가')] 지원자가 2인 이상이면 공고자
+        # 단독 판단 금지 — 팀 표결(vote)을 거친 뒤에만 확정된다(공고 이후의 표결만 인정).
+        _op = getattr(flow, "recruit_open", None)
+        _apps = (_op or {}).get("applicants") or {}
+        if _op and len(_apps) >= 2:
+            _lv = getattr(flow, "last_vote", None)
+            if not (_lv and _lv.get("ts", 0) >= _op.get("ts", 0)):
+                _names = ";".join(str(flow._info(m) or m) for m in _apps)
+                return (f"[선발 표결 필요] 지원자 {len(_apps)}명 — 단독 선발은 금지입니다. "
+                        f"vote(question='선발: {(_op.get('role') or _op.get('need') or '')[:24]}', "
+                        f"options='{_names}')로 팀 표결을 연 뒤, 그 결과로 recruit(member=…)를 다시 부르세요.")
         if mid == me_id:
             return ("자기 자신은 채용 대상이 아닙니다 — 자기 직군 확정은 Task 열기 전에만 가능합니다.")
         if mid in flow.current.team:
@@ -599,7 +612,8 @@ async def recruit(flow, me_id, role, args):
         return (f"'{role_name}' 공고 유찰 → 신규 채용: {flow._info(nid) or nid} 합류. "
                 f"현재 팀: {flow._names(flow.current.team)}")
 
-    flow.recruit_open = {"role": role_name, "need": need,
+    import time as _t
+    flow.recruit_open = {"role": role_name, "need": need, "ts": _t.time(),
                          "applicants": dict(applicants)}
     lines = [f"[채용 공고] 지원 {len(applicants)}건 — 지원서를 읽고 선발하세요:"]
     for m, app in applicants.items():

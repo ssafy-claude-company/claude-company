@@ -508,7 +508,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
           "검증을 마친 산출물을 실제로 공개 배포한다(GitHub push + Render 웹서비스 생성/갱신). "
           "name=영문 소문자·하이픈 서비스명(예: slither-multiplayer). 라이브 URL을 반환. "
           "Node 앱이어야 하고 서버는 process.env.PORT를 사용해야 함. run 검증을 끝낸 뒤 마지막에 호출. "
-          "리더만이 아니라 검증을 끝낸 누구나(대개 owner) 직접 배포한다 — 리더에게 넘기려 멈추지 말 것. "
+          "검증을 끝낸 누구나(대개 owner) 직접 배포한다 — 남에게 넘기려 멈추지 말 것. "
           "note=이번 배포의 계기·변경 한 줄(필수에 준함 — 피드에 '누가 왜 배포했나'로 남습니다).",
           {"name": str, "note": str})
     async def deploy(args):
@@ -518,7 +518,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     if role == "leader":
         @tool("create_project",
               "Project로 판단되면 전용 채널 생성 + 규모를 산정해 팀 배정"
-              "(team=쉼표구분 동료 id/역할명, 리더 제외분). 비우면 풀 전체.",
+              "(team=쉼표구분 동료 id/역할명, 본인 제외분). 비우면 풀 전체.",
               {"name": str, "team": str})
         async def create_project(args):
             # [도구=얇은 래퍼] 로직은 rule/project.py(Project Rule)에 — @tool은 계약·표현만, 규칙은 rule/가 소유(§7 복원)
@@ -526,9 +526,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(create_project)
 
         @tool("create_task",
-              "Task '빈 껍데기'를 연다 — **Purpose도 비운 채 멤버만 배정**한다(리더가 할 일을 미리 못 박음 = 중앙집권 "
+              "Task '빈 껍데기'를 연다 — **Purpose도 비운 채 팀만 확정**한다(개인이 할 일을 미리 못 박음 = 중앙집권 "
               "방지). 이후 **배정된 팀이 모여(request Info) Purpose(풀 문제)·Goal(성공기준)을 함께 정해 set_goal로 "
-              "확정**한다 — 이때 **각 직군 전문가가 *자기 도메인*의 Task·소유를 직접 제안**하게 하라(리더가 남의 "
+              "확정**한다 — 이때 **각 직군 전문가가 *자기 도메인*의 Task·소유를 직접 제안**하게 하라(남의 "
               "도메인을 정하지 말 것 — 전문가가 자기 분야를 정의). Owner는 그 일을 Work로 받은 동료가 된다(선배정 "
               "금지). **members=이 일에 필요한 직군 동료를 당신이 직접 고른다**(자동 전원 소집 아님 — 직군 고정 방지) — "
               "고를 때 **각 동료의 누적 경험·강점(직무 기준)을 살려** 적임자에게 맡겨라. 비우면 프로젝트팀 "
@@ -540,7 +540,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(create_task)
 
         @tool("set_goal",
-              "팀 회의로 정한 이번 Task의 **Purpose(풀 문제)와 Goal(측정가능한 성공기준)**을 확정·기록한다. 리더 "
+              "팀 회의로 정한 이번 Task의 **Purpose(풀 문제)와 Goal(측정가능한 성공기준)**을 확정·기록한다. 개인 "
               "단독/선지정 금지 — **이 Task의 멤버 전원**과 meet(회의)로 'Purpose·각 도메인의 목표·성공기준'을 "
               "수렴한 결과를 적는다(1:1 request(Info)보다 meet 권장 — 앵커링↓·회의록 자동 기록). Goal엔 '무엇이 "
               "되면 성공인가'(결과·시나리오)만 쓰고 '어떤 파일·엔드포인트·스택으로 만들지'(구현 방법)는 쓰지 말 것 — "
@@ -566,7 +566,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         @tool("vote",
               "팀 표결(구조적 합의): 선택지를 두고 멤버 전원의 선택+근거를 **동시에**(독립·앵커링 방지) "
               "수집·집계한다. question=안건, options='선택지1;선택지2;...', members=쉼표구분(비우면 현재 "
-              "Task 팀 전원). 1:1 Info를 여러 번 도는 대신 합의를 구조화 — 결과(집계+근거)를 보고 리더가 확정한다.",
+              "Task 팀 전원). 1:1 Info를 여러 번 도는 대신 합의를 구조화 — 결과(집계+근거)를 보고 소집자가 정리한다.",
               {"question": str, "options": str, "members": str})
         async def vote(args):
             return _ok(await _rule_vote(flow, me_id, args))

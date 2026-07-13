@@ -2753,7 +2753,7 @@ def test_비리더_교차도메인_Work_게이트():
     r = asyncio.run(_tools(f, 12, "member")["request"].handler(
         {"to_id": "15", "kind": "Work", "body": "로그인 화면 만들어"}))
     txt = r["content"][0]["text"]
-    assert "교차도메인" in txt and "리더" in txt and "이관" in txt    # 리더 조율 큐로 이관
+    assert "교차도메인" in txt and "앵커" in txt and "이관" in txt    # [어휘 청산] 앵커 조율 큐로 이관
     assert any(ev == "work_crossdomain_blocked" for ev, _ in logged)
     # [리더 조율 강제(2026-06-23)] 막힌 교차도메인 Work가 리더 조율 큐에 적재됐는지 — 리더가 다음 턴에
     # 'SYS 확인 사실'로 받아 직접 그 도메인에 위임하게(워커 핑계 묵살 루프 차단).

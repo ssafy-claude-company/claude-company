@@ -692,9 +692,9 @@ def _req_gate_crossdomain(flow, me_id, to, kind, goal, body, me_is_leader, tag):
             except Exception:
                 pass
             return (
-                f"위임 보류(교차도메인 — **리더 조율 큐로 이관됨**): 당신({flow._info(me_id)})은 다른 도메인의 "
-                f"새 작업을 직접 맡길 수 없어, 이 요청을 **리더에게 조율 사안으로 올렸습니다** — 리더가 그 도메인 "
-                f"전문가에게 직접 배정합니다. 지금 이 턴은 **당신 도메인의 일을 계속**하세요(막힌 그 부분은 리더가 "
+                f"위임 보류(교차도메인 — **조율 큐로 이관됨**): 당신({flow._info(me_id)})은 다른 도메인의 "
+                f"새 작업을 직접 맡길 수 없어, 이 요청을 **앵커에게 조율 사안으로 올렸습니다** — 앵커가 그 도메인 "
+                f"전문가에게 직접 배정합니다. 지금 이 턴은 **당신 도메인의 일을 계속**하세요(막힌 그 부분은 앵커가 "
                 f"처리하니 기다리거나 다른 동료에게 떠넘기지 마세요). 질문·QA 검증은 그대로 자유입니다.")
     return None
 
@@ -743,7 +743,7 @@ async def request(flow, me_id, role, args):
     tag = f"[REQ] {me_id}({flow._info(me_id)})→{to}({flow._info(to)}) {getattr(kind, 'value', kind)}"
     if flow.current is None:
         _dbg(f"{tag} ✗거부:Task없음")
-        return _ok("오류: 진행 중인 Task가 없습니다. (리더가 create_task 먼저 여세요.)")
+        return _ok("오류: 진행 중인 Task가 없습니다. (create_task로 먼저 여세요.)")
     _msg = _req_gate_spare(flow, to, tag)
     if _msg:
         return _ok(_msg)
@@ -814,7 +814,7 @@ async def request(flow, me_id, role, args):
                        f"① 검증자(타 멤버)의 결함 보고로 **무엇이 왜 미달인지 정밀화**해 마지막 1회를 명확히 맡기거나 "
                        f"② 같은 직군의 **다른 전문가**(없으면 recruit)에게 결함 보고와 함께 맡기거나 "
                        f"③ goal이 이미 충족이면 complete_task, 끝내 미달이면 사용자에게 정직하게 보고하세요"
-                       f"(리더가 비전문 직접 마무리로 덮지 말 것).")
+                       f"(비전문 직접 마무리로 덮지 말 것).")
         owner_body = (f"[보완 요청(Redo) — 직전 산출물이 목표에 못 미쳐 되돌아왔습니다] 고칠 구체적 결함: {body}\n"
                       f"[이 Task의 Goal] {goal}\n결함만 정확히 고치고 run으로 재검증해 그 증거와 함께 보고하세요.")
     else:

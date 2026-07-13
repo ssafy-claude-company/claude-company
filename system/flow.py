@@ -13,11 +13,21 @@ from . import entity_status
 class Flow:
     """하나의 활성 흐름(단일흐름 보존). 풀→프로젝트 팀→Task 팀으로 인력을 구조적으로 배정."""
 
+
+    @property
+    def leader(self):
+        return self.anchor
+
+    @leader.setter
+    def leader(self, v):
+        self.anchor = v
     def __init__(self, guide, channel_id, guild_id, leader_id, bot_info=None):
         self.guide = guide
         self.user_channel = channel_id
         self.guild_id = guild_id
-        self.leader = leader_id
+        # [어휘 청산(2026-07-13, 사용자)] 정본 = anchor(턴 앵커 — 권한 아님, 루프 재시작 지점).
+        # leader는 하위호환 별칭(property) — 남은 참조·복원 경로가 깨지지 않게.
+        self.anchor = leader_id
         self.bot_info = bot_info or {}
         # [변경주입 상태] 동료 로스터는 바뀔 때만 재주입(이벤트 기반) — 안 바뀌면 대화 기억에 있음.
         self.seen_roster = {}   # {bot: 마지막으로 본 동료 로스터 문자열}
@@ -213,7 +223,7 @@ class Flow:
 
     def start_root(self, root_id):
         self.root_id = str(root_id)
-        self.comm.request(ORIGIN, self.leader, root_id, Kind.WORK)
+        self.comm.request(ORIGIN, self.anchor, root_id, Kind.WORK)
 
     def next_task_id(self) -> str:
         self._n += 1
