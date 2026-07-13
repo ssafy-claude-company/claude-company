@@ -2336,7 +2336,15 @@ class Sys:
             if getattr(f, "user_channel", None) == cid and not f.done:
                 lead = f.leader
                 bi = f.bot_info or {}
-                tgt = int(target_id) if (target_id and int(target_id) in bi) else lead
+                if target_id and int(target_id) in bi:
+                    tgt = int(target_id)
+                else:
+                    # [최근 작업자 우선(2026-07-13, 사용자: '가장 최근 작업자가 일단 받도록')] 무지정 개입은
+                    # 리더 고정이 아니라 '지금 베턴을 쥔 봇'이 받는다 — 소화/전달은 기계 라우팅이 아닌 봇 판단.
+                    _al = getattr(getattr(f, "comm", None), "alive", None)
+                    tgt = int(_al) if (_al and int(_al) in bi) else lead
+                    if tgt != lead:
+                        text = text + " (지금 작업 중인 당신이 우선 수신했습니다 — 직접 소화할지, 적임 동료에게 넘길지는 당신 판단.)"
                 if getattr(f, "pending_info", None) is None:
                     f.pending_info = {}
                 f.pending_info.setdefault(tgt, []).append(text)            # 대상 봇이 다음 턴에 직접 본다
