@@ -103,6 +103,14 @@ class BacklogRelay:
                 self._log(event, subtask=self.subtask_id, **fields)
             except Exception:
                 pass                            # 관측 실패가 규칙 실행을 죽이지 않는다(로그는 부수물)
+        # [미러 실시간(2026-07-13)] 릴레이 변이가 밀스톤 깔때기(_ckpt)를 안 지나 화면 백로그가
+        # 다음 ms 이벤트까지 낡던 랙 — 변이 즉시 미러 재게시(등재 순간 칩이 살아난다).
+        cb = getattr(self, "_on_change", None)
+        if cb:
+            try:
+                cb()
+            except Exception:
+                pass
 
     # ── 조회 ──────────────────────────────────────────────────────────────
     def get(self, backlog_id: str) -> Backlog:
@@ -346,6 +354,10 @@ def relay_for(flow, st) -> BacklogRelay:
         r = store[st.st_id] = BacklogRelay(subtask_id=st.st_id, log=getattr(flow, "log", None))
     else:
         r._log = getattr(flow, "log", None)      # ckpt 복원분은 log가 비어 있다 — 접근 시 재바인딩
+    def _persist():
+        from .milestone import persist_ms_status
+        persist_ms_status(flow)
+    r._on_change = _persist
     st.backlog_ids = [b.backlog_id for b in r.backlogs]
     return r
 
