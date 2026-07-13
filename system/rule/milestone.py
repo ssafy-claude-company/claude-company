@@ -224,8 +224,11 @@ def _ms_one(flow, ms, relays):
         cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
                "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in st.criteria[:15]]
         sts.append({"g": st.goal[:80], "id": st.st_id, "s": st.status, "met": st_met, "total": st_total, "bl": bl, "cr": cr})
+    # [완수조건 표면화(2026-07-13, 사용자: '뭐 완수했는지 보이게')] ms레벨 조건도 ✓체크리스트로
+    ms_cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
+              "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in ms.criteria[:15]]
     return {"goal": ms.goal[:140], "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
-            "sts": sts}
+            "cr": ms_cr, "sts": sts}
 
 
 def persist_ms_status(flow):
