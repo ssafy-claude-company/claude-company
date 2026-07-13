@@ -789,6 +789,14 @@ class Sys:
                 bids.append((score, mid, out))
                 _asked_jobs.add(_jk)               # 직군 대표 확보 — 차순위 생략
                 self._log("propose_bid", channel=channel_id, who=mid, score=score)
+                # [응찰 가시화(2026-07-13, 사용자: '블랙박스')] 응찰 순간이 채팅에 본인 명의로 남는다
+                try:
+                    import re as _re
+                    _line = _re.sub(r"^\s*\[\s*응찰\s*:\s*\d\s*\]\s*", "",
+                                    next((l.strip() for l in str(out).splitlines() if l.strip()), ""))[:140]
+                    await self.guide.post(int(channel_id), mid, f"[참여 응찰] {score}점 — {_line}")
+                except Exception:
+                    pass
             else:
                 self._log("propose_pass", channel=channel_id, who=mid)
         if not bids:
