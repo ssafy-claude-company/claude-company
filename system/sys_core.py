@@ -762,7 +762,7 @@ class Sys:
                     break
             else:
                 _groups.append((_jkey2(mid), [mid], [_jnorm(mid)]))
-        cands = [m for _, members in _groups for m in members[:2]]   # 대표+차순위만 후보 순회
+        cands = [m for _, members, _n in _groups for m in members[:2]]   # 대표+차순위만 후보 순회
         _asked_jobs = set()
         bids = []
         for mid in cands:
