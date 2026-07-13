@@ -141,6 +141,24 @@ class CommunicationManager:
     def is_alive(self, organt_id) -> bool:
         return self.alive == organt_id
 
+    def rotate_origin_holder(self, new_id: int) -> bool:
+        """[앵커 회전(2026-07-13, 사용자: '첫 주자가 왜 있어')] origin 루트 위임의 수신자를 재지정한다.
+        이어가기 세그먼트 사이 — 루트 프레임만 열려 있고(alive=현 보유자) 다른 프레임이 없을 때만
+        허용되는 원자 연산. 장부(백로그 보유자)가 다음 주자를 정하는 탈중앙 이어달리기의 기초."""
+        if self.done or len(self._stack) != 1:
+            return False
+        f = self._stack[0]
+        if f.from_id != self.origin or self.alive != f.to_id or int(new_id) == int(f.to_id):
+            return False
+        old = int(f.to_id)
+        f.to_id = int(new_id)
+        self.alive = int(new_id)
+        self._engage_frame(f)
+        if self._engagement is not None and old != self.origin and old not in self._participants():
+            self._engagement.release(old, self._scope)
+        self.history.append(("rotate", old, int(new_id), f.request_id, f.kind))
+        return True
+
     def check_request(self, from_id: int, to_id: int, kind: str = "work") -> None:
         """Request 가능 여부를 검증한다(상태 변경 없음). 불가하면 CommError."""
         if self.done:

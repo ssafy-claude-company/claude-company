@@ -697,6 +697,28 @@ class Sys:
                 pass
         return ok
 
+    def _next_runner(self, flow):
+        """[탈중앙 이어달리기(2026-07-13)] 이어가기의 다음 주자를 장부가 정한다 —
+        ①활성 단계의 in_progress 백로그 보유자(가장 최근 선점) ②릴레이 마무리자 ③현 앵커.
+        고정 앵커는 초기값일 뿐, 판이 진행되면 일이 있는 곳으로 주자가 옮겨 간다."""
+        try:
+            ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
+            st = next((x for x in ms.subtasks if x.status != "done"), None) if ms else None
+            r = (getattr(flow, "backlog_relays", None) or {}).get(st.st_id) if st else None
+            if r is not None:
+                hold = [b for b in r.backlogs if b.status == "in_progress" and b.assignee]
+                if hold:
+                    hold.sort(key=lambda b: b.ts_pick or 0)
+                    cand = int(hold[-1].assignee)
+                    if cand in (flow.bot_info or {}):
+                        return cand
+                th = getattr(r, "turn_holder", None)
+                if th and int(th) in (flow.bot_info or {}):
+                    return int(th)
+        except Exception:
+            pass
+        return flow.anchor
+
     async def _elect_proposer(self, channel_id, body):
         """[발제자 응찰 — 갭5, 사용자 설계 2026-07-09] 무지정 새 요청의 발제자를 is_leader 폴백(지정)이
         아니라 **봇들의 자기선택**으로 정한다. 채용 공고·1층 발언권 응찰의 '발제자판' — 4입구 문법 통일.
@@ -2182,7 +2204,12 @@ class Sys:
                                   "깨면 미완이니 **고쳐야 완료**(별도 task로 빼서 done 참칭 금지). 단 acceptance를 이미 "
                                   "통과했으면 *목표 밖 추가 개선*을 이 Task에 더 넣지 마세요 — 그게 회귀를 자초해 무한 "
                                   "churn을 만듭니다. 기존 범위 밖의 *진짜 새 요구*만 별도 Task로.\n\n")
-                result = await self.run_turn(flow, lead, _goal_note + _CONTINUE_BODY + team_note + drained,
+                # [앵커 회전] 다음 주자 = 장부(백로그 보유자·마무리자) — 루트 유휴 시점에만 원자 회전.
+                _nr = self._next_runner(flow)
+                if _nr != flow.anchor and flow.comm.rotate_origin_holder(_nr):
+                    flow.anchor = _nr           # 주자 회전 — 클로저 lead는 건드리지 않는다(초기값일 뿐)
+                    self._log("anchor_rotated", to=int(_nr))
+                result = await self.run_turn(flow, flow.anchor, _goal_note + _CONTINUE_BODY + team_note + drained,
                                              Kind.WORK, "leader")
             # 이어가기 한도 소진/마감 후에도 완주 중인 위임이 있으면 그 결과까지 받아 보고에 붙인다
             # (작업 유실 방지 — 마지막 위임이 마감 직전에 끝나는 경우).
