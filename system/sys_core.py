@@ -774,17 +774,37 @@ class Sys:
             return None
         bids.sort(key=lambda b: (-b[0], b[1]))            # 최고 응찰(동점=id 안정순)
         winner = bids[0]
-        joined = [b[1] for b in bids]
+        # [팀 비대 차단 복원(2026-07-13, 사용자: '중복 직군·과도 인원 — 트레이드오프')] 응찰은 전원
+        # 자유, 확정은 **직군당 최고 응찰 1명**(협의 비용∝인원² — 같은 직군 중복은 게이트 비용만 키움).
+        # 탈락 응찰자는 후보 대기 명단으로 기록 — 판 중간 채용 공고 시 우선 지원 대상.
+        from .rule.comm_ceremonies import _job_tokens
+        def _jkey(mid):
+            toks = _job_tokens(str(self.bot_info.get(mid, "")))
+            return frozenset(toks) if toks else frozenset({str(mid)})
+        joined, standby, _seen_jobs = [], [], []
+        for s0, mid, _ in bids:
+            jk = _jkey(mid)
+            if any(jk & prev for prev in _seen_jobs):     # 직군 토큰 겹침 = 같은/유사 직군
+                standby.append(mid)
+            else:
+                _seen_jobs.append(jk)
+                joined.append(mid)
         self._log("propose_elected", channel=channel_id, who=winner[1], score=winner[0],
                   bidders=len(bids))
         try:
-            _names = " · ".join(f"{self.bot_info.get(m, m)}({s0})" for s0, m, _ in bids)
+            _score = {m: s0 for s0, m, _ in bids}
+            _names = " · ".join(f"{self.bot_info.get(m, m)}({_score[m]})" for m in joined)
+            _stand = " · ".join(str(self.bot_info.get(m, m)) for m in standby)
             await self.guide.post(int(channel_id), 0,
-                f"[참여 확정] 응찰 {len(bids)}명 — {_names} · 1번 턴: {self.bot_info.get(winner[1], winner[1])}\n"
-                f"(첫 협의 의제: 원문에 필요한 직군이 이 구성에 다 있는지 점검 — 부족하면 recruit 공고, "
+                f"[참여 확정] 응찰 {len(bids)}명 → 팀 {len(joined)}명(직군당 최고 응찰) — {_names} · "
+                f"1번 턴: {self.bot_info.get(winner[1], winner[1])}"
+                + (f"\n후보 대기 {len(standby)}명: {_stand} (일손 부족 시 우선 충원)" if standby else "")
+                + f"\n(첫 협의 의제: 원문에 필요한 직군이 이 구성에 다 있는지 점검 — 부족하면 recruit 공고, "
                 f"지원자 없으면 신규 채용이 자동으로 이어집니다.)")
         except Exception:
             pass
+        if flow_standby := standby:
+            self._log("join_standby", n=len(flow_standby))
         return (winner[1], joined)
 
     async def _onboard_inner(self, new_mid, role, recruiter) -> bool:
