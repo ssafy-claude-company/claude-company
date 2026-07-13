@@ -25,7 +25,7 @@ def _flow3(g, tmp_path=None, bot_info=None):
     for a in ("gap_checked", "percept_checked", "acceptance_checked", "decomp_checked",
               "data_prov_checked", "staffing_exempt", "iface_dialogue_checked",
               "offdomain_checked", "crossdomain_checked", "existence_checked",
-              "owner_protect_checked"):
+              "owner_protect_checked", "team_checked"):
         setattr(f, a, True)
     return f
 

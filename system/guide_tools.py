@@ -598,9 +598,11 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "상위가 달라짐', 인증='틀린 토큰은 거부'. 부품 체크(버튼 있나·이벤트 발화하나)만 적으면 *부품은 통과인데 "
               "전체는 목적 미달*인 산출물이 마감된다 — 마감이 이 항목들(특히 존재이유 테스트)의 실현을 검증한다. "
               "게이트 면제 인자(종전 마커와 동등): maximal_na(최대화 N/A 사유)·staffing_waiver(스태핑 면제 "
-              "이유)·depth_solo(심도 단독 — 능력·사유).",
+              "이유)·depth_solo(심도 단독 — 능력·사유). team_check=구성 점검 합의 결론(필수 게이트 — "
+              "'추가 직군 불필요 — <사유>' 또는 '<직군> 부족 → recruit 예정').",
               {"purpose": str, "goal": str, "acceptance": str, "standard": str, "interfaces": str,
-               "existence_test": str, "maximal_na": str, "staffing_waiver": str, "depth_solo": str})
+               "existence_test": str, "maximal_na": str, "staffing_waiver": str, "depth_solo": str,
+               "team_check": str})
         async def set_goal(args):
             return await _rule_set_goal(flow, me_id, role, args)
         tools.append(set_goal)

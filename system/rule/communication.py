@@ -154,6 +154,7 @@ async def meet(flow, me_id, args):
         # 소집자 발제 후 첫 발화부터 응찰. 트레이드오프 관측(§8 민감 접근): R1은 발산(앵커링 방지)
         # 장치였다 — 제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다.
         from .milestone import extract_consensus as _ms_extract, open_milestone as _ms_open_fn
+        from .milestone import gate_new_cycle as _ms_gate_cycle
         from .milestone import pipeline_on as _ms_on, parse_criteria_lines as _ms_parse
         _no_r1 = _ms_on()
         conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
@@ -368,7 +369,11 @@ async def meet(flow, me_id, args):
         # 시스템이 서기로서 즉시 등록한다(사람 확정 발화 없음). 최다 지지 = 동일안 제출 수, 동률=최신.
         # 등록 게이트(실행·측정 강제)가 품질을 지키고, 거부되면 사유를 회의록에 남겨 재회의를 유도한다.
         _confirm_note = ""
-        if _no_r1 and conv_props:
+        # [같은 문(2026-07-13, 사용자: '대체됨은 또 왜 생긴거고')] 표결 확정도 등록 게이트(목표 선행·
+        # 정밀 복구)를 지난다 — U-015에서 이 경로가 검문 없이 iter>0 미완 주기를 대체했다.
+        if _no_r1 and conv_props and (_cyc_err := _ms_gate_cycle(flow)):
+            _confirm_note = f"\n\n[표결 확정 보류] {_cyc_err}"
+        elif _no_r1 and conv_props:
             from collections import Counter
             _ranked = [p for p, _ in Counter(conv_props).most_common()]
             for _prop in _ranked:

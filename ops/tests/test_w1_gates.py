@@ -23,7 +23,7 @@ def _flow4(g):
     for a in ("gap_checked", "percept_checked", "acceptance_checked", "decomp_checked",
               "data_prov_checked", "staffing_exempt", "iface_dialogue_checked",
               "offdomain_checked", "crossdomain_checked", "existence_checked",
-              "owner_protect_checked"):
+              "owner_protect_checked", "team_checked"):
         setattr(f, a, True)
     return f
 
@@ -396,3 +396,46 @@ def test_G3_좁은판정_캐주얼만_casual_빌드동사나_Info단독은_아�
     assert _casual_turn("추천 시스템 만들어줘", "leader") is False       # 빌드 동사 → 전체 장착
     assert _casual_turn("팀 토론 진행해줘", "leader") is False           # Info 단독 경로(신호 없음) 제외
     assert _casual_turn("점심 맛집 추천해줘", "member") is False         # 워커 턴 비대상
+
+
+# ──────────────── 2026-07-13 새 주기 공용 게이트 + set_goal 구성 점검 ────────────────
+
+def test_새주기_공용게이트_목표선행과_정밀복구_두경로가_같은문(monkeypatch):
+    """[U-015 라이브] 회의 표결 확정 경로가 open_milestone을 직접 불러 목표 선행·정밀 복구 게이트를
+    우회, iter>0 미완 주기를 대체(supersede)했다 — gate_new_cycle 하나를 도구 등록과 표결 확정이
+    공유한다(같은 문). ①GOAL 미확정=보류 ②확정 후 통과 ③iter 0 큐잉 허용 ④iter>0 대체 금지."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import gate_new_cycle, open_milestone, parse_criteria_lines
+    g = FakeGuide()
+    f = _flow(g)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"purpose": "p", "members": "12"}))
+    err = gate_new_cycle(f)
+    assert err and "목표(GOAL)" in err                       # ① 목표 선행
+    f.current.status.goal = "웹앱 v1 배포"
+    assert gate_new_cycle(f) is None                         # ② 통과(미완 주기 없음)
+    ms = open_milestone(f, "주기1", parse_criteria_lines("카운트 API 동작 | curl POST 후 GET으로 확인"))
+    assert not isinstance(ms, str)
+    assert gate_new_cycle(f) is None                         # ③ 계획 단계(iter 0) 큐잉 허용
+    ms.iter_n = 1                                            # 검증이 돌던 주기
+    err2 = gate_new_cycle(f)
+    assert err2 and "이어가세요" in err2                     # ④ 갈아타기 거부(정밀 복구)
+
+
+def test_set_goal_구성점검_결론없으면_보류_마커로_통과():
+    """[2026-07-13 사용자: '직원 더 필요한거 없나 회의를 했냐'] 참여 확정문에 '첫 협의 의제'로 동봉한
+    권고가 씹혔다(U-015 — 첫 회의가 곧장 컨셉으로, 구성 논의 발화 0). set_goal이 구성 점검 *결론*
+    ('[구성 점검: …]')을 요구해 논의를 목표 회의 안으로 구조 강제 — 결론은 GOAL.md에 남는다."""
+    g = FakeGuide()
+    f = _flow(g)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"purpose": "p", "members": "12"}))
+    f.current.participated.update({12})                      # 합의 커버리지 통과
+    f.team_checked = False                                   # 테스트 우회 해제(관례) — 이 게이트 활성
+    r = asyncio.run(t["set_goal"].handler({"goal": "웹앱 v1", "standard": "부품 A·B·C"}))
+    txt = r["content"][0]["text"]
+    assert "구성 점검" in txt and not f.current.status.goal   # 보류 + goal 미설정
+    asyncio.run(t["set_goal"].handler({                      # B-16 인자 경로(마커와 동등)로 결론 명시
+        "goal": "웹앱 v1", "standard": "부품 A·B·C",
+        "team_check": "추가 직군 불필요 — 원문 요구 직군 전원 보유"}))
+    assert f.current.status.goal and "[구성 점검" in f.current.status.goal   # 확정 + GOAL에 결론 박제

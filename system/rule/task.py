@@ -266,6 +266,9 @@ async def set_goal(flow, me_id, role, args):
     _ds_arg = str(args.get("depth_solo") or "").strip()
     if _ds_arg and "[심도 단독" not in goal and "[심도 단독" not in (args.get("acceptance") or ""):
         _b16.append(f"[심도 단독: {_ds_arg}]")
+    _tc_arg = str(args.get("team_check") or "").strip()
+    if _tc_arg and "[구성 점검" not in goal and "[구성 점검" not in (args.get("acceptance") or ""):
+        _b16.append(f"[구성 점검: {_tc_arg}]")
     if _b16:
         goal = goal + "\n" + "\n".join(_b16)
     # Purpose·Goal은 '담당 팀이 함께' 정한다(docs: Task.Team이 Goal을 정한다). 이 Task 멤버 전원이
@@ -388,6 +391,23 @@ async def set_goal(flow, me_id, role, args):
                    "훌륭한 예를 대조해 *자기 도메인 최대 부품*을 meet로 기여(합집합 누적 — 1명 지능에 인질 "
                    "금지). 정말 이 작품엔 최대화할 차원이 없으면 goal이나 standard에 **'[최대화 N/A: "
                    "<사유>]'**를 적어 재호출하세요(빈 재호출은 통과 안 됨 — 사유 필수).")
+    # [구성 점검 강제(2026-07-13, 사용자: '13명에서 직원 더 필요한거 없나 회의를 했냐')] 참여 확정문에
+    # '첫 협의 의제'로 동봉한 권고는 씹혔다(U-015 — 첫 회의가 곧장 컨셉으로, 구성 논의 발화 0). 권고는
+    # 구조가 아니다 — 목표 확정문에 구성 점검 *결론*을 요구해 그 논의가 목표 회의 안에서 반드시 일어나게
+    # 강제한다(별도 회의 없음 — 토큰 추가 0에 수렴). 결론은 GOAL.md에 남아 사용자가 열람. 스태핑 게이트
+    # (_capability_gaps)는 능력표 키워드만 보는 기계 검사라 표 밖 도메인(사운드·장르 특수직)을 못 본다 —
+    # 이 게이트가 그 빈자리를 팀 지능의 의식적 합의로 채운다. 테스트 우회는 team_checked(게이트별 관례).
+    _team_checked = bool(re.search(r"\[\s*구성\s*점검[^\]]*[:：]\s*\S{2,}",
+                                   goal + "\n" + (args.get("acceptance") or "")))
+    if not getattr(flow, "team_checked", False) and not _team_checked:
+        if flow.log:
+            flow.log("set_goal_team_check", task=flow.current.task_id)
+        holds.append(
+            "확정 보류(구성 점검 미기재): 확정 전에 팀 구성 점검을 마치세요 — 회의에서 **'원문·목표에 필요한 "
+            "직군이 지금 구성에 다 있는가, 반대로 이 판에 필요 없는 직군이 끼어 있진 않은가'**를 물어 합의하고, "
+            "goal 또는 acceptance에 **'[구성 점검: 추가 직군 불필요 — <사유>]'** 또는 **'[구성 점검: <직군> "
+            "부족 → recruit 예정]'**을 명시해 재호출하세요(빈 재호출은 통과 안 됨 — 합의 결론 필수). "
+            "부족 결론이면 recruit(role=…) 충원이 먼저고, 후보 대기 인원이 있으면 그들이 우선입니다.")
     # [스태핑 커버리지 강제 — 리더 흡수 차단(2026-06-19, 사용자: '전문가 분배 무조건, 리더는 자기 직군만')]
     # consensus-coverage 게이트처럼 persistent-until-resolved: 목표가 명시적으로 부른 전문 능력을 팀(리더
     # 포함)이 *아무도* 보유 못 했으면 확정 보류 → recruit로 그 전문가를 투입해야 통과(채우면 갭이 사라져

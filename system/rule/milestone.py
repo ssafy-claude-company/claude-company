@@ -544,20 +544,17 @@ def extract_consensus(text: str):
     return m.group("body").strip() if m else None
 
 
-def rule_set_milestone(flow, me_id, args) -> str:
-    """[누구나 — 서기] 회의 수렴을 등록해 마일스톤 개설. 확정의 실체는 회의 종결 표결(가결)이고
-    등록은 기록 행위다 — 품질은 등록 게이트가 방어. 게이트 거부는 사유+처방을 그대로 반환."""
-    if not pipeline_on():
-        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+def gate_new_cycle(flow):
+    """[새 주기 공용 게이트(2026-07-13, 사용자: '대체됨은 또 왜 생긴거고')] 마일스톤 개설 전 공통 검문 —
+    도구 등록(rule_set_milestone)과 회의 표결 확정(communication)이 같은 문을 지난다. U-015 라이브에서
+    표결 경로가 이 검문 없이 open_milestone을 직접 불러 iter>0 미완 주기를 대체(supersede)했다.
+    통과=None, 거부=사유 문자열(호출측이 그대로 회신)."""
     # [목표 선행 게이트(2026-07-13)] GOAL 없이 마일스톤이 서면 판의 정체가 영영 빈칸 - 순서를 구조로 강제.
     _cur = getattr(flow, "current", None)
     if _cur is not None and not str(getattr(_cur.status, "goal", "") or "").strip():
         return ("[마일스톤 등록 보류] 이 Task의 목표(GOAL)가 아직 확정되지 않았습니다 - 소집자가 "
                 "set_goal(팀 합의)로 목표를 먼저 확정하세요. 목표 없는 마일스톤은 판의 정체를 비웁니다. "
                 "(set_goal은 소집자 턴의 도구입니다 - 회의 참여 턴에는 안 보입니다.)")
-    goal = str(args.get("goal") or "").strip()
-    if not goal:
-        return "등록 거부: goal(이 주기의 목표 한 줄)이 비었습니다."
     # [정밀 복구 게이트(2026-07-11, 사용자: '대체 말고 기존 걸 바로 이어가야지')] 미완 주기가 있으면
     # 새 주기 개설 금지 — 승계·재편성이라는 이름의 중복 개설이 태깅·기록·화면을 갈랐다(ch53 라이브).
     _open = next((m for m in (getattr(flow, "milestones", None) or [])
@@ -577,6 +574,20 @@ def rule_set_milestone(flow, me_id, args) -> str:
                 f"**그 주기를 이어가세요**(정밀 복구 원칙). 미충족: {_remain[:200] or '(없음 — wrapup 정리 후 종료)'}. "
                 f"report_iter(대상 지정 가능)로 검증을 잇고, 단위가 필요하면 set_subtask로 그 주기 안에 여세요. "
                 f"조건이 환경상 불가면 renegotiate_criterion이 출구입니다.")
+    return None
+
+
+def rule_set_milestone(flow, me_id, args) -> str:
+    """[누구나 — 서기] 회의 수렴을 등록해 마일스톤 개설. 확정의 실체는 회의 종결 표결(가결)이고
+    등록은 기록 행위다 — 품질은 등록 게이트가 방어. 게이트 거부는 사유+처방을 그대로 반환."""
+    if not pipeline_on():
+        return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    err = gate_new_cycle(flow)
+    if err:
+        return err
+    goal = str(args.get("goal") or "").strip()
+    if not goal:
+        return "등록 거부: goal(이 주기의 목표 한 줄)이 비었습니다."
     entries = parse_criteria_lines(args.get("criteria"))
     ms = open_milestone(flow, goal, entries, origin=str(args.get("origin") or ""))
     if isinstance(ms, str):

@@ -833,7 +833,8 @@ class Sys:
                 f"[참여 확정] 응찰 {len(bids)}명 → 팀 {len(joined)}명(직군당 최고 응찰) — {_names} · "
                 f"1번 턴: {self.bot_info.get(winner[1], winner[1])}"
                 + (f"\n후보 대기 {len(standby)}명: {_stand} (일손 부족 시 우선 충원)" if standby else "")
-                + f"\n(첫 협의 의제: 원문에 필요한 직군이 이 구성에 다 있는지 점검 — 부족하면 recruit 공고, "
+                + f"\n(첫 협의 의제: 원문에 필요한 직군이 이 구성에 다 있는지 점검 — 합의 결론을 "
+                f"'[구성 점검: …]'으로 목표 확정문에 담아야 set_goal이 통과합니다. 부족하면 recruit 공고, "
                 f"지원자 없으면 신규 채용이 자동으로 이어집니다.)")
         except Exception:
             pass

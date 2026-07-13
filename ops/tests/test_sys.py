@@ -64,6 +64,7 @@ def _flow(g, leader=11):
     f.crossdomain_checked = True  # 비-리더 교차도메인 Work 게이트도 기본 우회(전용 테스트만 False로 검증)
     f.existence_checked = True  # [G5 B-05] 존재이유 게이트도 기본 우회(전용 테스트만 False로 검증)
     f.owner_protect_checked = True  # [G1 B-04] 미완 owner 보호 게이트도 기본 우회(전용 테스트만 False로 검증)
+    f.team_checked = True  # 구성 점검 게이트(2026-07-13)도 기본 우회(전용 테스트만 False로 검증)
     return f
 
 
@@ -668,7 +669,7 @@ def test_owner는_work수신자_goal합의후():
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "A백엔드", 13: "B프론트"})
     f.start_root("root")
-    f.gap_checked = True; f.decomp_checked = True   # P7 범주·분해 점검 보류 우회(이 테스트 범위 밖)
+    f.gap_checked = True; f.decomp_checked = True; f.team_checked = True   # P7 범주·분해 점검 보류 우회(이 테스트 범위 밖)
     f.staffing_exempt = True; f.parallel_planned = True   # Stage1·2 게이트 우회(이 테스트 범위 밖)
     f.existence_checked = True   # [G5 B-05] 존재이유 게이트 우회(이 테스트 범위 밖)
     waked = []
@@ -704,7 +705,7 @@ def test_set_goal은_Task멤버_전원_의견받은뒤에만_Task별():
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백", 13: "프"})
     f.start_root("root")
-    f.gap_checked = True; f.decomp_checked = True   # P7 범주·분해 점검 보류(이 테스트는 participated 게이트 검증)
+    f.gap_checked = True; f.decomp_checked = True; f.team_checked = True   # P7 범주·분해 점검 보류(이 테스트는 participated 게이트 검증)
     f.staffing_exempt = True; f.parallel_planned = True   # Stage1·2 게이트 우회(이 테스트는 participated 검증)
     f.percept_checked = True   # 지각 비대칭 점검 보류 우회(범위 밖)
     f.acceptance_checked = True   # 수용 계약 게이트 보류 우회(범위 밖)
@@ -735,7 +736,7 @@ def test_set_goal_점유도메인은_면제아니라_1회대기보류_후_의식
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드", 13: "프론트엔드"})
     f.start_root("root")
-    f.gap_checked = True; f.percept_checked = True; f.acceptance_checked = True
+    f.gap_checked = True; f.percept_checked = True; f.acceptance_checked = True; f.team_checked = True
     f.staffing_exempt = True; f.parallel_planned = True   # Stage1·2 게이트 우회(이 테스트는 busy-consensus 검증)
     eng = Engagement()
     f.comm.attach_engagement(eng, scope="P-THIS")
@@ -762,7 +763,7 @@ def test_set_goal_같은직군_잉여는_합의면제_에코방지():
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드", 13: "백엔드", 14: "프론트엔드"})
     f.start_root("root")
-    f.gap_checked = True; f.percept_checked = True; f.acceptance_checked = True; f.decomp_checked = True
+    f.gap_checked = True; f.percept_checked = True; f.acceptance_checked = True; f.decomp_checked = True; f.team_checked = True
     f.staffing_exempt = True; f.parallel_planned = True   # Stage1·2 set_goal 게이트 우회(이 테스트는 consensus 검증)
     f.existence_checked = True   # [G5 B-05] 존재이유 게이트 우회(이 테스트 범위 밖)
     logged = []; f.log = lambda ev, **kw: logged.append((ev, kw))
@@ -776,7 +777,7 @@ def test_set_goal_같은직군_잉여는_합의면제_에코방지():
     # 대조: 프론트(14) 미참여면 프론트 도메인 *미커버* → 거부(에코 아님, 진짜 도메인 누락)
     g2 = FakeGuide()
     f2 = Flow(g2, channel_id=501, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드", 13: "백엔드", 14: "프론트엔드"})
-    f2.start_root("r2"); f2.gap_checked = True; f2.percept_checked = True; f2.acceptance_checked = True; f2.decomp_checked = True
+    f2.start_root("r2"); f2.gap_checked = True; f2.percept_checked = True; f2.acceptance_checked = True; f2.decomp_checked = True; f2.team_checked = True
     f2.staffing_exempt = True; f2.parallel_planned = True
     f2.existence_checked = True   # [G5 B-05] 존재이유 게이트 우회(이 테스트 범위 밖)
     t2 = {x.name: x for x in make_guide_tools(f2, 11, "leader")}
@@ -794,7 +795,7 @@ def test_set_goal_가용한_미참여멤버는_여전히_협의요구():
     g = FakeGuide()
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드", 13: "프론트엔드"})
     f.start_root("root")
-    f.gap_checked = True; f.percept_checked = True; f.acceptance_checked = True; f.decomp_checked = True
+    f.gap_checked = True; f.percept_checked = True; f.acceptance_checked = True; f.decomp_checked = True; f.team_checked = True
     f.staffing_exempt = True; f.parallel_planned = True   # Stage1·2 set_goal 게이트 우회(이 테스트는 consensus 검증)
     eng = Engagement()
     f.comm.attach_engagement(eng, scope="P-THIS")    # 13은 어디에도 점유 안 됨(가용)
@@ -2668,7 +2669,7 @@ def test_스태핑_커버리지_AI능력없으면_set_goal보류_리더흡수차
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     f.current.participated.update({12, 13})                    # 합의 커버리지 통과
-    f.gap_checked = True                                       # 최대화 점검 통과(이 게이트만 검증)
+    f.gap_checked = True; f.team_checked = True                # 최대화·구성점검 통과(이 게이트만 검증)
     r = asyncio.run(t["set_goal"].handler({"goal": "AI 모델로 예측"}))
     txt = r["content"][0]["text"]
     assert "스태핑 커버리지" in txt and "recruit" in txt and not f.current.status.goal   # 보류 + goal 미설정
@@ -4260,7 +4261,7 @@ def test_Task_체크포인트_전이마다_영속_마감시_해제(tmp_path):
                         "leader": 11, "summary": ""}}
     f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드"})
     f.start_root("root")
-    f.gap_checked = True   # P7 범주점검 보류 우회(체크포인트 검증 범위 밖)
+    f.gap_checked = True; f.team_checked = True   # P7 범주·구성점검 보류 우회(체크포인트 검증 범위 밖)
     f.percept_checked = True   # 지각 비대칭 점검 보류 우회(범위 밖)
     f.acceptance_checked = True   # 수용 계약 게이트 보류 우회(범위 밖)
     f.existence_checked = True   # [G5 B-05] 존재이유 게이트 우회(범위 밖)
@@ -5501,7 +5502,7 @@ def test_재검증dedup_F1_이미검증한검증자만_차단():
     f.start_root("root")
     for _a in ("gap_checked", "percept_checked", "acceptance_checked", "decomp_checked",
                "data_prov_checked", "staffing_exempt", "iface_dialogue_checked",
-               "offdomain_checked", "crossdomain_checked", "existence_checked"):
+               "offdomain_checked", "crossdomain_checked", "existence_checked", "team_checked"):
         setattr(f, _a, True)   # 다른 게이트는 우회(reverify_checked는 *안* 켜 — dedup만 활성 테스트)
 
     async def wake(to, b, k):
@@ -5543,7 +5544,8 @@ def test_회로차단기_경보후_검증보류_S1a():
     f.start_root("root")
     for _a in ("gap_checked", "percept_checked", "acceptance_checked", "decomp_checked",
                "data_prov_checked", "staffing_exempt", "iface_dialogue_checked",
-               "offdomain_checked", "crossdomain_checked", "reverify_checked", "existence_checked"):
+               "offdomain_checked", "crossdomain_checked", "reverify_checked", "existence_checked",
+               "team_checked"):
         setattr(f, _a, True)   # 다른 게이트·재검증dedup 모두 우회 — 회로차단기 블록만 활성 테스트
 
     async def wake(to, b, k):
