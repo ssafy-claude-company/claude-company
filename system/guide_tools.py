@@ -364,12 +364,14 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                 _ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
                 _st = next((x for x in _ms.subtasks if x.status != "done"), None) if _ms else None
                 _r = (getattr(flow, "backlog_relays", None) or {}).get(_st.st_id) if _st else None
-                if _r is not None and _r.backlogs and not any(
-                        b.status == "in_progress" and int(b.assignee or 0) == int(me_id) for b in _r.backlogs):
-                    _cand = " · ".join(f"{b.backlog_id}({b.status[:4]})" for b in _r.backlogs[:8])
-                    return _ok(f"[백로그 선점 필요] 판이 열려 있으면 작업은 백로그 단위입니다 — pick_backlog로 "
-                               f"집은 뒤 실행하세요(기존 id 또는 desc로 돌발 등재). 집지 않은 작업은 장부·대화 "
-                               f"귀속에 남지 않습니다. 현재 {_st.st_id}: {_cand}")
+                # [빈 장부 구멍 봉쇄(2026-07-13, 라이브 U-013: ST 열림·백로그 0·자유 실행)] ST가 열려
+                # 있으면 장부가 비어 있어도 선점 없인 실행 불가 — 안 만들면 영영 안 걸리던 구멍.
+                if _st is not None and not (_r is not None and any(
+                        b.status == "in_progress" and int(b.assignee or 0) == int(me_id) for b in _r.backlogs)):
+                    _cand = " · ".join(f"{b.backlog_id}({b.status[:4]})" for b in (_r.backlogs[:8] if _r else [])) or "(비어 있음)"
+                    return _ok(f"[백로그 선점 필요] 단계({_st.st_id})가 열려 있으면 작업은 백로그 단위입니다 — "
+                               f"pick_backlog(기존 id 또는 desc='이번에 할 일')로 집은 뒤 실행하세요. 한 번의 "
+                               f"호출로 등재+착수됩니다. 집지 않은 작업은 장부·대화에 남지 않습니다. 현재 장부: {_cand}")
         except Exception:
             pass
         if _COLLAB_RE.search(cmd.lower()):
