@@ -738,10 +738,30 @@ class Sys:
             await self.guide.post(int(channel_id), 0, f"[참여 공고] 새 판이 열렸습니다 — 참여는 자기선택입니다.\n원문: {clip}")
         except Exception:
             pass
+        # [직군 대표제(2026-07-13, 사용자: '적합성 토대로 각 도메인 1위에게만 물으면')] 전원 wake(인원수
+        # 비용)를 직군별 대표 후보 wake(직군 수 비용)로 — 대표가 패스하면 차순위 1명까지. 참여 여부는
+        # 여전히 본인 자기선택([응찰: N]/[패스]), 적합도 점수가 1번 턴을 정한다.
+        from .rule.comm_ceremonies import _job_tokens as _jt
+        def _jkey2(mid):
+            t = _jt(str(self.bot_info.get(mid, "")))
+            return frozenset(t) if t else frozenset({str(mid)})
+        _groups = []
+        for mid in cands:
+            for g in _groups:
+                if _jkey2(mid) & g[0]:
+                    g[1].append(mid)
+                    break
+            else:
+                _groups.append((_jkey2(mid), [mid]))
+        cands = [m for _, members in _groups for m in members[:2]]   # 대표+차순위만 후보 순회
+        _asked_jobs = set()
         bids = []
         for mid in cands:
             if self.engaged.holder(mid) is not None:
                 continue
+            _jk = _jkey2(mid)
+            if any(_jk & j for j in _asked_jobs if isinstance(j, frozenset)):
+                continue   # 이 직군은 이미 대표가 응찰함 — 차순위 wake 생략(비용)
             self.engaged.engage(mid, "__propose__")       # 응찰 중 배경 점유(배타 — 이중 존재 차단)
             try:
                 flow = Flow(self.guide, 0, self.guild_id, mid, self.bot_info)
@@ -767,6 +787,7 @@ class Sys:
             score = _bid_of(out)
             if score > 0:
                 bids.append((score, mid, out))
+                _asked_jobs.add(_jk)               # 직군 대표 확보 — 차순위 생략
                 self._log("propose_bid", channel=channel_id, who=mid, score=score)
             else:
                 self._log("propose_pass", channel=channel_id, who=mid)
