@@ -52,6 +52,8 @@ def task_snapshot(flow, ref) -> dict:
         "dossier_path": dossier_rel(ref.task_id),
         "purpose": ref.status.purpose or "",
         "goal": ref.status.goal or "",
+        # [팀 로스터(2026-07-13, 사용자: '확정된 작업자 수가 정본')] 확정 팀 명단 — 화면 인원 표시의 정본
+        "team": [{"id": str(m), "label": str(flow.bot_info.get(m, ""))} for m in (ref.team or [])],
         "owner": int(ref.owner or 0),
         "owner_name": ref.status.owner or "",
         "team": [int(x) for x in ref.team],
