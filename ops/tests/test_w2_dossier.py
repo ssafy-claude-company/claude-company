@@ -478,16 +478,18 @@ def _speech_fixture(guide, tmp_path):
     return f
 
 
-def test_B12_post_document_매체는_500자clip_전문ref(tmp_path):
+def test_B12_post_document_매체는_전문_인라인_문서보존(tmp_path):
+    # [회의 더보기 잔재 제거(2026-07-09)] murmur 피드는 긴 글을 담으므로 전문을 인라인 게시 —
+    # 채널엔 clip·더보기 마커 없이 전문, 문서(dossier)엔 기록 보존.
     g = _DocGuide()
     f = _speech_fixture(g, tmp_path)
     full = "발언 " * 300                                         # ~900자
     asyncio.run(_say_speech(f, 12, "[회의 1R]", full))
     docs = [c for c in g.calls if c[0] == "doc"]
     posts = [c for c in g.calls if c[0] == "post"]
-    assert docs and docs[0][4] == full                          # 전문이 문서로
-    assert posts and "…[전문: /api/docs/7/]" in posts[-1][3]     # 채널엔 참조
-    assert "500자 안전망에서 잘림" in posts[-1][3]                # clip은 '표기된' 500자(2026-07-03 200→500)
+    assert docs and docs[0][4] == full                          # 전문이 문서로 보존
+    assert posts and full.strip() in posts[-1][3]               # 채널엔 전문 인라인
+    assert "전문:" not in posts[-1][3] and "잘림" not in posts[-1][3]   # 더보기 마커·잘림 안내 없음
 
 
 def test_B12_폴백_매체는_500자clip_참조문구_없음(tmp_path):
@@ -512,5 +514,6 @@ def test_B12_meet_채널발언이_매체조건부로_게시(tmp_path):
     asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "1",
                                    "my_opinion": "소집자 의견 " + "근거 " * 300}))
     posts = [c[3] for c in g.calls if c[0] == "post" and "[회의 1R]" in str(c[3])]
-    assert posts and all("…[전문: /api/docs/7/]" in p for p in posts)
-    assert len([c for c in g.calls if c[0] == "doc"]) == 3      # 발언자별 전문 문서(멤버2 + 소집자 리더 = 참여자)
+    assert posts and all("전문:" not in p and "잘림" not in p for p in posts)   # 인라인 — 더보기 마커 없음
+    assert len([c for c in g.calls if c[0] == "doc"]) == 3      # 발언자별 전문 문서(기록 보존) — 멤버2 + 소집자 리더
+    assert all(len(p) > 900 for p in posts)                     # 전문이 실제로 인라인(clip 아님)

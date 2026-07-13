@@ -5724,10 +5724,12 @@ def test_deliver_human_info_노트주입_프롬프트반영_가드_대상라우�
     assert s.deliver_human_info(500, None, "   ") is False       # 빈 텍스트
     # 대상 미지정 → 리더(11)
     assert s.deliver_human_info(500, None, "백엔드 코드 이상, 다시 봐") is True
-    assert f.pending_info.get(11) == ["백엔드 코드 이상, 다시 봐"]
+    # [개입 소화 확인(2026-07-13)] 전달문에 '[답변]' 확인 규약이 동봉된다
+    _n11 = f.pending_info.get(11) or []
+    assert len(_n11) == 1 and _n11[0].startswith("백엔드 코드 이상, 다시 봐") and "[답변]" in _n11[0]
     # 대상=12 → 12 직접 + 리더(11) 인지 노트
     assert s.deliver_human_info(500, 12, "캐시 붙여줘") is True
-    assert "캐시 붙여줘" in f.pending_info.get(12, [])
+    assert any(str(x).startswith("캐시 붙여줘") for x in f.pending_info.get(12, []))
     assert any("전달됨" in n for n in f.pending_info.get(11, []))
     # _prompt: 리더(11) 프롬프트에 노트 반영
     p = s._prompt("받은요청", Kind.WORK, "leader", 11, 11, f)

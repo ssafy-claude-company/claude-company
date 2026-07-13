@@ -367,7 +367,10 @@ async def _say_speech(flow, who, prefix, full):
         except Exception:
             ref = None                                # 미배포 백엔드·순단 — clip 폴백(무중단)
     if ref:
-        await _say(flow, who, f"{prefix} {_speech_clip(full, 500)} …[전문: {ref}]")
+        # [회의 더보기 잔재 제거(2026-07-09, 사용자)] murmur 피드는 긴 글을 담게 재설계됐다 —
+        # 500자 clip + 모달 '더보기'는 디스코드(평채널) 시절 잔재. 전문을 인라인으로 게시하고
+        # (문서 ref는 기록 보존용으로 남되 채널엔 마커 안 붙임). 아주 긴 발언만 안전 상한.
+        await _say(flow, who, f"{prefix} {_speech_clip(full, 8000)}")
     else:
-        await _say(flow, who, f"{prefix} {_speech_clip(full, 500)}")
+        await _say(flow, who, f"{prefix} {_speech_clip(full, 500)}")   # 폴백 매체(디스코드)는 종전 clip
 

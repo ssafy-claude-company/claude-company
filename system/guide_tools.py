@@ -251,6 +251,42 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return _r
         tools.append(set_subtask)
 
+        @tool("pick_backlog",
+              "활성 SubTask의 백로그를 집는다(id='B3') — 또는 desc로 돌발 항목을 등재+집기. "
+              "**작업(run)은 백로그를 집은 뒤에만** — 집어야 작업·대화가 그 항목 장부에 남는다. "
+              "기존 항목의 배분권은 릴레이 규칙(마무리자 지명·응찰)을 따르고, 자기 desc 등재는 즉시 착수.",
+              {"id": str, "desc": str})
+        async def pick_backlog(args):
+            from .rule.backlog import relay_for, BacklogError, DuplicateBacklog
+            from .rule.milestone import _set_pipeline_ctx
+            ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
+            st = next((x for x in ms.subtasks if x.status != "done"), None) if ms else None
+            if st is None:
+                return _ok("활성 SubTask가 없습니다 — set_subtask로 단계를 먼저 여세요.")
+            r = relay_for(flow, st)
+            bid = str(args.get("id") or "").strip()
+            desc = str(args.get("desc") or "").strip()
+            try:
+                if bid:
+                    b = r.get(bid)
+                    if b.status == "in_progress" and int(b.assignee or 0) == int(me_id):
+                        pass                      # 이미 내 보유 — 멱등
+                    else:
+                        r.pick(int(me_id), b.backlog_id, int(me_id))
+                elif desc:
+                    try:
+                        b = r.submit(int(me_id), desc[:140])
+                    except DuplicateBacklog as e:
+                        return _ok(str(e))
+                    r.pick(int(me_id), b.backlog_id, int(me_id))
+                else:
+                    return _ok("id(기존 백로그) 또는 desc(돌발 등재) 중 하나가 필요합니다.")
+            except BacklogError as e:
+                return _ok(f"선점 불가: {e}")
+            _set_pipeline_ctx(flow, me_id)        # 이 턴의 이후 게시부터 이 백로그로 귀속
+            return _ok(f"백로그 {b.backlog_id} 선점 — 작업하세요. 완료는 report_iter(조건 검증) 또는 위임 마무리가 장부에 반영합니다.")
+        tools.append(pick_backlog)
+
         @tool("report_iter",
               "진행 중 주기의 완수조건 실증 결과를 제출한다(검증 참여자 누구나). results=한 줄에 "
               "'조건 | pass/fail | 증거(run 출력 요지)' — **증거 없는 pass는 인정되지 않는다**. "
@@ -318,6 +354,24 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return _ok("[대기] 직전 위임이 아직 진행 중입니다 — 지금 직접 실행(run)하면 동료와 동시 작업(이중 "
                        "활성)이 됩니다. 추가 행동 없이 이 턴을 마치세요. 위임이 완료되면 SYS가 그 결과와 함께 "
                        "당신을 다시 깨웁니다(그때 검증·통합하세요).")
+        # [백로그 문맥 전수 보장(2026-07-13, 사용자: '백로그 단위로 일하게 설계돼 있는데')] 판(활성 ST의
+        # 장부)이 열려 있으면 작업 실행은 백로그 선점 후에만 — 집지 않은 작업이 장부 밖에서 벌어져
+        # 검증 시점 소급 등재(빈 완수)를 만드는 구조 구멍을 도구층에서 막는다. 장부가 아직 없는
+        # 초기 탐색(협의·GOAL 확정 전)은 자유.
+        try:
+            from .rule.milestone import pipeline_on as _po
+            if _po():
+                _ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
+                _st = next((x for x in _ms.subtasks if x.status != "done"), None) if _ms else None
+                _r = (getattr(flow, "backlog_relays", None) or {}).get(_st.st_id) if _st else None
+                if _r is not None and _r.backlogs and not any(
+                        b.status == "in_progress" and int(b.assignee or 0) == int(me_id) for b in _r.backlogs):
+                    _cand = " · ".join(f"{b.backlog_id}({b.status[:4]})" for b in _r.backlogs[:8])
+                    return _ok(f"[백로그 선점 필요] 판이 열려 있으면 작업은 백로그 단위입니다 — pick_backlog로 "
+                               f"집은 뒤 실행하세요(기존 id 또는 desc로 돌발 등재). 집지 않은 작업은 장부·대화 "
+                               f"귀속에 남지 않습니다. 현재 {_st.st_id}: {_cand}")
+        except Exception:
+            pass
         if _COLLAB_RE.search(cmd.lower()):
             # [B-08] 거부에 '어디로 기록하나' 처방 동봉(결정 지점 공급 — permissions 훅과 같은 문구).
             return _ok("실행 거부: 협의 기록(.collab/)은 시스템 소유 — meet/vote/set_goal/보고로만 "

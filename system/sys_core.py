@@ -1554,7 +1554,27 @@ class Sys:
                             await self._absorb_role_profiles(_syn, me=organt_id)
                 if flow is not None:   # [사람 개입] 주입된 노트 소비-clear(턴 성공 후 1회 — revive 재시도엔 유지돼 재주입)
                     try:
-                        (flow.pending_info or {}).pop(organt_id, None)
+                        _pi = (flow.pending_info or {}).pop(organt_id, None)
+                        # [개입 소화 확인(2026-07-13, 감사 P4)] 이 턴 프롬프트로 전달된 사람 개입에
+                        # 응답 흔적([답변])이 없으면 1회 재주입, 그래도 없으면 관측(interject_unacked)
+                        # — 개입이 조용히 증발하는 갭을 닫는다(주입은 강제였지만 소화 확인이 없었음).
+                        _ij = [x for x in (_pi or []) if str(x).startswith(("[개입", "[사용자", "[운영자", "[재전달"))]
+                        if _ij:
+                            _rt = getattr(flow, "_ij_retry", None)
+                            if _rt is None:
+                                _rt = flow._ij_retry = {}
+                            if "[답변]" not in (_out or ""):
+                                _n = _rt.get(int(organt_id), 0)
+                                if _n < 1:
+                                    _rt[int(organt_id)] = _n + 1
+                                    flow.pending_info.setdefault(organt_id, []).append(
+                                        "[재전달 — 직전 개입에 응답이 안 보였습니다] " + str(_ij[-1])[:400]
+                                        + " (이번 턴 서두에 '[답변]' 문단으로 짧게 응답부터 하세요.)")
+                                else:
+                                    _rt.pop(int(organt_id), None)
+                                    self._log("interject_unacked", organt=organt_id)
+                            else:
+                                _rt.pop(int(organt_id), None)
                         # [미답 질문 해소] 리더가 [답변]을 실제로 냈으면 상시 재주입 종료
                         if organt_id == flow.leader and "[답변]" in (_out or "") and getattr(flow, "unanswered_questions", None):
                             flow.unanswered_questions = []
@@ -2345,6 +2365,7 @@ class Sys:
                     tgt = int(_al) if (_al and int(_al) in bi) else lead
                     if tgt != lead:
                         text = text + " (지금 작업 중인 당신이 우선 수신했습니다 — 직접 소화할지, 적임 동료에게 넘길지는 당신 판단.)"
+                text = text + " (응답 서두를 '[답변]'으로 시작하면 전달 확인으로 기록됩니다.)"
                 if getattr(f, "pending_info", None) is None:
                     f.pending_info = {}
                 f.pending_info.setdefault(tgt, []).append(text)            # 대상 봇이 다음 턴에 직접 본다

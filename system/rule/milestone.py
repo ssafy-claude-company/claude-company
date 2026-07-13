@@ -681,6 +681,10 @@ def rule_report_iter(flow, me_id, args) -> str:
             tgt.backlog_ids = [x.backlog_id for x in r.backlogs]
         except Exception:
             pass
+    if flow.log:
+        # [감사 P3 — 자기검증 가시화] 누가 결과를 제출했나(교차 검증 부재의 관측 지표)
+        flow.log("iter_report_by", by=int(me_id), n=len(results),
+                 id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""))
     ok, note = iter_verify(flow, obj, results)
     if ok and tgt is not None:
         # [S2 접점(§12-1)] SubTask 조건 충족 → 잔여 백로그 정리 훅(wrapup_done **앞**) → 자동 종료.
