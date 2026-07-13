@@ -189,9 +189,10 @@ async def create_task(flow, args):
         base = picked
     else:
         # [시작 채용 = 참여 공고·응찰(2026-07-13, TEAM_BIDDING 확정 설계·사용자: '시작 채용 말이야')]
-        # 발제자의 조용한 편성(직군당 1명 자동)을 공고로 교체 — 원문을 참여 공고로 게시하고,
-        # 후보들이 [참여 응찰]/[패스]로 자기선택한다. 응찰자 = 팀. 입장이 채팅에 보인다.
-        base = await _join_posting(flow)
+        # 픽업 직후 SYS 공고에 응찰한 봇 전원이 팀(선출·참여 응찰 통합 — 별도 선출 단계 소멸).
+        # 응찰 기록이 없으면(지정 요청 등) 여기서 공고를 돌린다.
+        _jb = [m for m in (getattr(flow, "join_bidders", None) or []) if m != flow.anchor]
+        base = _jb or await _join_posting(flow)
         if base is None:      # 공고 실패/응찰 0 — 판이 못 서는 것 방지: 종전 직군당 1명 폴백
             base, _seen = [], set()
             for m in flow.project_team:

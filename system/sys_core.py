@@ -710,6 +710,12 @@ class Sys:
         if not cands:
             return None
         clip = " ".join(str(body or "").split())[:400]
+        # [참여 공고(2026-07-13, 사용자: '발제자 선출이 왜 있어')] 선출 응찰과 참여 응찰을 하나로 —
+        # SYS가 공고를 게시하고, 응찰자 전원 = 팀, 최고 응찰 = 앵커(첫 주자). 별도 선출 단계 소멸.
+        try:
+            await self.guide.post(int(channel_id), 0, f"[참여 공고] 새 판이 열렸습니다 — 참여는 자기선택입니다.\n원문: {clip}")
+        except Exception:
+            pass
         bids = []
         for mid in cands:
             if self.engaged.holder(mid) is not None:
@@ -724,10 +730,11 @@ class Sys:
                 except TypeError:
                     organt = self.organt_builder(mid, server, "member", flow)
                 prompt = (
-                    f"[발제자 응찰] 새 요청이 들어왔습니다. 이 일을 **당신이 이끌(발제) 의향**이 있는지 "
-                    f"스스로 정하세요 — 지명이 아니라 자기선택입니다. 당신 직군: {self.bot_info.get(mid)}.\n\n"
+                    f"[참여 응찰] 새 판이 열렸습니다 — **참여할지 스스로** 정하세요(지명 아님). "
+                    f"당신 직군: {self.bot_info.get(mid)}.\n\n"
                     f"요청: {clip}\n\n"
-                    f"이끌고 싶으면 첫 줄에 [응찰: N](N=0~9, 이 일과 당신의 적합도·의지) + 한 줄 이유. "
+                    f"참여하려면 첫 줄에 [응찰: N](N=1~9, 이 일과 당신의 적합도·의지) + 한 줄 이유 — "
+                    f"응찰자 전원이 팀이 되고, 최고 응찰이 첫 주자(앵커)를 맡습니다. "
                     f"맞지 않으면 [패스] 한 줄. 도구 쓰지 말고 텍스트로만.")
                 try:
                     out = await organt.handle(prompt)
@@ -745,9 +752,15 @@ class Sys:
             return None
         bids.sort(key=lambda b: (-b[0], b[1]))            # 최고 응찰(동점=id 안정순)
         winner = bids[0]
+        joined = [b[1] for b in bids]
         self._log("propose_elected", channel=channel_id, who=winner[1], score=winner[0],
                   bidders=len(bids))
-        return winner[1]
+        try:
+            _names = " · ".join(f"{self.bot_info.get(m, m)}({s0})" for s0, m, _ in bids)
+            await self.guide.post(int(channel_id), 0, f"[참여 확정] 응찰 {len(bids)}명 — {_names} · 첫 주자: {self.bot_info.get(winner[1], winner[1])}")
+        except Exception:
+            pass
+        return (winner[1], joined)
 
     async def _onboard_inner(self, new_mid, role, recruiter) -> bool:
         flow = Flow(self.guide, 0, self.guild_id, recruiter, self.bot_info)   # 도구 형식용 빈 흐름
@@ -1667,8 +1680,10 @@ class Sys:
             except Exception as _e:
                 self._log("propose_failed", err=str(_e)[:120])
                 _elected = None
+            _joined_team = None
             if _elected:
-                leader_id = int(_elected)
+                leader_id = int(_elected[0]) if isinstance(_elected, tuple) else int(_elected)
+                _joined_team = (_elected[1] if isinstance(_elected, tuple) else None)
         # [신규×신규 병렬 완화] 신규 요청도 고유 스코프로 동시 진행한다 — 과거 'main' 직렬은 등록
         # 경합 방지용이었으나 전역 점유·스코프 선점·원자 등록 이후 근거가 소멸(라이브: 서로 다른
         # 리더에게 보낸 두 신규가 직렬돼 병렬 의도가 좌절). 같은 리더면 전역 점유가 자연 직렬화한다.
@@ -1741,6 +1756,11 @@ class Sys:
             except Exception:
                 pass
         flow = Flow(self.guide, channel_id, self.guild_id, lead, self.bot_info)
+        # [참여 응찰 = 팀] 공고 응찰자 전원이 이 판의 팀 — create_task가 2차 공고 없이 그대로 쓴다
+        try:
+            flow.join_bidders = list(_joined_team or [])
+        except NameError:
+            flow.join_bidders = []
         flow._handoff = True   # [논블로킹 핸드오프] 프로덕션은 위임을 즉시-반환 핸드오프로(75초 detach·비동기 churn
                                #   차단). 동료 작업은 SYS가 호출 밖에서 직렬 완주시켜 결과로 잇는다. (테스트는 기본 동기.)
         flow.inbound_attachments = list(attachments or [])   # [파일 전송] 사용자 첨부 — 워크스페이스 준비 시 inbox/로 staging

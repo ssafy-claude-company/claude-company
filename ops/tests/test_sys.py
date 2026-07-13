@@ -5915,19 +5915,20 @@ def test_발제자_응찰_무지정요청은_봇자기선택으로_선출():
         def __init__(self, mid):
             self.mid = mid
         async def handle(self, prompt):
-            assert "[발제자 응찰]" in prompt
+            assert "[참여 응찰]" in prompt   # [통합] 선출·참여 응찰 = 한 공고
             return bids[self.mid]
 
     s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _Bidder(int(oid))
     s._distill_workspace = lambda: None
 
-    winner = asyncio.run(s._elect_proposer(500, "그림 맞히기 게임 만들어줘"))
-    assert winner == 12                                  # 최고 응찰(8)이 발제자
+    winner, joined = asyncio.run(s._elect_proposer(500, "그림 맞히기 게임 만들어줘"))
+    assert winner == 12                                  # 최고 응찰(8)이 앵커(첫 주자)
+    assert set(joined) == {11, 12}                       # 응찰자 전원 = 팀
 
     # 점유 봇은 후보 제외 — 12를 타 흐름 점유시키면 그 다음(11)이 이긴다
     s.engaged._is_live = lambda scope: True   # 유령 자가치유 끄기(수동 점유 유지)
     s.engaged.engage(12, "other-flow")
-    winner2 = asyncio.run(s._elect_proposer(500, "다른 요청"))
+    winner2, _ = asyncio.run(s._elect_proposer(500, "다른 요청"))
     assert winner2 == 11                                 # 12 제외 → 11(응찰 3)
 
     # 아무도 응찰 안 하면 None(호출부가 종전 leader 폴백)
