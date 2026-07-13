@@ -113,6 +113,58 @@ _LOOP_ESCALATE_CROSS = int(os.environ.get("ORGANT_LOOP_CROSS", "0") or 0)   # 0=
 # ── [Task 체크포인트 — guide_tools에서 이관] 흐름의 Task 상태를 크래시-세이프 영속 ──
 
 
+async def _join_posting(flow):
+    """[참여 공고] 요청 원문을 공고로 게시하고 [참여 응찰]/[패스]를 수집 — 응찰자 목록(없으면 None).
+    recruit 세리머니의 수집 루프와 동형(comm 장부·베턴 규약 준수). 실패는 None(폴백 편성)."""
+    import re as _re
+    from .communication import _is_spare
+    from ..protocol import Kind
+    try:
+        g = flow.guide
+        me = flow.leader
+        eng, scope = flow.comm.engagement, flow.comm.scope
+        def _free(m):
+            return not (eng is not None and scope is not None and eng.busy_elsewhere(m, scope))
+        cands = [m for m in flow.pool if m != me and not _is_spare(flow, m) and _free(m)]
+        if not cands:
+            return None
+        origin = (getattr(flow, "origin_request", "") or "").strip()[:200]
+        posting = (f"[참여 공고] 새 판이 열렸습니다 — 참여할지 스스로 정하세요.\n원문: {origin or '(원문 미기록)'}")
+        await g.post(flow.user_channel, me, posting)
+        if flow.log:
+            flow.log("join_posted", candidates=len(cands))
+        joined = []
+        for m in cands:
+            try:
+                flow.comm.request(me, m, "recruit", Kind.INFO)
+            except Exception:
+                continue
+            body = (f"{posting}\n\n[자기선택] 당신: {(flow._info(m) or '').strip() or '무직'}. 이 판에 "
+                    f"당신 전문이 필요한지 스스로 판단하세요. 참여하면 첫 줄에 [참여 응찰]과 한 줄 근거, "
+                    f"아니면 [패스] 한 줄만.")
+            try:
+                res = await flow.wake(m, body, Kind.INFO)
+            except Exception:
+                res = ""
+            try:
+                flow.comm.respond(m, "accept", res)
+            except Exception:
+                pass
+            if res and _re.search(r"\[\s*참여\s*응찰\s*\]", res):
+                joined.append(m)
+                _line = next((l.strip() for l in str(res).splitlines() if l.strip()), "")[:160]
+                await g.post(flow.user_channel, m, f"[참여 응찰] {_line.replace('[참여 응찰]', '').strip()}")
+        if flow.log:
+            flow.log("join_result", joined=len(joined), candidates=len(cands))
+        if not joined:
+            return None
+        await g.post(flow.user_channel, me,
+                     "[참여 확정] " + " · ".join(str(flow._info(m) or m) for m in joined))
+        return joined
+    except Exception:
+        return None
+
+
 async def create_task(flow, args):
     """[Task Rule 로직] create_task — 빈 Task 껍데기를 열고 팀 배정. @tool 래퍼가 _ok로 감쌈(평문 반환).
     flow는 duck-typed(guide·current·project_*·pool·leader·tasks·comm·next_task_id 등)."""
@@ -136,15 +188,20 @@ async def create_task(flow, args):
     if picked:
         base = picked
     else:
-        base, _seen = [], set()
-        for m in flow.project_team:
-            if m == flow.leader or _is_spare(flow, m):
-                continue
-            r = (flow._info(m) or "").strip()
-            if r and r in _seen:
-                continue        # 같은 직군 중복은 기본 팀에서 제외(recruit로 추가 가능)
-            _seen.add(r)
-            base.append(m)
+        # [시작 채용 = 참여 공고·응찰(2026-07-13, TEAM_BIDDING 확정 설계·사용자: '시작 채용 말이야')]
+        # 발제자의 조용한 편성(직군당 1명 자동)을 공고로 교체 — 원문을 참여 공고로 게시하고,
+        # 후보들이 [참여 응찰]/[패스]로 자기선택한다. 응찰자 = 팀. 입장이 채팅에 보인다.
+        base = await _join_posting(flow)
+        if base is None:      # 공고 실패/응찰 0 — 판이 못 서는 것 방지: 종전 직군당 1명 폴백
+            base, _seen = [], set()
+            for m in flow.project_team:
+                if m == flow.leader or _is_spare(flow, m):
+                    continue
+                r = (flow._info(m) or "").strip()
+                if r and r in _seen:
+                    continue        # 같은 직군 중복은 기본 팀에서 제외(recruit로 추가 가능)
+                _seen.add(r)
+                base.append(m)
     team = _uniq([flow.leader] + base)
     # 'PM 혼자 Task' 차단(구조): 프로젝트에 직군 동료가 있는데 리더 혼자만 멤버로 여는 건 팀을 버리고
     # 단독작업·독식하는 패턴(사용자가 본 'PM 혼자 있는 Task'). 동료가 무응답이라고 새 솔로 Task로 도망가지
