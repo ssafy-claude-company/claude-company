@@ -130,7 +130,7 @@ async def _join_posting(flow):
             return None
         origin = (getattr(flow, "origin_request", "") or "").strip()[:200]
         posting = (f"[참여 공고] 새 판이 열렸습니다 — 참여할지 스스로 정하세요.\n원문: {origin or '(원문 미기록)'}")
-        await g.post(flow.user_channel, me, posting)
+        await g.post(flow.user_channel, 0, posting)   # SYS 명의 — 누구의 권한도 아님(설계 원문)
         if flow.log:
             flow.log("join_posted", candidates=len(cands))
         joined = []
@@ -158,7 +158,7 @@ async def _join_posting(flow):
             flow.log("join_result", joined=len(joined), candidates=len(cands))
         if not joined:
             return None
-        await g.post(flow.user_channel, me,
+        await g.post(flow.user_channel, 0,
                      "[참여 확정] " + " · ".join(str(flow._info(m) or m) for m in joined))
         return joined
     except Exception:

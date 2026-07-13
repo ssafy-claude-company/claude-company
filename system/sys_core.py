@@ -2227,8 +2227,11 @@ class Sys:
                 # murmur에선 '[Response] Body:' 원문이 일반 채팅으로 노출되고 요청 카드에 답변이
                 # 안 붙는다(ch53 1290·1452, 사용자: "마지막 보고가 없어"). 구조 경로가 있으면 그걸로.
                 _sr = getattr(self.guide, "send_response", None)
+                # [발제자 대표성 해제(2026-07-13, 사용자: '대표가 필요하지 않은 설계')] 마감 보고 명의는
+                # 발제자 고정이 아니라 마지막 작업자(베턴 최종 보유자) — 발제자는 절차 초기값일 뿐.
+                _speaker = getattr(getattr(flow, "comm", None), "alive", None) or lead
                 if _sr is not None and getattr(flow, "root_id", None):
-                    await _sr(flow.user_channel, lead, flow.root_id, result)
+                    await _sr(flow.user_channel, _speaker, flow.root_id, result)
                 else:
                     await self.guide.post(flow.user_channel, lead, format_response(result),
                                           reply_to=flow.root_id)
