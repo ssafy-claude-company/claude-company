@@ -543,6 +543,12 @@ def rule_set_milestone(flow, me_id, args) -> str:
     등록은 기록 행위다 — 품질은 등록 게이트가 방어. 게이트 거부는 사유+처방을 그대로 반환."""
     if not pipeline_on():
         return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    # [목표 선행 게이트(2026-07-13)] GOAL 없이 마일스톤이 서면 판의 정체가 영영 빈칸 - 순서를 구조로 강제.
+    _cur = getattr(flow, "current", None)
+    if _cur is not None and not str(getattr(_cur.status, "goal", "") or "").strip():
+        return ("[마일스톤 등록 보류] 이 Task의 목표(GOAL)가 아직 확정되지 않았습니다 - 소집자가 "
+                "set_goal(팀 합의)로 목표를 먼저 확정하세요. 목표 없는 마일스톤은 판의 정체를 비웁니다. "
+                "(set_goal은 소집자 턴의 도구입니다 - 회의 참여 턴에는 안 보입니다.)")
     goal = str(args.get("goal") or "").strip()
     if not goal:
         return "등록 거부: goal(이 주기의 목표 한 줄)이 비었습니다."
