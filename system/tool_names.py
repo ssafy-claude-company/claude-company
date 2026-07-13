@@ -21,7 +21,8 @@ FLOW_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL, RUN_TOOL,
               # [결정권자 폐지(2026-07-09, 사용자)] 확정=종결 표결(자동 등록)이므로 set_milestone은
               # '서기'(누구나) 표면이고, 재협상도 누구나(진짜 게이트=사람 승인) — 둘 다 공통 이동.
               "mcp__guide__set_milestone", "mcp__guide__renegotiate_criterion",
-              "mcp__guide__deploy"]   # [배포 탈중앙화(2026-07-08, 사용자)] deploy는 전원 — 검증 끝낸 owner가 직접 공개(리더 독점 폐지)
+              "mcp__guide__deploy",   # [배포 탈중앙화(2026-07-08, 사용자)] deploy는 전원 — 검증 끝낸 owner가 직접 공개(리더 독점 폐지)
+              "mcp__guide__atelier"]  # [P0 B-2(2026-07-13)] 공유 판 — 전원, 사용은 자발(산출물·증거 남김, 승격 핀 done 회신)
 # 리더(코디네이터) 흐름 도구: 조율만(run 없음) — 구현·실행은 owner/QA가 한다.
 COORD_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL]
 LEADER_TOOLS = [f"mcp__guide__{n}" for n in

@@ -515,6 +515,51 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         return await _rule_deploy(flow, args, me_id=me_id)
     tools.append(deploy)
 
+    # [atelier(P0 B-2, 2026-07-13)] 공유 판(atelier)에 남기는 문 — deploy의 Render처럼 외부 독립
+    # 서비스 클라이언트(매체 아님 — 매체중립 무관). 사용은 Organt의 선택(강제·자동 없음): 산출물
+    # 설명·검증 증거를 남기거나, 판에서 승격돼 온 요청([atelier 핀 #N])을 끝냈을 때 마감 회신.
+    # env(ATELIER_URL/ATELIER_TOKEN) 미설정이면 호출해도 안내만 — 협업 흐름은 막지 않는다.
+    @tool("atelier",
+          "사람과 같이 쓰는 공유 캔버스(atelier)에 남긴다 — 필요하다고 판단될 때만. "
+          "op=note: 스티키 한 장(project,canvas,text — 산출물 설명·검증 증거·설계 메모). "
+          "op=shot: 실화면 라이브 조각(project,canvas,url,text=제목,sel=CSS선택자(선택) — 배포/구현한 "
+          "화면을 판에 품는다, 캡쳐 아님). "
+          "op=done: 'atelier 핀'이 붙은 사람 요청을 끝낸 뒤 마감 회신(pin=요청문 [atelier 핀 #N]의 N, "
+          "text=처리 한 줄). project=판 이름(요청문의 '판에서 보기' 주소 /p/<이름>/ 참조, 예: murmur), "
+          "canvas=시트 이름(없으면 생성, 예: 검증-증거).",
+          {"type": "object",
+           "properties": {"op": {"type": "string", "enum": ["note", "shot", "done"]},
+                          "project": {"type": "string"}, "canvas": {"type": "string"},
+                          "text": {"type": "string"}, "url": {"type": "string"},
+                          "sel": {"type": "string"}, "pin": {"type": "string"}},
+           "required": ["op"]})
+    async def atelier(args):
+        from . import atelier_client as _atl
+
+        def _go():
+            op = str(args.get("op") or "")
+            pj = str(args.get("project") or "").strip()
+            cv = str(args.get("canvas") or "메모").strip()
+            tx = str(args.get("text") or "").strip()
+            if op == "done":
+                return _atl.done(str(args.get("pin") or ""), tx)
+            if not pj:
+                raise RuntimeError("project(판 이름)가 필요합니다 — 예: murmur")
+            if op == "shot":
+                u = str(args.get("url") or "").strip()
+                if not u:
+                    raise RuntimeError("shot은 url(품을 실화면 주소)이 필요합니다")
+                return _atl.shot(pj, cv, u, str(args.get("sel") or ""), tx)
+            if not tx:
+                raise RuntimeError("note는 text(남길 내용)가 필요합니다")
+            return _atl.note(pj, cv, tx)
+
+        try:
+            return _ok(await anyio.to_thread.run_sync(_go))
+        except Exception as e:   # 판 장애가 협업을 막으면 안 됨 — 실패는 안내로만
+            return _ok(f"atelier 실패: {e}")
+    tools.append(atelier)
+
     if role == "leader":
         @tool("create_project",
               "Project로 판단되면 전용 채널 생성 + 규모를 산정해 팀 배정"

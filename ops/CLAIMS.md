@@ -20,5 +20,7 @@
 | 이현준-3 | system/sys_core.py | 2026-07-09 03:18 |
 | 이현준-2 | system/rule/task.py | 2026-07-09 03:22 |
 | 이현준-2 | system/rule/task_pipeline.py | 2026-07-09 03:22 |
-| 변도진-2 | ops/codegraph/** | 2026-07-11 03:03 |
-| 변도진-2 | ops/dev/** | 2026-07-11 03:23 |
+| 변도진-2 | system/atelier_client.py | 2026-07-13 09:45 |
+| 변도진-2 | system/guide_tools.py | 2026-07-13 09:45 |
+| 변도진-2 | system/tool_names.py | 2026-07-13 09:45 |
+| 변도진-2 | ops/tests/test_sys.py | 2026-07-13 09:45 |
