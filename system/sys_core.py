@@ -2623,13 +2623,21 @@ class Sys:
                             except Exception:
                                 pass
                 # ── 작업 중지(전역 스캔 — 도는 흐름 취소 + 픽 요청 종결) ──
+                # [at-least-once(2026-07-14, U-015 유령)] 조회는 읽기 전용, 소거(ack)는 mark_stopped가
+                # 처리 완료 후 수행 — 어느 단계가 실패해도 신호가 남아 다음 폴이 재시도한다. 종전엔
+                # 조회=소거+통짜 except:pass라 전송 유실 한 번에 중지가 증발(ch60 흐름 1시간 유령).
                 try:
-                    for _sch in await guide.all_stops():
+                    _stop_chs = list(await guide.all_stops())
+                except Exception as _e:
+                    _stop_chs = []
+                    log.warning("중지 신호 조회 실패(다음 폴 재시도): %s", _e)
+                for _sch in _stop_chs:
+                    try:
                         cancelled = self.request_cancel(_sch)
                         await guide.mark_stopped(_sch)
                         log.info("■ 작업 중지 — ch=%s(흐름취소=%s)", _sch, cancelled)
-                except Exception:
-                    pass
+                    except Exception as _e:
+                        log.warning("중지 처리 실패 ch=%s(신호 보존 — 다음 폴 재시도): %s", _sch, _e)
                 # ── 진행 중 흐름 개입 폴 ──
                 for _mid, _info in list(inflight.items()):
                     _ch = _info["ch"]
