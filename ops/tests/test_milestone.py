@@ -247,6 +247,23 @@ def test_중지투표_도구가_리더셋에_등록되고_import된다():
     assert "mcp__guide__vote_stop" in LEADER_TOOLS
 
 
+def test_수렴안_파싱_콜론없는줄_크래시안함_단계조건_안뺏김(monkeypatch):
+    """[파싱 견고화(2026-07-14, 정합 감사)] ①콜론 없는 '목표..'/'단계..'가 split(':',1)[1] IndexError로
+    meet를 크래시시키던 것 봉합 ②'단계'가 아니라 '단계:'로만 로드맵 인식 — '단계별 배포 | 확인'류
+    완수조건이 roadmap으로 오분류돼 조건에서 소실되던 비대칭 제거."""
+    from system.rule.milestone import register_consensus
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    # 콜론 없는 '목표 없이' 줄 + '단계별' 완수조건 — 크래시 없이 조건으로 보존돼야
+    prop = ("목표: 배포\n단계별 배포 성공 | curl -s localhost:8000 확인\n기능 동작 | playwright로 로드 확인\n단계: MVP\n단계: 확장")
+    ms, n = register_consensus(f, prop, "t")
+    assert not isinstance(ms, str)                              # 크래시 없음
+    assert f.roadmap == ["MVP", "확장"]                         # '단계:'만 로드맵
+    _descs = " ".join(c.desc for c in ms.criteria)
+    assert "단계별 배포 성공" in _descs                         # '단계별' 조건이 소실 안 됨(2개 조건)
+    assert len(ms.criteria) == 2
+
+
 def test_GOAL_구조화_회의수렴안이_Task목표를_채움(monkeypatch):
     """[GOAL 구조화(2026-07-14, 사용자: 'set_goal도 봇 지능 의지보다 구조적으로 제한')] 개인이
     set_goal을 부를지가 아니라, 첫 주기 수렴안의 '목표:' 줄이 미확정 Task GOAL을 구조적으로 채운다 —

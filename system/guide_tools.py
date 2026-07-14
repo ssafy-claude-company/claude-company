@@ -373,6 +373,46 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return _res
         tools.append(drop_backlog)
 
+        @tool("block_backlog",
+              "[차단 — 선행 필요] 내 백로그가 **다른 일(선행)이 먼저 돼야** 진행 가능할 때: 이 백로그를 "
+              "잠시 보류(blocked, 버리지 않고 보존·나중 재개)하고 순차 릴레이의 자리를 넘긴다 — 정지한 채 "
+              "릴레이를 막지 않는 출구다. id=백로그, reason=무슨 선행이 필요한가. 중단(drop=완수 불가)과 "
+              "다르다: 차단은 선행이 풀리면 재방문한다.",
+              {"id": str, "reason": str})
+        async def block_backlog(args):
+            from .rule.backlog import relay_for, BacklogError, handoff_note
+            from .rule.milestone import flush_pipeline_notes as _flush, _ckpt as _ck
+            ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
+            _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
+            bid = str(args.get("id") or "").strip()
+            reason = str(args.get("reason") or "").strip()
+            if not bid or not reason:
+                return _ok("id와 reason(무슨 선행이 필요한가)이 모두 필요합니다.")
+            r, b = None, None
+            for _x in _sts:
+                _r = relay_for(flow, _x)
+                if any(x.backlog_id == bid for x in _r.backlogs):
+                    r, b = _r, _r.get(bid)
+                    break
+            if b is None:
+                return _ok(f"차단 불가: 백로그 {bid}가 열린 단위 어디에도 없습니다.")
+            try:
+                # next_starter=나(차단자) — 배분권을 쥐고 [다음 선정]으로 선행 작업 수행자를 고른다.
+                _bl, _deadlock = r.block(int(me_id), bid, int(me_id), reason)
+            except BacklogError as e:
+                return _ok(f"차단 불가: {e}")
+            handoff_note(flow, r, me_id, "차단됐습니다(선행 대기)")
+            _ck(flow)
+            _msg = (f"백로그 {bid} 차단(선행 대기 — 보존, 나중 재개). 순차 자리를 넘겼습니다: 당신이 "
+                    f"pick_backlog(id)로 선행 작업 수행자를 선정하거나 남은 백로그를 진행시키세요.")
+            if _deadlock:
+                _msg += (f" ⚠ 같은 백로그가 {_bl.block_count}회 차단됐습니다 — 접근이 결과를 못 바꾸는 "
+                         f"신호입니다. renegotiate_criterion(조건 재협상) 또는 vote_stop(판 접기)을 고려하세요.")
+            _res = _ok(_msg)
+            await _flush(flow)
+            return _res
+        tools.append(block_backlog)
+
         @tool("report_iter",
               "진행 중 주기의 완수조건 실증 결과를 제출한다(검증 참여자 누구나). results=한 줄에 "
               "'조건 | pass/fail | 증거(run 출력 요지)' — **증거 없는 pass는 인정되지 않는다**. "

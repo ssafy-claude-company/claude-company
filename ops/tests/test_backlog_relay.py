@@ -192,6 +192,25 @@ def test_백로그_소진시_회의코칭_아니면_다음선정():
     assert "[백로그 소진]" in note and "vote_stop" in note and "meet" in note  # 회의 코칭
 
 
+def test_차단_배선_선행필요_출구():
+    """[block 배선(2026-07-14, 정합 감사 최대위험 — 무출구 교착)] 정지한 in_progress 하나가 순차
+    릴레이를 막던 것에 '선행 필요' 차단 출구를 준다: block()이 in_progress를 BLOCKED로 보존(버리지
+    않음)하고 순차 잠금을 풀어 다음이 설 수 있게 한다. 2회째 차단이면 deadlock 신호."""
+    r = _relay()
+    b1 = r.submit(A, "저장 API")
+    b2 = r.submit(B, "프론트 카드")
+    r.pick(A, "B1", A)                                # A 착수
+    with pytest.raises(BacklogError):
+        r.pick(A, "B2", B)                            # 순차 잠금 — B1 작업 중
+    _bl, dl = r.block(A, "B1", next_starter=A, reason="스키마 선행 필요")
+    assert _bl.status == BLOCKED and not dl           # 보존(버리지 않음)
+    assert r.pick(A, "B2", B).status == IN_PROGRESS   # 잠금 풀림 — 다음이 선다
+    r.done(B, "B2")
+    r.pick(A, "B1", A)                                # 선행 풀려 재방문
+    _, dl2 = r.block(A, "B1", A, "여전히 막힘")        # 2회째 차단
+    assert dl2                                        # deadlock 신호(→ renegotiate/vote_stop 라우팅)
+
+
 def test_순차_1활성_잠금():
     """[순차 돌리기(2026-07-14, 사용자: '백로그든 서브테스크든 순차 돌리기')] 한 번에 한 백로그만
     in_progress — 하나가 작업 중이면 다른 착수 거부. 완료/중단 후에야 다음이 선다."""

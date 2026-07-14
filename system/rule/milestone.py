@@ -648,11 +648,16 @@ def register_consensus(flow, prop: str, origin: str = ""):
     - 열린 주기 있음 → 이 수렴안은 그 주기의 **분해 회의** — '단위:' 줄만 그 주기에 추가 등록.
       단, 기존 단위의 백로그가 아직 처리 중이면 보류(경계 생성 — '종료될 때만 생성')."""
     lines = str(prop or "").splitlines()
-    goal = next((l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("목표")), origin)
+    # [파싱 견고화(2026-07-14, 정합 감사)] ①라벨은 콜론 필수 — 콜론 없는 '목표..'/'단계..'에
+    # split(":",1)[1]이 IndexError로 meet 종결부에 예외를 뿌리던 것 봉합(":" in l 가드). ②'단계'가
+    # 아니라 '단계:'로만 로드맵 인식 — 콜론 없는 '단계별 …|…' 완수조건이 roadmap으로 오분류돼 조건에서
+    # 소실되던 비대칭 제거(단위: 와 대칭).
+    goal = next((l.split(":", 1)[1].strip() for l in lines
+                 if l.strip().startswith("목표") and ":" in l), origin)
     units = [l.strip()[3:].strip() for l in lines if l.strip().startswith("단위:")]
-    stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계")]
+    stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계:")]
     crit = "\n".join(l for l in lines if "|" in l and not l.strip().startswith("단위:")
-                     and not l.strip().startswith("단계"))
+                     and not l.strip().startswith("단계:"))
     _open = next((m for m in (getattr(flow, "milestones", None) or [])
                   if m.status not in ("done", "superseded")), None)
     if _open is not None:
