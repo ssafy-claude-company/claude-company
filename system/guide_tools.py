@@ -252,31 +252,24 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(set_subtask)
 
         @tool("pick_backlog",
-              "**전담의 실체 = 백로그.** 자기 몫을 집는다: id='B3'(기존 항목 — 열린 단위 전체에서 찾음) "
-              "또는 desc='내가 할 일'(자기 등재+즉시 착수 — st=단위 id/목표 일부로 소속 단위 지정, 생략 시 "
-              "내가 참여 중인 단위→첫 열린 단위). **작업(run/Write)은 백로그를 집은 뒤에만** — 집어야 "
-              "작업·대화가 그 항목 장부에 남는다. 기존 항목의 배분권은 릴레이 규칙(마무리자 지명·응찰)을 따른다.",
+              "**순차 릴레이 — 한 번에 한 백로그.** desc='내가 할 일'로 내 백로그를 풀에 등재한다(st=단위 "
+              "id/목표 일부로 소속 지정). 아무도 작업 중이 아니고 내 차례면 즉시 착수, 아니면 대기(내 "
+              "차례는 마무리자 선정으로 온다). id='B3'는 **마무리자(직전 완료·중단자)만** — 남은 백로그 중 "
+              "하나를 골라 그 제출자를 다음 수행자로 선정한다. **작업(run/Write)은 착수된 뒤에만.**",
               {"id": str, "desc": str, "st": str})
         async def pick_backlog(args):
-            from .rule.backlog import relay_for, BacklogError, DuplicateBacklog
+            from .rule.backlog import relay_for, BacklogError, DuplicateBacklog, IN_PROGRESS
             from .rule.milestone import _set_pipeline_ctx
             ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
-            # [열린 단위 전체(2026-07-14)] 첫 단위만 보던 것 → 열린 단위 전부 — id는 전 단위에서 찾고,
-            # desc(자기 등재)는 st로 소속 단위를 지정(참여는 등재로 시작되므로 선참여 요구는 닭-달걀).
             _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
             if not _sts:
                 return _ok("활성 SubTask가 없습니다 — 단위 분해는 회의 수렴안('단위:' 줄)으로 가결과 함께 등록됩니다.")
             bid = str(args.get("id") or "").strip()
             desc = str(args.get("desc") or "").strip()
             _stq = str(args.get("st") or "").strip()
-            # [1인 1활성 백로그(2026-07-14, 사용자: '백로그는 개인의 작업 단위')] 내가 이미 쥔
-            # in_progress가 있으면 새로 못 집는다 — 개인 작업 단위는 하나씩 끝내며 간다.
-            _rls_all = getattr(flow, "backlog_relays", None) or {}
-            _my_ip = next((b for x in _sts if _rls_all.get(x.st_id) is not None
-                           for b in _rls_all[x.st_id].backlogs
-                           if b.status == "in_progress" and int(b.assignee or 0) == int(me_id)), None)
             try:
                 if bid:
+                    # [선정(2026-07-14)] 마무리자가 남은 백로그를 골라 그 제출자를 다음 수행자로 — 순차.
                     r, b = None, None
                     for _x in _sts:
                         _r = relay_for(flow, _x)
@@ -285,46 +278,50 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                             break
                     if b is None:
                         return _ok(f"선점 불가: 백로그 {bid}가 열린 단위 어디에도 없습니다.")
-                    if b.status == "in_progress" and int(b.assignee or 0) == int(me_id):
-                        pass                      # 이미 내 보유 — 멱등
-                    else:
-                        # [선정 = 제출자 착수(2026-07-14)] 백로그는 개인 작업 단위 — 남의 백로그를
-                        # 집는 행위는 '내가 대신'이 아니라 **다음 수행 선정**(배분권=마무리자, relay가 검증).
-                        _assn = int(b.submitter)
-                        if _assn != int(me_id):
-                            r.pick(int(me_id), b.backlog_id, _assn)
-                            return _ok(f"[다음 선정] {b.backlog_id} → {flow._info(_assn) if hasattr(flow, '_info') else _assn}"
-                                       f"(제출자)가 착수합니다 — 선정 사유는 채널에 남기세요.")
-                        if _my_ip is not None and _my_ip.backlog_id != b.backlog_id:
-                            return _ok(f"선점 불가: 당신은 {_my_ip.backlog_id}를 이미 쥐고 있습니다 — 개인 작업 "
-                                       f"단위는 하나씩. 끝내거나(report_iter/완료 응답) 불가면 drop_backlog로 중단하세요.")
-                        r.pick(int(me_id), b.backlog_id, int(me_id))
+                    if b.status == IN_PROGRESS and int(b.assignee or 0) == int(me_id):
+                        _set_pipeline_ctx(flow, me_id)
+                        return _ok(f"백로그 {b.backlog_id}는 이미 당신이 작업 중입니다 — 이어서 하세요.")
+                    _assn = int(b.submitter)
+                    r.pick(int(me_id), b.backlog_id, _assn)      # relay가 배분권(마무리자)·순차 잠금 검증
+                    _who = flow._info(_assn) if hasattr(flow, "_info") else _assn
+                    if _assn == int(me_id):
+                        _set_pipeline_ctx(flow, me_id)
+                        return _ok(f"백로그 {b.backlog_id} 착수 — 작업하세요.")
+                    return _ok(f"[다음 선정] {b.backlog_id} → {_who}(제출자)를 다음 수행자로 선정 — 곧 깨어나 "
+                               f"착수합니다. 선정 사유는 채널에 남기세요.")
                 elif desc:
-                    if _my_ip is not None:
-                        return _ok(f"등재 보류: 당신은 {_my_ip.backlog_id}를 이미 쥐고 있습니다 — 개인 작업 단위는 "
-                                   f"하나씩. 지금 것을 끝낸 뒤 다음을 등재하세요(불가 판단이면 drop_backlog).")
                     _tgt = None
                     if _stq:
                         _tgt = next((x for x in _sts if _stq in x.st_id or _stq.lower() in x.goal.lower()), None)
                         if _tgt is None:
                             return _ok(f"등재 불가: '{_stq}'와 맞는 열린 단위가 없습니다. 열린 단위: "
                                        + " · ".join(f"{x.st_id}({x.goal[:20]})" for x in _sts[:8]))
-                    if _tgt is None:   # 내가 이미 참여 중인 단위 → 없으면 첫 열린 단위
+                    if _tgt is None:
                         _tgt = next((x for x in _sts if int(me_id) in (getattr(x, "participants", None) or set())), _sts[0])
                     r = relay_for(flow, _tgt)
                     try:
-                        b = r.submit(int(me_id), desc[:140])
+                        b = r.submit(int(me_id), desc[:140])   # 풀에 등재(OPEN)
                     except DuplicateBacklog as e:
                         return _ok(str(e))
-                    r.pick(int(me_id), b.backlog_id, int(me_id))
                     _tgt.participants.add(int(me_id))
                     _tgt.backlog_ids = [x.backlog_id for x in r.backlogs]
+                    # [순차 착수 정책(2026-07-14)] 첫 착수(turn_holder None) 또는 내가 마무리자일 때만 즉시
+                    # 착수 — 아니면 등재만(대기). 내 차례는 마무리자의 pick_backlog(id) 선정으로 온다.
+                    _th = r.turn_holder
+                    if _th is not None and int(_th) != int(me_id):
+                        return _ok(f"백로그 {b.backlog_id} 등재 완료(대기) — 지금 배분권은 마무리자"
+                                   f"({flow._info(_th) if hasattr(flow,'_info') else _th})에게 있습니다. "
+                                   f"당신 차례는 그의 선정으로 옵니다.")
+                    try:
+                        r.pick(int(me_id), b.backlog_id, int(me_id))
+                    except BacklogError as e:
+                        return _ok(f"백로그 {b.backlog_id} 등재 완료(대기) — {e} 당신 차례가 오면 착수합니다.")
                 else:
-                    return _ok("id(기존 백로그) 또는 desc(자기 등재) 중 하나가 필요합니다.")
+                    return _ok("id(마무리자 선정) 또는 desc(내 백로그 등재) 중 하나가 필요합니다.")
             except BacklogError as e:
                 return _ok(f"선점 불가: {e}")
             _set_pipeline_ctx(flow, me_id)        # 이 턴의 이후 게시부터 이 백로그로 귀속
-            return _ok(f"백로그 {b.backlog_id} 선점 — 작업하세요. 완료는 report_iter(조건 검증) 또는 위임 마무리가 장부에 반영합니다.")
+            return _ok(f"백로그 {b.backlog_id} 착수 — 작업하세요. 완료는 report_iter(조건 검증) 또는 위임 마무리가 장부에 반영합니다.")
         tools.append(pick_backlog)
 
         @tool("drop_backlog",

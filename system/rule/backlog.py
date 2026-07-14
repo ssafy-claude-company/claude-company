@@ -163,12 +163,17 @@ class BacklogRelay:
     # ── 규칙 ① 지명 ───────────────────────────────────────────────────────
     def pick(self, picker: int, backlog_id: str, assignee: int) -> Backlog:
         """마무리자(턴 홀더)가 다음 (백로그, 수행자)를 정한다. 자기 지명 허용(자기 일 고르기).
-        blocked 백로그의 pick = 재방문(재개)이다 — 차단 이력(block_count)은 보존된다."""
+        blocked 백로그의 pick = 재방문(재개)이다 — 차단 이력(block_count)은 보존된다.
+        [순차 1활성(2026-07-14, 사용자: '순차 돌리기')] 이미 다른 백로그가 in_progress면 새 착수 거부 —
+        한 번에 한 백로그만. 배분권·첫-자기착수 같은 정책은 도구층(pick_backlog)이 얹는다."""
         self._guard_open()
         b0 = self.get(backlog_id)
-        # [돌발 자기착수(2026-07-13)] 자기가 제출한 항목을 자기가 집는 건 배분권 밖 —
-        # 작업 턴 백로그 게이트(집지 않으면 실행 불가)가 배분권 대기로 교착하지 않는 출구.
+        # [돌발 자기착수(2026-07-13)] 자기가 제출한 항목을 자기가 집는 건 배분권 밖.
         _self_claim = (b0.submitter == int(picker) == int(assignee))
+        # 순차 잠금 — 이미 누가 작업 중이면 새 착수 불가(그 완료/중단 후 다음).
+        _active = next((x for x in self.backlogs if x.status == IN_PROGRESS and x.backlog_id != backlog_id), None)
+        if _active is not None:
+            raise BacklogError(f"{_active.backlog_id}가 작업 중입니다(순차 1활성) — 그 완료/중단 뒤 다음이 선정됩니다.")
         if not _self_claim and self.turn_holder is not None and int(picker) != self.turn_holder:
             raise BacklogError(
                 f"배분권은 마지막 작업자({self.turn_holder})에게 있습니다 — 지명은 마무리한 사람의 몫.")

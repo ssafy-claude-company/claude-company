@@ -173,6 +173,19 @@ def test_교착신호_같은백로그_2회차단():
     assert dl2                                           # → deadlock_signal(중재는 결정권자 권한 ③)
 
 
+def test_순차_1활성_잠금():
+    """[순차 돌리기(2026-07-14, 사용자: '백로그든 서브테스크든 순차 돌리기')] 한 번에 한 백로그만
+    in_progress — 하나가 작업 중이면 다른 착수 거부. 완료/중단 후에야 다음이 선다."""
+    r = _relay()
+    b1 = r.submit(A, "저장 API")
+    b2 = r.submit(B, "프론트 카드")
+    r.pick(A, "B1", A)                                # A 착수(self-claim)
+    with pytest.raises(BacklogError):
+        r.pick(A, "B2", B)                            # 이미 B1 작업 중 → 순차 잠금
+    r.done(A, "B1")                                   # 완료 후엔
+    assert r.pick(A, "B2", B).status == IN_PROGRESS   # 다음 선정 가능(A=마무리자)
+
+
 def test_완료는_수행자만():
     r = _relay()
     b = r.submit(A, "프론트 카드")

@@ -646,6 +646,15 @@ def register_consensus(flow, prop: str, origin: str = ""):
             if not isinstance(st, str):
                 n += 1
         return _open, n
+    # [GOAL 구조화(2026-07-14, 사용자: 'set_goal도 봇 지능 의지보다 구조적으로 제한')] Task GOAL은
+    # 개인이 set_goal을 부를지 말지가 아니라 **회의 수렴안이 낳는다** — 첫 주기 수렴안의 '목표:' 줄이
+    # 미확정 Task GOAL을 채운다. 이로써 목표 선행 게이트(gate_new_cycle)가 같은 회의 산물로 충족된다.
+    _cur = getattr(flow, "current", None)
+    if _cur is not None and not str(getattr(_cur.status, "goal", "") or "").strip():
+        try:
+            _cur.status.goal = goal
+        except Exception:
+            pass
     err = gate_new_cycle(flow)         # 신설 분기만 검문(목표 선행 등) — 단위 추가 분기는 위에서 자체 게이트
     if err:
         return err, 0

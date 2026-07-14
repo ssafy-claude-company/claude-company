@@ -207,6 +207,21 @@ def test_수렴안_로드맵과_단계인식_분해회의(monkeypatch):
     assert not isinstance(ms3, str) and n3 == 1
 
 
+def test_GOAL_구조화_회의수렴안이_Task목표를_채움(monkeypatch):
+    """[GOAL 구조화(2026-07-14, 사용자: 'set_goal도 봇 지능 의지보다 구조적으로 제한')] 개인이
+    set_goal을 부를지가 아니라, 첫 주기 수렴안의 '목표:' 줄이 미확정 Task GOAL을 구조적으로 채운다 —
+    같은 회의 산물로 목표 선행 게이트가 충족돼 마일스톤이 등록된다."""
+    import types
+    from system.rule.milestone import register_consensus
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.current = types.SimpleNamespace(team=[11, 12], status=types.SimpleNamespace(goal=""))
+    assert not f.current.status.goal                             # GOAL 미확정
+    ms, _ = register_consensus(f, "목표: ToDo MVP 배포\n동작 | curl 확인", "ToDo")
+    assert not isinstance(ms, str)                               # 목표 미확정이어도 수렴안이 채워 등록됨
+    assert f.current.status.goal == "ToDo MVP 배포"              # Task GOAL이 회의 산물로 세팅됨
+
+
 def test_마일스톤_완수_보고와_로드맵_다음단계_코칭(monkeypatch):
     """[주기 보고 체계(2026-07-14, 사용자: '각 주기마다 사용자가 체감하도록 적용하고 보고')] 마일스톤
     wrapup_done → [마일스톤 보고](조건+증거) 게시 + 로드맵 다음 단계 회의 코칭."""
@@ -263,8 +278,10 @@ def test_iter_제출_도구_전_사이클(monkeypatch):
     assert {"set_subtask", "report_iter", "set_milestone", "renegotiate_criterion"} <= names
 
 
-def test_발제자_프레임_프롬프트(monkeypatch):
-    """[결정권자 폐지] 플래그 ON에서 To 수신자는 권한 없는 '발제자' 프레임을 받는다."""
+def test_첫턴_프레임_중앙집권_해제_프롬프트(monkeypatch):
+    """[중앙집권 해제(2026-07-14, 사용자: '발제자같은 중앙집권은 해제')] 플래그 ON에서 To 수신자는
+    '발제자/우두머리'가 아니라 권한 없는 '첫 턴' 프레임 — GOAL·마일스톤·단위는 회의 수렴안이, 배분은
+    순차 릴레이가 맡는다는 안내를 받는다. '발제자' 라벨과 개인 set_subtask 안내는 사라진다."""
     from system.sys_prompt import prompt as _prompt
     from types import SimpleNamespace
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
@@ -273,12 +290,13 @@ def test_발제자_프레임_프롬프트(monkeypatch):
                                capability_ledger={}, _craft_note=lambda me, fw=True: "",
                                _portfolio_note=lambda: "", _origin_request="")
     p = _prompt(fake_sys, "카운터 만들어줘", "Work", "leader", 11, leader_id=11, flow=f)
-    assert "발제자" in p and "권한은 없습니다" in p            # 권력 아닌 첫 턴 역할
-    assert "수렴안" in p and "report_iter" in p                # 확정=종결 표결(자동 등록) 안내
-    assert "배정하지 마세요" in p                              # 배분은 릴레이 몫
+    assert "발제자" not in p                                   # 중앙집권 라벨 제거
+    assert "첫 턴" in p and "우두머리가 아니라" in p           # 권력 아닌 첫 턴 역할
+    assert "수렴안" in p and "순차 릴레이" in p                # 확정=회의 수렴안 / 배분=순차 릴레이
+    assert "pick_backlog" in p and "drop_backlog" in p         # 새 플로우 도구 안내
     monkeypatch.delenv("ORGANT_PIPELINE", raising=False)
     p_off = _prompt(fake_sys, "카운터 만들어줘", "Work", "leader", 11, leader_id=11, flow=f)
-    assert "발제자" not in p_off                               # OFF — 종전 담당자 프레임 불변
+    assert "첫 턴" not in p_off and "발제자" not in p_off       # OFF — 종전 담당자 프레임 불변
 
 
 def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monkeypatch):
