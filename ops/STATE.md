@@ -71,7 +71,8 @@ claude-company  7769358  ← 브레인 — 2026-07-14 ★잔여 잠재문제 2�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  e245d01  ← HEAD — ★협의 Task 레벨화 완결(마일스톤 확정 전 preNego도 taskhead.nego로 — 임시 msblock 틀 제거, U-018 실증·U-016 무회귀, 빌드 배포됨)
+murmur  b26aca4  ← HEAD — ★새 파이프라인 마커 렌더([마일스톤 보고]·로드맵·다음단계·다음선정·백로그소진·중지상신 화이트리스트+라벨/색) · ★중지 판 Task 박스 수리(stopped 요청 pending 제외 — board-root 유지, U-019 taskhead 0→1)
+                          · ★협의 Task 레벨화 완결(마일스톤 확정 전 preNego도 taskhead.nego로 — 임시 msblock 틀 제거, U-018 실증·U-016 무회귀, 빌드 배포됨)
                           · ★중지/취소된 최신 요청이 옛 완료 이벤트로 '완료' 오표시되던 것 수리 · ★역할적합 시소러스 system.role_fit 재수출(단일 진실원) · ★완료 보고 시스템 종합·Task 하위 끝 섹션(개인 마감 응답 억제) · ★상태칩 4종 지속화
                           · ★상태칩 4종 지속화(완료=done_ts·중단=stopped·작업중=live·대기=pending, context.terminal)
                           · atelier 치유 캐시 굶김 수리(d3fefb2)
