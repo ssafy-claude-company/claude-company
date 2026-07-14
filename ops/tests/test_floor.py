@@ -334,6 +334,36 @@ def test_meet_TT_종결반대자는_발언권을_받아_직접_말한다():
     assert f.comm.alive == 11 and 12 in f.current.participated
 
 
+def test_meet_수렴안_미동봉이면_SYS가_강제종합해_마일스톤을_등록한다(monkeypatch):
+    """[강제 종합(2026-07-14, 사용자: '형식을 봇 지능·운에 맡기지 말고 돌게 하라')] 파이프라인 회의가
+    내용상 수렴했는데 아무도 [수렴안] 형식을 안 넣어 빈손 종결되면(라이브 U-024: 16분 토론이 통째
+    버려짐 — Haiku 형식 실패), 종전엔 재회의 코칭뿐이라 봇 재시도가 또 실패했다. 이제 SYS가 앵커에게
+    회의록 종합 [수렴안] 작성을 강제하는 단일 턴을 넣어 논의를 마일스톤 등록으로 착지시킨다(형식 전환
+    =SYS 구동=A, 내용은 이미 봇이 냄=B)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
+    f.floor_mode = "turn-taking"
+    synth_asked = {"n": 0}
+
+    async def wake(to, b, k):
+        if "수렴안 작성(필수)" in b:                 # SYS 강제 종합 턴만 수렴안을 낸다
+            synth_asked["n"] += 1
+            return ("[수렴안]\n단계: MVP\n단계: 확장\n목표: 방명록 1주기\n"
+                    "등록 API 동작 | curl POST 후 GET 확인\n목록 표시 | playwright 로드 확인\n"
+                    "단위: 백엔드 API | curl 확인\n단위: 프론트 목록 | playwright 확인\n[/수렴안]")
+        return "[종료]"                              # 발언·종결표결 모두 종료(수렴안 미동봉) → conv_props 빔
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    r = asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견"}))
+    txt = r["content"][0]["text"]
+    assert synth_asked["n"] == 1                      # 빈손 → SYS가 강제 종합을 딱 1회 요청(봇 재시도에 안 맡김)
+    assert "[표결 확정] 수렴안(시스템 종합)" in txt   # 종합 수렴안이 등록으로 착지(빈손 코칭 아님)
+    _open = [m for m in (f.milestones or []) if m.status not in ("done", "superseded")]
+    assert _open                                      # 마일스톤 실제 생성
+    assert f.current.status.goal == "방명록 1주기"    # 회의 산물이 미확정 Task GOAL도 채움
+
+
 def test_meet_기본은_종전_고정라운드_그대로():
     """ORGANT_FLOOR 미설정 = orchestrated round_robin — 발언 순서·라벨·프롬프트가 종전과 동일
     (동작 불변의 직접 검증; test_sys의 핀 테스트와 이중 안전망)."""

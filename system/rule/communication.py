@@ -435,13 +435,48 @@ async def meet(flow, me_id, args):
             _has_open = any(m.status not in ("done", "superseded")
                             for m in (getattr(flow, "milestones", None) or []))
             if not _has_open:
-                if flow.log:
-                    flow.log("ms_consensus_empty", topic=str(topic)[:60], members=len(members))
-                _confirm_note = ("\n\n[확정 실패 — 수렴안 미동봉] 회의는 종결됐지만 [수렴안] 블록이 없어 "
-                                 "등록된 것이 0건입니다. **마일스톤이 없으면 판이 진행되지 않습니다** — 다시 "
-                                 "meet를 열고, 종결 시 반드시 이 형식을 동봉하세요:\n[수렴안]\n단계: <로드맵>\n"
-                                 "목표: <이 주기 목표>\n<조건 | 실증절차(run으로 확인)>\n단위: <분해 | 실증>\n"
-                                 "[/수렴안]  (가결되면 자동 등록됩니다.)")
+                # [강제 종합(2026-07-14, 사용자: '형식을 봇 지능·운에 맡기지 말고 돌게 하라')] 회의는
+                # 내용상 수렴했는데(라이브 U-024: 16분 토론 전원 동의) 아무도 [수렴안]으로 포맷 안 해
+                # 빈손 종결 — Haiku 형식 실패의 사망 원인. 재회의 코칭(봇 재시도)은 또 형식 실패한다.
+                # SYS가 앵커에게 '회의록 종합 [수렴안] 작성'을 강제하는 단일 턴을 넣어 논의를 등록으로
+                # 착지시킨다(형식 전환=SYS 구동=A, 내용은 이미 봇이 냄=B). 종합도 거부되면 코칭 폴백.
+                _ctx = "\n".join(minutes[-14:]) or "(발언 없음)"
+                _synth_body = (
+                    f"[회의 종결 — 수렴안 작성(필수)] 주제: {topic}\n회의록:\n{_ctx}\n\n"
+                    "회의가 소진됐습니다. 지금까지 논의를 종합해 아래 형식의 [수렴안]을 **반드시** 작성하세요 "
+                    "— 이것이 이 턴의 유일한 임무입니다(다른 말·도구 호출 금지, [수렴안] 블록만 출력):\n"
+                    "[수렴안]\n단계: <전체 로드맵 1단계(완전한 MVP)>\n단계: <2단계(확장)>\n"
+                    "목표: <이번 주기 목표 한 줄>\n<조건 | 실증절차(run으로 확인)>\n<조건 | 실증절차>\n"
+                    "단위: <분해 단위 | 실증절차>\n단위: <분해 단위 | 실증절차>\n[/수렴안]")
+                _synth = None
+                try:
+                    _synth = await flow.wake(me_id, _synth_body, Kind.INFO)
+                except Exception as _e:
+                    if flow.log:
+                        flow.log("ms_forced_synth_err", err=str(_e)[:100])
+                _c = _ms_extract(_synth) if _synth else None
+                if _c:
+                    from .milestone import register_consensus as _ms_reg2
+                    _ms2, _n2 = _ms_reg2(flow, _c, topic)
+                    if not isinstance(_ms2, str):
+                        if flow.log:
+                            flow.log("ms_forced_synth", ms=_ms2.ms_id, subtasks=_n2)
+                        _confirm_note = (f"\n\n[표결 확정] 수렴안(시스템 종합) → 마일스톤 {_ms2.ms_id} 자동 "
+                                         f"등록(조건 {len(_ms2.criteria)}개, 단위 {_n2}개). 각자 pick_backlog"
+                                         "(desc='내가 할 일')로 자기 백로그를 등재해 전담하세요.")
+                    else:
+                        if flow.log:
+                            flow.log("ms_forced_synth_reject", reason=str(_ms2)[:80])
+                        _confirm_note = (f"\n\n[확정 실패 — 종합 수렴안 거부] {_ms2}\n다시 meet를 열어 조건을 "
+                                         "실증 가능하게 다듬어 재수렴하세요.")
+                if not _confirm_note:
+                    if flow.log:
+                        flow.log("ms_consensus_empty", topic=str(topic)[:60], members=len(members))
+                    _confirm_note = ("\n\n[확정 실패 — 수렴안 미동봉] 회의는 종결됐지만 [수렴안] 블록이 없어 "
+                                     "등록된 것이 0건입니다. **마일스톤이 없으면 판이 진행되지 않습니다** — 다시 "
+                                     "meet를 열고, 종결 시 반드시 이 형식을 동봉하세요:\n[수렴안]\n단계: <로드맵>\n"
+                                     "목표: <이 주기 목표>\n<조건 | 실증절차(run으로 확인)>\n단위: <분해 | 실증>\n"
+                                     "[/수렴안]  (가결되면 자동 등록됩니다.)")
         return (f"[회의록] 주제: {topic} ({rounds}라운드, {len(members)}명)\n"
                    + "\n".join(minutes)
                    + (_confirm_note if _no_r1 else
