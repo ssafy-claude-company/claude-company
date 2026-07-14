@@ -1873,6 +1873,8 @@ class Sys:
             flow.join_bidders = list(_joined_team or [])
         except NameError:
             flow.join_bidders = []
+        flow.was_elect = bool(elect)   # [완료 참칭 방지] 선거로 연 새 제작 요청 — 앵커가 Task도 안 열고
+        #   평문만 뱉으면(meet 미호출) 미완인데 완료로 마감되던 것 판정에 쓴다(kickoff 강제·중단 마킹).
         flow._handoff = True   # [논블로킹 핸드오프] 프로덕션은 위임을 즉시-반환 핸드오프로(75초 detach·비동기 churn
                                #   차단). 동료 작업은 SYS가 호출 밖에서 직렬 완주시켜 결과로 잇는다. (테스트는 기본 동기.)
         flow.inbound_attachments = list(attachments or [])   # [파일 전송] 사용자 첨부 — 워크스페이스 준비 시 inbox/로 staging
@@ -2190,7 +2192,14 @@ class Sys:
             # 구조적 연속 실행: 턴 한도로 작업이 끊겼으면(진행 중 Task가 남았거나 '턴 한도' 표시)
             # 같은 세션으로 이어서 완료까지 재호출한다 — '턴 한도 = 무조건 中断' 결함 해소.
             cont = 0
-            while ((flow.current is not None or "턴 한도 도달" in (result or "") or _ms_pending())
+            # [완료 참칭 방지(2026-07-14, 사용자: '프론트가 답변 하나 뱉고 끝나버린거 아니야')] 선거로 연
+            # 제작 요청인데 앵커가 Task도 안 열고(flow.current None) meet도 안 부른 채 평문만 뱉으면, 종전엔
+            # 루프 조건이 False라 한 턴에 종료→완료 참칭. '킥오프 미완'을 조건에 더해 SYS가 다시 깨워 **실제
+            # meet 호출을 강제**한다(최대 kickoff_cap회 — 그래도 안 되면 완료 아닌 중단으로 마감·아래).
+            _kickoff_cap, _kicks = 3, 0
+            def _needs_kickoff():
+                return getattr(flow, "was_elect", False) and flow.current is None and _kicks < _kickoff_cap
+            while ((flow.current is not None or "턴 한도 도달" in (result or "") or _ms_pending() or _needs_kickoff())
                    and cont < self.max_continue and not flow.cancelled):   # [사용자 중지] 이어가기 멈춤
                 # [하드블록 종결/자기치유(B-03 G4)] 봇이 못 푸는 인프라 벽(배포 자격증명 등)에 막히면 재시도
                 # 루프를 멈춘다 — 가짜 진행(재검증)으로 며칠씩 빙빙 돌다 무진행 컷나던 것 차단. 단 '연속
@@ -2299,7 +2308,17 @@ class Sys:
                 if _nr != flow.anchor and flow.comm.rotate_origin_holder(_nr):
                     flow.anchor = _nr           # 주자 회전 — 클로저 lead는 건드리지 않는다(초기값일 뿐)
                     self._log("anchor_rotated", to=int(_nr))
-                result = await self.run_turn(flow, flow.anchor, _goal_note + _CONTINUE_BODY + team_note + drained,
+                # [킥오프 강제] 앵커가 Task도 안 열고 평문으로 회의를 흉내냈으면 — 실제 meet 호출을 강제.
+                _kick_note = ""
+                if _needs_kickoff():
+                    _kicks += 1
+                    self._log("kickoff_forced", ch=int(flow.user_channel or 0), n=_kicks)
+                    _kick_note = ("\n\n[SYS — 회의를 '평문으로 흉내내지' 마세요] 방금 당신은 회의를 텍스트로만 "
+                                  "적고 끝냈습니다 — **팀은 그 글을 못 보고, 아무 일도 안 일어났습니다**(당신 혼자 "
+                                  "독백). 진행은 **다같이 대화(회의)**로만 됩니다. 지금 **`meet` 도구를 실제로 "
+                                  "호출**하세요(topic=주제, my_opinion=당신 의견) — 그래야 팀이 깨어나 다자 토론이 "
+                                  "시작됩니다. 혼자 답·계획을 쓰지 말고, 도구를 부르세요.")
+                result = await self.run_turn(flow, flow.anchor, _goal_note + _CONTINUE_BODY + team_note + drained + _kick_note,
                                              Kind.WORK, "leader")
             # 이어가기 한도 소진/마감 후에도 완주 중인 위임이 있으면 그 결과까지 받아 보고에 붙인다
             # (작업 유실 방지 — 마지막 위임이 마감 직전에 끝나는 경우).
@@ -2395,6 +2414,13 @@ class Sys:
         if not hasattr(self, "_flow_open_task"):
             self._flow_open_task = {}
         self._flow_open_task[int(flow.user_channel or 0)] = flow.current is not None
+        # [완료 참칭 방지(2026-07-14)] 선거로 연 제작 요청인데 Task도 안 열린 채(flow.current None) 끝났으면
+        # = 앵커가 아무것도 안 만든 것(평문 독백). done으로 마감하면 '완료' 참칭이라, 이 채널을 '산출물 0'로
+        # 표시해 reap이 done 대신 **중단**으로 닫게 한다(정직한 미완).
+        if not hasattr(self, "_flow_no_deliverable"):
+            self._flow_no_deliverable = {}
+        self._flow_no_deliverable[int(flow.user_channel or 0)] = bool(
+            getattr(flow, "was_elect", False) and flow.current is None)
         open_task_snap = None
         if flow.current is not None:
             flow.current.status.status = "중단"
@@ -2622,7 +2648,17 @@ class Sys:
                                 log.info("↻ Task 미완 — 같은 요청 재픽 예약(%d/3): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
                             else:
                                 await guide.pick(_mid, done=True)
-                                log.info("✓ 처리 완료: msg_id=%s", _mid)
+                                # [완료 참칭 방지] 선거 제작 요청인데 산출물 0(Task 미개설)이면 done_ts는
+                                # 찍히되 **중단**으로 표시 — 피드가 '완료'가 아니라 '중단'으로 렌더(정직).
+                                if getattr(self, "_flow_no_deliverable", {}).pop(int(_info["ch"]), False):
+                                    try:
+                                        await self.guide.mark_stopped(int(_info["ch"]))  # 채널 요청을 중단으로(피드 '완료' 아님)
+                                    except Exception:
+                                        pass
+                                    self._log("false_complete_blocked", mid=_mid, ch=_info["ch"])
+                                    log.info("⚠ 산출물 0 — 완료 아닌 중단으로 마감: msg_id=%s", _mid)
+                                else:
+                                    log.info("✓ 처리 완료: msg_id=%s", _mid)
                         except asyncio.CancelledError:
                             log.info("■ 중지됨: msg_id=%s", _mid)
                         except Exception as _e:
