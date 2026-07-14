@@ -167,6 +167,9 @@ def checkpoint_open_task(sys, flow) -> None:
     # [마일스톤 파이프라인 §9 — 최대 저장] 주기 상태(마일스톤·SubTask·조건·증거) 전부 동승 —
     # 크래시·재시작 후 iter 중간부터 재개하는 토대. 플래그 OFF면 빈 리스트라 무비용.
     p["milestones"] = [ms_to_dict(m) for m in (getattr(flow, "milestones", None) or [])]
+    # [로드맵 §9(2026-07-14)] 전체 구조 회의가 확정한 다단계 로드맵(달구지→자동차→스포츠카) —
+    # 주기 완수마다 다음 단계 회의를 코칭하는 근거라 재시작을 넘어 살아야 한다.
+    p["roadmap"] = list(getattr(flow, "roadmap", None) or [])
     # [백로그 릴레이 §9 — S2] 릴레이 장부(풀·턴 홀더·차단 이력)도 같은 원칙으로 동승 —
     # 재시작 후 '누구 배분 차례였나'까지 그대로 살아난다. OFF면 빈 dict라 무비용.
     p["backlog_relays"] = {sid: r.to_ckpt()
@@ -189,6 +192,7 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         flow.milestones = [ms_from_dict(d) for d in (proj.get("milestones") or [])]
     except Exception:
         flow.milestones = []
+    flow.roadmap = list(proj.get("roadmap") or [])   # [로드맵 §9 복원(2026-07-14)]
     # [백로그 릴레이 §9 — 복원] 마일스톤과 같은 독립 복원(릴레이만 있는 시점의 죽음도 복구).
     # log 바인딩은 복원 시점에 못 한다 — relay_for가 접근 시 재바인딩한다.
     try:

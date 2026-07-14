@@ -167,7 +167,6 @@ async def meet(flow, me_id, args):
         # 소집자 발제 후 첫 발화부터 응찰. 트레이드오프 관측(§8 민감 접근): R1은 발산(앵커링 방지)
         # 장치였다 — 제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다.
         from .milestone import extract_consensus as _ms_extract
-        from .milestone import gate_new_cycle as _ms_gate_cycle
         from .milestone import pipeline_on as _ms_on
         _no_r1 = _ms_on()
         conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
@@ -328,13 +327,17 @@ async def meet(flow, me_id, args):
                     # [종료] 투표는 수렴안(완수조건 초안)을 동봉한다 — 가결되면 그 안이 그대로 등록된다
                     # (사람이 아니라 표결+등록 게이트가 확정). 확정 발화 권력의 비인격 대체.
                     _conv = ("\n마쳐도 된다면 `[종료]` 다음 줄에 이 회의의 수렴안을 동봉하세요:\n"
-                             "[수렴안]\n목표: <이 주기의 목표 한 줄>\n<조건 | 실증절차(run으로 확인)>\n"
+                             "[수렴안]\n단계: <전체 로드맵 1단계(완전한 MVP)>\n단계: <2단계(확장)>\n"
+                             "목표: <이번(첫) 주기의 목표 한 줄>\n<조건 | 실증절차(run으로 확인)>\n"
                              "<조건 | 실증절차>\n단위: <분해 단위 목표> | <실증절차>\n"
                              "단위: <분해 단위 목표> | <실증절차>\n[/수렴안]\n"
-                             "('단위:' 줄 = 이 주기의 SubTask 분해 — **참여 도메인마다 자기 몫 단위**를 "
-                             "넣으세요(한 도메인이 전부 카빙 금지). 동료가 이미 낸 수렴안에 동의하면 그대로 "
-                             "복사·수정해 제출 — 가결 시 최다 지지안이 마일스톤+단위로 함께 등록됩니다. "
-                             "등록 후 각자 pick_backlog(desc)로 자기 백로그를 등재해 전담하세요)"
+                             "('단계:' 줄 = 전체 구조 로드맵(예: 달구지→자동차→스포츠카) — 첫 주기는 완전한 "
+                             "MVP로, 주기는 순차 1개씩 완수·보고 후 다음을 엽니다. '단위:' 줄 = 이 주기의 "
+                             "SubTask 분해 — **참여 도메인마다 자기 몫 단위**를 넣으세요(한 도메인이 전부 "
+                             "카빙 금지). 진행 중 주기가 이미 있으면 이 수렴안은 그 주기의 단위 추가로 "
+                             "등록됩니다. 동료가 이미 낸 수렴안에 동의하면 그대로 복사·수정해 제출 — 가결 시 "
+                             "최다 지지안이 등록됩니다. 등록 후 각자 pick_backlog(desc)로 자기 백로그를 "
+                             "등재해 전담하세요 — 백로그는 개인 역량 안의 작업 단위입니다)"
                              if _no_r1 else " 마쳐도 되면 `[종료]`만.")
                     return (f"[회의 — 종결 확인] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
@@ -386,23 +389,29 @@ async def meet(flow, me_id, args):
         # 시스템이 서기로서 즉시 등록한다(사람 확정 발화 없음). 최다 지지 = 동일안 제출 수, 동률=최신.
         # 등록 게이트(실행·측정 강제)가 품질을 지키고, 거부되면 사유를 회의록에 남겨 재회의를 유도한다.
         _confirm_note = ""
-        # [같은 문(2026-07-13, 사용자: '대체됨은 또 왜 생긴거고')] 표결 확정도 등록 게이트(목표 선행·
-        # 정밀 복구)를 지난다 — U-015에서 이 경로가 검문 없이 iter>0 미완 주기를 대체했다.
-        if _no_r1 and conv_props and (_cyc_err := _ms_gate_cycle(flow)):
-            _confirm_note = f"\n\n[표결 확정 보류] {_cyc_err}"
-        elif _no_r1 and conv_props:
+        # [같은 문(2026-07-13→14)] 표결 확정도 등록 게이트를 지난다 — 단 검문은 register_consensus
+        # 내부에서(신설 분기만). 진행 중 주기가 있으면 수렴안은 '단위 추가'로 등록되므로 여기서
+        # 선차단하면 분해 회의가 막힌다(2026-07-14 흐름 귀속 재설계).
+        if _no_r1 and conv_props:
             from collections import Counter
             _ranked = [p for p, _ in Counter(conv_props).most_common()]
             # [단위 동반 등록(2026-07-14, 사용자: '개인 서브태스크 제한 — 회의 끝나고 생기는 흐름으로')]
             # 수렴안의 '단위:' 줄들 = 팀 합의 SubTask 분해 — 가결과 함께 등록. 개인 도구(set_milestone·
             # set_subtask)는 솔로 판 한정이라, 팀 판의 주기·단위는 이 경로가 유일하다(개인 카빙의 비인격 대체).
             from .milestone import register_consensus as _ms_reg
+            _pre_open = next((m.ms_id for m in (getattr(flow, "milestones", None) or [])
+                              if m.status not in ("done", "superseded")), None)
             for _prop in _ranked:
                 _ms, _n_st = _ms_reg(flow, _prop, topic)
                 if not isinstance(_ms, str):
-                    _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 마일스톤 {_ms.ms_id} 자동 등록"
-                                     f"(조건 {len(_ms.criteria)}개, 단위 {_n_st}개). 각자 pick_backlog"
-                                     f"(desc='내가 할 일')로 자기 백로그를 등재해 전담하세요.")
+                    if _pre_open == _ms.ms_id:      # 진행 중 주기의 분해 회의 — 단위 추가 모드
+                        _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 진행 중 주기 {_ms.ms_id}에 단위 "
+                                         f"{_n_st}개 추가. 각자 pick_backlog(desc='내가 할 일')로 자기 "
+                                         f"백로그를 등재해 전담하세요.")
+                    else:
+                        _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 마일스톤 {_ms.ms_id} 자동 등록"
+                                         f"(조건 {len(_ms.criteria)}개, 단위 {_n_st}개). 각자 pick_backlog"
+                                         f"(desc='내가 할 일')로 자기 백로그를 등재해 전담하세요.")
                     if flow.log:
                         flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props), subtasks=_n_st)
                     break
@@ -1188,6 +1197,10 @@ async def request(flow, me_id, role, args):
             from .backlog import sync_completion as _bl_done
             _bl_done(flow, to)
             _ckpt(flow)              # [인도 사실 영속] 복구가 인도 핸드셰이크를 다시 요구하지 않게(마감 닫힘)
+            # [다음 선정 즉시 게시(2026-07-14)] 완료가 낳은 핸드오프 공고(handoff_note)를 다음 도구
+            # 호출까지 묵히지 않는다 — 응찰·선정이 이 경계에서 바로 시작되도록.
+            from .milestone import flush_pipeline_notes as _fl_notes
+            await _fl_notes(flow)
         # [B-09 Phase A — Task Dossier] Work 응답 전문([결과]/[변경]/[검증]/[리스크])을 REPORTS.md에
         # append(무절단 원본). 채팅 clip·스냅샷 result_so_far 500자 절단과 무관하게 보고 원문이 보존된다.
         # 크래시(transient)·되묻기(clarify)는 보고가 아니므로 제외. 실패해도 흐름 무해(best-effort).

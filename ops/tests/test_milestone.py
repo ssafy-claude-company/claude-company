@@ -180,6 +180,49 @@ def test_가결_수렴안_단위줄_마일스톤과_동반등록(monkeypatch):
     assert [st.goal for st in ms.subtasks] == ["백엔드 저장 API", "프론트 목록 UI"]
 
 
+def test_수렴안_로드맵과_단계인식_분해회의(monkeypatch):
+    """[전체 플로우(2026-07-14 사용자 설계)] ①첫 수렴안: '단계:' 줄 = 로드맵(달구지→자동차) 보관 +
+    M1 등록 ②열린 주기 존재 시 수렴안 = 그 주기의 분해 회의(단위 추가, 주기 신설 아님 = 순차 1주기)
+    ③기존 백로그가 처리 중이면 단위 추가 보류(경계 생성 — '종료될 때만 생성')."""
+    from system.rule.milestone import register_consensus
+    from system.rule.backlog import relay_for
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    prop1 = ("단계: 달구지 — ToDo MVP\n단계: 자동차 — 계정·동기화\n목표: ToDo MVP\n"
+             "CRUD 동작 | curl POST 후 GET 확인")
+    ms, n = register_consensus(f, prop1, "ToDo")
+    assert not isinstance(ms, str) and f.roadmap == ["달구지 — ToDo MVP", "자동차 — 계정·동기화"]
+    assert len(ms.criteria) == 1 and n == 0                       # '단계:' 줄이 조건에 안 섞임
+    # ② 열린 주기 존재 — 분해 회의(단위 추가)
+    ms2, n2 = register_consensus(f, "단위: 백엔드 API | curl 200 확인", "분해")
+    assert not isinstance(ms2, str) and ms2.ms_id == ms.ms_id and n2 == 1   # 신설 아님 — 같은 주기
+    # ③ 백로그 처리 중 — 경계 생성 보류
+    r = relay_for(f, ms.subtasks[0])
+    b = r.submit(12, "저장 API 구현")
+    r.pick(12, b.backlog_id, 12)
+    err, _ = register_consensus(f, "단위: 프론트 UI | playwright 확인", "분해2")
+    assert isinstance(err, str) and "보류" in err and "처리 중" in err
+    b2 = r.done(12, b.backlog_id)                                 # 종료 후엔 추가 가능
+    ms3, n3 = register_consensus(f, "단위: 프론트 UI | playwright 확인", "분해2")
+    assert not isinstance(ms3, str) and n3 == 1
+
+
+def test_마일스톤_완수_보고와_로드맵_다음단계_코칭(monkeypatch):
+    """[주기 보고 체계(2026-07-14, 사용자: '각 주기마다 사용자가 체감하도록 적용하고 보고')] 마일스톤
+    wrapup_done → [마일스톤 보고](조건+증거) 게시 + 로드맵 다음 단계 회의 코칭."""
+    from system.rule.milestone import register_consensus, iter_verify, wrapup_done
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    ms, _ = register_consensus(f, "단계: MVP\n단계: 확장판\n목표: MVP\n동작 | curl 확인", "t")
+    ms.criteria[0].passed = True
+    ms.criteria[0].evidence = "curl 200 OK"
+    ms.status = "wrapup"
+    assert wrapup_done(f, ms) == "done"
+    notes = "\n".join(getattr(f, "_pipeline_notes", []) or [])
+    assert "[마일스톤 보고]" in notes and "curl 200 OK" in notes
+    assert "[다음 단계]" in notes and "확장판" in notes            # 로드맵 2단계 회의 코칭
+
+
 def test_종결표결_수렴안_추출과_결정권자_부재(monkeypatch):
     """[결정권자 폐지] [수렴안] 블록 파서 — 종결 표결 동봉분을 시스템이 서기로 등록하는 원료.
     재협상도 누구나(사람 승인이 진짜 게이트)."""

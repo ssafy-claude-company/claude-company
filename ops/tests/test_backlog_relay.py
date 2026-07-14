@@ -371,6 +371,36 @@ def test_배선_백로그밖_위임은_그대로_통과(monkeypatch):
     assert not any(b.assignee == B for b in r.backlogs)                # 수행자에게 자동 배정 없음
 
 
+def test_중단_dropped_본인만_처리제외_핸드오프(monkeypatch):
+    """[중단(2026-07-14, 사용자: '개인이 올린거니 중지가 아니라 중단 — 처리에서 제외')] drop은
+    본인(수행자/제출자)만, dropped는 remaining에서 빠지고 재선정 불가, 중단자가 새 턴 홀더(다음
+    선정 담당자). 종결 시 남은 백로그 보유자 응찰 공고(handoff_note)가 노트로 게시된다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.backlog import handoff_note, BacklogError
+    f, st, ev = _pipe_flow()
+    r = relay_for(f, st)
+    b1 = r.submit(A, "저장 API 스키마 설계")
+    b2 = r.submit(B, "프론트 카드 렌더")
+    r.pick(A, "B1", A)
+    try:
+        r.drop(B, "B1", "남의 것")                              # 본인 아님 — 거부
+        assert False
+    except BacklogError:
+        pass
+    r.drop(A, "B1", "역량 밖 — 인프라 권한 필요")
+    assert b1.status == "dropped" and b1 not in r.remaining()    # 처리 제외
+    assert r.turn_holder == A                                    # 중단자 = 다음 선정 담당
+    try:
+        r.pick(A, "B1", A)                                       # 재선정 불가
+        assert False
+    except BacklogError:
+        pass
+    handoff_note(f, r, A, "중단됐습니다")
+    notes = "\n".join(getattr(f, "_pipeline_notes", []) or [])
+    assert "[다음 선정]" in notes and "B2" in notes               # 남은 보유자 응찰 공고
+    assert ("backlog_dropped" in [e for e, _ in ev])
+
+
 def test_배선_wrapup_정리와_장부요지(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, _ = _pipe_flow()

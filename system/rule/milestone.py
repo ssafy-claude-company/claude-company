@@ -497,6 +497,19 @@ def wrapup_done(flow, obj) -> str:
         _pnote(flow, f"[{'마일스톤 완수' if isinstance(obj, Milestone) else 'SubTask 완수'}] ({_oid}) {getattr(obj, 'goal', '')[:120]}")
         flow.log("ms_done" if isinstance(obj, Milestone) else "subtask_done",
                  id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""))
+    if isinstance(obj, Milestone):
+        # [주기 보고 체계(2026-07-14, 사용자: '각 마일스톤 주기마다 사용자가 체감할 수 있도록 적용하고
+        # 보고')] 주기 완수 = 사용자 가시 보고 게시(조건+증거) — 로드맵이 있으면 다음 단계 회의 코칭.
+        _ev = "\n".join(f"· {c.desc[:70]} — {(c.evidence or '실증 기록')[:90]}"
+                        for c in obj.criteria[:8] if c.status != "waived")
+        _pnote(flow, f"[마일스톤 보고] ({obj.ms_id}) {obj.goal[:100]}\n{_ev}\n"
+                     f"→ 사용자 확인 단위입니다 — 라이브에서 체감 검증하세요.")
+        _rm = list(getattr(flow, "roadmap", None) or [])
+        _done_n = sum(1 for m in flow.milestones if m.status == "done")
+        if _done_n < len(_rm):
+            _pnote(flow, f"[다음 단계] 로드맵 {_done_n + 1}/{len(_rm)} 완수 — 다음: **{_rm[_done_n][:60]}**. "
+                         f"meet 회의를 열어 다음 주기 수렴안([수렴안] 목표/조건/단위)을 확정하세요"
+                         f"(사용자 보고·목표 확인 후).")
     return "done"
 
 
@@ -599,13 +612,46 @@ def gate_new_cycle(flow):
 
 
 def register_consensus(flow, prop: str, origin: str = ""):
-    """[표결 가결 → 서기 등록(2026-07-14)] 수렴안 원문에서 목표·조건·'단위:' 줄을 갈라 마일스톤과
-    SubTask를 **함께** 등록한다 — 팀 판의 주기 확정·단위 분해의 유일 경로(개인 도구는 솔로 판 한정).
-    '단위:' 줄은 | 를 포함하므로 마일스톤 조건에서 분리(오파싱 방지). 반환: (Milestone|에러 str, 단위 수)."""
+    """[표결 가결 → 서기 등록(2026-07-14)] 수렴안 원문을 갈라 흐름 단계에 맞게 등록한다 — 팀 판의
+    주기 확정·단위 분해의 유일 경로(개인 도구는 솔로 판 한정). 반환: (Milestone|에러 str, 단위 수).
+
+    단계 인식(사용자 설계: '마일스톤은 순차 1개, 회의 종료 시에만 생성'):
+    - 열린 주기 없음 → 새 마일스톤(+동봉 '단위:' 줄) 등록. '단계:' 줄들 = 로드맵(달구지→자동차→
+      스포츠카) — flow.roadmap에 보관, 각 주기 완수 보고 때 다음 단계 회의를 코칭.
+    - 열린 주기 있음 → 이 수렴안은 그 주기의 **분해 회의** — '단위:' 줄만 그 주기에 추가 등록.
+      단, 기존 단위의 백로그가 아직 처리 중이면 보류(경계 생성 — '종료될 때만 생성')."""
     lines = str(prop or "").splitlines()
     goal = next((l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("목표")), origin)
     units = [l.strip()[3:].strip() for l in lines if l.strip().startswith("단위:")]
-    crit = "\n".join(l for l in lines if "|" in l and not l.strip().startswith("단위:"))
+    stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계")]
+    crit = "\n".join(l for l in lines if "|" in l and not l.strip().startswith("단위:")
+                     and not l.strip().startswith("단계"))
+    _open = next((m for m in (getattr(flow, "milestones", None) or [])
+                  if m.status not in ("done", "superseded")), None)
+    if _open is not None:
+        # 진행 중 주기의 분해 회의 — 단위 추가만(주기 신설 금지 = 순차 1주기).
+        if not units:
+            return (f"진행 중 주기 {_open.ms_id}가 있어 새 주기는 열 수 없습니다(순차 1주기) — 이 회의가 "
+                    f"그 주기의 분해라면 수렴안에 '단위: <목표> | <실증절차>' 줄을 동봉하세요."), 0
+        _rls = getattr(flow, "backlog_relays", None) or {}
+        _busy = [b.backlog_id for x in _open.subtasks if x.status not in ("done", "superseded")
+                 and _rls.get(x.st_id) is not None
+                 for b in _rls[x.st_id].backlogs if b.status not in ("done", "dropped")]
+        if _busy:
+            return (f"단위 추가 보류: 기존 백로그 {len(_busy)}건({' · '.join(_busy[:6])})이 아직 처리 중입니다 — "
+                    f"단위·백로그 생성은 이전 것들이 종료(완료/중단)된 뒤에만 가능합니다(경계 생성)."), 0
+        n = 0
+        for u in units:
+            st = open_subtask(flow, _open, u.partition("|")[0].strip(), parse_criteria_lines(u))
+            if not isinstance(st, str):
+                n += 1
+        return _open, n
+    err = gate_new_cycle(flow)         # 신설 분기만 검문(목표 선행 등) — 단위 추가 분기는 위에서 자체 게이트
+    if err:
+        return err, 0
+    if stages:
+        flow.roadmap = stages          # 전체 구조(로드맵) — ckpt 동승(sys_recovery), 주기 완수마다 다음 단계 코칭
+        _pnote(flow, "[로드맵] " + " → ".join(s[:40] for s in stages[:8]) + " (순차 1주기 — 각 주기 완수 시 보고 후 다음 단계 회의)")
     ms = open_milestone(flow, goal, parse_criteria_lines(crit), origin=f"회의 가결: {origin[:60]}")
     if isinstance(ms, str):
         return ms, 0

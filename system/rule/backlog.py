@@ -30,8 +30,11 @@ from typing import Callable, Dict, List, Optional
 from .comm_helpers import _body_overlap
 from .milestone import next_milestone, pipeline_on   # 단방향: milestone은 backlog를 모른다(순환 0)
 
-# 상태 4종 (§3 확정 — 이 밖의 상태 없음)
+# 상태 5종 — 기본 4종(§3) + dropped(2026-07-14, 사용자: '개인이 올린거니 중지가 아니라 중단으로
+# 처리해서 아예 백로그 처리에서 제외'). 백로그는 개인 작업 단위라 완수 불가 판단도 본인 몫 —
+# blocked(재방문 가능)와 달리 dropped는 장부에서 종결 취급(remaining 제외·재선정 불가).
 OPEN, IN_PROGRESS, BLOCKED, DONE = "open", "in_progress", "blocked", "done"
+DROPPED = "dropped"
 
 # 교착 판정(§3 제안): 같은 백로그가 차단으로 2회 재방문 = 차단이 2번째 쌓이는 순간.
 # (1차 차단 → 핸드오프로 재방문·재개 → 또 차단 = 선행 해소가 안 돌고 있다는 신호)
@@ -124,8 +127,8 @@ class BacklogRelay:
         return list(self._pool.values())
 
     def remaining(self) -> List[Backlog]:
-        """아직 done이 아닌 것 전부(open/in_progress/blocked)."""
-        return [b for b in self._pool.values() if b.status != DONE]
+        """아직 종결 아닌 것 전부(open/in_progress/blocked) — done·dropped는 처리 대상 밖."""
+        return [b for b in self._pool.values() if b.status not in (DONE, DROPPED)]
 
     def all_done(self) -> bool:
         return bool(self._pool) and not self.remaining()
@@ -256,6 +259,22 @@ class BacklogRelay:
             b.note = str(note)[:300]
         self.turn_holder = int(worker)
         self._emit("backlog_done", backlog=b.backlog_id, by=int(worker))
+        return b
+
+    def drop(self, worker: int, backlog_id: str, reason: str = "") -> Backlog:
+        """[중단(2026-07-14, 사용자: '개인이 올린거니 중지가 아니라 중단으로 — 처리에서 제외')]
+        본인(수행자 또는 제출자)이 완수 불가로 판단한 백로그를 장부에서 종결 제외한다. blocked와 달리
+        재방문 없음. 중단자도 마무리자와 동일하게 새 턴 홀더(다음 선정의 담당자)가 된다."""
+        b = self.get(backlog_id)
+        if int(worker) not in (int(b.assignee or 0), int(b.submitter)):
+            raise BacklogError(f"{b.backlog_id}는 본인(수행자/제출자)만 중단할 수 있습니다.")
+        if b.status in (DONE, DROPPED):
+            raise BacklogError(f"{b.backlog_id}는 이미 {b.status} — 중단 대상이 아닙니다.")
+        b.status = DROPPED
+        b.ts_done = time.time()
+        b.note = (f"중단({worker}): {reason}"[:300] if reason else b.note)
+        self.turn_holder = int(worker)
+        self._emit("backlog_dropped", backlog=b.backlog_id, by=int(worker), reason=str(reason or "")[:120])
         return b
 
     def block(self, worker: int, backlog_id: str, next_starter: int, reason: str = ""):
@@ -423,6 +442,23 @@ def sync_delegation(flow, me_id, to, body) -> Optional[str]:
     return None
 
 
+def handoff_note(flow, r, actor, verb) -> None:
+    """[다음 선정 공고(2026-07-14, 사용자: '백로그 끝나거나 중단되면 보유 봇들에게 응찰 — 담당자가
+    판단해 선정')] 백로그 종결(완료/중단) 순간, 남은 백로그 보유자들에게 응찰을 공고하고 선정권이
+    직전 마무리자(담당자)에게 있음을 채널에 게시한다. 파이프라인 노트로 누적 — 도구 래퍼가 flush."""
+    rem = [b for b in r.backlogs if b.status in (OPEN, BLOCKED)]
+    if not rem:
+        return
+    _info = getattr(flow, "_info", lambda x: x)
+    cand = " · ".join(f"{b.backlog_id}({_info(b.submitter)}: {b.body[:24]})" for b in rem[:8])
+    notes = getattr(flow, "_pipeline_notes", None)
+    if notes is None:
+        notes = flow._pipeline_notes = []
+    notes.append(f"[다음 선정] {_info(actor)}의 백로그가 {verb} — 남은 백로그 보유자는 '내가 다음이어야 "
+                 f"하는 이유' 한 줄을 담당자({_info(actor)})에게 알리세요. 담당자가 pick_backlog(id)로 "
+                 f"다음 수행을 선정합니다(선정되면 그 백로그의 제출자가 착수). 남은 백로그: {cand}")
+
+
 def sync_completion(flow, worker) -> None:
     """[위임축 접점 — owner 실작업 인도 확정 지점에서 호출] 그 수행자의 in_progress 백로그를
     done으로 — 그가 새 턴 홀더(다음 배분권자)가 된다(backlog_done 이벤트). 백로그 밖 위임이면 no-op."""
@@ -439,6 +475,7 @@ def sync_completion(flow, worker) -> None:
             try:
                 r.done(int(worker), b.backlog_id)
                 st.participants.add(int(worker))
+                handoff_note(flow, r, worker, "완료됐습니다")
             except BacklogError:
                 pass
             break

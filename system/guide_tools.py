@@ -269,6 +269,12 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             bid = str(args.get("id") or "").strip()
             desc = str(args.get("desc") or "").strip()
             _stq = str(args.get("st") or "").strip()
+            # [1인 1활성 백로그(2026-07-14, 사용자: '백로그는 개인의 작업 단위')] 내가 이미 쥔
+            # in_progress가 있으면 새로 못 집는다 — 개인 작업 단위는 하나씩 끝내며 간다.
+            _rls_all = getattr(flow, "backlog_relays", None) or {}
+            _my_ip = next((b for x in _sts if _rls_all.get(x.st_id) is not None
+                           for b in _rls_all[x.st_id].backlogs
+                           if b.status == "in_progress" and int(b.assignee or 0) == int(me_id)), None)
             try:
                 if bid:
                     r, b = None, None
@@ -282,8 +288,21 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     if b.status == "in_progress" and int(b.assignee or 0) == int(me_id):
                         pass                      # 이미 내 보유 — 멱등
                     else:
+                        # [선정 = 제출자 착수(2026-07-14)] 백로그는 개인 작업 단위 — 남의 백로그를
+                        # 집는 행위는 '내가 대신'이 아니라 **다음 수행 선정**(배분권=마무리자, relay가 검증).
+                        _assn = int(b.submitter)
+                        if _assn != int(me_id):
+                            r.pick(int(me_id), b.backlog_id, _assn)
+                            return _ok(f"[다음 선정] {b.backlog_id} → {flow._info(_assn) if hasattr(flow, '_info') else _assn}"
+                                       f"(제출자)가 착수합니다 — 선정 사유는 채널에 남기세요.")
+                        if _my_ip is not None and _my_ip.backlog_id != b.backlog_id:
+                            return _ok(f"선점 불가: 당신은 {_my_ip.backlog_id}를 이미 쥐고 있습니다 — 개인 작업 "
+                                       f"단위는 하나씩. 끝내거나(report_iter/완료 응답) 불가면 drop_backlog로 중단하세요.")
                         r.pick(int(me_id), b.backlog_id, int(me_id))
                 elif desc:
+                    if _my_ip is not None:
+                        return _ok(f"등재 보류: 당신은 {_my_ip.backlog_id}를 이미 쥐고 있습니다 — 개인 작업 단위는 "
+                                   f"하나씩. 지금 것을 끝낸 뒤 다음을 등재하세요(불가 판단이면 drop_backlog).")
                     _tgt = None
                     if _stq:
                         _tgt = next((x for x in _sts if _stq in x.st_id or _stq.lower() in x.goal.lower()), None)
@@ -307,6 +326,39 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             _set_pipeline_ctx(flow, me_id)        # 이 턴의 이후 게시부터 이 백로그로 귀속
             return _ok(f"백로그 {b.backlog_id} 선점 — 작업하세요. 완료는 report_iter(조건 검증) 또는 위임 마무리가 장부에 반영합니다.")
         tools.append(pick_backlog)
+
+        @tool("drop_backlog",
+              "**중단**: 내 백로그(내가 제출/수행 중)를 완수 불가로 판단해 장부에서 제외한다 — 백로그는 "
+              "개인 역량 안이어야 하며, 불가 판단도 본인 몫. blocked(선행 대기·재방문)와 다르게 중단은 "
+              "종결이다. 중단하면 당신이 다음 선정의 담당자가 된다. id=백로그, reason=왜 불가한가(필수).",
+              {"id": str, "reason": str})
+        async def drop_backlog(args):
+            from .rule.backlog import relay_for, BacklogError, handoff_note
+            from .rule.milestone import flush_pipeline_notes as _flush
+            ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
+            _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
+            bid = str(args.get("id") or "").strip()
+            reason = str(args.get("reason") or "").strip()
+            if not bid or not reason:
+                return _ok("id와 reason(왜 완수 불가인가)이 모두 필요합니다 — 중단은 기록이 남는 종결입니다.")
+            r, b = None, None
+            for _x in _sts:
+                _r = relay_for(flow, _x)
+                if any(x.backlog_id == bid for x in _r.backlogs):
+                    r, b = _r, _r.get(bid)
+                    break
+            if b is None:
+                return _ok(f"중단 불가: 백로그 {bid}가 열린 단위 어디에도 없습니다.")
+            try:
+                r.drop(int(me_id), bid, reason)
+            except BacklogError as e:
+                return _ok(f"중단 불가: {e}")
+            handoff_note(flow, r, me_id, "중단됐습니다")
+            _res = _ok(f"백로그 {bid} 중단(처리 제외) — 사유가 장부에 남았습니다. 당신이 다음 선정의 "
+                       f"담당자입니다: 남은 백로그 보유자들의 사유를 듣고 pick_backlog(id)로 선정하세요.")
+            await _flush(flow)
+            return _res
+        tools.append(drop_backlog)
 
         @tool("report_iter",
               "진행 중 주기의 완수조건 실증 결과를 제출한다(검증 참여자 누구나). results=한 줄에 "
