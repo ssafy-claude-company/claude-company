@@ -19,7 +19,11 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  0e7be91  ← 브레인 — 2026-07-14 ★파이프라인 3구멍 근본 수리(U-019 라이브 실증): ①내용 주기 보호(gate_new_cycle —
+claude-company  62f2750  ← 브레인 — 2026-07-14 ★생성 권한 흐름 귀속(사용자 설계 확정): 팀 판 개인 set_milestone·set_subtask 폐쇄 —
+                          확정=회의 종결 표결([수렴안] 가결 자동 등록), 분해=수렴안 '단위: 목표 | 실증' 줄 동반 등록
+                          (register_consensus), **전담의 실체=백로그**(pick_backlog desc 자기 등재, st= 단위 지정,
+                          id는 열린 단위 전체 검색). 솔로 판만 개인 도구 허용. 스위트 603 그린.
+                          + ★파이프라인 3구멍 근본 수리(U-019 라이브 실증): ①내용 주기 보호(gate_new_cycle —
                           SubTask 붙은 주기는 iter 0이라도 새 주기 개설=대체 금지; 종전 '큐잉 허용'은 open_milestone이
                           실제론 supersede라 판 파기 허용이었음 — 프론트 set_milestone 1방이 ST 6개 판 파기한 건)
                           ②자기 등재 원칙(sync_delegation 자동제출 제거 — 위임문 원문이 수행자 in_progress 백로그로
