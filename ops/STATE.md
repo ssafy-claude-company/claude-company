@@ -19,7 +19,14 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  1b40dcc  ← 브레인 — 2026-07-14 ★전역 haiku 전환(SiteConfig, per-bot 오버라이드 제거)·중지 detach 콜백 BaseException 가드·Bash 부재 명시 · ★역할적합 정본화(system.role_fit — 선거 그룹대표를 추천(F1301)과
+claude-company  0e7be91  ← 브레인 — 2026-07-14 ★파이프라인 3구멍 근본 수리(U-019 라이브 실증): ①내용 주기 보호(gate_new_cycle —
+                          SubTask 붙은 주기는 iter 0이라도 새 주기 개설=대체 금지; 종전 '큐잉 허용'은 open_milestone이
+                          실제론 supersede라 판 파기 허용이었음 — 프론트 set_milestone 1방이 ST 6개 판 파기한 건)
+                          ②자기 등재 원칙(sync_delegation 자동제출 제거 — 위임문 원문이 수행자 in_progress 백로그로
+                          날조되던 것; 등재는 본인 pick_backlog(desc)만, 백로그는 그 도메인 지능으로) ③백로그 게이트
+                          열린 단계 전체 스캔(Write/run — 첫 ST 슬롯만 쥐면 도메인 무관 통과·오거부 양쪽 수리).
+                          **러너 재시작 대기(미반영)** — 다음 e2e 전 반영 필요. 스위트 601 그린.
+                          이전: ★전역 haiku 전환(SiteConfig, per-bot 오버라이드 제거)·중지 detach 콜백 BaseException 가드·Bash 부재 명시 · ★역할적합 정본화(system.role_fit — 선거 그룹대표를 추천(F1301)과
                           같은 적합성 함수로: 직군명×2+의미 힌트 시소러스. 게임엔 게임 기획자, 하드매칭 아님) + ★완료 보고 시스템 종합(마감 시 판 전체 검증기록에서
                           [완료 보고] 게시, e86a30b) + ★주기완수=조건+하위ST전부완료 게이트(wrapup_done — 조건 4/4여도
                           open SubTask 있으면 완수 보류, ch61 '체크만 뜨고 과정 빈' 근본 — 위조 롤업이 원인이었고
@@ -37,7 +44,8 @@ claude-company  1b40dcc  ← 브레인 — 2026-07-14 ★전역 haiku 전환(Sit
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  b04b378  ← HEAD — ★중지/취소된 최신 요청이 옛 완료 이벤트로 '완료' 오표시되던 것 수리 · ★역할적합 시소러스 system.role_fit 재수출(단일 진실원) · ★완료 보고 시스템 종합·Task 하위 끝 섹션(개인 마감 응답 억제) · ★협의 Task 레벨화 · ★상태칩 4종 지속화
+murmur  e245d01  ← HEAD — ★협의 Task 레벨화 완결(마일스톤 확정 전 preNego도 taskhead.nego로 — 임시 msblock 틀 제거, U-018 실증·U-016 무회귀, 빌드 배포됨)
+                          · ★중지/취소된 최신 요청이 옛 완료 이벤트로 '완료' 오표시되던 것 수리 · ★역할적합 시소러스 system.role_fit 재수출(단일 진실원) · ★완료 보고 시스템 종합·Task 하위 끝 섹션(개인 마감 응답 억제) · ★상태칩 4종 지속화
                           · ★상태칩 4종 지속화(완료=done_ts·중단=stopped·작업중=live·대기=pending, context.terminal)
                           · atelier 치유 캐시 굶김 수리(d3fefb2)
                           · ★완료 Task '중단'→'완료' 수리(taskState done 인식) · 위조 롤업 revert(단계 상태는
