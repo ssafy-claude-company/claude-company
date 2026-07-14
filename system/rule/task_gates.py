@@ -789,6 +789,32 @@ async def _finalize_done(flow, g, args, third, has_product):
     )[:1400]
     await flow.refresh(done_ref)
     await _react(g, flow.project_channel, done_ref.block_id, "✅")  # 완료=이모지
+    # [완료 보고 = 시스템 종합(2026-07-14, 사용자: '한 명이 올리는 게 아니라 결정된 보고안을 Task 하위에')]
+    # 개인 result 대신, 판 전체의 *검증된 기록*(목표·마일스톤별 완수조건·배포·참여)에서 시스템이 종합한
+    # 완료 보고를 시스템 명의(sender 0)로 게시한다 — 내용은 특정 한 명의 서사가 아니라 팀이 실제로 통과시킨
+    # 것들의 집합. 피드는 이 '[완료 보고]'를 Task 하위 끝 섹션으로 형식화해 보여준다(개인 result는 근거로 동봉).
+    try:
+        _rl = [f"[완료 보고] {done_ref.task_id} 완료"]
+        _g = str(getattr(done_ref.status, "goal", "") or "").strip()
+        if _g:
+            _rl.append(f"· 목표: {_g[:180]}")
+        for _ms in (getattr(flow, "milestones", None) or []):
+            if _ms.status != "done":
+                continue
+            _met = sum(1 for _c in _ms.criteria if _c.passed)
+            _tot = len(_ms.criteria)
+            _rl.append(f"· ✓ {_ms.goal[:70]} — 완수조건 {_met}/{_tot}")
+        if _auth:
+            _rl.append(f"· 배포: {_au}")
+        _tm = ", ".join(flow._names(list(getattr(done_ref, "team", None) or []))[:12])
+        if _tm:
+            _rl.append(f"· 참여: {_tm}")
+        _sumline = re.sub(r"\s+", " ", (report or "")).strip()
+        if _sumline:
+            _rl.append(f"· 요약: {_sumline[:400]}")
+        await g.post(int(flow.project_channel), 0, "\n".join(_rl)[:1600])
+    except Exception:
+        pass
     _ledger_accrue(flow)              # [B-21] 품질 게이트 통과분만 실적 영속(흡수형 저작은 여기서 폐기)
     flow.current = None
     _ckpt(flow)                       # 크래시-세이프: 마감 즉시 '미완 없음'으로 영속(유령 복원 방지)

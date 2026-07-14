@@ -4291,6 +4291,10 @@ def test_Task_체크포인트_전이마다_영속_마감시_해제(tmp_path):
     # 완결된 판의 정체(목표·팀)가 피드에서 계속 해석된다(복구 대상 아님, 읽기 전용 이력).
     assert s.projects[500]["last_task"]["goal"] == "측정가능 g"
     assert s.projects[500]["last_task"]["task_id"]
+    # [완료 보고 = 시스템 종합(2026-07-14, 사용자)] 마감 시 시스템 명의(sender 0) [완료 보고]를 게시 —
+    # 개인 result가 아니라 판 기록(목표 등)에서 종합. 피드가 Task 하위 끝 섹션으로 렌더.
+    _rep = [c for c in g.calls if c[0] == "post" and c[2] == 0 and "[완료 보고]" in str(c[3])]
+    assert _rep and "측정가능 g" in str(_rep[-1][3])
 
 
 def test_배포검증_라이브가_산출물과_다르면_성공선언_불가(tmp_path):
