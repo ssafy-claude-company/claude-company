@@ -72,6 +72,24 @@ def test_서브태스크_주기중_추가와_동일_게이트():
     assert isinstance(bad, str)                # 같은 등록 게이트가 SubTask에도
 
 
+def test_마일스톤_완수는_서브태스크_전부_완료_요구():
+    """[최대 구현 선완료(2026-07-14, 사용자: '조건 다 만족해도 서브테스크는 다 하고 끝내는걸로')] 마일스톤
+    조건이 4/4여도 그 주기가 낳은 SubTask가 open이면 완수 보류 — 하위 단위 전부 done이라야 주기가 닫힌다
+    (ch61: 조건 4/4인데 ST 5개 open으로 닫혀 빈 백로그 유령)."""
+    f = _flow()
+    ms = open_milestone(f, "M1", [{"desc": "빌드 통과", "verify": "npm run build 0"}])
+    st = open_subtask(f, ms, "프론트 뼈대", [{"desc": "index 로드", "verify": "curl -s localhost/"}])
+    ok, _ = iter_verify(f, ms, [{"desc": "빌드 통과", "passed": True, "evidence": "exit 0"}])
+    assert ok and ms.status == "wrapup"
+    # SubTask(st) 미완 → 마일스톤 완수 보류
+    r = wrapup_done(f, ms)
+    assert "보류" in r and st.st_id in r and ms.status == "wrapup"     # 아직 안 닫힘
+    # SubTask 닫고 나면 통과
+    iter_verify(f, st, [{"desc": "index 로드", "passed": True, "evidence": "HTTP 200"}])
+    assert st.status == "wrapup" and wrapup_done(f, st) == "done"
+    assert wrapup_done(f, ms) == "done" and ms.status == "done"        # 하위 완료 후 주기 닫힘
+
+
 def test_복기_ms_replan은_결함을_새_주기로():
     f = _flow()
     ms1 = open_milestone(f, "M1", [{"desc": "a", "verify": "run a"}])

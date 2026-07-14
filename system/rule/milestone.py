@@ -478,6 +478,18 @@ def wrapup_done(flow, obj) -> str:
     """잔여 정리 완료 선언 → done. wrapup 상태에서만 유효(조건 미충족 상태의 건너뛰기 차단)."""
     if obj.status != "wrapup":
         return "정리 완료 선언 불가: 아직 완수조건 검증(iter_verify)을 통과하지 않았습니다."
+    # [서브태스크 선완료 게이트(2026-07-14, 사용자: '최대 구현 조건으로 생성된 서브테스크는 다 하고
+    # 끝내는걸로 했었는데')] 마일스톤 조건(cr)이 4/4여도, 그 주기가 낳은 서브태스크가 open이면 아직
+    # 최대 구현이 안 끝난 것 — 닫으면 미완 ST가 빈 장부의 유령으로 남는다(ch61: 조건 4/4인데 ST 5개 open).
+    # 주기는 '조건 충족 + 하위 단위 전부 완수'일 때만 닫힌다. 미완 ST는 이름을 대 잇게 지시.
+    if isinstance(obj, Milestone):
+        _open_sts = [s for s in obj.subtasks if s.status not in ("done", "superseded")]
+        if _open_sts:
+            _names = " · ".join(f"{s.st_id}({s.goal[:24]})" for s in _open_sts[:6])
+            return ("마일스톤 완수 보류: 완수조건은 충족됐지만 이 주기의 SubTask "
+                    f"{len(_open_sts)}건이 아직 미완입니다 — 최대 구현으로 연 하위 단위는 전부 끝나야 "
+                    f"주기가 닫힙니다. 미완: {_names}. 각 SubTask를 iter_verify→wrapup_done으로 닫거나, "
+                    "환경상 불가하면 renegotiate_criterion으로 그 SubTask를 정리한 뒤 다시 선언하세요.")
     obj.status = "done"
     _ckpt(flow)
     if flow.log:
