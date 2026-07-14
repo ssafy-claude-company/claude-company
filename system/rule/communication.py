@@ -415,7 +415,10 @@ async def meet(flow, me_id, args):
                     if flow.log:
                         flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props), subtasks=_n_st)
                     break
-                _confirm_note = f"\n\n[표결 확정 실패] 수렴안이 등록 게이트에 거부됨: {_ms} — 조건을 다듬어 재회의하세요."
+                # [오라벨링 봉합(2026-07-14, 정합 감사)] register_consensus 반환은 조건 거부만이 아니라
+                # 경계 보류(백로그 처리 중·진행 중 주기)일 수 있다 — 각 메시지가 자체 처방을 담으므로
+                # '조건 다듬어 재회의' 획일 접미사를 빼고 그대로 surface(잘못된 처방 제거).
+                _confirm_note = f"\n\n[표결 확정 보류] {_ms}"
         elif _no_r1:
             # [수렴안 미동봉 재시도(2026-07-14, 안정성 감사 위험#1)] 파이프라인 회의가 종결됐는데 아무도
             # [수렴안]을 형식대로 안 넣으면 등록이 0건 — 종전엔 침묵(코칭조차 없음)이라 판이 마일스톤

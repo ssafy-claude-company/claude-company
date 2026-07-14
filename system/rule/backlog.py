@@ -275,10 +275,14 @@ class BacklogRelay:
             raise BacklogError(f"{b.backlog_id}는 본인(수행자/제출자)만 중단할 수 있습니다.")
         if b.status in (DONE, DROPPED):
             raise BacklogError(f"{b.backlog_id}는 이미 {b.status} — 중단 대상이 아닙니다.")
+        _was_active = (b.status == IN_PROGRESS)   # 실제 착수분의 중단만 '마무리' — 배분권 이동
         b.status = DROPPED
         b.ts_done = time.time()
         b.note = (f"중단({worker}): {reason}"[:300] if reason else b.note)
-        self.turn_holder = int(worker)
+        # [배분권 우회 봉합(2026-07-14, 정합 감사)] 착수(in_progress)한 백로그의 중단만 마무리자 자격 —
+        # 대기 중 멤버가 자기 미착수(OPEN) 백로그를 버려 turn_holder(배분권)를 탈취하던 것 차단.
+        if _was_active:
+            self.turn_holder = int(worker)
         self._emit("backlog_dropped", backlog=b.backlog_id, by=int(worker), reason=str(reason or "")[:120])
         return b
 

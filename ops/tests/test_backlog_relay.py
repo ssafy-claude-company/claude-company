@@ -192,6 +192,18 @@ def test_백로그_소진시_회의코칭_아니면_다음선정():
     assert "[백로그 소진]" in note and "vote_stop" in note and "meet" in note  # 회의 코칭
 
 
+def test_중단_배분권_우회_봉합():
+    """[배분권 우회 봉합(2026-07-14, 정합 감사)] 착수(in_progress)한 백로그의 중단만 마무리자 자격 —
+    대기 중 멤버가 자기 미착수(OPEN) 백로그를 버려 turn_holder(배분권)를 탈취하던 것 차단."""
+    r = _relay()
+    r.submit(A, "저장 API"); r.submit(B, "프론트 카드")
+    r.pick(A, "B1", A); r.done(A, "B1")            # A가 마무리 → 배분권 A
+    assert r.turn_holder == A
+    r.drop(B, "B2", "안 할래")                      # B가 자기 미착수(OPEN) B2를 중단
+    assert r.turn_holder == A                       # 배분권 그대로 A (B가 탈취 못 함)
+    assert r.get("B2").status == "dropped"
+
+
 def test_차단_배선_선행필요_출구():
     """[block 배선(2026-07-14, 정합 감사 최대위험 — 무출구 교착)] 정지한 in_progress 하나가 순차
     릴레이를 막던 것에 '선행 필요' 차단 출구를 준다: block()이 in_progress를 BLOCKED로 보존(버리지
