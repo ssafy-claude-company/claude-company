@@ -418,9 +418,12 @@ async def meet(flow, me_id, args):
                 flow.log("delegation_detached", to="meet", seg=flow.leader_segment)
 
             def _hand(t):
+                # [중지 레이스 가드(2026-07-14)] 사용자 중지로 detach된 회의가 취소되면 t.result()가
+                # CancelledError(=BaseException, Exception 아님)를 던져 콜백이 이벤트루프에 미처리 예외로
+                # 남았다(라이브 traceback). BaseException까지 삼켜 중지 시 조용히 무시한다.
                 try:
                     flow.detached_results.append(f"회의 완료 → {_speech_clip(t.result()['content'][0]['text'], 4000)}")
-                except Exception:
+                except BaseException:
                     pass
             inner.add_done_callback(_hand)
         raise
