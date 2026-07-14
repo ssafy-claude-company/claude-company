@@ -598,11 +598,39 @@ def gate_new_cycle(flow):
     return None
 
 
+def register_consensus(flow, prop: str, origin: str = ""):
+    """[표결 가결 → 서기 등록(2026-07-14)] 수렴안 원문에서 목표·조건·'단위:' 줄을 갈라 마일스톤과
+    SubTask를 **함께** 등록한다 — 팀 판의 주기 확정·단위 분해의 유일 경로(개인 도구는 솔로 판 한정).
+    '단위:' 줄은 | 를 포함하므로 마일스톤 조건에서 분리(오파싱 방지). 반환: (Milestone|에러 str, 단위 수)."""
+    lines = str(prop or "").splitlines()
+    goal = next((l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("목표")), origin)
+    units = [l.strip()[3:].strip() for l in lines if l.strip().startswith("단위:")]
+    crit = "\n".join(l for l in lines if "|" in l and not l.strip().startswith("단위:"))
+    ms = open_milestone(flow, goal, parse_criteria_lines(crit), origin=f"회의 가결: {origin[:60]}")
+    if isinstance(ms, str):
+        return ms, 0
+    n = 0
+    for u in units:
+        st = open_subtask(flow, ms, u.partition("|")[0].strip(), parse_criteria_lines(u))
+        if not isinstance(st, str):
+            n += 1
+    return ms, n
+
+
 def rule_set_milestone(flow, me_id, args) -> str:
-    """[누구나 — 서기] 회의 수렴을 등록해 마일스톤 개설. 확정의 실체는 회의 종결 표결(가결)이고
-    등록은 기록 행위다 — 품질은 등록 게이트가 방어. 게이트 거부는 사유+처방을 그대로 반환."""
+    """[솔로 판 전용 — 서기] 확정의 실체는 회의 종결 표결(가결 시 자동 등록)이고 이 도구는 팀 없는
+    판(혼자)의 기록 행위다 — 품질은 등록 게이트가 방어. 게이트 거부는 사유+처방을 그대로 반환."""
     if not pipeline_on():
         return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    # [확정 권위 게이트(2026-07-14, 사용자: '개인이 마일스톤 만들고 대체되고 난리 — 닫아야지')] 결정권자
+    # 폐지(07-09)로 확정 권위는 회의 종결 표결로 이관됐는데, 이 도구는 '표결이 실제 있었나'를 검증하지
+    # 않는 우회로였다 — U-019 라이브: 표결 0건인 채 백엔드·프론트·기획이 각자 직접 등록(대체 파기 포함).
+    # 동료가 있는 판의 주기 확정은 표결 자동 등록(ms_confirm_by_vote)만 — 개인 등록은 솔로 판 한정.
+    _team = list(getattr(getattr(flow, "current", None), "team", None) or [])
+    if any(int(m) != int(me_id) for m in _team):
+        return ("등록 거부: 팀 판의 마일스톤 확정은 개인 등록이 아니라 **회의 종결 표결**입니다 — meet를 "
+                "열어 완수조건을 협의하고, 종결 표결 때 각자 [수렴안](목표: 한 줄 + '조건 | 실증절차' 줄들)을 "
+                "동봉하세요. **가결되면 그 안이 자동 등록됩니다**(따로 등록하는 사람 없음 — 결정권자 폐지).")
     err = gate_new_cycle(flow)
     if err:
         return err
@@ -618,9 +646,18 @@ def rule_set_milestone(flow, me_id, args) -> str:
 
 
 def rule_set_subtask(flow, me_id, args) -> str:
-    """진행 중 마일스톤에 SubTask 추가 — 주기 중에도 허용(계약 §2). 등록 게이트는 동일."""
+    """진행 중 마일스톤에 SubTask 추가 — 주기 중에도 허용(계약 §2). 등록 게이트는 동일.
+    [흐름 귀속(2026-07-14)] 팀 판의 단위 분해는 개인이 아니라 회의 수렴안('단위:' 줄 동봉 → 가결 시
+    자동 등록) — 한 봇의 지능이 전 도메인 몫을 카빙하던 것(U-019 백엔드 ST-1~6) 차단. 개인 도구는
+    솔로 판 한정. 전담의 실체는 SubTask가 아니라 **백로그**(각자 pick_backlog(desc)로 자기 등재)."""
     if not pipeline_on():
         return "이 도구는 마일스톤 파이프라인(ORGANT_PIPELINE=milestone)에서만 동작합니다."
+    _team = list(getattr(getattr(flow, "current", None), "team", None) or [])
+    if any(int(m) != int(me_id) for m in _team):
+        return ("등록 거부: 팀 판의 단위(SubTask) 분해는 개인 등록이 아니라 **회의 수렴안**입니다 — meet "
+                "종결 표결의 [수렴안]에 '단위: <목표> | <실증절차>' 줄로 동봉하세요. 가결되면 마일스톤과 "
+                "함께 등록됩니다. 주기 중 추가 단위가 필요해도 meet 재협의가 경로입니다. 자기 몫 작업은 "
+                "단위 안에서 pick_backlog(desc='내가 할 일')로 등재해 집으세요 — 전담은 백로그 단위입니다.")
     ms = next_milestone(flow)
     if ms is None:
         return "추가 불가: 진행 중인 마일스톤이 없습니다 — set_milestone으로 주기를 먼저 여세요."
@@ -631,7 +668,7 @@ def rule_set_subtask(flow, me_id, args) -> str:
     if isinstance(st, str):
         return f"등록 거부: {st}"
     return (f"SubTask {st.st_id} 추가 — {goal[:60]} (마일스톤 {ms.ms_id}). "
-            f"참여는 자발입니다 — 백로그 제출로 참여하세요.")
+            f"자기 몫은 pick_backlog(desc)로 등재해 집으세요 — 전담은 백로그 단위입니다.")
 
 
 def rule_renegotiate(flow, me_id, args) -> str:

@@ -145,6 +145,41 @@ def test_등록은_누구나_서기_파싱과_게이트_경유(monkeypatch):
     assert "추가" in out and f.milestones[0].subtasks        # SubTask 추가는 현장 누구나(자발 참여)
 
 
+def test_팀판_개인등록_차단_확정은_표결_분해는_수렴안(monkeypatch):
+    """[확정 권위 게이트(2026-07-14, 사용자: '개인이 마일스톤 만들고 대체되고 난리 — 닫아야지. 개인
+    권한 서브태스크·백로그 다 제한하고 회의 흐름을 이용하도록')] 동료가 있는 판에서 set_milestone·
+    set_subtask 개인 등록은 거부 — 주기 확정은 회의 종결 표결([수렴안] 가결 자동 등록), 단위 분해는
+    수렴안 '단위:' 줄. 솔로 판(동료 없음)은 종전대로 도구 허용. U-019 라이브: 표결 0건, 개인 직접
+    등록·대체 파기가 원인."""
+    import types
+    from system.rule.milestone import rule_set_milestone, rule_set_subtask
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.current = types.SimpleNamespace(team=[11, 12], status=types.SimpleNamespace(goal="목표 확정됨"))
+    out = rule_set_milestone(f, 12, {"goal": "M1", "criteria": "API | curl 확인"})
+    assert "거부" in out and "표결" in out and not f.milestones     # 팀 판 개인 등록 차단
+    out = rule_set_subtask(f, 12, {"goal": "단위", "criteria": "로드 | curl -s /"})
+    assert "거부" in out and "수렴안" in out                        # 단위 분해도 수렴안 경로만
+    f.current.team = [12]                                           # 솔로(자기뿐) — 도구 허용
+    out = rule_set_milestone(f, 12, {"goal": "M1", "criteria": "API | curl 확인"})
+    assert "개설" in out
+
+
+def test_가결_수렴안_단위줄_마일스톤과_동반등록(monkeypatch):
+    """[단위 동반 등록(2026-07-14)] 수렴안의 '단위:' 줄 = 팀 합의 SubTask 분해 — 가결 등록
+    (register_consensus)이 마일스톤과 함께 등록하고, '|'를 포함해도 마일스톤 조건으로 오파싱하지
+    않는다. 팀 판에서 단위가 생기는 유일 경로."""
+    from system.rule.milestone import register_consensus
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    prop = ("목표: 방명록 1주기\n등록 API 동작 | curl POST 후 GET 확인\n"
+            "단위: 백엔드 저장 API | curl POST 200 확인\n단위: 프론트 목록 UI | playwright 로드 확인")
+    ms, n = register_consensus(f, prop, "방명록")
+    assert not isinstance(ms, str) and n == 2
+    assert len(ms.criteria) == 1                                    # '단위:' 줄이 조건에 안 섞임
+    assert [st.goal for st in ms.subtasks] == ["백엔드 저장 API", "프론트 목록 UI"]
+
+
 def test_종결표결_수렴안_추출과_결정권자_부재(monkeypatch):
     """[결정권자 폐지] [수렴안] 블록 파서 — 종결 표결 동봉분을 시스템이 서기로 등록하는 원료.
     재협상도 누구나(사람 승인이 진짜 게이트)."""

@@ -166,9 +166,9 @@ async def meet(flow, me_id, args):
         # [마일스톤 파이프라인 §4 — 완전 turn-taking(2026-07-09 확정)] 강제 R1(전원 의무 발화) 폐지:
         # 소집자 발제 후 첫 발화부터 응찰. 트레이드오프 관측(§8 민감 접근): R1은 발산(앵커링 방지)
         # 장치였다 — 제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다.
-        from .milestone import extract_consensus as _ms_extract, open_milestone as _ms_open_fn
+        from .milestone import extract_consensus as _ms_extract
         from .milestone import gate_new_cycle as _ms_gate_cycle
-        from .milestone import pipeline_on as _ms_on, parse_criteria_lines as _ms_parse
+        from .milestone import pipeline_on as _ms_on
         _no_r1 = _ms_on()
         conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
         if not _no_r1:
@@ -329,9 +329,13 @@ async def meet(flow, me_id, args):
                     # (사람이 아니라 표결+등록 게이트가 확정). 확정 발화 권력의 비인격 대체.
                     _conv = ("\n마쳐도 된다면 `[종료]` 다음 줄에 이 회의의 수렴안을 동봉하세요:\n"
                              "[수렴안]\n목표: <이 주기의 목표 한 줄>\n<조건 | 실증절차(run으로 확인)>\n"
-                             "<조건 | 실증절차>\n[/수렴안]\n"
-                             "(동료가 이미 낸 수렴안에 동의하면 그대로 복사·수정해 제출 — 가결 시 최다 "
-                             "지지안이 등록됩니다)" if _no_r1 else " 마쳐도 되면 `[종료]`만.")
+                             "<조건 | 실증절차>\n단위: <분해 단위 목표> | <실증절차>\n"
+                             "단위: <분해 단위 목표> | <실증절차>\n[/수렴안]\n"
+                             "('단위:' 줄 = 이 주기의 SubTask 분해 — **참여 도메인마다 자기 몫 단위**를 "
+                             "넣으세요(한 도메인이 전부 카빙 금지). 동료가 이미 낸 수렴안에 동의하면 그대로 "
+                             "복사·수정해 제출 — 가결 시 최다 지지안이 마일스톤+단위로 함께 등록됩니다. "
+                             "등록 후 각자 pick_backlog(desc)로 자기 백로그를 등재해 전담하세요)"
+                             if _no_r1 else " 마쳐도 되면 `[종료]`만.")
                     return (f"[회의 — 종결 확인] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
                             f"판단하세요. 더 다뤄야 할 것이 있으면 `[계속: N]`(N=1~9)과 무엇인지 한 줄만 "
@@ -389,17 +393,18 @@ async def meet(flow, me_id, args):
         elif _no_r1 and conv_props:
             from collections import Counter
             _ranked = [p for p, _ in Counter(conv_props).most_common()]
+            # [단위 동반 등록(2026-07-14, 사용자: '개인 서브태스크 제한 — 회의 끝나고 생기는 흐름으로')]
+            # 수렴안의 '단위:' 줄들 = 팀 합의 SubTask 분해 — 가결과 함께 등록. 개인 도구(set_milestone·
+            # set_subtask)는 솔로 판 한정이라, 팀 판의 주기·단위는 이 경로가 유일하다(개인 카빙의 비인격 대체).
+            from .milestone import register_consensus as _ms_reg
             for _prop in _ranked:
-                _lines = _prop.splitlines()
-                _goal = next((l.split(":", 1)[1].strip() for l in _lines
-                              if l.strip().startswith("목표")), topic)
-                _crit = "\n".join(l for l in _lines if "|" in l)
-                _ms = _ms_open_fn(flow, _goal, _ms_parse(_crit), origin=f"회의 가결: {topic[:60]}")
+                _ms, _n_st = _ms_reg(flow, _prop, topic)
                 if not isinstance(_ms, str):
                     _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 마일스톤 {_ms.ms_id} 자동 등록"
-                                     f"(조건 {len(_ms.criteria)}개). 이제 set_subtask·백로그로 진행하세요.")
+                                     f"(조건 {len(_ms.criteria)}개, 단위 {_n_st}개). 각자 pick_backlog"
+                                     f"(desc='내가 할 일')로 자기 백로그를 등재해 전담하세요.")
                     if flow.log:
-                        flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props))
+                        flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props), subtasks=_n_st)
                     break
                 _confirm_note = f"\n\n[표결 확정 실패] 수렴안이 등록 게이트에 거부됨: {_ms} — 조건을 다듬어 재회의하세요."
         return (f"[회의록] 주제: {topic} ({rounds}라운드, {len(members)}명)\n"

@@ -240,9 +240,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     # 결정권자 전용이 아니다 — 현장 누구나. 플래그 OFF면 미등록(표면 불변).
     if _pipe_on():
         @tool("set_subtask",
-              "진행 중 마일스톤에 SubTask를 추가한다(주기 중에도 가능·누구나). goal=단위 목표, "
-              "criteria='조건 | 실증절차' 줄들(등록 게이트 동일). 참여는 자발 — 배정이 아니라 "
-              "백로그 제출로 참여한다.",
+              "진행 중 마일스톤에 분해 단위(SubTask)를 추가한다 — 팀 판에선 회의 수렴안에 '단위: 목표 | "
+              "실증절차' 줄로 동봉해 **가결과 함께 등록**되는 게 정석(개인 등록은 솔로 판만). 단위는 팀 "
+              "공유 컨테이너고, **전담은 백로그 단위** — 자기 몫은 pick_backlog(desc)로 등재해 집는다.",
               {"goal": str, "criteria": str})
         async def set_subtask(args):
             from .rule.milestone import flush_pipeline_notes as _flush
@@ -252,35 +252,56 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(set_subtask)
 
         @tool("pick_backlog",
-              "활성 SubTask의 백로그를 집는다(id='B3') — 또는 desc로 돌발 항목을 등재+집기. "
-              "**작업(run)은 백로그를 집은 뒤에만** — 집어야 작업·대화가 그 항목 장부에 남는다. "
-              "기존 항목의 배분권은 릴레이 규칙(마무리자 지명·응찰)을 따르고, 자기 desc 등재는 즉시 착수.",
-              {"id": str, "desc": str})
+              "**전담의 실체 = 백로그.** 자기 몫을 집는다: id='B3'(기존 항목 — 열린 단위 전체에서 찾음) "
+              "또는 desc='내가 할 일'(자기 등재+즉시 착수 — st=단위 id/목표 일부로 소속 단위 지정, 생략 시 "
+              "내가 참여 중인 단위→첫 열린 단위). **작업(run/Write)은 백로그를 집은 뒤에만** — 집어야 "
+              "작업·대화가 그 항목 장부에 남는다. 기존 항목의 배분권은 릴레이 규칙(마무리자 지명·응찰)을 따른다.",
+              {"id": str, "desc": str, "st": str})
         async def pick_backlog(args):
             from .rule.backlog import relay_for, BacklogError, DuplicateBacklog
             from .rule.milestone import _set_pipeline_ctx
             ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
-            st = next((x for x in ms.subtasks if x.status != "done"), None) if ms else None
-            if st is None:
-                return _ok("활성 SubTask가 없습니다 — set_subtask로 단계를 먼저 여세요.")
-            r = relay_for(flow, st)
+            # [열린 단위 전체(2026-07-14)] 첫 단위만 보던 것 → 열린 단위 전부 — id는 전 단위에서 찾고,
+            # desc(자기 등재)는 st로 소속 단위를 지정(참여는 등재로 시작되므로 선참여 요구는 닭-달걀).
+            _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
+            if not _sts:
+                return _ok("활성 SubTask가 없습니다 — 단위 분해는 회의 수렴안('단위:' 줄)으로 가결과 함께 등록됩니다.")
             bid = str(args.get("id") or "").strip()
             desc = str(args.get("desc") or "").strip()
+            _stq = str(args.get("st") or "").strip()
             try:
                 if bid:
-                    b = r.get(bid)
+                    r, b = None, None
+                    for _x in _sts:
+                        _r = relay_for(flow, _x)
+                        if any(x.backlog_id == bid for x in _r.backlogs):
+                            r, b = _r, _r.get(bid)
+                            break
+                    if b is None:
+                        return _ok(f"선점 불가: 백로그 {bid}가 열린 단위 어디에도 없습니다.")
                     if b.status == "in_progress" and int(b.assignee or 0) == int(me_id):
                         pass                      # 이미 내 보유 — 멱등
                     else:
                         r.pick(int(me_id), b.backlog_id, int(me_id))
                 elif desc:
+                    _tgt = None
+                    if _stq:
+                        _tgt = next((x for x in _sts if _stq in x.st_id or _stq.lower() in x.goal.lower()), None)
+                        if _tgt is None:
+                            return _ok(f"등재 불가: '{_stq}'와 맞는 열린 단위가 없습니다. 열린 단위: "
+                                       + " · ".join(f"{x.st_id}({x.goal[:20]})" for x in _sts[:8]))
+                    if _tgt is None:   # 내가 이미 참여 중인 단위 → 없으면 첫 열린 단위
+                        _tgt = next((x for x in _sts if int(me_id) in (getattr(x, "participants", None) or set())), _sts[0])
+                    r = relay_for(flow, _tgt)
                     try:
                         b = r.submit(int(me_id), desc[:140])
                     except DuplicateBacklog as e:
                         return _ok(str(e))
                     r.pick(int(me_id), b.backlog_id, int(me_id))
+                    _tgt.participants.add(int(me_id))
+                    _tgt.backlog_ids = [x.backlog_id for x in r.backlogs]
                 else:
-                    return _ok("id(기존 백로그) 또는 desc(돌발 등재) 중 하나가 필요합니다.")
+                    return _ok("id(기존 백로그) 또는 desc(자기 등재) 중 하나가 필요합니다.")
             except BacklogError as e:
                 return _ok(f"선점 불가: {e}")
             _set_pipeline_ctx(flow, me_id)        # 이 턴의 이후 게시부터 이 백로그로 귀속
