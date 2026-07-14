@@ -100,6 +100,29 @@ def test_B14_stale_스태시는_wake전에_소거():
     assert f.current.owner_delivered is True
 
 
+def test_offdomain_부정센티넬은_반려아님_소유유지(monkeypatch, tmp_path):
+    """[라이브 P-016 근본버그(2026-07-14)] 봇이 offdomain_role='해당없음'/'없음'(=직군밖 아님)으로 답하면
+    종전엔 non-empty라 *직군밖 반려*로 오분류돼 파일 소유가 유령 직군 '해당없음'으로 이전, app.js 등
+    10개 파일이 아무도 못 고쳐 7시간 교착. 이제 부정 센티넬은 '반려 없음'과 동치 — 소유 무변경."""
+    import os
+    from system.rule.communication import _norm_offdomain
+    assert _norm_offdomain("해당없음") == "" and _norm_offdomain("없음") == "" and _norm_offdomain("N/A") == ""
+    assert _norm_offdomain("AI 엔지니어") == "AI 엔지니어"          # 진짜 직군명은 통과
+    for sentinel in ("해당없음", "없음", "N/A", "-"):
+        g = FakeGuide()
+        f = _flow3(g)
+        fp = os.path.join(str(tmp_path), "app.js"); open(fp, "w").write("//x")
+        f.file_owner = {os.path.realpath(fp): "프론트"}          # 프론트 소유 파일
+        async def wake(to, b, k, _s=sentinel):
+            f.act_count += 1
+            f.report_stash[to] = {"offdomain_role": _s}          # 부정 센티넬 응답
+            return "정상 구현·검증 완료"
+        t = _delegated(f, wake)
+        r = asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "app.js 수정"}))
+        assert "직군밖" not in r["content"][0]["text"], f"센티넬 {sentinel}이 반려로 오분류됨"
+        assert f.file_owner.get(os.path.realpath(fp)) == "프론트", f"센티넬 {sentinel}이 소유를 유령 이전"
+
+
 def test_B14_REPORTS에_구조화필드_동봉(tmp_path):
     from system._util import dossier_rel
     g = FakeGuide()

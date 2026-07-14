@@ -69,6 +69,19 @@ from .comm_ceremonies import vote, parallel_work, recruit  # noqa: F401 (M9 재�
 # 아니라 대화 Rule 소관 — 정책은 내용 불가지(Turn.addressee/passed 신호만 받는다).
 _NOMINATE_RE = re.compile(r"\[\s*지명\s*[:：]\s*([^\]\n]{1,40})\]")
 
+# [직군밖 부정 센티넬(2026-07-14, 라이브 P-016 근본버그)] 봇이 offdomain_role에 "이 일은 직군밖 아님"을
+# '해당없음'·'없음'·'N/A' 같은 부정어로 답하면, 종전엔 문자열이 비어있지 않아 *직군밖 반려*로 오분류돼
+# 파일 소유가 유령 직군('해당없음')으로 이전됐다(app.js 등 10개 파일이 아무도 못 고치는 상태 → 7시간 교착).
+# 이 값들은 '반려 없음'과 동치로 취급한다(빈 값). 도메인명이 실제로 이렇게 생기는 일은 없다.
+_OFFDOMAIN_NEGATIONS = {"", "해당없음", "해당 없음", "없음", "없다", "무", "n/a", "na", "none", "null",
+                        "-", "–", "—", ".", "해당사항없음", "해당 사항 없음", "not applicable", "적용안됨"}
+
+
+def _norm_offdomain(val) -> str:
+    """offdomain_role 인자·regex 캡처를 정규화 — 부정 센티넬이면 ''(반려 아님), 아니면 원문 strip."""
+    s = str(val or "").strip()
+    return "" if s.lower() in _OFFDOMAIN_NEGATIONS else s
+
 
 def _turn_signals(flow, res, allowed):
     """발언 텍스트 → (지명 대상 id|None, 패스 여부). 지명은 allowed(대화 참여자) 안에서만 해석 —
@@ -1049,9 +1062,11 @@ async def request(flow, me_id, role, args):
         # 구조적으로 지시한다 — 관계없는 직군이 일을 흡수해 어설픈 산출물을 내던 경로(라이브:
         # ML이 백엔드에 묶여 감)의 차단. [B-14] report 인자 offdomain_role이 이 첫줄 regex보다
         # 우선한다(이중 수용 — regex 폴백 존치).
-        _off_arg = str((_stash or {}).get("offdomain_role") or "").strip()
+        _off_arg = _norm_offdomain((_stash or {}).get("offdomain_role"))   # 부정 센티넬('해당없음' 등)=반려 아님
         refused_m = re.match(r"^\s*\[직군밖\]\s*([^\n]*)", result or "")
-        refused = bool(kind == Kind.WORK and not was_clarify and not failed and (refused_m or _off_arg))
+        # regex 캡처도 센티넬이면 반려 무효(봇이 '[직군밖] 해당없음'처럼 자기모순으로 적어도 오이전 차단).
+        _off_regex = _norm_offdomain(refused_m.group(1)) if refused_m else ""
+        refused = bool(kind == Kind.WORK and not was_clarify and not failed and (_off_regex or _off_arg))
         if refused and flow.current is not None and flow.current.owner == to:
             flow.current.owner = 0                 # 소유 해제 — 채용된 전문가가 새 owner가 되게
             flow.current.status.owner = ""
@@ -1064,7 +1079,7 @@ async def request(flow, me_id, role, args):
         # '내용을 텍스트로 넘김→[직군밖] 거절' 데드락(라이브). X 미지목이면 해제(다음 편집자 재귀속).
         if refused and getattr(flow, "file_owner", None):
             _refdoms = {_norm_job(j) for j in _jobs_of(flow._info(to) or "") if j.strip()} - {""}
-            _need = (refused_m.group(1).strip() if refused_m else "") or _off_arg
+            _need = _off_regex or _off_arg                      # 이미 센티넬 정규화됨(유령 직군 이전 차단)
             _target = _norm_job(_need) if _need else ""
             _touched = [p for p, d in list(flow.file_owner.items()) if d in _refdoms]
             for _p in _touched:
@@ -1265,7 +1280,7 @@ async def request(flow, me_id, role, args):
         flow.consec_fail = 0   # 정상 응답 → 연속 실패 카운터 리셋(일시 블립 회복)
         if refused:
             # [B-14] 인자 > regex — offdomain_role 인자가 있으면 그 직군명, 없으면 첫줄 regex 캡처(폴백).
-            need = (_off_arg or ((refused_m.group(1) or "") if refused_m else "")).strip() or "해당 전문 직군"
+            need = (_off_arg or _off_regex).strip() or "해당 전문 직군"
             if flow.log:
                 flow.log("work_refused_offdomain", to=to, need=need[:30], seg=flow.leader_segment)
             return _ok(f"[직군밖 반려] {flow._info(to) or to}가 이 일을 **자기 직군 밖**으로 판정했습니다 — "
