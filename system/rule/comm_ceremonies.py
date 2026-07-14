@@ -647,16 +647,22 @@ async def recruit(flow, me_id, role, args):
                     flow.comm.respond(m, "accept", res)
                 except CommError:
                     pass
-                if res and Marker.APPLY_RE.search(res):
+                # 게시가 "[지원]" prefix를 붙이므로 본문 선두의 마커는 벗긴다 — "[지원] [지원] …"
+                # 중복 방지(격리 라이브 관측 2026-07-09). 지원서 = [지원] 뒤 근거 본문.
+                _clean = re.sub(rf"^\s*\[\s*{Marker.APPLY}\s*\]\s*", "", str(res)).strip() if res else ""
+                if res and Marker.APPLY_RE.search(res) and _clean:
                     _decl = Marker.ROLE_DECL_RE.search(res)
                     applicants[m] = {"text": res,
                                      "role": (_decl.group(1).strip() if _decl else "")}
-                    # 게시가 "[지원]" prefix를 붙이므로 본문 선두의 마커는 벗긴다 — "[지원] [지원] …"
-                    # 중복 방지(격리 라이브 관측 2026-07-09에서 발견). 파싱(applicants)은 원문 유지.
-                    _clean = re.sub(rf"^\s*\[\s*{Marker.APPLY}\s*\]\s*", "", str(res))
                     await _say_speech(flow, m, "[지원]", _clean)   # 지원서 = 본인 명의 공개 발화
                     if flow.log:
                         flow.log("recruit_apply", role=role_name or "(문제 공고)", who=m)
+                elif res and Marker.APPLY_RE.search(res):
+                    # [지원서(사유) 강제(2026-07-14, 사용자: '채용에서 사유 강제')] 응찰(선거)과 달리
+                    # 채용은 **근거로 뽑는다** — [지원]만 있고 지원서가 비면 판단 자료가 없어 무효(미지원
+                    # 처리). 공고자가 근거 없는 지원자를 뽑는 독단을 원천 차단.
+                    if flow.log:
+                        flow.log("recruit_apply_empty", role=role_name or "(문제 공고)", who=m)
                 else:
                     if flow.log:
                         flow.log("recruit_pass", role=role_name or "(문제 공고)", who=m)

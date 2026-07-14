@@ -818,7 +818,10 @@ class Sys:
                     import re as _re
                     _line = _re.sub(r"^\s*\[\s*응찰\s*:\s*\d\s*\]\s*", "",
                                     next((l.strip() for l in str(out).splitlines() if l.strip()), ""))[:140]
-                    await self.guide.post(int(channel_id), mid, f"[참여 응찰] {score}점 — {_line}")
+                    # [점수 비표시(2026-07-14, 사용자: '응찰 점수 보여주지 말고 사유만')] 점수는 선발
+                    # 내부 신호일 뿐(propose_bid 로그에 남음) — 사용자에겐 사유만 보인다(사유는 서비스성).
+                    await self.guide.post(int(channel_id), mid,
+                                          f"[참여 응찰] {_line}" if _line else "[참여 응찰] 참여합니다")
                 except Exception:
                     pass
             else:
@@ -855,8 +858,8 @@ class Sys:
         self._log("propose_elected", channel=channel_id, who=winner[1], score=winner[0],
                   bidders=len(bids))
         try:
-            _score = {m: s0 for s0, m, _ in bids}
-            _names = " · ".join(f"{self.bot_info.get(m, m)}({_score[m]})" for m in joined)
+            # [점수 비표시(2026-07-14)] 확정 요약도 직군만 — 응찰 점수(N)는 사용자에게 안 보인다.
+            _names = " · ".join(str(self.bot_info.get(m, m)) for m in joined)
             _stand = " · ".join(str(self.bot_info.get(m, m)) for m in standby)
             await self.guide.post(int(channel_id), 0,
                 f"[참여 확정] 응찰 {len(bids)}명 → 팀 {len(joined)}명(직군당 최고 응찰) — {_names} · "
