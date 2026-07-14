@@ -35,7 +35,9 @@ claude-company  1835bfa  ← 브레인 — 2026-07-14 ★주기완수=조건+하
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  d3fefb2   ← HEAD — atelier 치유 캐시 굶김 수리(d3fefb2)
+murmur  d4e74e5   ← HEAD — ★협의 Task 레벨화(마일스톤 생성 회의를 더미 밖·마일스톤들 위로, d4e74e5)
+                          · ★상태칩 4종 지속화(완료=done_ts·중단=stopped·작업중=live·대기=pending, context.terminal)
+                          · atelier 치유 캐시 굶김 수리(d3fefb2)
                           · ★완료 Task '중단'→'완료' 수리(taskState done 인식) · 위조 롤업 revert(단계 상태는
                           장부 그대로 — 게이트가 하위완료 강제하므로) · ★목표·로스터 last_task 폴백(마감 후에도 판 정체 표시)
                           · ★피드 회의 표면화(회의·표결 행 백로그 귀속 제외 — 피벗 심의 실종 수리)
