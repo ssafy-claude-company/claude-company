@@ -29,6 +29,8 @@ CONTRACT = {
     "system.protocol.Response": ["guide", "murmur"],
     "system.protocol.parse": ["guide"],
     "system.protocol.PIPELINE_CTX": ["guide"],   # 파이프라인 소속 컨텍스트(SYS가 채움 → Guide가 게시 payload에 동봉, 2026-07-10)
+    "system.role_fit.ROLE_HINTS": ["murmur"],    # 역할적합 시소러스 정본(브레인) — 추천(F1301)이 재수출(2026-07-14)
+    "system.role_fit.tokens": ["murmur"],        # 토크나이저 정본 — 선거·추천 공용
     "system.sys_core.Sys": ["guide", "murmur"],
     "system.sys_core.load_personas": ["guide"],
     "system.sys_core.save_personas": ["murmur"],
