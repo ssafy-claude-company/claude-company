@@ -848,6 +848,16 @@ def test_create_task_기본팀은_직군당_1명_비대차단():
     t2 = {x.name: x for x in make_guide_tools(f2, 11, "leader")}
     asyncio.run(t2["create_task"].handler({"members": "12,13"}))  # 백엔드 2명 명시
     assert set(f2.current.team) == {11, 12, 13}                   # 명시하면 중복도 그대로(자율)
+    # [리더 계열 중복 제거(2026-07-14, 사용자: '게임 판에 멍청한 일반 기획이 왜')] 리더=게임 기획자면
+    # 일반 '기획'은 같은 계열(기획⊂게임기획자)이라 자동 팀에서 빠져야 — 저품질 목소리가 전문가를 밀어냄.
+    f3 = Flow(g, channel_id=502, guild_id=1, leader_id=21,
+              bot_info={21: "게임 기획자", 22: "기획", 23: "백엔드", 24: "게임 비주얼 디자이너"})
+    f3.start_root("r3"); f3.project_team = [21, 22, 23, 24]
+    t3 = {x.name: x for x in make_guide_tools(f3, 21, "leader")}
+    asyncio.run(t3["create_task"].handler({}))                    # 자동 팀
+    _roles = {f3._info(m) for m in f3.current.team}
+    assert "기획" not in _roles                                    # 일반 기획 제외(리더 게임기획자와 동계열)
+    assert "백엔드" in _roles and "게임 비주얼 디자이너" in _roles  # 다른 직군은 유지
 
 
 def test_create_task_빈껍데기_purpose는_팀이_set_goal로():

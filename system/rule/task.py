@@ -203,6 +203,25 @@ async def create_task(flow, args):
                     continue        # 같은 직군 중복은 기본 팀에서 제외(recruit로 추가 가능)
                 _seen.add(r)
                 base.append(m)
+    # [직군 계열 중복 제거(2026-07-14, 사용자: '게임 판에 멍청한 일반 기획이 왜')] **자동 팀**(join_bidders)
+    # 을 그대로 쓰면 같은 직군 계열이 여럿(게임기획자+기획, 백엔드×2) 끼어 저품질 목소리(일반 기획)가
+    # 도메인 전문가를 밀어내고 협의를 흐린다 — 리더 직군까지 씨앗으로(기획⊂게임기획자) 계열당 1명으로
+    # 슬림화. **명시 members=(picked)는 중복도 존중**(리더 자율) — 그땐 dedup 안 함.
+    if not picked:
+        def _rnorm(m):
+            return "".join((flow._info(m) or "").lower().split())
+        _seen = [r for r in [_rnorm(flow.leader)] if r]
+        _slim = []
+        for m in base:
+            if _is_spare(flow, m):
+                continue
+            r = _rnorm(m)
+            if r and any(r in s or s in r for s in _seen):
+                continue                     # 같은 직군 계열 이미 있음 — 중복 제외
+            if r:
+                _seen.append(r)
+            _slim.append(m)
+        base = _slim
     team = _uniq([flow.leader] + base)
     # 'PM 혼자 Task' 차단(구조): 프로젝트에 직군 동료가 있는데 리더 혼자만 멤버로 여는 건 팀을 버리고
     # 단독작업·독식하는 패턴(사용자가 본 'PM 혼자 있는 Task'). 동료가 무응답이라고 새 솔로 Task로 도망가지

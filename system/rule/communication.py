@@ -194,13 +194,14 @@ async def meet(flow, me_id, args):
                            f"## 회의 — {topic} [1R 독립의견]\n"
                            + "\n".join(f"[1R] {w}: {t}" for w, t in r1_full))
         else:
-            # [완전 TT × 리더도 참여자] 발제 = 주제 + 소집자 자기 의견(my_opinion) — 소집자도 중재자가
-            # 아니라 첫 참여자다. 이후 전 발언이 응찰.
-            _preface = topic + (f"\n[소집자 의견] {my_view}" if str(my_view or "").strip() else "")
-            minutes.append(f"[발제] {flow._info(me_id) or me_id}: {_speech_clip(_preface)}")
-            await _say_speech(flow, me_id, "[발제]", _preface)
+            # [중립 어휘(2026-07-14, 사용자: '소집자 의견 이러니 자기가 리더인줄 아나')] '발제/소집자'는
+            # 폐지된 발제자 권위처럼 읽힌다 — 회의 연 사람도 한 참여자일 뿐이라 '회의 시작 / 여는 의견'으로
+            # 중립화(권한 착시 제거). 기능은 동일: 주제 제시 + 자기 의견, 이후 전 발언이 응찰.
+            _preface = topic + (f"\n[여는 의견] {my_view}" if str(my_view or "").strip() else "")
+            minutes.append(f"[회의 시작] {flow._info(me_id) or me_id}: {_speech_clip(_preface)}")
+            await _say_speech(flow, me_id, "[회의 시작]", _preface)
             dossier_append(flow, "MINUTES.md",
-                           f"## 회의 — {topic} [발제 — 완전 TT(§4): 강제 R1 없음]\n"
+                           f"## 회의 — {topic} [완전 TT(§4): 강제 R1 없음]\n"
                            f"{flow._info(me_id) or me_id}: {_preface}")
         # ══ [1층 floor seam — R2+ 발언권 순환의 정책화(CA-Lab RFC-003 1층)] 토론의 발언 '순서'는
         # FloorPolicy가 정하고, 발언 1회의 실행(베턴 프레임·wake·회의록·게시·참여 인정)은 정책과
