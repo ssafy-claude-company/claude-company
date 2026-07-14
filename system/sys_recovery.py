@@ -192,7 +192,10 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         flow.milestones = [ms_from_dict(d) for d in (proj.get("milestones") or [])]
     except Exception:
         flow.milestones = []
-    flow.roadmap = list(proj.get("roadmap") or [])   # [로드맵 §9 복원(2026-07-14)]
+    try:
+        flow.roadmap = list(proj.get("roadmap") or [])   # [로드맵 §9 복원(2026-07-14)]
+    except Exception:
+        flow.roadmap = []                                 # [갭#5 격리] 손상 roadmap이 뒤 복원을 무산시키지 않게
     # [백로그 릴레이 §9 — 복원] 마일스톤과 같은 독립 복원(릴레이만 있는 시점의 죽음도 복구).
     # log 바인딩은 복원 시점에 못 한다 — relay_for가 접근 시 재바인딩한다.
     try:

@@ -416,6 +416,20 @@ async def meet(flow, me_id, args):
                         flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props), subtasks=_n_st)
                     break
                 _confirm_note = f"\n\n[표결 확정 실패] 수렴안이 등록 게이트에 거부됨: {_ms} — 조건을 다듬어 재회의하세요."
+        elif _no_r1:
+            # [수렴안 미동봉 재시도(2026-07-14, 안정성 감사 위험#1)] 파이프라인 회의가 종결됐는데 아무도
+            # [수렴안]을 형식대로 안 넣으면 등록이 0건 — 종전엔 침묵(코칭조차 없음)이라 판이 마일스톤
+            # 없이 겉돌았다(Haiku 형식 실패의 가장 흔한 사망 원인). 열린 주기가 없으면 재회의를 명시 유도.
+            _has_open = any(m.status not in ("done", "superseded")
+                            for m in (getattr(flow, "milestones", None) or []))
+            if not _has_open:
+                if flow.log:
+                    flow.log("ms_consensus_empty", topic=str(topic)[:60], members=len(members))
+                _confirm_note = ("\n\n[확정 실패 — 수렴안 미동봉] 회의는 종결됐지만 [수렴안] 블록이 없어 "
+                                 "등록된 것이 0건입니다. **마일스톤이 없으면 판이 진행되지 않습니다** — 다시 "
+                                 "meet를 열고, 종결 시 반드시 이 형식을 동봉하세요:\n[수렴안]\n단계: <로드맵>\n"
+                                 "목표: <이 주기 목표>\n<조건 | 실증절차(run으로 확인)>\n단위: <분해 | 실증>\n"
+                                 "[/수렴안]  (가결되면 자동 등록됩니다.)")
         return (f"[회의록] 주제: {topic} ({rounds}라운드, {len(members)}명)\n"
                    + "\n".join(minutes)
                    + (_confirm_note if _no_r1 else

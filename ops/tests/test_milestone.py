@@ -229,6 +229,16 @@ def test_완수_조건충족이어도_백로그_처리중이면_보류_중단은
     assert ok2 is True and ms.status == "wrapup"                   # dropped는 제외 → 통과
 
 
+def test_수렴안_미동봉시_재회의_코칭이_붙는다():
+    """[회의 미수렴 재시도(2026-07-14, 안정성 감사 위험#1)] 파이프라인 회의가 종결됐는데 [수렴안]이
+    하나도 없고 열린 마일스톤도 없으면, 종전엔 침묵(코칭 0)이라 판이 겉돌았다 — 이제 '확정 실패 —
+    수렴안 미동봉' + 형식 재안내가 회의록에 붙어 재meet를 유도한다. register_consensus 경로의 방어."""
+    # extract_consensus가 빈 응답에서 아무것도 못 뽑는지(코칭 트리거 조건) 단위 확인.
+    from system.rule.milestone import extract_consensus
+    assert extract_consensus("이 회의 마칩니다. [종료]") is None      # 수렴안 미동봉 → None → conv_props 빔
+    assert extract_consensus("[수렴안]\n목표: x\n조건 | run\n[/수렴안]") is not None
+
+
 def test_중지투표_도구가_리더셋에_등록되고_import된다():
     """[중지 투표(2026-07-14)] vote_stop 세리머니가 재수출되고 리더 도구 셋에 등록됐는지(계약 정합)."""
     from system.rule.communication import vote_stop            # 재수출 경로

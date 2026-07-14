@@ -260,7 +260,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               {"id": str, "desc": str, "st": str})
         async def pick_backlog(args):
             from .rule.backlog import relay_for, BacklogError, DuplicateBacklog, IN_PROGRESS
-            from .rule.milestone import _set_pipeline_ctx
+            from .rule.milestone import _set_pipeline_ctx, _ckpt as _ck  # [갭#1 — 릴레이 변이 즉시 영속]
             ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
             _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
             if not _sts:
@@ -284,6 +284,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                         return _ok(f"백로그 {b.backlog_id}는 이미 당신이 작업 중입니다 — 이어서 하세요.")
                     _assn = int(b.submitter)
                     r.pick(int(me_id), b.backlog_id, _assn)      # relay가 배분권(마무리자)·순차 잠금 검증
+                    _ck(flow)                                     # [갭#1] 선정 즉시 영속(크래시 내구)
                     _who = flow._info(_assn) if hasattr(flow, "_info") else _assn
                     if _assn == int(me_id):
                         _set_pipeline_ctx(flow, me_id)
@@ -320,17 +321,20 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     # 착수 — 아니면 등재만(대기). 내 차례는 마무리자의 pick_backlog(id) 선정으로 온다.
                     _th = r.turn_holder
                     if _th is not None and int(_th) != int(me_id):
+                        _ck(flow)                                 # [갭#1] 등재(대기)도 영속
                         return _ok(f"백로그 {b.backlog_id} 등재 완료(대기) — 지금 배분권은 마무리자"
                                    f"({flow._info(_th) if hasattr(flow,'_info') else _th})에게 있습니다. "
                                    f"당신 차례는 그의 선정으로 옵니다.")
                     try:
                         r.pick(int(me_id), b.backlog_id, int(me_id))
                     except BacklogError as e:
+                        _ck(flow)
                         return _ok(f"백로그 {b.backlog_id} 등재 완료(대기) — {e} 당신 차례가 오면 착수합니다.")
                 else:
                     return _ok("id(마무리자 선정) 또는 desc(내 백로그 등재) 중 하나가 필요합니다.")
             except BacklogError as e:
                 return _ok(f"선점 불가: {e}")
+            _ck(flow)                             # [갭#1] 착수(mutation) 즉시 영속 — 크래시 내구
             _set_pipeline_ctx(flow, me_id)        # 이 턴의 이후 게시부터 이 백로그로 귀속
             return _ok(f"백로그 {b.backlog_id} 착수 — 작업하세요. 완료는 report_iter(조건 검증) 또는 위임 마무리가 장부에 반영합니다.")
         tools.append(pick_backlog)
@@ -342,7 +346,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               {"id": str, "reason": str})
         async def drop_backlog(args):
             from .rule.backlog import relay_for, BacklogError, handoff_note
-            from .rule.milestone import flush_pipeline_notes as _flush
+            from .rule.milestone import flush_pipeline_notes as _flush, _ckpt as _ck
             ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
             _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
             bid = str(args.get("id") or "").strip()
@@ -362,6 +366,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             except BacklogError as e:
                 return _ok(f"중단 불가: {e}")
             handoff_note(flow, r, me_id, "중단됐습니다")
+            _ck(flow)                             # [갭#1] 중단 즉시 영속(크래시 내구)
             _res = _ok(f"백로그 {bid} 중단(처리 제외) — 사유가 장부에 남았습니다. 당신이 다음 선정의 "
                        f"담당자입니다: 남은 백로그 보유자들의 사유를 듣고 pick_backlog(id)로 선정하세요.")
             await _flush(flow)
