@@ -5976,5 +5976,22 @@ def test_유사직군_병합_대표는_과제적합_우선_게임엔_게임기�
     assert 11 in joined2 and 12 not in joined2
 
 
+def test_선거복구_갭2_미등록채널은_route_to있어도_재선거():
+    """[선거-복구 갭#2 봉합(2026-07-14, 사용자: '문제가 있으면 해결해')] 선거 도중 크래시→재클레임
+    재배달 시 _route_to가 '마지막 발신자(=응찰 봇)'를 route_to로 넣어 _elect=False로 선거를 건너뛰고
+    ad-hoc 단일 봇에 배정됐다(ch63). 프로젝트 미등록 채널의 무지정 요청은 route_to가 있어도 재선거해야."""
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "기획", 12: "백엔드"}, workspace="/ws")
+    # ① 무지정·무라우트 = 새 요청 → 선거
+    assert s._should_elect({"to_id": None, "route_to": None, "channel_id": 500}) is True
+    # ② 무지정인데 route_to 있음 + 프로젝트 미등록(응찰 봇 휴리스틱) → 그래도 재선거 (핵심 수정)
+    assert s._should_elect({"to_id": None, "route_to": 12, "channel_id": 500}) is True
+    # ③ route_to 있고 프로젝트 등록됨(진짜 리더) → 선거 안 함(개입=이어가기)
+    s.projects[500] = {"id": "P-1", "leader": 12}
+    assert s._should_elect({"to_id": None, "route_to": 12, "channel_id": 500}) is False
+    # ④ 명시 To = 특정 봇 지목 → 선거 안 함
+    assert s._should_elect({"to_id": 11, "route_to": None, "channel_id": 500}) is False
+
+
 async def _acoro(v):
     return v

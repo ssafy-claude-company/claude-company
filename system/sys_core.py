@@ -697,6 +697,21 @@ class Sys:
                 pass
         return ok
 
+    def _should_elect(self, m) -> bool:
+        """[선거 결정 — 갭#2 봉합(2026-07-14, 사용자: '문제가 있으면 해결해')] 무지정(To 없음) +
+        (무라우트 OR 프로젝트 미등록) = 새 요청 → 발제자 선거. route_to는 **등록 프로젝트 리더**일 때만
+        진짜 라우트다 — 미등록 채널의 route_to는 _route_to가 '마지막 발신자'를 넣는 휴리스틱이라, 선거
+        도중 크래시→재클레임 재배달 시 응찰한 봇을 가리켜 선거를 건너뛰고 ad-hoc 단일 봇에 배정됐다
+        (ch63 라이브 사인). 미등록 채널의 무지정 요청은 route_to가 있어도 재선거한다."""
+        if m.get("to_id"):
+            return False
+        if not m.get("route_to"):
+            return True
+        try:
+            return self.projects.get(int(m["channel_id"])) is None
+        except (KeyError, TypeError, ValueError):
+            return True
+
     def _next_runner(self, flow):
         """[탈중앙 이어달리기(2026-07-13)] 이어가기의 다음 주자를 장부가 정한다 —
         ①활성 단계의 in_progress 백로그 보유자(가장 최근 선점) ②릴레이 마무리자 ③현 앵커.
@@ -2673,15 +2688,15 @@ class Sys:
                     # 종전엔 is_leader 폴백(leader)으로 발제자를 '지정'했다 — 이제 봇들이 응찰로
                     # 자기선택한다(handle_user_input에서 실제 선출). 여기선 게이트 통과용 provisional만:
                     # 한가한 후보 하나(없으면 종전 leader). 실 발제자는 elect=True로 선출된다.
-                    _elect = not m["to_id"] and not m.get("route_to")
+                    _elect = self._should_elect(m)
                     if m["to_id"]:
                         to_id = int(m["to_id"])
-                    elif m.get("route_to"):
-                        to_id = int(m["route_to"])
-                    elif _elect:
+                    elif _elect:      # 선거가 route_to 휴리스틱보다 우선 — provisional은 한가한 후보
                         to_id = next((int(b) for b in self.bot_info
                                       if not _is_spare_label(self.bot_info.get(int(b)))
                                       and self.engaged.holder(int(b)) is None), leader)
+                    elif m.get("route_to"):
+                        to_id = int(m["route_to"])
                     else:
                         to_id = leader
                     ch = int(m["channel_id"])
