@@ -374,6 +374,35 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                 _owner_dom = flow.file_owner.get(_orp)
                 if _owner_dom:
                     from .guide_tools import _jobs_of, _norm_job
+                    from .rule.communication import _OFFDOMAIN_NEGATIONS
+                    # [고아·유령 소유 자가치유(2026-07-14, 사용자: '재발되지 않는 구조적 안정성')] 무효 소유는
+                    # 아무도 못 고치는 영구 락이 된다(라이브 P-016: 10개 파일이 유령 직군 '해당없음' 소유로 교착).
+                    # 무효=①부정 센티넬('해당없음'·'없음'·'N/A' 등 — 절대 실직군 아님, 항상 해제) 또는 ②신뢰할
+                    # 팀 로스터(flow.current.team 존재)가 있는데 그 소유 직군을 *팀 누구도 안 가짐*(봇 이탈로 고아).
+                    # 무효면 소유를 즉시 해제→미소유(개방)로 되돌리고 아래 deny를 건너뛴다. 첫 유효 수정자(지금 이
+                    # actor)가 편집하고 PostToolUse가 그의 직군으로 재귀속(승계) — 어떤 경로로 잘못 써지든 자가 치유.
+                    _od_l = str(_owner_dom).strip().lower()
+                    _invalid = _od_l in _OFFDOMAIN_NEGATIONS
+                    if not _invalid:
+                        _team = list(getattr(getattr(flow, "current", None), "team", None) or [])
+                        if _team:                                      # 로스터가 있을 때만 '팀에 없음=고아' 판정(보수적)
+                            _ldr = getattr(flow, "leader", None)
+                            if _ldr is not None:
+                                _team.append(_ldr)
+                            _valid_jobs = {_norm_job(_j) for _m in _team for _j in _jobs_of(flow._info(_m) or "") if _j.strip()}
+                            _invalid = bool(_valid_jobs) and _owner_dom not in _valid_jobs
+                    if _invalid:
+                        del flow.file_owner[_orp]                       # 유령/고아 소유 해제 → 개방·재귀속
+                        (getattr(flow, "file_permits", None) or {}).pop(_orp, None)
+                        audit.record("file_owner_orphan_cleared", actor=actor, role=role, tool=tool,
+                                     reason=f"무효 소유({_owner_dom}) 해제 — 개방·재귀속", tool_use_id=tool_use_id)
+                        if getattr(flow, "persist_owner", None):
+                            try:
+                                flow.persist_owner()
+                            except Exception:
+                                pass
+                        _owner_dom = None                              # 이하 소유 게이트 건너뜀(개방)
+                if _owner_dom:
                     _mydoms = {_norm_job(j) for j in _jobs_of(flow._info(actor) or "") if j.strip()}
                     _permitted = bool(_mydoms & (getattr(flow, "file_permits", None) or {}).get(_orp, set()))
                     if _owner_dom not in _mydoms and not _permitted:   # [단순 허락] 편집권 받은 직군은 통과(담당은 주인 유지)

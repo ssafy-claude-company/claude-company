@@ -113,9 +113,10 @@ def test_flow없으면_게이트_미적용():
 
 
 class _FakeTask:
-    """Fix B용 최소 Task: owner·status.owner(표시용)·status.goal(개입 게이트용)."""
-    def __init__(self, owner, owner_label="프A", goal=""):
+    """Fix B용 최소 Task: owner·status.owner(표시용)·status.goal(개입 게이트용)·team(소유 유효성용)."""
+    def __init__(self, owner, owner_label="프A", goal="", team=None):
         self.owner = owner
+        self.team = list(team) if team is not None else []
         self.status = type("S", (), {"owner": owner_label, "goal": goal})()
 
 
@@ -325,11 +326,29 @@ def test_소유경계_타직군_소유파일_편집_차단():
     a = FakeAudit()
     flow = _FakeFlow2(_comm_with((0, 11, Kind.WORK), (11, 12, Kind.WORK)), current=_FakeTask(owner=12), leader=11)
     flow._info = lambda i: {11: "게임 기획자", 12: "QA", 13: "백엔드"}.get(i, "")
-    flow.file_owner = {os.path.realpath("/ws/server.js"): "백엔드"}      # 백엔드가 만든 파일
+    flow.file_owner = {os.path.realpath("/ws/server.js"): "백엔드"}      # 백엔드가 만든 파일(팀 로스터 미명시=보수적 유지)
     out = _run(make_pre_tool_use_hook(a, ALLOWED, actor=12, flow=flow), "Edit", {"file_path": "server.js"})
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert a.records[-1][1]["reason"] == "타 직군 소유 파일 편집"
     assert out["hookSpecificOutput"]["permissionDecisionReason"].startswith("[소유 경계]")
+
+
+def test_소유경계_고아유령_소유는_개방_첫수정자승계(monkeypatch):
+    """[구조적 안정성(2026-07-14, 사용자)] 소유 직군이 *현재 팀 누구의 것도 아니면*(봇 이탈·유령 직군
+    '해당없음' 등) 영구 락 대신 개방 — 소유 해제 후 이 수정자가 편집·승계한다(P-016 10파일 교착 재발 차단)."""
+    for owner in ("해당없음", "없음", "백엔드"):   # 유령 2종 + '팀에 없는' 백엔드(이탈) 모두 개방
+        a = FakeAudit()
+        flow = _FakeFlow2(_comm_with((0, 11, Kind.WORK), (11, 12, Kind.WORK)),
+                          current=_FakeTask(owner=12, team=[12]), leader=11)   # 팀=QA만(백엔드 이탈)
+        flow._info = lambda i: {11: "게임 기획자", 12: "QA"}.get(i, "")
+        rp = os.path.realpath("/ws/server.js")
+        flow.file_owner = {rp: owner}
+        flow.persist_owner = lambda: None
+        out = _run(make_pre_tool_use_hook(a, ALLOWED, actor=12, flow=flow), "Edit", {"file_path": "server.js"})
+        assert out == {}, f"{owner} 소유가 개방 안 됨"                 # deny 없음(통과)
+        assert flow.file_owner.get(rp) != owner, f"{owner} 무효 소유가 남음"   # 유령/고아 소유 제거됨
+        assert flow.file_owner.get(rp) in (None, "qa"), f"{owner}→개방 또는 수정자(qa) 승계"  # 개방 또는 첫 수정자 승계
+        assert any(e == "file_owner_orphan_cleared" for e, _ in a.records)
 
 
 def test_소유경계_자기직군_소유파일_편집_허용():
@@ -358,7 +377,7 @@ def test_소유경계_리더도_타도메인_차단_S2():
     """[S2 협업재설계 — 리더 대리구현 차단(게이트4)] 리더도 *타 도메인 owner 파일*은 편집 차단(owner에게 위임).
     단 자기 도메인·미소유(통합) 파일은 자유 — '팀장만 구현·팀원 기여 0'을 구조로 막아 팀원이 기여하게."""
     flow = _FakeFlow2(_comm_with((0, 11, Kind.WORK)), current=_FakeTask(owner=0), leader=11)
-    flow._info = lambda i: {11: "게임 기획자"}.get(i, "")   # 리더 = 게임 기획자 도메인
+    flow._info = lambda i: {11: "게임 기획자", 13: "백엔드"}.get(i, "")   # 리더 = 게임 기획자 도메인
     flow.persist_owner = lambda: None
     flow.file_owner = {os.path.realpath("/ws/server.js"): "백엔드",
                        os.path.realpath("/ws/game.js"): "게임 기획자"}
