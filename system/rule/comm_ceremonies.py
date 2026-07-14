@@ -126,6 +126,89 @@ async def vote(flow, me_id, args):
         raise
 
 
+async def vote_stop(flow, me_id, args):
+    """[중지 투표(2026-07-14, 사용자: '해결할 수 없는 마일스톤 주제가 있을 수 있으니 마일스톤 중지
+    투표를 열수도 있음 Task 중지 투표일수도 있음')] 해결 불가한 판을 봇 혼자가 아니라 팀 표결로 접는
+    구조적 출구. target='milestone'|'task', reason=왜 불가한가.
+      · 과반(도메인 관점 단위) 찬성 시 — milestone: 진행 중 마일스톤을 stopped 종결(로드맵 다음 단계는
+        안 셈). task: 큰 결정이라 자동 중지 없이 **사용자 승인 상신**(불변식4 — 사람 주권).
+    표는 서로 독립 수집(_fork_collect)."""
+    from .._util import _speech_clip
+    from .task import _ckpt
+    if flow.current is None:
+        return "오류: 진행 중인 Task가 없습니다."
+    target = str(args.get("target") or "").strip().lower()
+    if target not in ("milestone", "task"):
+        return "오류: target은 'milestone'(마일스톤 중지) 또는 'task'(Task 중지)여야 합니다."
+    reason = str(args.get("reason") or "").strip()
+    if not reason:
+        return "오류: reason(왜 해결 불가한가)이 필요합니다 — 중지는 팀이 표결로 접는 종결입니다."
+    voters = [m for m in flow.current.team if m != me_id and not _is_spare(flow, m)]
+    if not voters:
+        return "오류: 표결할 팀원이 없습니다."
+    if flow.comm.done or flow.comm.alive != me_id:
+        return f"지금은 표결을 열 수 없습니다(활성={flow.comm.alive}) — 진행 중 요청 응답 후 다시."
+    _tgt_ko = "마일스톤" if target == "milestone" else "Task"
+
+    async def _run():
+        def body_of(v):
+            return (f"[중지 표결 — 독립 의견] {_tgt_ko} 중지 제안\n사유: {reason}\n"
+                    f"이 {_tgt_ko}가 지금 구성으로 해결 불가라 접어야 할지 당신의 전문가 관점에서 판단하세요. "
+                    f"찬성(중지)/반대(계속) 중 하나와 근거 2줄 이내. 형식: [표] 찬성  또는  [표] 반대\n근거")
+        yes, no, reasons, dom_yes, dom_no = 0, 0, [], set(), set()
+        for v, res, note in await _fork_collect(flow, me_id, voters, body_of):
+            txt = (res or note or "")
+            pick = "찬성" if re.search(r"\[표\]\s*찬성|찬성", txt) and not re.search(r"\[표\]\s*반대", txt) else \
+                   ("반대" if re.search(r"반대", txt) else "무효")
+            _vd = {_norm_job(j) for j in _jobs_of(flow._info(v) or "")} - {""}
+            _vdk = sorted(_vd)[0] if _vd else f"·{v}"
+            if pick == "찬성" and _vdk not in dom_yes:
+                dom_yes.add(_vdk); yes += 1
+            elif pick == "반대" and _vdk not in dom_no:
+                dom_no.add(_vdk); no += 1
+            reasons.append(f"{flow._info(v) or v}: {pick} — {_speech_clip(txt, 300)}")
+            await _say(flow, v, f"[중지표결] {pick} — {_speech_clip(txt, 300)}")
+            if v in flow.current.team and v != flow.leader:
+                flow.current.participated.add(v)
+        board = f"찬성 {yes}관점 / 반대 {no}관점"
+        passed = yes > no
+        _eff = ""
+        if passed and target == "milestone":
+            _ms = next((m for m in (getattr(flow, "milestones", None) or [])
+                        if m.status not in ("done", "superseded")), None)
+            if _ms is not None:
+                # 종결 처리는 'superseded'(전역 활성 필터가 이미 인식 — 21곳 무변경). '중지'라는 사실은
+                # origin 사유 + ms_stopped_by_vote 이벤트로 보존(피드가 구분 렌더 가능). done 아님 =
+                # 로드맵 다음 단계는 진전으로 세지 않는다.
+                _ms.status = "superseded"
+                _ms.origin = (_ms.origin + " | " if _ms.origin else "") + f"중지 표결: {reason[:80]}"
+                if flow.log:
+                    flow.log("ms_stopped_by_vote", ms=_ms.ms_id, yes=yes, no=no)
+                _eff = (f"\n\n[마일스톤 중지] {_ms.ms_id} 종결 — 팀 표결 가결. 로드맵 다음 단계는 "
+                        f"진전으로 세지 않습니다. 다음 판단(다음 단계 착수 / 접기)은 새 meet로.")
+        elif passed and target == "task":
+            _eff = (f"\n\n[Task 중지 상신] 팀 표결 가결({board}) — 다만 Task 통째 중지는 사람 주권입니다"
+                    f"(불변식). 사용자에게 중지 승인을 요청했습니다. 승인 전까지 판은 유지됩니다.")
+            try:
+                _tid = getattr(flow.current, "thread_id", None) or getattr(flow, "user_channel", None)
+                if _tid:
+                    await flow.guide.post(int(_tid), 0, f"[Task 중지 상신] 팀이 이 Task를 접자고 표결"
+                                          f"({board})했습니다. 사유: {reason[:200]}. 중지를 승인하시겠습니까?")
+            except Exception:
+                pass
+        _ckpt(flow)
+        return f"[중지 표결 집계 — 도메인 관점 단위] {_tgt_ko} 중지: {board} → {'가결' if passed else '부결'}" \
+               f"\n" + "\n".join(reasons) + _eff
+
+    inner = asyncio.ensure_future(_run())
+    flow.inflight_tasks.add(inner)
+    inner.add_done_callback(flow.inflight_tasks.discard)
+    try:
+        return await asyncio.shield(inner)
+    except asyncio.CancelledError:
+        raise
+
+
 async def parallel_work(flow, me_id, args):
     """[Communication Rule 로직] parallel_work — guide_tools에서 이관(평문 반환, @tool이 _ok 래핑)."""
     from .._util import _speech_clip, _react, _dbg

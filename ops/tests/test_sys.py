@@ -100,7 +100,7 @@ def test_leader는_project_task_도구():
     # [W3 B-18③] list_projects: 회사 이력 pull 보강(push 캡 16건 유지 — pull 전환 아님).
     assert names == {"request", "recruit", "run", "atelier",
                      "create_project", "create_task", "set_goal", "complete_task", "deploy", "send_file",
-                     "vote", "meet", "parallel_work", "list_projects"}   # Discord 심화 대화: 표결·회의(1R 동시 수집). 경쟁 구현은
+                     "vote", "vote_stop", "meet", "parallel_work", "list_projects"}   # Discord 심화 대화: 표결·회의(1R 동시 수집). 경쟁 구현은
                                        # 사용자 판단으로 제거(같은 모델 중복 비교 — 효과는 협업에서)
 
 

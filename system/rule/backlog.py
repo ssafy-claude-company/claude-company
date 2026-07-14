@@ -448,17 +448,23 @@ def sync_delegation(flow, me_id, to, body) -> Optional[str]:
 
 
 def handoff_note(flow, r, actor, verb) -> None:
-    """[다음 선정 공고(2026-07-14, 사용자: '백로그 끝나거나 중단되면 보유 봇들에게 응찰 — 담당자가
-    판단해 선정')] 백로그 종결(완료/중단) 순간, 남은 백로그 보유자들에게 응찰을 공고하고 선정권이
-    직전 마무리자(담당자)에게 있음을 채널에 게시한다. 파이프라인 노트로 누적 — 도구 래퍼가 flush."""
-    rem = [b for b in r.backlogs if b.status in (OPEN, BLOCKED)]
-    if not rem:
-        return
+    """[다음 선정 / 백로그 소진(2026-07-14, 사용자: '끝나거나 중단되면 응찰 → 담당자 선정',
+    '백로그 다 돌고 서브태스크·백로그 회의')] 백로그 종결(완료/중단) 순간:
+      · 남은 백로그 있으면 → [다음 선정] 공고(응찰 → 마무리자 선정).
+      · 풀 소진(남은 것 0) → [백로그 소진] 회의 코칭 — 조건 확인 후 미충족이면 meet 추가 단위 or
+        vote_stop(중지 투표). 봇 혼자 판단 말고 팀 회의·표결로."""
     _info = getattr(flow, "_info", lambda x: x)
-    cand = " · ".join(f"{b.backlog_id}({_info(b.submitter)}: {b.body[:24]})" for b in rem[:8])
     notes = getattr(flow, "_pipeline_notes", None)
     if notes is None:
         notes = flow._pipeline_notes = []
+    rem = [b for b in r.backlogs if b.status in (OPEN, BLOCKED)]
+    if not rem:
+        notes.append(f"[백로그 소진] {_info(actor)}의 백로그가 {verb} — 이 단위 백로그가 모두 종결됐습니다"
+                     f"(완료/중단). report_iter로 마일스톤 완수조건을 확인하세요. 미충족이면 **meet**로 추가 "
+                     f"단위('단위:' 줄)를 열거나, 해결 불가한 주제면 **vote_stop**(마일스톤/Task 중지 투표)으로 "
+                     f"접으세요 — 혼자 판단 말고 팀 표결로.")
+        return
+    cand = " · ".join(f"{b.backlog_id}({_info(b.submitter)}: {b.body[:24]})" for b in rem[:8])
     notes.append(f"[다음 선정] {_info(actor)}의 백로그가 {verb} — 남은 백로그 보유자는 '내가 다음이어야 "
                  f"하는 이유' 한 줄을 담당자({_info(actor)})에게 알리세요. 담당자가 pick_backlog(id)로 "
                  f"다음 수행을 선정합니다(선정되면 그 백로그의 제출자가 착수). 남은 백로그: {cand}")

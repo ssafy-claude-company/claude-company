@@ -324,6 +324,24 @@ def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
 
 # ── iter 검증 (계약 §2) ────────────────────────────────────────────────────────
 
+def _backlogs_pending(flow, obj):
+    """[완수 판정 보조(2026-07-14)] obj(Milestone/SubTask)의 미종결 백로그 id 목록 —
+    open/in_progress/blocked(=remaining). done·dropped는 종결이라 제외. flow.backlog_relays 직접
+    조회(backlog 모듈 import는 순환이라 금지 — 장부 dict만 본다)."""
+    rels = getattr(flow, "backlog_relays", None) or {}
+    if isinstance(obj, SubTask):
+        _sts = [obj]
+    else:
+        _sts = [s for s in getattr(obj, "subtasks", []) if s.status not in ("done", "superseded")]
+    out = []
+    for st in _sts:
+        r = rels.get(st.st_id)
+        if r is None:
+            continue
+        out += [b.backlog_id for b in r.backlogs if b.status not in ("done", "dropped")]
+    return out
+
+
 def iter_verify(flow, obj, results):
     """한 iter의 완수조건 검증. results = [{desc, passed, evidence}] — 봇들이 run으로 실증한 결과.
 
@@ -395,12 +413,21 @@ def iter_verify(flow, obj, results):
         flow.log("ms_iter_verify", kind=kind, id=oid, iter=obj.iter_n,
                  passed=len(obj.criteria) - len(remain), total=len(obj.criteria))
     if not remain:
+        # [완수 = 조건 실증 + 백로그 전부 종결(2026-07-14, 사용자: '백로그를 모두 완수하면 끝난다는
+        # 표현이 맞아 — 중단으로 처리된 것은 제외')] 완수조건이 충족돼도 미종결(open/in_progress/
+        # blocked) 백로그가 남아 있으면 아직 끝이 아니다 — 전부 완료(done)나 중단(dropped)돼야 닫힌다.
+        # dropped(개인이 완수 불가로 접은 것)는 remaining()이 이미 제외한다.
+        _pending = _backlogs_pending(flow, obj)
+        if _pending:
+            return False, (f"완수조건은 충족됐지만 백로그 {len(_pending)}건이 아직 처리 중입니다 "
+                           f"({' · '.join(_pending[:6])}) — 백로그는 전부 완료(report_iter)나 중단"
+                           f"(drop_backlog)돼야 종료됩니다. 중단은 완수 집계에서 제외됩니다.")
         obj.iter_stuck = 0
         obj.status = "wrapup"
         if flow.log:
             flow.log("ms_iter_pass", kind=kind, id=oid, iter=obj.iter_n)
         _ckpt(flow)
-        return True, "완수조건 전부 충족 — 잔여 정리(wrapup) 후 다음 주기로."
+        return True, "완수조건 전부 충족 + 백로그 전부 종결 — 정리(wrapup) 후 다음 주기로."
     # [조건 불가능 출구 #1] 같은 조건이 진전 없이 반복 미충족이면 접근이 결과를 못 바꾸는 신호 —
     # iter_stuck을 세고 임계(기본 3) 도달 시 재협상 경로를 안내한다(무한 iter 차단).
     # [버그 A] 진전 = 이번 iter에 미충족 수가 줄었는가(새로 통과) — '과거에 하나 통과'로 영구 진전 오판 금지.

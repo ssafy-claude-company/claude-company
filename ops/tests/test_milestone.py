@@ -207,6 +207,36 @@ def test_수렴안_로드맵과_단계인식_분해회의(monkeypatch):
     assert not isinstance(ms3, str) and n3 == 1
 
 
+def test_완수_조건충족이어도_백로그_처리중이면_보류_중단은제외(monkeypatch):
+    """[완수 정의(2026-07-14, 사용자: '백로그를 모두 완수하면 끝 — 중단으로 처리된 것은 제외')]
+    완수조건이 전부 충족돼도 미종결(open/in_progress) 백로그가 남으면 wrapup 보류. dropped(중단)는
+    완수 집계에서 제외돼 종결로 취급 — 남은 게 dropped뿐이면 통과."""
+    from system.rule.milestone import iter_verify, Milestone, Criterion
+    from system.rule.backlog import relay_for
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    ms = Milestone(ms_id="MS-1", goal="g", criteria=[Criterion("조건A", "run a")])
+    f.milestones = [ms]
+    from system.rule.milestone import SubTask
+    st = SubTask(st_id="MS-1/ST-1", goal="단위", criteria=[])
+    ms.subtasks.append(st)
+    r = relay_for(f, st)
+    r.submit(11, "작업1"); r.pick(11, "B1", 11)                   # B1 in_progress
+    ok, note = iter_verify(f, ms, [{"desc": "조건A", "passed": True, "evidence": "run OK"}])
+    assert ok is False and "백로그" in note and "처리 중" in note   # 조건 충족해도 백로그 남아 보류
+    r.drop(11, "B1", "역량 밖")                                    # 중단(dropped)으로 처리
+    ok2, note2 = iter_verify(f, ms, [{"desc": "조건A", "passed": True, "evidence": "run OK"}])
+    assert ok2 is True and ms.status == "wrapup"                   # dropped는 제외 → 통과
+
+
+def test_중지투표_도구가_리더셋에_등록되고_import된다():
+    """[중지 투표(2026-07-14)] vote_stop 세리머니가 재수출되고 리더 도구 셋에 등록됐는지(계약 정합)."""
+    from system.rule.communication import vote_stop            # 재수출 경로
+    from system.tool_names import LEADER_TOOLS
+    assert callable(vote_stop)
+    assert "mcp__guide__vote_stop" in LEADER_TOOLS
+
+
 def test_GOAL_구조화_회의수렴안이_Task목표를_채움(monkeypatch):
     """[GOAL 구조화(2026-07-14, 사용자: 'set_goal도 봇 지능 의지보다 구조적으로 제한')] 개인이
     set_goal을 부를지가 아니라, 첫 주기 수렴안의 '목표:' 줄이 미확정 Task GOAL을 구조적으로 채운다 —

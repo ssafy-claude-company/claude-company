@@ -130,6 +130,7 @@ from .rule.wrapup import (rule_e2e_finish, rule_e2e_open, rule_e2e_result,
 # 고신호 능력만(오발 최소). 새 능력은 (이름, needs(text)→bool, providers(label keywords)) 한 줄로 확장.
 # [팀·역량 라우팅 Rule → rule/communication] guide_tools 병합 해체(re-export로 도구·tests 호환)
 from .rule.communication import _say as _rule_say, vote as _rule_vote  # noqa: F401  [발언·표결 → rule/communication]
+from .rule.communication import vote_stop as _rule_vote_stop  # noqa: F401  [중지 투표 → comm_ceremonies]
 from .rule.communication import request as _rule_request  # noqa: F401
 from .rule.communication import recruit as _rule_recruit  # noqa: F401
 from .rule.communication import parallel_work as _rule_parallel_work  # noqa: F401
@@ -290,6 +291,16 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     return _ok(f"[다음 선정] {b.backlog_id} → {_who}(제출자)를 다음 수행자로 선정 — 곧 깨어나 "
                                f"착수합니다. 선정 사유는 채널에 남기세요.")
                 elif desc:
+                    # [순차 1명 1개(2026-07-14, 사용자: '한명씩 여러개 등록이 아닌 순차적으로 1명씩
+                    # 1개씩 돌아가며 — 균등 분배')] 내가 이미 미종결(open/in_progress/blocked) 백로그를
+                    # 갖고 있으면 새 등재 거부 — 한 사람이 여러 개 선점해 몰아쥐는 것 차단.
+                    _mine_open = next((b.backlog_id for x in _sts if (getattr(flow, "backlog_relays", None) or {}).get(x.st_id)
+                                       for b in flow.backlog_relays[x.st_id].backlogs
+                                       if int(b.submitter) == int(me_id) and b.status not in ("done", "dropped")), None)
+                    if _mine_open is not None:
+                        return _ok(f"등재 거부: 당신은 이미 백로그 {_mine_open}(미종결)를 갖고 있습니다 — "
+                                   f"백로그는 1명 1개씩 순차 등재(균등 분배)입니다. 그것을 완료(report_iter)/"
+                                   f"중단(drop_backlog)한 뒤 다음을 등재하세요.")
                     _tgt = None
                     if _stq:
                         _tgt = next((x for x in _sts if _stq in x.st_id or _stq.lower() in x.goal.lower()), None)
@@ -694,6 +705,16 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         async def vote(args):
             return _ok(await _rule_vote(flow, me_id, args))
         tools.append(vote)
+
+        @tool("vote_stop",
+              "[중지 투표] 해결 불가한 판을 봇 혼자가 아니라 팀 표결로 접는다 — 백로그를 다 돌아도 "
+              "마일스톤을 충족 못 하고 접근이 결과를 못 바꿀 때의 구조적 출구. target='milestone'(진행 중 "
+              "마일스톤만 종결) 또는 'task'(Task 통째 — 사람 승인 상신). reason=왜 해결 불가한가. "
+              "과반(도메인 관점) 찬성 시 실행. (조건 1개만 불가면 renegotiate_criterion을 쓰세요.)",
+              {"target": str, "reason": str})
+        async def vote_stop(args):
+            return _ok(await _rule_vote_stop(flow, me_id, args))
+        tools.append(vote_stop)
 
         @tool("meet",
               ("완전 turn-taking 회의(§4): 소집자가 주제+자기 의견을 발제하면 매 발언권이 응찰"

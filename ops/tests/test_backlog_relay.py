@@ -173,6 +173,25 @@ def test_교착신호_같은백로그_2회차단():
     assert dl2                                           # → deadlock_signal(중재는 결정권자 권한 ③)
 
 
+def test_백로그_소진시_회의코칭_아니면_다음선정():
+    """[백로그 소진 트리거(2026-07-14, 사용자: '백로그 다 돌고 서브태스크·백로그 회의')] 종결 순간
+    남은 백로그가 있으면 [다음 선정], 하나도 없으면(풀 소진) [백로그 소진] 회의 코칭(meet/vote_stop)."""
+    from system.rule.backlog import handoff_note, relay_for
+    f, st, ev = _pipe_flow()
+    f._pipeline_notes = []
+    r = relay_for(f, st)
+    r.submit(A, "저장 API")
+    r.submit(B, "프론트 카드")
+    r.pick(A, "B1", A); r.done(A, "B1")
+    handoff_note(f, r, A, "완료됐습니다")
+    assert any("[다음 선정]" in n for n in f._pipeline_notes)     # 아직 B2 남음
+    f._pipeline_notes.clear()
+    r.pick(A, "B2", B); r.done(B, "B2")                           # 마지막까지 종결
+    handoff_note(f, r, B, "완료됐습니다")
+    note = "\n".join(f._pipeline_notes)
+    assert "[백로그 소진]" in note and "vote_stop" in note and "meet" in note  # 회의 코칭
+
+
 def test_순차_1활성_잠금():
     """[순차 돌리기(2026-07-14, 사용자: '백로그든 서브테스크든 순차 돌리기')] 한 번에 한 백로그만
     in_progress — 하나가 작업 중이면 다른 착수 거부. 완료/중단 후에야 다음이 선다."""

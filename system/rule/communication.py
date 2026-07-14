@@ -60,7 +60,7 @@ from .comm_helpers import (  # noqa: F401
     _free_alternatives, _group_of, _is_spare, _is_substantive, _job_tokens,
     _jobs_of, _kw, _needed_caps_coverage, _norm_job, _same_job, _offdomain_capability_hit,
     _resolve_members, _say, _say_speech, _uniq)
-from .comm_ceremonies import vote, parallel_work, recruit  # noqa: F401 (M9 재수출)
+from .comm_ceremonies import vote, vote_stop, parallel_work, recruit  # noqa: F401 (M9 재수출)
 
 
 

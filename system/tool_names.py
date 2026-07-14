@@ -27,4 +27,4 @@ FLOW_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL, RUN_TOOL,
 COORD_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL]
 LEADER_TOOLS = [f"mcp__guide__{n}" for n in
                 ("create_project", "create_task", "set_goal", "complete_task", "send_file",
-                 "vote", "meet", "parallel_work", "list_projects")]
+                 "vote", "vote_stop", "meet", "parallel_work", "list_projects")]
