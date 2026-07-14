@@ -135,7 +135,15 @@ async def meet(flow, me_id, args):
         return ("[대기] 직전 위임이 아직 진행 중입니다 — 회의는 그 결과를 받은 뒤 여세요.")
     if getattr(flow, "fork_active", 0) > 0:
         return ("[대기] 다른 의견 수집이 진행 중입니다 — 그 결과를 받은 뒤 여세요(중첩 수집 금지).")
-    if flow.comm.done or flow.comm.alive != me_id:
+    # [SYS 자동 개시(2026-07-14, 사용자: '기계적 단계는 SYS가 돌려')] SYS가 첫 회의를 자동으로 열 때는
+    # (봇이 도구를 부른 게 아니라) comm alive 가드를 우회한다 — 개시자를 alive로 세워 정상 진행.
+    _sys_open = bool(args.get("_sys_open"))
+    if _sys_open:
+        try:
+            flow.comm.alive = me_id; flow.comm.done = False
+        except Exception:
+            pass
+    elif flow.comm.done or flow.comm.alive != me_id:
         return (f"지금은 회의를 열 수 없습니다(활성={flow.comm.alive}) — 진행 중인 요청의 "
                    f"응답을 받은 뒤 다시 시도하세요.")
     topic = str(args.get("topic", "")).strip()

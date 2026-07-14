@@ -2181,7 +2181,33 @@ class Sys:
                                         "일을 다시 위임하지 마세요]\n" + _po)
                 except Exception as _e:
                     self._log("precise_resume_failed", err=str(_e)[:150])
-            result = await self.run_turn(flow, lead, _body, Kind.WORK, "leader")
+            # [기계적 킥오프 구조화(2026-07-14, 사용자: '왜 정석을 봇 지능에 맡겨 — 마일스톤 등록·서브태스크·
+            # 백로그는 정석인데')] 선거로 연 제작 요청의 Task 개설·첫 회의 개시는 **SYS가 자동으로** 돌린다 —
+            # 앵커가 create_task·meet를 '부를지'에 안 맡긴다(누가 시작하든 똑같은 기계적 단계). 앵커는 '여는
+            # 의견'(내용=판단)만 내고, 회의 개시·진행·표결·마일스톤/서브태스크 등록은 구조가 굴린다. 이로써
+            # '앵커 평문 독백→완료 참칭'(킥오프 유도)이 통째로 사라진다. 실패 시 종전 봇-구동 경로로 폴백.
+            _auto_kicked = False
+            from .rule.milestone import pipeline_on as _ms_on0
+            if _ms_on0() and getattr(flow, "was_elect", False) and flow.current is None and not _pf:
+                try:
+                    from .rule.task import create_task as _auto_ct
+                    from .rule.communication import meet as _auto_meet
+                    _ctr = await _auto_ct(flow, {})          # SYS 자동 Task 개설(auto 팀=응찰자, 계열 dedup 적용)
+                    if flow.current is not None:
+                        _op = await self.run_turn(
+                            flow, lead,
+                            "회의는 시스템이 자동으로 엽니다 — 당신은 이 요청에 대한 **여는 의견**만 3~5줄으로 "
+                            "내세요(**도구 호출 금지, 텍스트로만**). 요청: " + (flow.origin_request or body)[:300],
+                            Kind.INFO, "leader")
+                        result = await _auto_meet(flow, lead, {"topic": (flow.origin_request or body)[:200],
+                                                               "my_opinion": (str(_op or "").strip() or "여는 의견 없음")[:1500],
+                                                               "_sys_open": True})
+                        _auto_kicked = True
+                        self._log("auto_kickoff", ch=int(flow.user_channel or 0))
+                except Exception as _e:
+                    self._log("auto_kickoff_failed", err=str(_e)[:150])
+            if not _auto_kicked:
+                result = await self.run_turn(flow, lead, _body, Kind.WORK, "leader")
             # [마일스톤 파이프라인 §5 — 진행을 '리더 세그먼트'가 아니라 '주기(iter)'가 관할]
             # 플래그 ON이면 continue 루프의 종료 조건에 '미완 주기 존재'를 더한다 — 결정권자가 주기를
             # 안 닫고 턴을 끝내도 SYS가 계속 깨워 회의→조건→릴레이→iter로 주기를 닫게 한다(마감은 조건).
