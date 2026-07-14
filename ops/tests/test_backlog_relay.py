@@ -357,12 +357,18 @@ def test_배선_겹침방지_남의_진행분_위임_거부(monkeypatch):
 
 
 def test_배선_백로그밖_위임은_그대로_통과(monkeypatch):
+    """[자기 등재 원칙(2026-07-14, 사용자: '백로그가 백엔드 지능으로 만들어지면 안 되고 각자 만들어
+    전담해야')] 매칭 없는 위임은 백로그를 **날조하지 않고** 그대로 통과 — 종전 자동 제출(의무화 1단)이
+    위임문 원문을 수행자 in_progress로 등재해, U-019에서 '네 백로그를 등록하라'는 메타 지시가 작업
+    백로그로 둔갑했다. 등재는 수행자 본인의 pick_backlog(desc)만 — 계층 보장은 산출물 게이트가 맡는다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, ev = _pipe_flow()
     r = relay_for(f, st)
     r.submit(A, "프론트 카드")
     assert sync_delegation(f, A, B, "배포 계정 설정 확인 부탁") is None   # 겹침 없음 → 장부 밖
     assert r.get("B1").status == OPEN
+    assert len(r.backlogs) == 1                                        # 날조된 항목 없음(B2 미생성)
+    assert not any(b.assignee == B for b in r.backlogs)                # 수행자에게 자동 배정 없음
 
 
 def test_배선_wrapup_정리와_장부요지(monkeypatch):

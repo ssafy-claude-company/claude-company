@@ -187,14 +187,20 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                 from .rule.milestone import pipeline_on as _po
                 if _po():
                     _ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
-                    _st = next((x for x in _ms.subtasks if x.status != "done"), None) if _ms else None
-                    _r = (getattr(flow, "backlog_relays", None) or {}).get(_st.st_id) if _st else None
-                    if _st is not None and not (_r is not None and any(
-                            b.status == "in_progress" and int(b.assignee or 0) == int(actor) for b in _r.backlogs)):
+                    # [열린 단계 전체 스캔(2026-07-14)] 종전엔 '첫 열린 SubTask' 하나만 봐서 ①내 백로그가
+                    # 다른 열린 단계에 있으면 오거부 ②첫 단계 슬롯만 쥐면 도메인 무관 통과(U-019: 프론트가
+                    # 백엔드 ST-1 슬롯으로 전 작업) — 열린 단계 전부에서 '내 in_progress 백로그'를 본다.
+                    _sts = [x for x in _ms.subtasks if x.status not in ("done", "superseded")] if _ms else []
+                    _rls = getattr(flow, "backlog_relays", None) or {}
+                    _mine = any(b.status == "in_progress" and int(b.assignee or 0) == int(actor)
+                                for x in _sts if _rls.get(x.st_id) is not None
+                                for b in _rls[x.st_id].backlogs)
+                    if _sts and not _mine:
                         audit.record("tool_denied", actor=actor, role=role, tool=tool,
                                      reason="백로그 미선점", tool_use_id=tool_use_id)
-                        return _deny(f"[백로그 선점 필요] 단계({_st.st_id})가 열려 있으면 산출물 작성도 백로그 단위입니다 — "
-                                     f"pick_backlog(기존 id 또는 desc='이번에 할 일')로 집은 뒤 쓰세요. 집지 않은 작업은 장부·대화에 남지 않습니다.")
+                        return _deny(f"[백로그 선점 필요] 열린 단계({len(_sts)}개)가 있으면 산출물 작성도 백로그 단위입니다 — "
+                                     f"pick_backlog(기존 id 또는 desc='이번에 내가 할 일')로 **내 몫을 직접 등재해 집은 뒤** "
+                                     f"쓰세요. 집지 않은 작업은 장부·대화에 남지 않습니다.")
             except Exception:
                 pass
 

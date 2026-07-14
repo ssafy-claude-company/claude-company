@@ -391,25 +391,15 @@ def sync_delegation(flow, me_id, to, body) -> Optional[str]:
         return None
     r = relay_for(flow, st)
     b = _match_backlog(r, body)
+    # (2026-07-13 '재발송 합류' 분기는 자기 등재 원칙으로 흡수 — 매칭 없는 위임은 아래서 전부 통과라
+    #  재전송이 새 항목을 낳을 자동 등재 자체가 없다.)
     if b is None:
-        # [재발송 합류(2026-07-13, 사용자: '어떻게 백로그가 늘어났지')] 끊김 재전송(TimeoutError 등)이
-        # 어휘 겹침을 못 넘어 새 항목으로 중복 등재되던 것 — 재발송 신호가 있고 같은 수행자의
-        # in_progress 항목이 있으면 그 항목에 합류(장부 무변화).
-        if re.search(r"재발송|재전송|다시\s*보냅|재요청", str(body or "")[:200]):
-            _prev = [x for x in r.backlogs if x.status == IN_PROGRESS and int(x.assignee or 0) == int(to)]
-            if _prev:
-                return None
-    if b is None:
-        # [백로그 의무화(2026-07-10, 사용자: 'SubTask 하위로 그냥 일하는 것처럼 보인다 — 아니어야지')]
-        # 장부 밖 Work 위임을 통과시키던 선택제가 계층(ST→백로그→작업)을 비웠다 — 매칭 없는 위임은
-        # 거부(마찰) 대신 **자동 제출**로 장부에 등재하고 그 위임을 곧 배분으로 만든다(장부=진실).
-        try:
-            b = r.submit(int(me_id), str(body or "")[:200], force=True)
-            r.pick(int(me_id), b.backlog_id, int(to))
-            st.participants.add(int(to)); st.participants.add(int(me_id))
-            st.backlog_ids = [x.backlog_id for x in r.backlogs]
-        except Exception:
-            pass
+        # [자기 등재 원칙(2026-07-14, 사용자: '백로그가 백엔드 지능으로 만들어지면 안 되고 각자 자기
+        # 백로그를 만들어 전담해야')] 종전 '자동 제출'(2026-07-10 의무화 1단)은 위임문 원문을 그대로
+        # 수행자의 in_progress 백로그로 날조했다 — U-019 라이브에서 "네 백로그를 등록하라"는 메타 지시가
+        # 프론트의 작업 백로그로 둔갑, 그 한 슬롯으로 전 작업이 장부 밖처럼 흘렀다. 매칭 없는 위임은
+        # '그 직군이 자기 백로그를 등재하라는 요청'으로 그대로 통과 — 수행자가 pick_backlog(desc=자기
+        # 스코프)로 스스로 등재해야 산출물 게이트(Write/run)가 열린다(계층 보장은 게이트가, 등재는 본인이).
         return None
     if b.status == IN_PROGRESS:
         if b.assignee == int(to):

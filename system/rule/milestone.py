@@ -586,6 +586,15 @@ def gate_new_cycle(flow):
                 f"**그 주기를 이어가세요**(정밀 복구 원칙). 미충족: {_remain[:200] or '(없음 — wrapup 정리 후 종료)'}. "
                 f"report_iter(대상 지정 가능)로 검증을 잇고, 단위가 필요하면 set_subtask로 그 주기 안에 여세요. "
                 f"조건이 환경상 불가면 renegotiate_criterion이 출구입니다.")
+    # [내용 있는 주기 보호(2026-07-14, U-019 라이브)] '계획 단계(iter 0) 큐잉 허용'은 open_milestone이
+    # 실제로는 대체(supersede)라 빈말이었다 — 프론트의 set_milestone 한 방이 SubTask 6개 붙은 판을
+    # 통째로 갈아엎었다(ms_superseded, 자기 자리가 없어 상위를 자작한 증상). 단위(SubTask)가 이미 붙은
+    # 주기는 검증 전이라도 갈아타기 금지 — 대체가 허용되는 건 아무것도 안 붙은 빈 헛발 주기뿐.
+    if _open is not None and any(st.status != "superseded" for st in _open.subtasks):
+        return (f"등록 거부: 주기 {_open.ms_id}에 이미 단위(SubTask {len(_open.subtasks)}개)가 붙어 있습니다 — "
+                f"새 주기를 열면 그 판이 통째로 대체(파기)됩니다. **그 주기 안에서 일하세요**: 내 몫의 단위가 "
+                f"없으면 set_subtask로 그 주기 안에 열고, 작업은 pick_backlog(desc='내가 할 일')로 집은 뒤 "
+                f"시작하세요. 다음 주기는 이 주기 완수(wrapup) 후에 엽니다.")
     return None
 
 

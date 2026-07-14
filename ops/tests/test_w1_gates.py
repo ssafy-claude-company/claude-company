@@ -403,9 +403,10 @@ def test_G3_좁은판정_캐주얼만_casual_빌드동사나_Info단독은_아�
 def test_새주기_공용게이트_목표선행과_정밀복구_두경로가_같은문(monkeypatch):
     """[U-015 라이브] 회의 표결 확정 경로가 open_milestone을 직접 불러 목표 선행·정밀 복구 게이트를
     우회, iter>0 미완 주기를 대체(supersede)했다 — gate_new_cycle 하나를 도구 등록과 표결 확정이
-    공유한다(같은 문). ①GOAL 미확정=보류 ②확정 후 통과 ③iter 0 큐잉 허용 ④iter>0 대체 금지."""
+    공유한다(같은 문). ①GOAL 미확정=보류 ②확정 후 통과 ③빈 주기만 대체 허용 ③-b 단위 붙으면
+    금지(2026-07-14 내용 보호) ④iter>0 대체 금지."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
-    from system.rule.milestone import gate_new_cycle, open_milestone, parse_criteria_lines
+    from system.rule.milestone import gate_new_cycle, open_milestone, open_subtask, parse_criteria_lines
     g = FakeGuide()
     f = _flow(g)
     t = _tools(f, 11, "leader")
@@ -416,7 +417,14 @@ def test_새주기_공용게이트_목표선행과_정밀복구_두경로가_같
     assert gate_new_cycle(f) is None                         # ② 통과(미완 주기 없음)
     ms = open_milestone(f, "주기1", parse_criteria_lines("카운트 API 동작 | curl POST 후 GET으로 확인"))
     assert not isinstance(ms, str)
-    assert gate_new_cycle(f) is None                         # ③ 계획 단계(iter 0) 큐잉 허용
+    assert gate_new_cycle(f) is None                         # ③ 빈 헛발 주기(단위 0)만 대체 허용
+    # ③-b [내용 있는 주기 보호(2026-07-14, U-019 라이브: 프론트 set_milestone이 SubTask 6개 판을 대체)]
+    #      단위가 붙는 순간 iter 0(검증 전)이라도 새 주기 개설 금지 — open_milestone은 큐잉이 아니라
+    #      대체(supersede)라, 종전 '큐잉 허용'은 곧 판 파기 허용이었다.
+    st = open_subtask(f, ms, "API 스펙", parse_criteria_lines("스펙 문서 존재 | ls api_spec.md로 확인"))
+    assert not isinstance(st, str)
+    err_c = gate_new_cycle(f)
+    assert err_c and "단위(SubTask" in err_c and "그 주기 안에서" in err_c
     ms.iter_n = 1                                            # 검증이 돌던 주기
     err2 = gate_new_cycle(f)
     assert err2 and "이어가세요" in err2                     # ④ 갈아타기 거부(정밀 복구)
