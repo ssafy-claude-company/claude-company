@@ -4287,6 +4287,10 @@ def test_Task_체크포인트_전이마다_영속_마감시_해제(tmp_path):
     f.current.cross_checks = f.current.cross_check_offdomain = 1                    # 검증 분업 게이트(별도 테스트)와 무관한 의도 보존
     asyncio.run(t["complete_task"].handler({"result": "끝"}))
     assert s.projects[500]["open_task"] is None                    # 마감 즉시 해제(유령 복원 방지)
+    # [기록 보존(2026-07-14, 사용자: 'Task 목표도 갑자기 없어짐')] 해제 전 스냅샷은 last_task로 보관 —
+    # 완결된 판의 정체(목표·팀)가 피드에서 계속 해석된다(복구 대상 아님, 읽기 전용 이력).
+    assert s.projects[500]["last_task"]["goal"] == "측정가능 g"
+    assert s.projects[500]["last_task"]["task_id"]
 
 
 def test_배포검증_라이브가_산출물과_다르면_성공선언_불가(tmp_path):

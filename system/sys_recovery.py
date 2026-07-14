@@ -146,6 +146,12 @@ def checkpoint_open_task(sys, flow) -> None:
     if not ch or int(ch) not in sys.projects:
         return
     p = sys.projects[int(ch)]
+    # [기록 보존 — 마감돼도 정체는 남는다(2026-07-14, 사용자: 'Task 목표도 갑자기 없어진걸 보면')]
+    # 종전엔 마감(complete_task) 체크포인트가 open_task=None으로 덮어 목표·로스터의 유일한 홈이
+    # 증발 — 완결된 판의 피드 머리(목표·인원)가 화면에서 사라졌다(ch61 라이브). 활성 스냅샷을 지우기
+    # 전에 last_task로 보관한다(읽기 전용 이력 — 복구 대상 아님, 피드 해석 폴백 전용).
+    if flow.current is None and p.get("open_task"):
+        p["last_task"] = p["open_task"]
     p["open_task"] = (sys._task_snapshot(flow, flow.current)
                       if flow.current is not None else None)
     if getattr(flow, "file_owner", None) is not None:   # [소유 경계 영속] Task 전이마다 같이 저장
