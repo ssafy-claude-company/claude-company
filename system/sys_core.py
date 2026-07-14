@@ -815,14 +815,28 @@ class Sys:
         # [팀 비대 차단 복원(2026-07-13, 사용자: '중복 직군·과도 인원 — 트레이드오프')] 응찰은 전원
         # 자유, 확정은 **직군당 최고 응찰 1명**(협의 비용∝인원² — 같은 직군 중복은 게이트 비용만 키움).
         # 탈락 응찰자는 후보 대기 명단으로 기록 — 판 중간 채용 공고 시 우선 지원 대상.
-        joined, standby, _seen = [], [], []          # _seen: (tokens, norm)
+        # [과제 적합 우선 그룹 대표(2026-07-14, 사용자: '게임엔 게임 기획자가 남아야')] 같은/유사 직군은
+        # 응찰 점수만으로 대표를 뽑던 것 — 일반직(기획)이 과제 전문직(게임 기획자)을 밀어냈다(게임 판인데
+        # 기획이 남고 게임 기획자가 벤치로). 그룹 대표 = 직군 토큰이 원문에 등장(도메인 적합)하는 쪽 우선,
+        # 동률은 응찰 점수. '기획⊂게임 기획자'처럼 일반⊂전문이 묶여도 과제 도메인의 전문가가 남는다.
+        _tf_txt = str(clip or "").lower()
+        def _taskfit(mid):
+            return sum(1 for _t in _jt(str(self.bot_info.get(mid, ""))) if _t and str(_t).lower() in _tf_txt)
+        _grps = []                                    # 각 원소: {"keys":[(jk,jn)...], "mem":[(s0,mid)...]}
         for s0, mid, _ in bids:
             jk, jn = _jkey2(mid), _jnorm(mid)
-            if any((jk & t) or (jn and n and (jn in n or n in jn)) for t, n in _seen):
-                standby.append(mid)                       # 같은/유사 직군 — 최고점에게 양보
+            for gr in _grps:
+                if any((jk & t) or (jn and n and (jn in n or n in jn)) for t, n in gr["keys"]):
+                    gr["keys"].append((jk, jn)); gr["mem"].append((s0, mid)); break
             else:
-                _seen.append((jk, jn))
-                joined.append(mid)
+                _grps.append({"keys": [(jk, jn)], "mem": [(s0, mid)]})
+        joined, standby = [], []
+        for gr in _grps:
+            gr["mem"].sort(key=lambda sm: (-_taskfit(sm[1]), -sm[0], str(sm[1])))   # 적합↑·응찰↑·id안정
+            joined.append(gr["mem"][0][1])
+            standby.extend(m for _, m in gr["mem"][1:])
+        # 앵커(첫 주자) = 합류자 중 최고 응찰 — 대표가 적합으로 바뀌어도 앵커는 합류자에서만.
+        winner = next(((s, m, x) for s, m, x in bids if m in joined), bids[0])
         self._log("propose_elected", channel=channel_id, who=winner[1], score=winner[0],
                   bidders=len(bids))
         try:

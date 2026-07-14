@@ -5952,5 +5952,29 @@ def test_발제자_응찰_무지정요청은_봇자기선택으로_선출():
     assert asyncio.run(s._elect_proposer(500, "x")) is None
 
 
+def test_유사직군_병합_대표는_과제적합_우선_게임엔_게임기획자():
+    """[과제 적합 우선(2026-07-14, 사용자: '게임엔 게임 기획자만 남아야')] 기획⊂게임 기획자로 병합될 때,
+    종전엔 응찰 점수 최고자(일반 '기획')가 남고 전문 '게임 기획자'가 벤치로 갔다(게임 판인데 거꾸로).
+    이제 그룹 대표 = 직군 토큰이 원문에 등장(도메인 적합)하는 쪽 — 게임 과제엔 게임 기획자가 남는다."""
+    import asyncio
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None,
+            bot_info={11: "기획", 12: "게임 기획자", 13: "백엔드"}, workspace="/ws")
+    bids = {11: "[응찰: 8] 제품 관점으로 이끌겠습니다.",     # 일반 기획 — 높은 응찰
+            12: "[응찰: 5] 게임 룰·밸런스는 제 축입니다.",   # 게임 기획자 — 낮은 응찰이지만 과제 적합
+            13: "[응찰: 6] 서버 구현 맡습니다."}
+    class _B:
+        def __init__(self, mid): self.mid = mid
+        async def handle(self, prompt): return bids[self.mid]
+    s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
+    s._distill_workspace = lambda: None
+    winner, joined = asyncio.run(s._elect_proposer(500, "멀티 게임 만들어서 배포해줘"))
+    assert 12 in joined and 11 not in joined              # 게임 기획자 남고 기획은 벤치(과제 적합 우선)
+    assert 13 in joined                                    # 백엔드는 별 직군 — 그대로 합류
+    # 게임 없는 과제면 도메인 적합 동률(0) → 응찰 점수로 폴백(무회귀): 일반 기획이 남는다
+    winner2, joined2 = asyncio.run(s._elect_proposer(500, "포트폴리오 웹사이트 만들어줘"))
+    assert 11 in joined2 and 12 not in joined2
+
+
 async def _acoro(v):
     return v
