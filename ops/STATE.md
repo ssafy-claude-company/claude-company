@@ -25,8 +25,10 @@ claude-company  ba1cf16  ← 브레인 — 2026-07-14 ①중지 at-least-once(�
                           목표선행·정밀복구를 도구 등록과 회의 표결이 공유, U-015 표결 경로가 iter>0 주기를
                           supersede한 우회 봉쇄) + set_goal 구성 점검 강제('[구성 점검: …]'/team_check 인자 —
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
-                          · atelier 도구(B-2, 변도진-2)는 커밋만 — 러너 env(ATELIER_URL/TOKEN)+재시작 승인 대기라 아직 미장착
-murmur  51ff6ad   ← HEAD — 중지 신호 at-least-once(stops 조회=읽기 전용·stop_channel=ack 소거, 51ff6ad)
+                          · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
+                          ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
+murmur  63a2427   ← HEAD — 파일 브라우저=산출물만(.collab 비공개, 63a2427) · 중지 신호
+                          at-least-once(stops 조회=읽기 전용·stop_channel=ack 소거, 51ff6ad)
                           + Task 내부 간격 일관화(7925cc4)·단계 칩 라벨 실체화(장부 비면 '조건 n/m', 선점
                           시작하면 '백로그 n/m' — 41d50a6). 프론트 빌드 배포됨. 웹·러너 재시작 반영(라이브).
 ```
