@@ -19,7 +19,12 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  9d67208  ← 브레인 — 2026-07-14 ★순차 릴레이·GOAL 구조화·발제자 해제(사용자 설계): ①백로그 순차 1활성
+claude-company  414deea  ← 브레인 — 2026-07-14 ★4개 규율 구조화(봇 지능→파이프라인 게이트, 사용자 감사): A)순차 1명 1개
+                          등재(pick_backlog desc가 내 미종결 백로그 있으면 거부) B)백로그 소진=회의 트리거(handoff_note가
+                          [백로그 소진]→meet 추가단위/vote_stop 코칭) C)vote_stop 중지 투표(마일스톤=종결/Task=사람 승인
+                          상신) D)완수=조건 실증+백로그 전부 종결(iter_verify가 미종결 백로그 있으면 보류, dropped 제외).
+                          스위트 611 그린.
+                          + ★순차 릴레이·GOAL 구조화·발제자 해제(사용자 설계): ①백로그 순차 1활성
                           (relay pick 잠금) — 첫 착수=자기 self-claim, 이후 마무리자가 pick_backlog(id)로 남은
                           백로그 제출자를 다음 수행자 선정(_next_runner가 깨움) ②GOAL=회의 수렴안 산물(개인
                           set_goal 의존 제거, register_consensus가 '목표:'로 Task GOAL 채움) ③'발제자' 라벨·
