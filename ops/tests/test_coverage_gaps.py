@@ -267,3 +267,41 @@ def test_dotenv_없어도_환경변수로_로딩(monkeypatch):
     monkeypatch.setitem(sys.modules, "dotenv", None)   # import 시 ImportError 강제
     cfg = config.load_config()
     assert cfg.channel_id == 42 and cfg.model is None
+
+
+# ── 위임 자동합류 직군 계열 dedup (communication._req_gate_team) ─────────
+
+def test_위임_자동합류_같은직군계열_차단():
+    """[위임 계열 dedup(2026-07-14, 사용자: '서버 채널엔 10명인데 Task는 11명, 기획+게임기획자')]
+    선거는 계열당 1명(기획⊂게임기획자)을 뽑는데, 위임 자동합류가 이를 우회해 같은 계열을 되불렀다
+    (ch69 라이브: 게임기획자 팀에 일반 기획이 위임 합류 → 11명). 자동합류 전 현 팀에 같은 계열이
+    있으면 거부·리다이렉트(선거와 동일한 정규화 부분문자열 판정)."""
+    from system.rule.communication import _req_gate_team
+    roles = {11: "게임 기획자", 12: "백엔드", 33: "기획", 40: "배포/인프라"}
+
+    class _G:
+        async def post(self, *a):
+            pass
+
+    class _F:
+        def __init__(self):
+            self.current = SimpleNamespace(team=[11, 12], status=SimpleNamespace(group=""), thread_id=1)
+            self.project_team = [11, 12, 33, 40]
+            self.pool = [11, 12, 33, 40]
+            self.guide = _G()
+
+        def _info(self, m):
+            return roles.get(m, "")
+
+        async def refresh(self, *a):
+            pass
+
+    f = _F()
+    # 리더(게임 기획자)가 일반 기획(33)에게 위임 → 같은 계열이라 거부, 팀에 안 들어감
+    out = asyncio.run(_req_gate_team(f, 11, 33, "tag"))
+    assert out is not None and "같은 직군 계열" in out and "게임 기획자" in out
+    assert 33 not in f.current.team
+
+    # 대조: 새 계열(배포/인프라)은 정상 자동합류(과차단 아님)
+    out2 = asyncio.run(_req_gate_team(f, 11, 40, "tag"))
+    assert out2 is None and 40 in f.current.team

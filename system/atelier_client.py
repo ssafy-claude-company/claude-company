@@ -69,6 +69,13 @@ def shot(project: str, canvas: str, url_: str, sel: str, title: str) -> str:
     return f"실화면 조각을 판에 → {url}/p/{project}/c/{cid}/?focus={it['id']}"
 
 
+def read(project: str, canvas: str) -> str:
+    """[AX] 판 읽기 — 캔버스를 AI용 요약문(digest)으로. 좌표 JSON 해석 없이 원문·연결·판정·핀."""
+    cid = _ensure_canvas(project, canvas)
+    d = _call(f"/api/projects/{project}/canvases/{cid}/digest/")
+    return d.get("digest") or "(빈 판)"
+
+
 def done(pin: str, note_: str) -> str:
     m = re.search(r"\d+", str(pin))
     if not m:

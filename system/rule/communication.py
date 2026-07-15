@@ -575,6 +575,24 @@ async def _req_gate_team(flow, me_id, to, tag):
     from .._util import _dbg
     if to not in flow.current.team:
         if to in flow.project_team:
+            # [직군 계열 중복 차단(2026-07-14, 사용자: '채널엔 10명인데 Task는 11명, 기획+게임기획자')]
+            # 선거는 계열 dedup(기획⊂게임기획자)으로 직군당 1명을 뽑는데, 위임 자동합류가 이를 우회해
+            # 같은 계열을 되불러들였다(ch69: 팀의 게임기획자 옆에 일반 기획이 위임으로 합류 → 11명).
+            # 자동합류 전에 현 Task 팀에 같은 계열이 이미 있으면 그 동료로 리다이렉트(중복 합류 차단) —
+            # 판정은 선거(_same_group)와 동일한 정규화 부분문자열.
+            def _fam(mid):
+                return "".join((flow._info(mid) or "").lower().split())
+            _tn = _fam(to)
+            # 리더 자신도 팀원 — 리더가 같은 계열이면 직접 하면 되므로 포함(m != me_id 제외 시 리더 계열이 새 구멍).
+            _same_fam = [m for m in flow.current.team if not _is_spare(flow, m)
+                         and _fam(m) and _tn and (_fam(m) in _tn or _tn in _fam(m))]
+            if _same_fam:
+                _dbg(f"{tag} ✗거부:계열중복(위임 자동합류 차단)")
+                _who = ", ".join(f"{flow._info(m)}(id {m})" + ("(당신)" if m == me_id else "")
+                                 for m in _same_fam)
+                return (f"요청 거부: {flow._info(to)}(id {to})는 팀의 {_who}와 같은 직군 계열입니다 — 이 "
+                        f"Task엔 직군당 1명입니다(선거 규칙과 동일). 그 동료가(당신이면 직접) 처리하세요"
+                        f"(중복 합류·재시도 금지).")
             flow.current.team.append(to)
             flow.current.status.group = _group_of(flow, flow.current.team)
             await flow.refresh()

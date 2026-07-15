@@ -652,7 +652,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     # 설명·검증 증거를 남기거나, 판에서 승격돼 온 요청([atelier 핀 #N])을 끝냈을 때 마감 회신.
     # env(ATELIER_URL/ATELIER_TOKEN) 미설정이면 호출해도 안내만 — 협업 흐름은 막지 않는다.
     @tool("atelier",
-          "사람과 같이 쓰는 공유 캔버스(atelier)에 남긴다 — 필요하다고 판단될 때만. "
+          "사람과 같이 쓰는 공유 캔버스(atelier) — 필요하다고 판단될 때만. "
+          "op=read: 판 읽기(project,canvas) — 무엇이 있고 어떻게 연결됐고 어떤 핀·검증 판정이 있는지 "
+          "요약문으로 돌아온다(작업 전 맥락 파악·사람 피드백 확인용). "
           "op=note: 스티키 한 장(project,canvas,text — 산출물 설명·검증 증거·설계 메모). "
           "op=shot: 실화면 라이브 조각(project,canvas,url,text=제목,sel=CSS선택자(선택) — 배포/구현한 "
           "화면을 판에 품는다, 캡쳐 아님). "
@@ -660,7 +662,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
           "text=처리 한 줄). project=판 이름(요청문의 '판에서 보기' 주소 /p/<이름>/ 참조, 예: murmur), "
           "canvas=시트 이름(없으면 생성, 예: 검증-증거).",
           {"type": "object",
-           "properties": {"op": {"type": "string", "enum": ["note", "shot", "done"]},
+           "properties": {"op": {"type": "string", "enum": ["read", "note", "shot", "done"]},
                           "project": {"type": "string"}, "canvas": {"type": "string"},
                           "text": {"type": "string"}, "url": {"type": "string"},
                           "sel": {"type": "string"}, "pin": {"type": "string"}},
@@ -677,6 +679,8 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                 return _atl.done(str(args.get("pin") or ""), tx)
             if not pj:
                 raise RuntimeError("project(판 이름)가 필요합니다 — 예: murmur")
+            if op == "read":
+                return _atl.read(pj, cv)
             if op == "shot":
                 u = str(args.get("url") or "").strip()
                 if not u:
