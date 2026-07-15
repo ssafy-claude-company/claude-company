@@ -451,3 +451,42 @@ def test_체크포인트_동승과_복원_왕복(tmp_path):
     assert out is None                                         # open_task 없어도
     assert len(f2.milestones) == 1 and f2.milestones[0].status == "wrapup"   # 주기 복원
     assert f2.milestones[0].criteria[0].evidence == "ok"       # 증거까지 무손실
+
+
+def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(monkeypatch):
+    """[회의 하나당 결론 하나(2026-07-14, 사용자)] meeting_stage가 상태에서 단계를 유도하고
+    register_stage가 그 단계 결론 하나만 등록 — GOAL→마일스톤→서브태스크→백로그 순차. 각 단계는
+    이전 결론 위에서만 열려 겹치지 않는다(종전 '수렴안 하나가 다 만들기' = 너무 큰 회의를 대체)."""
+    import types
+    from system.rule.milestone import meeting_stage, register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
+                                      status=types.SimpleNamespace(goal="", purpose=""),
+                                      acceptance="", standard="", interfaces="")
+    # ① GOAL 단계 — 목표만 정함
+    assert meeting_stage(f) == "goal"
+    ok, _ = register_stage(f, "goal", "목표: 방명록 앱\n등록 동작 | curl POST 확인")
+    assert ok and f.current.status.goal == "방명록 앱"
+    assert not getattr(f, "milestones", None)                # GOAL 회의는 마일스톤을 안 연다
+
+    # ② 마일스톤 단계 — GOAL 섰으니 로드맵/주기
+    assert meeting_stage(f) == "milestone"
+    ok, _ = register_stage(f, "milestone", "단계: MVP\n단계: 확장\n이번 주기: 방명록 MVP\n로드 | curl 확인")
+    assert ok and f.roadmap == ["MVP", "확장"]
+    _ms = [m for m in f.milestones if m.status not in ("done", "superseded")][0]
+    assert not _ms.subtasks                                  # 마일스톤 회의는 단위를 안 만든다
+
+    # ③ 서브태스크 단계 — 마일스톤 섰고 단위 없음
+    assert meeting_stage(f) == "subtask"
+    ok, _ = register_stage(f, "subtask", "단위: 백엔드 API | curl 확인\n단위: 프론트 폼 | playwright 확인")
+    assert ok and len([s for s in _ms.subtasks if s.status != "superseded"]) == 2
+
+    # ④ 백로그 단계 — 첫 미충원 단위부터 (단위마다 별도 백로그 회의)
+    assert meeting_stage(f) == "backlog"
+    ok, _ = register_stage(f, "backlog", "백로그: POST /guestbook 구현\n백로그: GET 목록 구현")
+    assert ok
+    assert meeting_stage(f) == "backlog"                     # 둘째 단위 아직 미충원 → 또 백로그 회의
+    ok, _ = register_stage(f, "backlog", "백로그: 폼 UI\n백로그: 제출 검증")
+    assert ok
+    assert meeting_stage(f) is None                          # 전 단계 완료 → 작업 단계

@@ -732,6 +732,171 @@ def register_consensus(flow, prop: str, origin: str = ""):
     return ms, n
 
 
+# ── 회의 하나당 결론 하나 — 단계 체인(2026-07-14, 사용자) ────────────────────────
+# GOAL → 마일스톤 → 서브태스크 → 백로그. 한 회의는 이 단계의 결론 '하나'만 정하고, SYS가 이전 결론을
+# 토대로 다음 단계 회의를 연다. 겹침 방지: 단계는 상태에서 유도돼 한 번에 하나만 '현재'이고(아래 순차
+# elif), 회의 자체는 단일 활성 베턴이라 두 회의가 동시에 못 돈다. 종전의 '수렴안 하나가 목표+마일스톤+
+# 단위 다 만들기'(너무 큰 회의 — 라이브 ch70 32분 겉돎)를 대체한다.
+
+def meeting_stage(flow):
+    """현 상태에서 이 회의가 정할 단 하나를 도출. 'goal'|'milestone'|'subtask'|'backlog'|None(작업 단계)."""
+    _cur = getattr(flow, "current", None)
+    if _cur is None:
+        return None
+    if not str(getattr(_cur.status, "goal", "") or "").strip():
+        return "goal"                                   # ① Task 회의 — GOAL 미정
+    _open = next((m for m in (getattr(flow, "milestones", None) or [])
+                  if m.status not in ("done", "superseded")), None)
+    if _open is None:
+        return "milestone"                              # ② 마일스톤 회의 — 열린 주기 없음
+    _sts = [st for st in _open.subtasks if st.status != "superseded"]
+    if not _sts:
+        return "subtask"                                # ③ 서브태스크 회의 — 단위 미분해
+    store = getattr(flow, "backlog_relays", None) or {}
+    for st in _sts:
+        if st.status == "done":
+            continue
+        r = store.get(st.st_id)
+        if r is None or not r.backlogs:
+            return "backlog"                            # ④ 백로그 회의 — 미충원 단위 존재
+    return None                                          # 전 단계 완료 → 작업/검증 단계
+
+
+_STAGE_META = {
+    "goal": ("이 Task의 GOAL(무엇을 만들지 + 완수 기준)을 딱 하나로 정한다",
+             "[수렴안]\n목표: <이 Task가 무엇을 만드는지 한 줄>\n"
+             "<완수조건 | 실증절차(run으로 확인)>\n<완수조건 | 실증절차>\n[/수렴안]\n"
+             "(이 회의는 GOAL만 정합니다 — 로드맵·단위·백로그는 다음 회의들에서. 지금 그것까지 넣지 마세요.)"),
+    "milestone": ("GOAL을 토대로 이번 주기(로드맵 1단계)를 정한다",
+             "[수렴안]\n단계: <전체 로드맵 1단계(완전한 MVP)>\n단계: <2단계(확장)>\n"
+             "이번 주기: <이번에 완성할 것 한 줄>\n<완수조건 | 실증절차>\n<완수조건 | 실증절차>\n[/수렴안]\n"
+             "(이 회의는 이번 주기 마일스톤만 정합니다 — 단위 분해는 다음 회의.)"),
+    "subtask": ("이번 마일스톤을 작업 단위(서브태스크)로 분해한다",
+             "[수렴안]\n단위: <분해 단위 목표> | <실증절차>\n단위: <분해 단위 목표> | <실증절차>\n[/수렴안]\n"
+             "(이 회의는 단위 분해만 정합니다 — 참여 도메인마다 자기 몫 단위. 백로그는 다음 회의.)"),
+    "backlog": ("한 서브태스크 안을 채울 백로그(개인 전담 작업)를 정한다",
+             "[수렴안]\n백로그: <작업 단위 하나>\n백로그: <작업 단위 하나>\n[/수렴안]\n"
+             "(이 회의는 이 서브태스크의 백로그만 정합니다 — 각자 pick_backlog로 전담.)"),
+}
+
+
+def stage_agenda(stage):
+    """meet()가 쓰는 (안건 설명, 수렴안 템플릿). 알 수 없으면 (None, None)."""
+    m = _STAGE_META.get(stage)
+    return (m[0], m[1]) if m else (None, None)
+
+
+def _write_goal_md(flow, cur, goal):
+    try:
+        from .._util import dossier_write
+        dossier_write(flow, "GOAL.md", (
+            f"# GOAL — Task {cur.task_id}\n\n"
+            f"## Purpose\n{(getattr(cur.status, 'purpose', '') or '').strip()}\n\n"
+            f"## Goal\n{(goal or '').strip()}\n\n"
+            f"## Acceptance\n{(getattr(cur, 'acceptance', '') or '').strip()}\n\n"
+            f"## Standard\n{(getattr(cur, 'standard', '') or '').strip()}\n\n"
+            f"## Interfaces\n{(getattr(cur, 'interfaces', '') or '').strip()}\n"))
+    except Exception:
+        pass
+
+
+def register_stage(flow, stage, prop, origin=""):
+    """그 회의의 결론 '하나'만 등록. 반환 (landed: bool, note: str). 게이트 거부·형식 미달=(False, 사유)."""
+    lines = str(prop or "").splitlines()
+
+    def _val(prefix):
+        return next((l.split(":", 1)[1].strip() for l in lines
+                     if l.strip().startswith(prefix) and ":" in l), "")
+    _crit_txt = "\n".join(l for l in lines if "|" in l
+                          and not l.strip().startswith(("단위:", "단계:", "백로그:")))
+    _cur = getattr(flow, "current", None)
+
+    if stage == "goal":
+        goal = _val("목표")
+        if not goal:
+            return False, "수렴안에 '목표: <이 Task가 무엇을 만드는지>' 줄이 필요합니다."
+        if _cur is not None:
+            try:
+                _cur.status.goal = goal
+            except Exception:
+                pass
+            _crits = parse_criteria_lines(_crit_txt)
+            if _crits:
+                try:
+                    _cur.acceptance = "\n".join(f"- {c.desc}" + (f" (실증: {c.verify})" if c.verify else "")
+                                                for c in _crits)
+                except Exception:
+                    pass
+            _write_goal_md(flow, _cur, goal)
+        if flow.log:
+            flow.log("task_goal_set", goal=goal[:60])
+        return True, (f"[표결 확정] Task GOAL 확정 → {goal[:80]} · GOAL.md 생성. "
+                      "다음: 마일스톤 회의(로드맵 1단계)를 시스템이 엽니다.")
+
+    if stage == "milestone":
+        cyc = _val("이번 주기") or _val("목표") or (str(getattr(_cur.status, "goal", "") or "") if _cur else "")
+        stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계:")]
+        if stages:
+            flow.roadmap = stages
+            _pnote(flow, "[로드맵] " + " → ".join(s[:40] for s in stages[:8]) + " (순차 1주기)")
+        ms = open_milestone(flow, cyc or "이번 주기", parse_criteria_lines(_crit_txt),
+                            origin=f"마일스톤 회의: {origin[:50]}")
+        if isinstance(ms, str):
+            return False, ms
+        if flow.log:
+            flow.log("ms_by_meeting", ms=ms.ms_id)
+        return True, (f"[표결 확정] 마일스톤 {ms.ms_id} 등록(조건 {len(ms.criteria)}개). "
+                      "다음: 서브태스크 회의(단위 분해)를 시스템이 엽니다.")
+
+    if stage == "subtask":
+        _open = next((m for m in (getattr(flow, "milestones", None) or [])
+                      if m.status not in ("done", "superseded")), None)
+        if _open is None:
+            return False, "열린 마일스톤이 없습니다 — 마일스톤 회의가 먼저입니다."
+        units = [l.strip()[3:].strip() for l in lines if l.strip().startswith("단위:")]
+        if not units:
+            return False, "수렴안에 '단위: <목표> | <실증>' 줄이 필요합니다."
+        n = 0
+        for u in units:
+            st = open_subtask(flow, _open, u.partition("|")[0].strip(), parse_criteria_lines(u))
+            if not isinstance(st, str):
+                n += 1
+        if flow.log:
+            flow.log("subtasks_by_meeting", ms=_open.ms_id, n=n)
+        return (n > 0), (f"[표결 확정] 서브태스크 {n}개 등록. 다음: 각 단위의 백로그 회의를 시스템이 엽니다."
+                         if n else "등록된 단위가 없습니다 — '단위:' 줄을 확인하세요.")
+
+    if stage == "backlog":
+        _open = next((m for m in (getattr(flow, "milestones", None) or [])
+                      if m.status not in ("done", "superseded")), None)
+        if _open is None:
+            return False, "열린 마일스톤이 없습니다."
+        from .backlog import relay_for
+        store = getattr(flow, "backlog_relays", None) or {}
+        _target = next((st for st in _open.subtasks if st.status not in ("done", "superseded")
+                        and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)), None)
+        if _target is None:
+            return False, "백로그를 채울 서브태스크가 없습니다."
+        items = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("백로그:")]
+        if not items:
+            return False, "수렴안에 '백로그: <작업 단위>' 줄이 필요합니다."
+        r = relay_for(flow, _target)
+        n = 0
+        for it in items:
+            try:
+                r.submit(0, it, force=True)
+                n += 1
+            except Exception:
+                pass
+        _target.backlog_ids = [b.backlog_id for b in r.backlogs]
+        if flow.log:
+            flow.log("backlogs_by_meeting", st=_target.st_id, n=n)
+        return (n > 0), (f"[표결 확정] 서브태스크 {_target.st_id}에 백로그 {n}개 등록. 각자 pick_backlog로 전담하세요."
+                         if n else "등록된 백로그가 없습니다.")
+
+    return False, "알 수 없는 회의 단계입니다."
+
+
 def rule_set_milestone(flow, me_id, args) -> str:
     """[솔로 판 전용 — 서기] 확정의 실체는 회의 종결 표결(가결 시 자동 등록)이고 이 도구는 팀 없는
     판(혼자)의 기록 행위다 — 품질은 등록 게이트가 방어. 게이트 거부는 사유+처방을 그대로 반환."""

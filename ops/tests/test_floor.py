@@ -334,19 +334,17 @@ def test_meet_TT_종결반대자는_발언권을_받아_직접_말한다():
     assert f.comm.alive == 11 and 12 in f.current.participated
 
 
-def test_meet_게이트_수렴안_채택돼야_끝나고_전원찬성_비준후_등록(monkeypatch):
-    """[게이트=채택된 수렴안(2026-07-14, 사용자: '회의 상한 두지 말고 — 수렴안 채택돼야만 끝난다')]
-    종료 조건 = 발언권 소진이 아니라 '수렴안이 표결로 채택됨'. ①아무도 수렴안 안 내면 전원 발언권
-    되살려 재응찰(게이트 전면화, 인위적 상한 없음) ②수렴안이 나오면 전원 찬성 표결로 채택돼야 등록
-    (앵커 독재 폐지) ③등록과 함께 SYS가 GOAL.md 생성, [회의 마무리]로 결론 게시. 라이브 U-024의
-    '발언권 소진으로 우회 종료 → 5단계 계획 버려짐'을 구조로 막는다."""
+def test_meet_게이트_Task회의는_GOAL만_전원찬성_채택후_등록(monkeypatch):
+    """[게이트=채택된 수렴안 + 회의 하나당 하나(2026-07-14, 사용자)] 첫 회의는 Task 회의 = GOAL만
+    정한다(마일스톤·단위 아님). 종료 조건 = 발언권 소진이 아니라 '수렴안이 표결로 채택됨' — ①아무도
+    안 내면 전원 발언권 되살려 재응찰(게이트 전면화) ②나오면 전원 찬성 표결로 채택 ③채택 시 GOAL만
+    등록(GOAL.md 생성), [회의 마무리]로 결론. 마일스톤은 이 회의에서 안 만든다(다음 회의)."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
     seen = {"gate": 0, "ratify": 0}
-    CONS = ("[종료]\n[수렴안]\n단계: MVP\n단계: 확장\n목표: 방명록 1주기\n"
-            "등록 API 동작 | curl POST 후 GET 확인\n목록 표시 | playwright 로드 확인\n"
-            "단위: 백엔드 API | curl 확인\n단위: 프론트 목록 | playwright 확인\n[/수렴안]")
+    CONS = ("[종료]\n[수렴안]\n목표: 방명록 1주기\n"
+            "등록 API 동작 | curl POST 후 GET 확인\n목록 표시 | playwright 로드 확인\n[/수렴안]")
 
     async def wake(to, b, k):
         if "수렴안 확정 표결" in b:                   # 비준 표결 → 전원 찬성
@@ -365,10 +363,8 @@ def test_meet_게이트_수렴안_채택돼야_끝나고_전원찬성_비준후_
     txt = r["content"][0]["text"]
     assert seen["gate"] >= 1                           # 첫 패스 미충족 → 되살려 재응찰(게이트 전면화)에서 제출
     assert seen["ratify"] >= 1                         # 제출된 수렴안에 전원 찬성 비준
-    assert "[표결 확정] 수렴안 채택(전원 찬성)" in txt  # 발언권 소진 아닌 '채택'으로 종료
-    assert "GOAL.md 생성" in txt
-    _open = [m for m in (f.milestones or []) if m.status not in ("done", "superseded")]
-    assert _open                                       # 마일스톤 실제 생성
+    assert "Task GOAL 확정" in txt and "GOAL.md 생성" in txt   # GOAL 단계 결론(마일스톤 아님)
+    assert not (f.milestones or [])                    # 이 회의는 마일스톤을 안 만든다(다음 회의)
     assert f.current.status.goal == "방명록 1주기"     # 채택 수렴안이 Task GOAL을 채움
     assert "[회의 마무리]" in txt and "방명록 1주기" in txt   # 결론 게시(왜→결론)
 
