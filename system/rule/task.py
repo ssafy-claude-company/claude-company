@@ -272,6 +272,16 @@ async def set_goal(flow, me_id, role, args):
     purpose = (args.get("purpose") or "").strip()
     if not goal:
         return _ok("오류: goal이 비었습니다.")
+    # [확정 권위 게이트 — set_milestone과 대칭(2026-07-15, 아키텍처 정렬)] 팀 판의 GOAL 확정은 개인
+    # set_goal이 아니라 **GOAL 회의 수렴안**이다(프롬프트가 '팀 판에선 막힌다'고 약속하는데 코드에 게이트가
+    # 없던 구멍 — 옛 위임 습관으로 회귀하는 우회로였다). 동료가 있으면 회의로만 확정, 개인 등록은 솔로 판 한정.
+    from .milestone import pipeline_on as _pl_on
+    if _pl_on():
+        _team = list(getattr(flow.current, "team", None) or [])
+        if any(int(m) != int(me_id) for m in _team):
+            return _ok("등록 거부: 팀 판의 GOAL 확정은 개인 set_goal이 아니라 **GOAL 회의**입니다 — meet를 "
+                       "열어 '무엇을 만들지'를 협의하고, 종결 표결 때 각자 [수렴안](목표: 한 줄 + '조건 | "
+                       "실증절차' 줄들)을 동봉하세요. 전원 찬성이면 GOAL이 자동 확정되고 GOAL.md가 작성됩니다.")
     # [B-16 — 게이트 마커 인자화(BOT_ARCH_REDESIGN 2026-07-03, 이중 수용: 인자 > regex·regex 폴백 존치)]
     # 면제 인자를 종전 마커 텍스트로 합성해 goal에 덧붙인다 — 이후 게이트(regex)·영속(status.goal)이
     # 종전 경로 그대로 소비하므로 기계적으로 동등(게이트 로직 무변경). 인자 없으면 종전 동작 그대로.
