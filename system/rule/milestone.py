@@ -596,6 +596,35 @@ def extract_consensus(text: str):
     return m.group("body").strip() if m else None
 
 
+def extract_file_block(text: str, filename: str):
+    """[파일 게이트(2026-07-15, 사용자 B안)] 봇 응답에서 ```<filename> ... ``` 펜스 블록 내용을 뽑는다.
+    수렴안 같은 특수 은어가 아니라 봇이 훈련으로 아는 자연 형식(파일 코드블록) — 영속·검증가능·그라운딩.
+    없으면 None. 파일명은 경로·대소문자 무시 매칭."""
+    import re as _re
+    if not text:
+        return None
+    base = str(filename).split("/")[-1]
+    rx = _re.compile(r"```(?:[a-zA-Z]*\s+)?(?:[^\n`]*/)?" + _re.escape(base) + r"[^\n`]*\n(.*?)```",
+                     _re.DOTALL | _re.IGNORECASE)
+    m = rx.search(str(text))
+    if m:
+        c = m.group(1).strip()
+        return c or None
+    return None
+
+
+# 스테이지별 산출 형식: goal은 진짜 파일(GOAL.md, B안), 나머지는 아직 [수렴안](점진 확장 — 검증 후 파일화).
+_STAGE_FILE = {"goal": "GOAL.md"}
+
+
+def extract_stage_proposal(stage, text):
+    """그 회의 단계의 결론을 봇 응답에서 추출 — goal은 GOAL.md 파일블록, 그 외는 [수렴안] 블록."""
+    fn = _STAGE_FILE.get(stage)
+    if fn:
+        return extract_file_block(text, fn)
+    return extract_consensus(text)
+
+
 def gate_new_cycle(flow):
     """[새 주기 공용 게이트(2026-07-13, 사용자: '대체됨은 또 왜 생긴거고')] 마일스톤 개설 전 공통 검문 —
     도구 등록(rule_set_milestone)과 회의 표결 확정(communication)이 같은 문을 지난다. U-015 라이브에서
@@ -770,8 +799,11 @@ def meeting_stage(flow):
 
 _STAGE_META = {
     "goal": ("이 Task의 GOAL(무엇을 만들지 + 완수 기준)을 딱 하나로 정한다",
-             "[수렴안]\n목표: <이 Task가 무엇을 만드는지 한 줄>\n"
-             "<완수조건 | 실증절차(run으로 확인)>\n<완수조건 | 실증절차>\n[/수렴안]\n"
+             "마치려면 이 회의의 결론을 **GOAL.md 파일 내용**으로 아래 코드블록에 적으세요 — 수렴안 같은 "
+             "특수 틀이 아니라, 그냥 여러분이 아는 그 GOAL.md를 쓰는 겁니다:\n"
+             "```GOAL.md\n## Goal\n<이 Task가 무엇을 만드는지 — 구체적으로(무슨 게임/앱, 핵심 동작)>\n"
+             "## Acceptance\n- <완수조건> — 실증: <run으로 확인하는 절차>\n"
+             "- <완수조건> — 실증: <절차>\n```\n"
              "(이 회의는 GOAL만 정합니다 — 로드맵·단위·백로그는 다음 회의들에서. 지금 그것까지 넣지 마세요.)"),
     "milestone": ("GOAL을 토대로 이번 주기(로드맵 1단계)를 정한다",
              "[수렴안]\n단계: <전체 로드맵 1단계(완전한 MVP)>\n단계: <2단계(확장)>\n"
@@ -818,25 +850,43 @@ def register_stage(flow, stage, prop, origin=""):
     _cur = getattr(flow, "current", None)
 
     if stage == "goal":
-        goal = _val("목표")
+        # [파일 게이트(B안)] prop = 봇이 쓴 GOAL.md 내용(펜스 블록 추출 후 이 함수로 옴). '## Goal'
+        # 섹션에서 목표를, '## Acceptance'에서 완수기준을 읽는다 — 수렴안 파싱이 아니라 GOAL.md 파싱.
+        import re as _re
+        content = str(prop or "").strip()
+        _gm = _re.search(r"##\s*Goal\s*\n(.+?)(?:\n##\s|\Z)", content, _re.DOTALL | _re.IGNORECASE)
+        goal = ""
+        if _gm:
+            goal = next((ln.strip() for ln in _gm.group(1).splitlines()
+                         if ln.strip() and not ln.strip().startswith("<")), "")
         if not goal:
-            return False, "수렴안에 '목표: <이 Task가 무엇을 만드는지>' 줄이 필요합니다."
+            return False, ("GOAL.md에 '## Goal' 섹션과 목표 한 줄이 필요합니다 — ```GOAL.md 코드블록으로 "
+                           "## Goal / ## Acceptance를 적으세요.")
+        _am = _re.search(r"##\s*Acceptance\s*\n(.+?)(?:\n##\s|\Z)", content, _re.DOTALL | _re.IGNORECASE)
+        _acc = _am.group(1).strip() if _am else ""
         if _cur is not None:
             try:
                 _cur.status.goal = goal
             except Exception:
                 pass
-            _crits = parse_criteria_lines(_crit_txt)
-            if _crits:
+            if _acc:
                 try:
-                    _cur.acceptance = "\n".join(f"- {c.desc}" + (f" (실증: {c.verify})" if c.verify else "")
-                                                for c in _crits)
+                    _cur.acceptance = _acc
                 except Exception:
                     pass
-            _write_goal_md(flow, _cur, goal)
+            # 봇이 쓴 GOAL.md를 그대로 영속(복구 파서 계약 헤더 ## Goal/## Acceptance 유지). Purpose 등
+            # 누락 헤더는 보강해 파서 호환.
+            try:
+                from .._util import dossier_write
+                _full = content
+                if "## Purpose" not in _full:
+                    _full = f"# GOAL — Task {getattr(_cur, 'task_id', '')}\n\n## Purpose\n\n" + _full
+                dossier_write(flow, "GOAL.md", _full)
+            except Exception:
+                pass
         if flow.log:
             flow.log("task_goal_set", goal=goal[:60])
-        return True, (f"[표결 확정] Task GOAL 확정 → {goal[:80]} · GOAL.md 생성. "
+        return True, (f"[표결 확정] GOAL.md 작성 완료 → {goal[:80]}. "
                       "다음: 마일스톤 회의(로드맵 1단계)를 시스템이 엽니다.")
 
     if stage == "milestone":

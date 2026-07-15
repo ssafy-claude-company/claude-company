@@ -464,9 +464,9 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
     f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
                                       status=types.SimpleNamespace(goal="", purpose=""),
                                       acceptance="", standard="", interfaces="")
-    # ① GOAL 단계 — 목표만 정함
+    # ① GOAL 단계 — GOAL.md 파일 내용(B안: 수렴안 은어 아님)만 정함
     assert meeting_stage(f) == "goal"
-    ok, _ = register_stage(f, "goal", "목표: 방명록 앱\n등록 동작 | curl POST 확인")
+    ok, _ = register_stage(f, "goal", "## Goal\n방명록 앱\n## Acceptance\n- 등록 동작 — 실증: curl POST 확인")
     assert ok and f.current.status.goal == "방명록 앱"
     assert not getattr(f, "milestones", None)                # GOAL 회의는 마일스톤을 안 연다
 

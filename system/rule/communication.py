@@ -175,6 +175,7 @@ async def meet(flow, me_id, args):
         # 소집자 발제 후 첫 발화부터 응찰. 트레이드오프 관측(§8 민감 접근): R1은 발산(앵커링 방지)
         # 장치였다 — 제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다.
         from .milestone import extract_consensus as _ms_extract
+        from .milestone import extract_stage_proposal as _stage_extract
         from .milestone import pipeline_on as _ms_on
         from .milestone import meeting_stage as _ms_stage, stage_agenda as _ms_agenda
         from .milestone import register_stage as _ms_regstage
@@ -347,14 +348,14 @@ async def meet(flow, me_id, args):
                     # (사람이 아니라 표결+등록 게이트가 확정). 확정 발화 권력의 비인격 대체.
                     # [단계별 수렴안(2026-07-14, 사용자: '회의 하나당 하나')] 이 회의의 안건에 맞는
                     # 좁은 수렴안만 요청한다 — 목표+마일스톤+단위를 한꺼번에가 아니라 이 단계 결론 하나.
-                    _conv = (f"\n마쳐도 된다면 `[종료]` 다음 줄에 이 회의의 수렴안을 동봉하세요 "
+                    _conv = (f"\n마쳐도 된다면 `[종료]` 다음 줄에 이 회의의 결론을 아래 형식으로 동봉하세요 "
                              f"(이 회의 안건 = **{_agenda}**):\n{_stage_tmpl}\n"
-                             "(동료가 이미 낸 수렴안에 동의하면 그대로 복사·수정해 제출 — 전원 찬성 표결로 "
+                             "(동료가 이미 낸 결론에 동의하면 그대로 복사·수정해 제출 — 전원 찬성 표결로 "
                              "채택됩니다. 이 회의 안건 밖의 것은 넣지 마세요 — 다음 단계 회의에서 정합니다.)"
                              if (_no_r1 and _stage_tmpl) else " 마쳐도 되면 `[종료]`만.")
-                    _gate = ("\n\n**이 회의는 [수렴안]이 채택돼야만 끝납니다 — 발언권 소진으로는 안 "
-                             "끝납니다.** 아직 채택된 수렴안이 없습니다. 마치려면 반드시 위 형식의 "
-                             "[수렴안]을 동봉하세요(누구든). 없으면 회의는 닫히지 않고 다시 열립니다."
+                    _gate = ("\n\n**이 회의는 위 형식의 결론이 채택돼야만 끝납니다 — 발언권 소진·지명 릴레이"
+                             "로는 안 끝납니다.** 아직 채택된 결론이 없습니다. 마치려면 반드시 위 코드블록/형식"
+                             "대로 결론을 동봉하세요(누구든). 없으면 회의는 닫히지 않고 다시 열립니다."
                              if (_no_r1 and _gate_unmet["on"]) else "")
                     return (f"[회의 — 종결 확인] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
@@ -370,8 +371,9 @@ async def meet(flow, me_id, args):
                 s = 0 if res is None else _bid_score(res)
                 out.append((m, s))
                 if purpose == CLOSE_VOTE and _no_r1 and res:
-                    # [종결 표결 동봉 수렴안 수집] 가결 시 자동 등록의 원료 — 제출 순서 보존.
-                    _c = _ms_extract(res)
+                    # [종결 표결 동봉 결론 수집] 단계별 형식으로 추출 — goal은 GOAL.md 파일블록, 그 외
+                    # [수렴안]. 가결 시 register_stage로 자동 등록의 원료(제출 순서 보존).
+                    _c = _stage_extract(_stage, res)
                     if _c:
                         conv_props.append(_c)
                 if flow.log:
@@ -391,8 +393,8 @@ async def meet(flow, me_id, args):
             if wakes["n"] >= wake_cap:
                 return False
             def _rbody(c):
-                return (f"[회의 — 수렴안 확정 표결] 주제: {topic}\n제출된 수렴안:\n{prop}\n\n"
-                        f"이 수렴안으로 이 주기를 확정합니까? 당신({flow._info(c)})의 판단: 찬성이면 "
+                return (f"[회의 — 결론 확정 표결] 주제: {topic}\n제출된 결론:\n{prop}\n\n"
+                        f"이 결론으로 이 회의를 확정합니까? 당신({flow._info(c)})의 판단: 찬성이면 "
                         f"`[찬성]`, 이견이 있으면 `[반대: 무엇을 고쳐야 하는지 한 줄]`. **전원 찬성이어야 "
                         f"확정되며, 반대가 하나라도 있으면 회의가 계속됩니다.**")
             _yes, _no = 0, 0
