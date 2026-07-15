@@ -349,7 +349,10 @@ def test_B10_검증_루브릭은_플래그_on이어도_전문_유지(tmp_path, m
 
 # ──────────────────────────── B-11 [Phase C] meet 축소·복구 문서 소스 ────────────────────────────
 
-def test_B11_플래그_on_meet_R2는_전원압축_직전전문_MINUTES참조(tmp_path, monkeypatch):
+def test_meet_R2는_못본발언만_주입하고_MINUTES참조(tmp_path, monkeypatch):
+    """[못 본 발언만 주입(2026-07-15, 사용자: '유니크 값 매기고 못 받은 메시지 찾아')] 매 턴 누적 전체를
+    재주입하지 않는다 — 봇별로 마지막 본 인덱스 이후 발언만 담고, 전체 회의록은 MINUTES.md 파일 참조.
+    LLM 반복 주입 최소화·파일 활용이라는 설계 목표. (종전 B-11 '전원 1R 압축'을 이 방식이 대체.)"""
     monkeypatch.setenv("ORGANT_DOC_COLLAB", "1")
     g = FakeGuide()
     f = _flow3(g, tmp_path)
@@ -364,11 +367,10 @@ def test_B11_플래그_on_meet_R2는_전원압축_직전전문_MINUTES참조(tmp
     f.wake = wake
     asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "2", "my_opinion": "소집자 독립의견"}))
     r2 = [b for _, b in seen if "2라운드" in b]
-    assert r2 and all("[전원 1R 요지 — 시스템 압축]" in b for b in r2)     # 전원 가시성(200자 압축)
-    assert all("[직전 발언 전문]" in b and "MINUTES.md" in b for b in r2)  # 직전 1발언 전문+참조
-    assert all("12의 입장" in b and "13의 입장" in b for b in r2[-1:])     # 전원 발언자 노출
-    # 종전 재방송(minutes[-8:] 1,500자 클립 원문 나열)은 없음 — 주입이 ~3K자로 축소
-    assert all(len(b) < 6000 for b in r2)
+    assert r2
+    assert all("MINUTES.md" in b for b in r2)                          # 전체 회의록은 파일 참조
+    assert all("[전원 1R 요지 — 시스템 압축]" not in b for b in r2)     # 옛 압축 방식은 폐지됨
+    assert all(len(b) < 6000 for b in r2)                             # 누적 전체 재주입 안 함(경계됨)
 
 
 def test_B11_플래그_off_meet_R2는_종전_재방송(tmp_path, monkeypatch):

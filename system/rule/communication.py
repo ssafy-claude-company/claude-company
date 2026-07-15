@@ -253,39 +253,47 @@ async def meet(flow, me_id, args):
                                + "\n".join(f"[{block['label']}] {w}: {t}" for w, t in block["items"]))
                 block["items"] = []
 
-        def _ctx_txt():
-            if doc_collab_on() and r1_full:
-                # [B-11 Phase C — meet R2+ 재방송 축소(ORGANT_DOC_COLLAB=1)] minutes[-8:]×1,500자
-                # 재방송(~12K자/발언자) 대신: 전원 1R 발언자별 ~200자 압축(시스템 기계 합성 — 전원
-                # 가시성 유지, '직전 2발언' 앵커링 기각 A-9) + 직전 1발언 전문 + MINUTES.md 참조(~3K자).
-                comp = "\n".join(f"- {w}: {_speech_clip(t, 200)}" for w, t in r1_full)
-                _lw, _lt = last_full if last_full else ("", "(아직 발언 없음)")
-                return (f"[전원 1R 요지 — 시스템 압축]\n{comp}\n"
-                        f"[직전 발언 전문] {_lw}: {_lt}\n"
-                        f"(발언 전문 전체: 작업공간 {dossier_rel(flow.current.task_id)}/MINUTES.md"
-                        f" — 필요할 때만 Read)")
-            return "\n".join(minutes[-8:]) or "(아직 발언 없음)"
+        _seen = {}   # 봇 -> 이미 본 minutes 개수(append-only 인덱스 = 사용자 안 보이는 유니크 값)
+        def _ctx_for(bot):
+            # [못 본 발언만 주입(2026-07-15, 사용자: '유니크 값 매기고 못 받은 메시지 찾아')] 매 턴 누적
+            # 전체를 재주입하지 않는다 — 봇은 자기 세션 기억이 있고(resume), 전체 회의록은 MINUTES.md
+            # 파일로 남는다. 프롬프트엔 그 봇이 아직 못 본 발언(마지막 본 인덱스 이후)만 담고, 앞은
+            # 기억/파일에 맡긴다. (LLM 반복 주입 최소화·파일 활용이라는 설계 목표 그대로.)
+            i = _seen.get(bot, 0)
+            fresh = minutes[i:]
+            _seen[bot] = len(minutes)
+            _ref = (f"\n(전체 회의록은 작업공간 {dossier_rel(flow.current.task_id)}/MINUTES.md 를 필요할 때만 Read)"
+                    if flow.current is not None else "")
+            if not fresh:
+                return "(당신이 아직 못 본 새 발언 없음 — 앞 발언은 당신 기억·MINUTES.md에)" + _ref
+            return "\n".join(fresh) + _ref
 
         def _mk_body(m, r, won=False):
             """토론 발언 프롬프트 — r(int)=종전 라운드 문구(바이트 동일), r=None=TT(발언권 규약 동봉,
             won=응찰 낙찰 발언)."""
-            log_txt = _ctx_txt()
+            log_txt = _ctx_for(m)
             if flow.log:
                 # [B-09 Phase A 관측 지표] meet 재방송 자수 — R2+ 축소(B-11)의 절감 검산 베이스라인.
                 flow.log("meet_r2_inject", chars=len(log_txt), r=(r or 0),
                          compressed=bool(doc_collab_on() and r1_full))
             _frm = (f"\n[이 회의의 자리] {_stage_frame}\n" if _stage_frame else "")
             if r is not None:
-                return (f"[회의 {r}라운드] 주제: {topic}{_frm}\n지금까지의 발언:\n{log_txt}\n\n"
-                        f"당신({flow._info(m)})의 차례입니다 — 앞 발언에 동의/반박/보완하며 "
-                        f"당신 전문 관점에서 **위 안건 질문에 답하세요**(작업 조직으로 새지 말 것). 3~5줄(최대 1000자), 맹목적 동의 금지(근거 필수). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.")
+                return (f"[회의 {r}라운드] 주제: {topic}{_frm}\n못 본 발언:\n{log_txt}\n\n"
+                        f"당신({flow._info(m)})의 차례입니다 — 위 안건에 당신 도메인 관점으로 답하세요"
+                        f"(근거 필수, 맹목적 동의 금지). 3~5줄(최대 1000자). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.")
+            # [수렴 쪽으로(2026-07-15, 사용자)] '동의/반박/보완'(=덧붙여라) 틀 제거 — 그게 무한 누적의
+            # 원천이었다. 대신 안건에 답하되, 충분히 다뤄졌으면 새로 보태지 말고 [수렴안]을 제출하도록
+            # 유도(제출 시 전원 찬반 표결 → 전원 찬성이면 확정·종료). 응찰 소진을 기다릴 필요 없음.
             head = ("[회의 토론 — 발언권 획득(당신의 응찰이 선정됨)] 방금 응찰한 그 관점을 지금 발언하세요."
                     if won else "[회의 토론]")
-            return (f"{head} 주제: {topic}{_frm}\n지금까지의 발언:\n{log_txt}\n\n"
-                    f"당신({flow._info(m)})의 차례입니다 — 앞 발언에 동의/반박/보완하며 "
-                    f"당신 전문 관점에서 **위 안건 질문에 답하세요**(작업 조직·일정으로 새지 말 것). 3~5줄(최대 1000자), 맹목적 동의 금지(근거 필수). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.\n"
+            _sub = (f"\n\n**이 안건이 충분히 다뤄졌다고 보면, 새 의견을 보태지 말고 아래 [수렴안]을 발언에 "
+                    f"담아 제출하세요 — 전원 찬반 표결에 부쳐지고 전원 찬성이면 확정·종료됩니다"
+                    f"(미완이면 부결되니 다듬어 낼 것):**\n{_stage_tmpl}" if (_no_r1 and _stage_tmpl) else "")
+            return (f"{head} 주제: {topic}{_frm}\n못 본 발언:\n{log_txt}\n\n"
+                    f"당신({flow._info(m)})의 차례입니다 — 위 안건에 당신 도메인 관점으로 답하세요"
+                    f"(근거 필수, 맹목적 동의·이미 나온 것 반복 금지). 3~5줄(최대 1000자). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.{_sub}\n"
                     f"[발언권 규약] 특정 동료의 답이 꼭 필요하면 발언 마지막 줄에 `[지명: 이름]` — "
-                    f"이 주제에 더 보탤 것이 없으면 본문 대신 `[패스]`만.")
+                    f"더 보탤 것이 없으면 `[패스]`만.")
 
         async def _speech(m, body, label):
             """발언 1회 — 정책 불문 단일 실행 경로. 반환 Turn(지명·패스 신호) / None=회의 중단."""
@@ -326,6 +334,16 @@ async def meet(flow, me_id, args):
             await _say_speech(flow, m, "[회의]" if tt else f"[회의 {label}]", res)  # 본인 명의([B-12] 매체 조건부)
             if m in flow.current.team and m != flow.leader:
                 flow.current.participated.add(m)    # 회의 발언 = 실질 협의 인정
+            # [수렴안 조기 제출(2026-07-15, 사용자: '발언 다 안 끝나도 수렴안 제출 → 거기서 찬반')] 응찰
+            # 소진(종결표결)을 기다리지 않고, 토론 발언 중 누구든 [수렴안]을 내면 그걸 게이트 루프로 넘겨
+            # 즉시 비준(전원 찬성)에 부친다 — 지명 릴레이가 응찰을 막아 종결표결이 안 열리던 교착 우회.
+            if _no_r1 and res:
+                _cprop = _stage_extract(_stage, res)
+                if _cprop:
+                    conv_props.append(_cprop)
+                    if flow.log:
+                        flow.log("consensus_in_discussion", who=int(m), stage=str(_stage))
+                    return None                     # 조기 종료 → 게이트 루프가 비준·등록
             return Turn(speaker=m, addressee=addressee, body=res or "")
 
         async def _speak(speaker, alloc):
@@ -359,11 +377,11 @@ async def meet(flow, me_id, args):
                              "로는 안 끝납니다.** 아직 채택된 결론이 없습니다. 마치려면 반드시 위 코드블록/형식"
                              "대로 결론을 동봉하세요(누구든). 없으면 회의는 닫히지 않고 다시 열립니다."
                              if (_no_r1 and _gate_unmet["on"]) else "")
-                    return (f"[회의 — 종결 확인] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
+                    return (f"[회의 — 종결 확인] 주제: {topic}\n못 본 발언:\n{_ctx_for(c)}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
                             f"판단하세요. 더 다뤄야 할 것이 있으면 `[계속: N]`(N=1~9)과 무엇인지 한 줄만 "
                             f"— 발언권을 받아 직접 발언하게 됩니다.{_conv}{_gate}")
-                return (f"[회의 — 발언권 응찰] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
+                return (f"[회의 — 발언권 응찰] 주제: {topic}\n못 본 발언:\n{_ctx_for(c)}\n\n"
                         f"지금 발언권이 비어 있습니다. 당신({flow._info(c)})이 **지금** 발언할 필요가 "
                         f"있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 이유만 "
                         f"답하세요 — 발언 내용은 발언권을 받은 뒤에 말합니다. 없으면 `[패스]`만.")
