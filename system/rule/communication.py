@@ -178,12 +178,13 @@ async def meet(flow, me_id, args):
         from .milestone import extract_stage_proposal as _stage_extract
         from .milestone import pipeline_on as _ms_on
         from .milestone import meeting_stage as _ms_stage, stage_agenda as _ms_agenda
-        from .milestone import register_stage as _ms_regstage
+        from .milestone import register_stage as _ms_regstage, stage_frame as _ms_frame
         _no_r1 = _ms_on()
         # [회의 하나당 결론 하나(2026-07-14, 사용자)] 이 회의가 정할 단 하나를 상태에서 유도 —
         # GOAL/마일스톤/서브태스크/백로그. 안건·수렴안 템플릿이 그 단계로 좁혀지고, 채택 시 그 단계만 등록.
         _stage = _ms_stage(flow) if _no_r1 else None
         _agenda, _stage_tmpl = _ms_agenda(_stage)
+        _stage_frame = _ms_frame(_stage) if _stage else ""   # 매 발언 턴에 주입할 '이 회의의 정체' 프레임
         conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
         _gate_unmet = {"on": False}   # [게이트=수렴안 채택] 재응찰 시 종결표결 프롬프트를 게이트로 전면화
         if not _no_r1:
@@ -273,15 +274,16 @@ async def meet(flow, me_id, args):
                 # [B-09 Phase A 관측 지표] meet 재방송 자수 — R2+ 축소(B-11)의 절감 검산 베이스라인.
                 flow.log("meet_r2_inject", chars=len(log_txt), r=(r or 0),
                          compressed=bool(doc_collab_on() and r1_full))
+            _frm = (f"\n[이 회의의 자리] {_stage_frame}\n" if _stage_frame else "")
             if r is not None:
-                return (f"[회의 {r}라운드] 주제: {topic}\n지금까지의 발언:\n{log_txt}\n\n"
+                return (f"[회의 {r}라운드] 주제: {topic}{_frm}\n지금까지의 발언:\n{log_txt}\n\n"
                         f"당신({flow._info(m)})의 차례입니다 — 앞 발언에 동의/반박/보완하며 "
-                        f"당신 전문 관점의 입장을 3~5줄(최대 1000자)로. 맹목적 동의 금지(근거 필수). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.")
+                        f"당신 전문 관점에서 **위 안건 질문에 답하세요**(작업 조직으로 새지 말 것). 3~5줄(최대 1000자), 맹목적 동의 금지(근거 필수). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.")
             head = ("[회의 토론 — 발언권 획득(당신의 응찰이 선정됨)] 방금 응찰한 그 관점을 지금 발언하세요."
                     if won else "[회의 토론]")
-            return (f"{head} 주제: {topic}\n지금까지의 발언:\n{log_txt}\n\n"
+            return (f"{head} 주제: {topic}{_frm}\n지금까지의 발언:\n{log_txt}\n\n"
                     f"당신({flow._info(m)})의 차례입니다 — 앞 발언에 동의/반박/보완하며 "
-                    f"당신 전문 관점의 입장을 3~5줄(최대 1000자)로. 맹목적 동의 금지(근거 필수). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.\n"
+                    f"당신 전문 관점에서 **위 안건 질문에 답하세요**(작업 조직·일정으로 새지 말 것). 3~5줄(최대 1000자), 맹목적 동의 금지(근거 필수). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.\n"
                     f"[발언권 규약] 특정 동료의 답이 꼭 필요하면 발언 마지막 줄에 `[지명: 이름]` — "
                     f"이 주제에 더 보탤 것이 없으면 본문 대신 `[패스]`만.")
 
