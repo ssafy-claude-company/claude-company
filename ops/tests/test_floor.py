@@ -362,6 +362,9 @@ def test_meet_수렴안_미동봉이면_SYS가_강제종합해_마일스톤을_�
     _open = [m for m in (f.milestones or []) if m.status not in ("done", "superseded")]
     assert _open                                      # 마일스톤 실제 생성
     assert f.current.status.goal == "방명록 1주기"    # 회의 산물이 미확정 Task GOAL도 채움
+    # 접힌 회의가 '결론'으로 읽히게 — 마무리 발언이 회의 블록에 결론(목표·로드맵)을 남긴다
+    assert "[회의 마무리]" in txt and "결론" in txt and "방명록 1주기" in txt
+    assert "로드맵: MVP" in txt                        # 로드맵(왜→어디로)이 결론에 보임
 
 
 def test_meet_기본은_종전_고정라운드_그대로():

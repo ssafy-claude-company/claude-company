@@ -398,6 +398,7 @@ async def meet(flow, me_id, args):
         # 시스템이 서기로서 즉시 등록한다(사람 확정 발화 없음). 최다 지지 = 동일안 제출 수, 동률=최신.
         # 등록 게이트(실행·측정 강제)가 품질을 지키고, 거부되면 사유를 회의록에 남겨 재회의를 유도한다.
         _confirm_note = ""
+        _landed_ms, _landed_units, _landed_new = None, 0, True   # 착지한 마일스톤 — 회의 마무리 결론 게시용
         # [같은 문(2026-07-13→14)] 표결 확정도 등록 게이트를 지난다 — 단 검문은 register_consensus
         # 내부에서(신설 분기만). 진행 중 주기가 있으면 수렴안은 '단위 추가'로 등록되므로 여기서
         # 선차단하면 분해 회의가 막힌다(2026-07-14 흐름 귀속 재설계).
@@ -421,6 +422,7 @@ async def meet(flow, me_id, args):
                         _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 마일스톤 {_ms.ms_id} 자동 등록"
                                          f"(조건 {len(_ms.criteria)}개, 단위 {_n_st}개). 각자 pick_backlog"
                                          f"(desc='내가 할 일')로 자기 백로그를 등재해 전담하세요.")
+                    _landed_ms, _landed_units, _landed_new = _ms, _n_st, (_pre_open != _ms.ms_id)
                     if flow.log:
                         flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props), subtasks=_n_st)
                     break
@@ -459,6 +461,7 @@ async def meet(flow, me_id, args):
                     from .milestone import register_consensus as _ms_reg2
                     _ms2, _n2 = _ms_reg2(flow, _c, topic)
                     if not isinstance(_ms2, str):
+                        _landed_ms, _landed_units, _landed_new = _ms2, _n2, True
                         if flow.log:
                             flow.log("ms_forced_synth", ms=_ms2.ms_id, subtasks=_n2)
                         _confirm_note = (f"\n\n[표결 확정] 수렴안(시스템 종합) → 마일스톤 {_ms2.ms_id} 자동 "
@@ -477,6 +480,28 @@ async def meet(flow, me_id, args):
                                      "meet를 열고, 종결 시 반드시 이 형식을 동봉하세요:\n[수렴안]\n단계: <로드맵>\n"
                                      "목표: <이 주기 목표>\n<조건 | 실증절차(run으로 확인)>\n단위: <분해 | 실증>\n"
                                      "[/수렴안]  (가결되면 자동 등록됩니다.)")
+        # [회의 마무리 결론 게시(2026-07-14, 사용자: '회의를 접었을 때 발제된 이유와 결론이 보이면
+        # 좋겠다')] 마일스톤 랜드마크([마일스톤 시작])는 회의 블록 밖 별도 메시지라, 회의가 접히면
+        # 요약(topic+마지막 발언)에 결론이 안 보였다(마지막 발언=중간 토론). 수렴안이 착지하면 그
+        # 결론(목표·로드맵·조건·단위)을 [회의 마무리] 발언으로 블록 안에 넣어, 접힌 회의가 '왜 열렸나
+        # (발제 topic)+무엇으로 맺었나(결론)'로 읽히게 한다. collab_kind가 [회의 마무리]=meeting이라 같은 블록.
+        if _landed_ms is not None:
+            try:
+                if _landed_new:
+                    _rm = " → ".join(s[:24] for s in (getattr(flow, "roadmap", None) or [])[:6])
+                    _cd = " · ".join((getattr(c, "desc", "") or "")[:40] for c in (_landed_ms.criteria or [])[:5])
+                    _concl = (f"결론 — 이 주기 목표: {_landed_ms.goal[:120]}"
+                              + (f"\n로드맵: {_rm}" if _rm else "")
+                              + (f"\n완수조건: {_cd}" if _cd else "")
+                              + (f"\n분해 단위 {_landed_units}개 → 각자 백로그로 전담" if _landed_units else ""))
+                else:
+                    _concl = (f"결론 — 진행 중 주기({_landed_ms.ms_id})에 분해 단위 {_landed_units}개 추가 "
+                              "→ 각자 백로그로 전담")
+                await _say_speech(flow, me_id, "[회의 마무리]", _concl)
+                minutes.append(f"[회의 마무리] {flow._info(me_id) or me_id}: {_concl}")
+            except Exception as _e:
+                if flow.log:
+                    flow.log("meet_conclusion_post_failed", err=str(_e)[:100])
         return (f"[회의록] 주제: {topic} ({rounds}라운드, {len(members)}명)\n"
                    + "\n".join(minutes)
                    + (_confirm_note if _no_r1 else
