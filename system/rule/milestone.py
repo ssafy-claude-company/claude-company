@@ -596,32 +596,9 @@ def extract_consensus(text: str):
     return m.group("body").strip() if m else None
 
 
-def extract_file_block(text: str, filename: str):
-    """[파일 게이트(2026-07-15, 사용자 B안)] 봇 응답에서 ```<filename> ... ``` 펜스 블록 내용을 뽑는다.
-    수렴안 같은 특수 은어가 아니라 봇이 훈련으로 아는 자연 형식(파일 코드블록) — 영속·검증가능·그라운딩.
-    없으면 None. 파일명은 경로·대소문자 무시 매칭."""
-    import re as _re
-    if not text:
-        return None
-    base = str(filename).split("/")[-1]
-    rx = _re.compile(r"```(?:[a-zA-Z]*\s+)?(?:[^\n`]*/)?" + _re.escape(base) + r"[^\n`]*\n(.*?)```",
-                     _re.DOTALL | _re.IGNORECASE)
-    m = rx.search(str(text))
-    if m:
-        c = m.group(1).strip()
-        return c or None
-    return None
-
-
-# 스테이지별 산출 형식: goal은 진짜 파일(GOAL.md, B안), 나머지는 아직 [수렴안](점진 확장 — 검증 후 파일화).
-_STAGE_FILE = {"goal": "GOAL.md"}
-
-
 def extract_stage_proposal(stage, text):
-    """그 회의 단계의 결론을 봇 응답에서 추출 — goal은 GOAL.md 파일블록, 그 외는 [수렴안] 블록."""
-    fn = _STAGE_FILE.get(stage)
-    if fn:
-        return extract_file_block(text, fn)
+    """[통일 수렴안(2026-07-15, 사용자 가안)] 모든 단계의 회의 산출물 = [수렴안] 하나의 형식.
+    그 수렴안을 어떻게 가공할지가 각 단계(register_stage)의 몫 — 추출은 단일 경로로 통일."""
     return extract_consensus(text)
 
 
@@ -797,24 +774,32 @@ def meeting_stage(flow):
     return None                                          # 전 단계 완료 → 작업/검증 단계
 
 
+# [통일 수렴안 + 구체 질문(2026-07-15, 사용자 가안)] 모든 회의의 산출물 = [수렴안](하나의 통일
+# 메커니즘). 그 수렴안을 어떻게 가공할지는 각 단계(register_stage)의 몫. 핵심은 각 안건을 봇이 오해할
+# 수 없는 **구체적 평문 질문(★)**으로 못박아, "작업 분배·일정·담당자 잡담"으로 도망치지 못하게 한다
+# (라이브 ch71: 스코프 회의인데 봇들이 섹션 나누기·병렬화만 논의 — 회의 정체를 몰라서).
 _STAGE_META = {
-    "goal": ("이 Task의 GOAL(무엇을 만들지 + 완수 기준)을 딱 하나로 정한다",
-             "마치려면 이 회의의 결론을 **GOAL.md 파일 내용**으로 아래 코드블록에 적으세요 — 수렴안 같은 "
-             "특수 틀이 아니라, 그냥 여러분이 아는 그 GOAL.md를 쓰는 겁니다:\n"
-             "```GOAL.md\n## Goal\n<이 Task가 무엇을 만드는지 — 구체적으로(무슨 게임/앱, 핵심 동작)>\n"
-             "## Acceptance\n- <완수조건> — 실증: <run으로 확인하는 절차>\n"
-             "- <완수조건> — 실증: <절차>\n```\n"
-             "(이 회의는 GOAL만 정합니다 — 로드맵·단위·백로그는 다음 회의들에서. 지금 그것까지 넣지 마세요.)"),
-    "milestone": ("GOAL을 토대로 이번 주기(로드맵 1단계)를 정한다",
-             "[수렴안]\n단계: <전체 로드맵 1단계(완전한 MVP)>\n단계: <2단계(확장)>\n"
-             "이번 주기: <이번에 완성할 것 한 줄>\n<완수조건 | 실증절차>\n<완수조건 | 실증절차>\n[/수렴안]\n"
-             "(이 회의는 이번 주기 마일스톤만 정합니다 — 단위 분해는 다음 회의.)"),
-    "subtask": ("이번 마일스톤을 작업 단위(서브태스크)로 분해한다",
-             "[수렴안]\n단위: <분해 단위 목표> | <실증절차>\n단위: <분해 단위 목표> | <실증절차>\n[/수렴안]\n"
-             "(이 회의는 단위 분해만 정합니다 — 참여 도메인마다 자기 몫 단위. 백로그는 다음 회의.)"),
-    "backlog": ("한 서브태스크 안을 채울 백로그(개인 전담 작업)를 정한다",
-             "[수렴안]\n백로그: <작업 단위 하나>\n백로그: <작업 단위 하나>\n[/수렴안]\n"
-             "(이 회의는 이 서브태스크의 백로그만 정합니다 — 각자 pick_backlog로 전담.)"),
+    "goal": ("이 Task로 **무엇을 만들지**와 **무엇이 되면 끝인지**를 정한다",
+             "[수렴안]\n목표: <이 Task로 정확히 무엇을 만드는지 — '게임'이 아니라 '2인 턴제 카드 대전'처럼 구체적으로>\n"
+             "<완수조건 | 실증절차(run으로 확인)>\n<완수조건 | 실증절차>\n[/수렴안]\n"
+             "★이 회의가 답할 질문 하나: **'이걸로 정확히 무엇을 만들고, 무엇이 되면 끝인가?'** "
+             "— 작업을 어떻게 나눌지·누가 맡을지·일정은 **지금 논의하지 마세요**(그건 다음 회의들). "
+             "지금은 '무엇을 만들지'만 정합니다."),
+    "milestone": ("이번에 **완성해서 사용자에게 보여줄 딱 하나**를 정한다(전체 말고 이번 것)",
+             "[수렴안]\n단계: <전체 로드맵 — 예: 최소버전 → 확장 → 완성>\n"
+             "이번 주기: <이번에 완성해 사용자가 실제로 써볼 수 있는 딱 하나>\n"
+             "<완수조건 | 실증절차>\n[/수렴안]\n"
+             "★이 회의가 답할 질문 하나: **'이번에 완성해서 사용자에게 보여줄 하나는 무엇인가?'** "
+             "— 전체를 한 번에 만들려 하지 마세요(달구지부터). 작업 분해·담당자는 다음 회의."),
+    "subtask": ("이번에 만들 것을 **어떤 작업 단위들로 나눌지** 정한다",
+             "[수렴안]\n단위: <작업 단위 — 어느 도메인의 무슨 일> | <실증절차>\n"
+             "단위: <작업 단위> | <실증절차>\n[/수렴안]\n"
+             "★이 회의가 답할 질문 하나: **'이번 것을 어떤 작업 단위들로 쪼개고, 참여 도메인이 각자 무슨 "
+             "몫을 맡는가?'** — 한 도메인이 다 가져가지 마세요. 세부 작업 항목은 다음 회의."),
+    "backlog": ("한 작업 단위 안에서 **하나씩 처리할 구체 작업 항목**을 정한다",
+             "[수렴안]\n백로그: <하나씩 처리할 구체 작업>\n백로그: <구체 작업>\n[/수렴안]\n"
+             "★이 회의가 답할 질문 하나: **'이 작업 단위 안에서 순서대로 처리할 작업 항목은 무엇인가?'** "
+             "— 각자 pick_backlog로 하나씩 전담합니다."),
 }
 
 
@@ -850,44 +835,28 @@ def register_stage(flow, stage, prop, origin=""):
     _cur = getattr(flow, "current", None)
 
     if stage == "goal":
-        # [파일 게이트(B안)] prop = 봇이 쓴 GOAL.md 내용(펜스 블록 추출 후 이 함수로 옴). '## Goal'
-        # 섹션에서 목표를, '## Acceptance'에서 완수기준을 읽는다 — 수렴안 파싱이 아니라 GOAL.md 파싱.
-        import re as _re
-        content = str(prop or "").strip()
-        _gm = _re.search(r"##\s*Goal\s*\n(.+?)(?:\n##\s|\Z)", content, _re.DOTALL | _re.IGNORECASE)
-        goal = ""
-        if _gm:
-            goal = next((ln.strip() for ln in _gm.group(1).splitlines()
-                         if ln.strip() and not ln.strip().startswith("<")), "")
+        # [통일 수렴안(가안)] prop = [수렴안]의 '목표:'+조건 줄들. goal 단계는 이 수렴안을 가공해
+        # Task GOAL을 세팅하고 GOAL.md를 쓴다(수렴안=통일 산출물, 가공은 이 단계의 몫).
+        goal = _val("목표")
         if not goal:
-            return False, ("GOAL.md에 '## Goal' 섹션과 목표 한 줄이 필요합니다 — ```GOAL.md 코드블록으로 "
-                           "## Goal / ## Acceptance를 적으세요.")
-        _am = _re.search(r"##\s*Acceptance\s*\n(.+?)(?:\n##\s|\Z)", content, _re.DOTALL | _re.IGNORECASE)
-        _acc = _am.group(1).strip() if _am else ""
+            return False, "수렴안에 '목표: <이 Task로 정확히 무엇을 만드는지>' 줄이 필요합니다."
         if _cur is not None:
             try:
                 _cur.status.goal = goal
             except Exception:
                 pass
-            if _acc:
+            _crits = parse_criteria_lines(_crit_txt)
+            if _crits:
                 try:
-                    _cur.acceptance = _acc
+                    _cur.acceptance = "\n".join(f"- {c.desc}" + (f" (실증: {c.verify})" if c.verify else "")
+                                                for c in _crits)
                 except Exception:
                     pass
-            # 봇이 쓴 GOAL.md를 그대로 영속(복구 파서 계약 헤더 ## Goal/## Acceptance 유지). Purpose 등
-            # 누락 헤더는 보강해 파서 호환.
-            try:
-                from .._util import dossier_write
-                _full = content
-                if "## Purpose" not in _full:
-                    _full = f"# GOAL — Task {getattr(_cur, 'task_id', '')}\n\n## Purpose\n\n" + _full
-                dossier_write(flow, "GOAL.md", _full)
-            except Exception:
-                pass
+            _write_goal_md(flow, _cur, goal)   # 수렴안 가공 결과를 영속 파일로(복구 파서 계약 헤더)
         if flow.log:
             flow.log("task_goal_set", goal=goal[:60])
-        return True, (f"[표결 확정] GOAL.md 작성 완료 → {goal[:80]}. "
-                      "다음: 마일스톤 회의(로드맵 1단계)를 시스템이 엽니다.")
+        return True, (f"[표결 확정] GOAL 확정 → {goal[:80]} · GOAL.md 작성. "
+                      "다음: 마일스톤 회의를 시스템이 엽니다.")
 
     if stage == "milestone":
         cyc = _val("이번 주기") or _val("목표") or (str(getattr(_cur.status, "goal", "") or "") if _cur else "")

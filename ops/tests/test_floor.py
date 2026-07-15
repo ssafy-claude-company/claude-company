@@ -343,16 +343,16 @@ def test_meet_게이트_Task회의는_GOAL만_전원찬성_채택후_등록(monk
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
     seen = {"gate": 0, "ratify": 0}
-    # [파일 게이트 B안] 결론 = 수렴안 은어 블록이 아니라 진짜 GOAL.md 파일 내용(펜스 블록)
-    CONS = ("[종료]\n```GOAL.md\n## Goal\n방명록 1주기\n## Acceptance\n"
-            "- 등록 API 동작 — 실증: curl POST 후 GET 확인\n- 목록 표시 — 실증: playwright 로드 확인\n```")
+    # [통일 수렴안(가안)] 모든 회의 산출물 = [수렴안]. goal 단계는 이 수렴안을 가공해 GOAL 세팅·GOAL.md 작성.
+    CONS = ("[종료]\n[수렴안]\n목표: 방명록 1주기\n"
+            "등록 API 동작 | curl POST 후 GET 확인\n목록 표시 | playwright 로드 확인\n[/수렴안]")
 
     async def wake(to, b, k):
         if "결론 확정 표결" in b:                     # 비준 표결 → 전원 찬성
             seen["ratify"] += 1
             return "[찬성]"
         if "종결 확인" in b:
-            if "채택돼야만" in b:                       # 게이트 전면화된 재응찰에서만 GOAL.md 제출
+            if "채택돼야만" in b:                       # 게이트 전면화된 재응찰에서만 수렴안 제출
                 seen["gate"] += 1
                 return CONS
             return "[종료]"                            # 첫 패스: 결론 없이 종료 시도 → 게이트 미충족(재응찰)
@@ -363,10 +363,10 @@ def test_meet_게이트_Task회의는_GOAL만_전원찬성_채택후_등록(monk
     r = asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견"}))
     txt = r["content"][0]["text"]
     assert seen["gate"] >= 1                           # 첫 패스 미충족 → 되살려 재응찰(게이트 전면화)에서 제출
-    assert seen["ratify"] >= 1                         # 제출된 GOAL.md에 전원 찬성 비준
-    assert "GOAL.md 작성 완료" in txt                  # 파일 게이트 — GOAL.md 작성(수렴안 은어 아님)
+    assert seen["ratify"] >= 1                         # 제출된 수렴안에 전원 찬성 비준
+    assert "GOAL 확정" in txt and "GOAL.md 작성" in txt   # goal 단계 가공: GOAL 세팅+파일
     assert not (f.milestones or [])                    # 이 회의는 마일스톤을 안 만든다(다음 회의)
-    assert f.current.status.goal == "방명록 1주기"     # GOAL.md의 ## Goal이 Task GOAL을 채움
+    assert f.current.status.goal == "방명록 1주기"     # 수렴안 '목표:'가 Task GOAL을 채움
     assert "[회의 마무리]" in txt and "방명록 1주기" in txt   # 결론 게시(왜→결론)
 
 
@@ -380,7 +380,7 @@ def test_meet_수렴안_반대_있으면_회의_계속된다(monkeypatch):
     CONS = ("[종료]\n[수렴안]\n목표: x\n동작 | curl 확인\n[/수렴안]")
 
     async def wake(to, b, k):
-        if "수렴안 확정 표결" in b:
+        if "결론 확정 표결" in b:
             return "[반대: 조건이 부실하다]" if to == 13 else "[찬성]"   # QA가 반대 → 부결
         if "종결 확인" in b:
             return CONS if "채택돼야만" in b else "[종료]"
