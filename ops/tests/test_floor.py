@@ -394,6 +394,39 @@ def test_meet_수렴안_반대_있으면_회의_계속된다(monkeypatch):
     assert "확정 실패 — 수렴 소진" in txt              # 거짓 완료 아닌 정직한 상신
 
 
+def test_meet_반대사유_병합후_재비준_통과(monkeypatch):
+    """[반대 사유 병합→재비준(2026-07-15, 사용자: '자기거 없어서 부결이면 합쳐야지')] 제출된 수렴안이
+    '내 도메인 게 빠졌다'로 부결되면, 그 반대 사유를 수렴안에 병합해 갱신하고 재비준한다 — 모두의 것이
+    들어가면 만장일치가 되어 채택(완성된 수렴안). 라이브 ch74: 조기 제출·비준은 됐는데 90% 반대로
+    안 닫히던 것(각자 자기 수치 빠졌다고 반대)을 병합으로 수렴시킨다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
+    f.floor_mode = "turn-taking"
+    CONS1 = "[종료]\n[수렴안]\n목표: 방명록 1주기\n등록 동작 | curl 확인\n[/수렴안]"
+    CONS2 = "[수렴안]\n목표: 방명록 1주기\n등록 동작 | curl 확인\nQA 검증 | playwright 확인\n[/수렴안]"
+    state = {"merged": 0}
+
+    async def wake(to, b, k):
+        if "수렴안 병합" in b:                       # 병합 서기 턴 → 반대 반영한 갱신본
+            state["merged"] += 1
+            return CONS2
+        if "결론 확정 표결" in b:                     # 1차: QA 반대(QA검증 빠짐), 병합 후: 전원 찬성
+            if state["merged"] == 0 and to == 13:
+                return "[반대: QA 검증 조건이 빠졌다]"
+            return "[찬성]"
+        if "종결 확인" in b:
+            return CONS1 if "채택돼야만" in b else "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "2", "my_opinion": "여는 의견"}))
+    txt = r["content"][0]["text"]
+    assert state["merged"] >= 1                       # 부결 → 반대 사유 병합 발생
+    assert "GOAL 확정" in txt and "GOAL.md 작성" in txt   # 병합 후 만장일치 → 채택·등록
+    assert f.current.status.goal == "방명록 1주기"
+
+
 def test_meet_기본은_종전_고정라운드_그대로():
     """ORGANT_FLOOR 미설정 = orchestrated round_robin — 발언 순서·라벨·프롬프트가 종전과 동일
     (동작 불변의 직접 검증; test_sys의 핀 테스트와 이중 안전망)."""

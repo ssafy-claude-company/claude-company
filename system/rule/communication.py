@@ -407,27 +407,45 @@ async def meet(flow, me_id, args):
                          nxt=a.next, reason=(a.reason or "")[:40])
 
         async def _ratify_vote(prop):
-            """[수렴안 확정 표결(2026-07-14, 사용자: '찬성을 모두 받아야만 수렴안이 제시될 수 있다')]
-            제출된 수렴안에 전원 찬성이어야 채택 — 반대가 하나라도 있으면 회의는 계속된다(앵커 독재
-            폐지·게이트=채택). 표결은 회의록에 안 남는다(채택 결과만 결론으로 게시)."""
+            """[수렴안 확정 표결(2026-07-14, 사용자: '찬성을 모두 받아야만')] 전원 찬성이어야 채택.
+            반환 (passed: bool, dissents: [반대 사유]) — 반대 사유는 병합의 원료(자기 것 빠져 부결이면 합침)."""
             if wakes["n"] >= wake_cap:
-                return False
+                return False, []
             def _rbody(c):
                 return (f"[회의 — 결론 확정 표결] 주제: {topic}\n제출된 결론:\n{prop}\n\n"
                         f"이 결론으로 이 회의를 확정합니까? 당신({flow._info(c)})의 판단: 찬성이면 "
-                        f"`[찬성]`, 이견이 있으면 `[반대: 무엇을 고쳐야 하는지 한 줄]`. **전원 찬성이어야 "
-                        f"확정되며, 반대가 하나라도 있으면 회의가 계속됩니다.**")
-            _yes, _no = 0, 0
+                        f"`[찬성]`, 당신 도메인에서 빠진 게 있으면 `[반대: 무엇이 빠졌는지/무엇을 더해야 하는지 "
+                        f"한 줄]`. **전원 찬성이어야 확정**되며, 반대는 그 지적이 결론에 병합된 뒤 재표결됩니다.")
+            _yes, _dissents = 0, []
             for m, res, note in await _fork_collect(flow, me_id, list(members), _rbody):
                 wakes["n"] += 1
                 t = str(res or "")
                 if "반대" in t:
-                    _no += 1
+                    _r = t.split("반대", 1)[1].lstrip(":： ]").strip().splitlines()[0][:150] if "반대" in t else ""
+                    _dissents.append(_r or "(사유 미기재)")
                 elif "찬성" in t or _is_substantive(t):
                     _yes += 1
                 if flow.log:
                     flow.log("consensus_ratify_vote", who=m, oppose=("반대" in t))
-            return _no == 0 and _yes >= 1
+            return (len(_dissents) == 0 and _yes >= 1), _dissents
+
+        async def _merge_dissents(prop, dissents):
+            """[반대 사유 병합(2026-07-15, 사용자: '자기거 없어서 부결난거면 그걸 합쳐야지')] 부결된
+            수렴안에 동료들의 '빠졌다'는 지적을 다 합쳐 갱신 — 모두의 것이 들어갈 때까지 자라 만장일치가
+            되게. 단일 봇의 저작이 아니라 '동료 지적을 기계적으로 병합'하는 서기 역할(재비준이 품질 담보)."""
+            if wakes["n"] >= wake_cap:
+                return prop
+            _dlist = "\n".join(f"- {d}" for d in dissents[:12])
+            _body = (f"[수렴안 병합 — 반대 사유 반영(서기 역할)] 현재 수렴안:\n{prop}\n\n"
+                     f"동료들이 아래가 빠졌다고 반대했습니다:\n{_dlist}\n\n"
+                     f"이 지적들을 **모두 반영해 수렴안을 갱신**하세요 — 기존 것을 지우지 말고 빠진 것을 더해 "
+                     f"완성하세요(당신 새 의견 추가 금지, 동료 지적을 병합만). 갱신된 [수렴안] 전문만 출력:\n{_stage_tmpl}")
+            try:
+                _res = await flow.wake(me_id, _body, Kind.INFO)
+                wakes["n"] += 1
+                return _stage_extract(_stage, _res) or prop
+            except Exception:
+                return prop
 
         st = FloorState(members)
         if not _no_r1:
@@ -464,21 +482,32 @@ async def meet(flow, me_id, args):
             _fresh = conv_props[_before:]                   # 이번 패스에 제출된 수렴안 후보
             if _fresh:
                 _top = Counter(_fresh).most_common(1)[0][0]
-                if await _ratify_vote(_top):                # 전원 찬성이어야 채택
+                # [반대 사유 병합→재비준(2026-07-15, 사용자: '자기거 없어서 부결이면 합쳐야지')] 제출된
+                # 수렴안이 '내 도메인 게 빠졌다'로 부결되면, 그 반대 사유들을 수렴안에 병합해 갱신하고
+                # 재비준한다 — 모두의 것이 들어갈 때까지 자라 만장일치가 됨(완성된 수렴안). 상한까지
+                # 병합해도 안 되면(무한 반대) 회의 계속(revive).
+                _passed, _dissents = await _ratify_vote(_top)
+                _mrg = 0
+                while (not _passed and _dissents and _mrg < 3 and wakes["n"] < wake_cap):
+                    _mrg += 1
+                    if flow.log:
+                        flow.log("consensus_merge", round=_mrg, dissents=len(_dissents), stage=str(_stage))
+                    _top = await _merge_dissents(_top, _dissents)   # 반대 사유 병합
+                    _passed, _dissents = await _ratify_vote(_top)   # 재비준
+                if _passed:
                     _ok, _note = _ms_regstage(flow, _stage, _top, topic)   # 이 단계 결론 '하나'만 등록
                     if _ok:
                         _landed, _conclusion = True, _note
                         _confirm_note = "\n\n" + _note
                         if flow.log:
-                            flow.log("stage_confirmed", stage=str(_stage), passes=_pass)
+                            flow.log("stage_confirmed", stage=str(_stage), passes=_pass, merges=_mrg)
                         break                               # 채택 완료 — 회의 종료
-                    # 채택됐지만 등록 게이트가 보류(실증불가 조건 등) — 사유 남기고 회의 계속
                     if flow.log:
                         flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
                     await _say_speech(flow, me_id, "[회의]",
                                       f"수렴안이 채택됐으나 등록이 보류됐습니다 — {_note} (다듬어 재수렴)")
                 elif flow.log:
-                    flow.log("meet_consensus_rejected", passes=_pass)
+                    flow.log("meet_consensus_rejected", passes=_pass, merges=_mrg)
             elif flow.log:
                 flow.log("meet_gate_unmet", passes=_pass)
             _gate_unmet["on"] = True                        # 재응찰: 종결표결에 게이트 전면화
