@@ -334,37 +334,67 @@ def test_meet_TT_종결반대자는_발언권을_받아_직접_말한다():
     assert f.comm.alive == 11 and 12 in f.current.participated
 
 
-def test_meet_수렴안_미동봉이면_SYS가_강제종합해_마일스톤을_등록한다(monkeypatch):
-    """[강제 종합(2026-07-14, 사용자: '형식을 봇 지능·운에 맡기지 말고 돌게 하라')] 파이프라인 회의가
-    내용상 수렴했는데 아무도 [수렴안] 형식을 안 넣어 빈손 종결되면(라이브 U-024: 16분 토론이 통째
-    버려짐 — Haiku 형식 실패), 종전엔 재회의 코칭뿐이라 봇 재시도가 또 실패했다. 이제 SYS가 앵커에게
-    회의록 종합 [수렴안] 작성을 강제하는 단일 턴을 넣어 논의를 마일스톤 등록으로 착지시킨다(형식 전환
-    =SYS 구동=A, 내용은 이미 봇이 냄=B)."""
+def test_meet_게이트_수렴안_채택돼야_끝나고_전원찬성_비준후_등록(monkeypatch):
+    """[게이트=채택된 수렴안(2026-07-14, 사용자: '회의 상한 두지 말고 — 수렴안 채택돼야만 끝난다')]
+    종료 조건 = 발언권 소진이 아니라 '수렴안이 표결로 채택됨'. ①아무도 수렴안 안 내면 전원 발언권
+    되살려 재응찰(게이트 전면화, 인위적 상한 없음) ②수렴안이 나오면 전원 찬성 표결로 채택돼야 등록
+    (앵커 독재 폐지) ③등록과 함께 SYS가 GOAL.md 생성, [회의 마무리]로 결론 게시. 라이브 U-024의
+    '발언권 소진으로 우회 종료 → 5단계 계획 버려짐'을 구조로 막는다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
-    synth_asked = {"n": 0}
+    seen = {"gate": 0, "ratify": 0}
+    CONS = ("[종료]\n[수렴안]\n단계: MVP\n단계: 확장\n목표: 방명록 1주기\n"
+            "등록 API 동작 | curl POST 후 GET 확인\n목록 표시 | playwright 로드 확인\n"
+            "단위: 백엔드 API | curl 확인\n단위: 프론트 목록 | playwright 확인\n[/수렴안]")
 
     async def wake(to, b, k):
-        if "수렴안 작성(필수)" in b:                 # SYS 강제 종합 턴만 수렴안을 낸다
-            synth_asked["n"] += 1
-            return ("[수렴안]\n단계: MVP\n단계: 확장\n목표: 방명록 1주기\n"
-                    "등록 API 동작 | curl POST 후 GET 확인\n목록 표시 | playwright 로드 확인\n"
-                    "단위: 백엔드 API | curl 확인\n단위: 프론트 목록 | playwright 확인\n[/수렴안]")
-        return "[종료]"                              # 발언·종결표결 모두 종료(수렴안 미동봉) → conv_props 빔
+        if "수렴안 확정 표결" in b:                   # 비준 표결 → 전원 찬성
+            seen["ratify"] += 1
+            return "[찬성]"
+        if "종결 확인" in b:
+            if "채택돼야만" in b:                       # 게이트 전면화된 재응찰에서만 수렴안 제출
+                seen["gate"] += 1
+                return CONS
+            return "[종료]"                            # 첫 패스: 수렴안 없이 종료 시도 → 게이트 미충족(재응찰)
+        return "[패스]"                                # 발언권 응찰은 패스(빨리 종결확인으로)
     f.wake = wake
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     r = asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견"}))
     txt = r["content"][0]["text"]
-    assert synth_asked["n"] == 1                      # 빈손 → SYS가 강제 종합을 딱 1회 요청(봇 재시도에 안 맡김)
-    assert "[표결 확정] 수렴안(시스템 종합)" in txt   # 종합 수렴안이 등록으로 착지(빈손 코칭 아님)
+    assert seen["gate"] >= 1                           # 첫 패스 미충족 → 되살려 재응찰(게이트 전면화)에서 제출
+    assert seen["ratify"] >= 1                         # 제출된 수렴안에 전원 찬성 비준
+    assert "[표결 확정] 수렴안 채택(전원 찬성)" in txt  # 발언권 소진 아닌 '채택'으로 종료
+    assert "GOAL.md 생성" in txt
     _open = [m for m in (f.milestones or []) if m.status not in ("done", "superseded")]
-    assert _open                                      # 마일스톤 실제 생성
-    assert f.current.status.goal == "방명록 1주기"    # 회의 산물이 미확정 Task GOAL도 채움
-    # 접힌 회의가 '결론'으로 읽히게 — 마무리 발언이 회의 블록에 결론(목표·로드맵)을 남긴다
-    assert "[회의 마무리]" in txt and "결론" in txt and "방명록 1주기" in txt
-    assert "로드맵: MVP" in txt                        # 로드맵(왜→어디로)이 결론에 보임
+    assert _open                                       # 마일스톤 실제 생성
+    assert f.current.status.goal == "방명록 1주기"     # 채택 수렴안이 Task GOAL을 채움
+    assert "[회의 마무리]" in txt and "방명록 1주기" in txt   # 결론 게시(왜→결론)
+
+
+def test_meet_수렴안_반대_있으면_회의_계속된다(monkeypatch):
+    """[전원 찬성 아니면 부결→회의 계속] 비준 표결에서 반대가 하나라도 있으면 채택 안 되고, 게이트가
+    안 열려 회의가 계속된다 — '찬성을 모두 받아야만'(사용자). 비용 천장에 닿으면 거짓 완료가 아니라
+    '수렴 소진 — 사람 확인'으로 정직히 상신(허위 완료 방지)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
+    f.floor_mode = "turn-taking"
+    CONS = ("[종료]\n[수렴안]\n목표: x\n동작 | curl 확인\n[/수렴안]")
+
+    async def wake(to, b, k):
+        if "수렴안 확정 표결" in b:
+            return "[반대: 조건이 부실하다]" if to == 13 else "[찬성]"   # QA가 반대 → 부결
+        if "종결 확인" in b:
+            return CONS if "채택돼야만" in b else "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    r = asyncio.run(t["meet"].handler({"topic": "T", "members": "", "rounds": "2", "my_opinion": "여는 의견"}))
+    txt = r["content"][0]["text"]
+    assert not [m for m in (f.milestones or []) if m.status not in ("done", "superseded")]  # 부결 → 미등록
+    assert "확정 실패 — 수렴 소진" in txt              # 거짓 완료 아닌 정직한 상신
 
 
 def test_meet_기본은_종전_고정라운드_그대로():

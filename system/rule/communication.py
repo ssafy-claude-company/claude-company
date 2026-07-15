@@ -178,6 +178,7 @@ async def meet(flow, me_id, args):
         from .milestone import pipeline_on as _ms_on
         _no_r1 = _ms_on()
         conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
+        _gate_unmet = {"on": False}   # [게이트=수렴안 채택] 재응찰 시 종결표결 프롬프트를 게이트로 전면화
         if not _no_r1:
             for m, res, note in await _fork_collect(flow, me_id, members, body_r1):
                 cut = _speech_clip(res or note)   # 회의록·채널 발언은 같은 내용(기록 일치)
@@ -229,7 +230,10 @@ async def meet(flow, me_id, args):
         wakes = {"n": 0}
         # 총 wake 상한(발언+응찰) — TT 비용·폭주 백스톱. 응찰은 open마다 후보 전원(≤인원-1)이라
         # 상한을 인원 배수로 잡는다(회의는 소수 인원 표면 — 응찰이 곧 '전원이 눈치보는' 비용).
-        wake_cap = budget * (len(members) + 1) + 2
+        # [게이트 회의는 재응찰 여지 확보(2026-07-14, 사용자: '상한 두지 마라')] 수렴안 채택이 유일
+        # 출구라 여러 패스가 필요할 수 있어 파이프라인 회의는 비용 천장을 4배로 — 인위적 라운드 상한은
+        # 없고, 이 천장은 무의미 무한스핀(응찰 소진 후 no-op 반복) 방지용 비용 바닥일 뿐이다.
+        wake_cap = budget * (len(members) + 1) * (4 if _no_r1 else 1) + 2
         sched_i = {"i": 0}                    # orchestrated 라벨(r)용 — allocator 소비 순서와 1:1
         block = {"label": None, "items": []}  # [B-09] MINUTES.md 블록 버퍼(라운드/토론 단위 flush)
 
@@ -348,10 +352,14 @@ async def meet(flow, me_id, args):
                              "최다 지지안이 등록됩니다. 등록 후 각자 pick_backlog(desc)로 자기 백로그를 "
                              "등재해 전담하세요 — 백로그는 개인 역량 안의 작업 단위입니다)"
                              if _no_r1 else " 마쳐도 되면 `[종료]`만.")
+                    _gate = ("\n\n**이 회의는 [수렴안]이 채택돼야만 끝납니다 — 발언권 소진으로는 안 "
+                             "끝납니다.** 아직 채택된 수렴안이 없습니다. 마치려면 반드시 위 형식의 "
+                             "[수렴안]을 동봉하세요(누구든). 없으면 회의는 닫히지 않고 다시 열립니다."
+                             if (_no_r1 and _gate_unmet["on"]) else "")
                     return (f"[회의 — 종결 확인] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
                             f"판단하세요. 더 다뤄야 할 것이 있으면 `[계속: N]`(N=1~9)과 무엇인지 한 줄만 "
-                            f"— 발언권을 받아 직접 발언하게 됩니다.{_conv}")
+                            f"— 발언권을 받아 직접 발언하게 됩니다.{_conv}{_gate}")
                 return (f"[회의 — 발언권 응찰] 주제: {topic}\n지금까지의 발언:\n{_ctx_txt()}\n\n"
                         f"지금 발언권이 비어 있습니다. 당신({flow._info(c)})이 **지금** 발언할 필요가 "
                         f"있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 이유만 "
@@ -376,6 +384,29 @@ async def meet(flow, me_id, args):
                 flow.log("floor_alloc", surface="meet", policy=mode, kind=a.kind,
                          nxt=a.next, reason=(a.reason or "")[:40])
 
+        async def _ratify_vote(prop):
+            """[수렴안 확정 표결(2026-07-14, 사용자: '찬성을 모두 받아야만 수렴안이 제시될 수 있다')]
+            제출된 수렴안에 전원 찬성이어야 채택 — 반대가 하나라도 있으면 회의는 계속된다(앵커 독재
+            폐지·게이트=채택). 표결은 회의록에 안 남는다(채택 결과만 결론으로 게시)."""
+            if wakes["n"] >= wake_cap:
+                return False
+            def _rbody(c):
+                return (f"[회의 — 수렴안 확정 표결] 주제: {topic}\n제출된 수렴안:\n{prop}\n\n"
+                        f"이 수렴안으로 이 주기를 확정합니까? 당신({flow._info(c)})의 판단: 찬성이면 "
+                        f"`[찬성]`, 이견이 있으면 `[반대: 무엇을 고쳐야 하는지 한 줄]`. **전원 찬성이어야 "
+                        f"확정되며, 반대가 하나라도 있으면 회의가 계속됩니다.**")
+            _yes, _no = 0, 0
+            for m, res, note in await _fork_collect(flow, me_id, list(members), _rbody):
+                wakes["n"] += 1
+                t = str(res or "")
+                if "반대" in t:
+                    _no += 1
+                elif "찬성" in t or _is_substantive(t):
+                    _yes += 1
+                if flow.log:
+                    flow.log("consensus_ratify_vote", who=m, oppose=("반대" in t))
+            return _no == 0 and _yes >= 1
+
         st = FloorState(members)
         if not _no_r1:
             for m in members[:-1]:
@@ -385,101 +416,73 @@ async def meet(flow, me_id, args):
         # [§4] 완전 TT의 시작 턴 = 소집자 발제(내용 발화가 아니라 주제 제시) — 이후 전 발언이 응찰.
         _t0 = (Turn(speaker=me_id, body="(발제)") if _no_r1
                else Turn(speaker=members[-1], body="(1R 마지막 발언)"))
-        await run_conversation(policy, st, _t0,
-                               _speak, bid=(_bid if tt else None),
-                               max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
-        _flush_minutes()
+        # [게이트 = 채택된 수렴안(2026-07-14, 사용자: '회의에 상한 두지 말고 — 수렴안 채택돼야만 끝난다')]
+        # 종료 조건을 '발언권 소진'이 아니라 '수렴안이 표결로 채택됨'으로 바꾼다. 파이프라인 TT 회의는
+        # 한 패스 돌린다 → 이번에 [수렴안]이 제출됐나? 없으면 전원 발언권 되살려 재응찰(인위적 상한 없음).
+        # 있으면 그 안에 전원 찬성 표결(_ratify_vote) → 통과하면 register_consensus로 채택·등록(GOAL.md
+        # 생성) → 종료. 부결·등록거부면 회의 계속. 앵커 특권·거짓 완료·봇 파일작성 떠넘기기 없이 게이트가
+        # 유일 출구. 비용 천장(wake_cap, 4배)에 닿으면 무의미 스핀 대신 정직히 상신(거짓 완료 아님).
+        from collections import Counter
+        from .milestone import register_consensus as _ms_reg
+        _confirm_note = ""
+        _landed_ms, _landed_units, _landed_new = None, 0, True   # 착지 마일스톤 — 회의 마무리 결론 게시용
+        _pipe = bool(_no_r1 and tt)
+        _pass = 0
+        while True:
+            _pass += 1
+            _before = len(conv_props)
+            await run_conversation(policy, st, _t0,
+                                   _speak, bid=(_bid if tt else None),
+                                   max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
+            _flush_minutes()
+            if flow.current is None or not _pipe:
+                break                                       # 솔로/orchestrated = 단일 패스(종전 동작)
+            _fresh = conv_props[_before:]                   # 이번 패스에 제출된 수렴안 후보
+            if _fresh:
+                _top = Counter(_fresh).most_common(1)[0][0]
+                if await _ratify_vote(_top):                # 전원 찬성이어야 채택
+                    _pre_open = next((m.ms_id for m in (getattr(flow, "milestones", None) or [])
+                                      if m.status not in ("done", "superseded")), None)
+                    _ms, _n_st = _ms_reg(flow, _top, topic)  # 등록 + GOAL.md 생성(milestone.py)
+                    if not isinstance(_ms, str):
+                        _landed_ms, _landed_units, _landed_new = _ms, _n_st, (_pre_open != _ms.ms_id)
+                        if _landed_new:
+                            _confirm_note = (f"\n\n[표결 확정] 수렴안 채택(전원 찬성) → 마일스톤 {_ms.ms_id} "
+                                             f"등록(조건 {len(_ms.criteria)}개, 단위 {_n_st}개) · GOAL.md 생성. "
+                                             "각자 pick_backlog(desc='내가 할 일')로 자기 백로그를 전담하세요.")
+                        else:
+                            _confirm_note = (f"\n\n[표결 확정] 수렴안 채택 → 진행 중 주기 {_ms.ms_id}에 단위 "
+                                             f"{_n_st}개 추가. 각자 pick_backlog(desc='내가 할 일')로 전담하세요.")
+                        if flow.log:
+                            flow.log("ms_confirm_by_vote", ms=_ms.ms_id, passes=_pass, subtasks=_n_st)
+                        break                               # 채택 완료 — 회의 종료
+                    # 채택됐지만 등록 품질 게이트가 보류(실증불가 조건 등) — 사유 남기고 회의 계속
+                    if flow.log:
+                        flow.log("ms_register_rejected", reason=str(_ms)[:80])
+                    await _say_speech(flow, me_id, "[회의]",
+                                      f"수렴안이 채택됐으나 등록 게이트가 보류했습니다 — {_ms} (다듬어 재수렴)")
+                elif flow.log:
+                    flow.log("meet_consensus_rejected", passes=_pass)
+            elif flow.log:
+                flow.log("meet_gate_unmet", passes=_pass)
+            _gate_unmet["on"] = True                        # 재응찰: 종결표결에 게이트 전면화
+            _t0 = Turn(speaker=me_id, body="(수렴안 미채택 — 회의 계속)")
+            if wakes["n"] >= wake_cap:                      # 비용 바닥 — 상한 아님, 무한 무의미 스핀 방지
+                if flow.log:
+                    flow.log("meet_gate_exhausted", passes=_pass)
+                break
         if flow.current is not None:
             record = f"[회의] {topic} ({rounds}R)\n" + "\n".join(minutes)
             flow.current.collab_notes = _speech_clip(
                 (getattr(flow.current, 'collab_notes', '') + '\n\n' + record).strip(), 6000)
             _ckpt(flow)   # 합의는 크래시-세이프(재개 위임에도 동봉되도록 스냅샷에 포함)
-        # [결정권자 폐지 — 표결이 곧 확정] 파이프라인 회의가 합의 종결로 끝났고 수렴안이 동봉됐으면
-        # 시스템이 서기로서 즉시 등록한다(사람 확정 발화 없음). 최다 지지 = 동일안 제출 수, 동률=최신.
-        # 등록 게이트(실행·측정 강제)가 품질을 지키고, 거부되면 사유를 회의록에 남겨 재회의를 유도한다.
-        _confirm_note = ""
-        _landed_ms, _landed_units, _landed_new = None, 0, True   # 착지한 마일스톤 — 회의 마무리 결론 게시용
-        # [같은 문(2026-07-13→14)] 표결 확정도 등록 게이트를 지난다 — 단 검문은 register_consensus
-        # 내부에서(신설 분기만). 진행 중 주기가 있으면 수렴안은 '단위 추가'로 등록되므로 여기서
-        # 선차단하면 분해 회의가 막힌다(2026-07-14 흐름 귀속 재설계).
-        if _no_r1 and conv_props:
-            from collections import Counter
-            _ranked = [p for p, _ in Counter(conv_props).most_common()]
-            # [단위 동반 등록(2026-07-14, 사용자: '개인 서브태스크 제한 — 회의 끝나고 생기는 흐름으로')]
-            # 수렴안의 '단위:' 줄들 = 팀 합의 SubTask 분해 — 가결과 함께 등록. 개인 도구(set_milestone·
-            # set_subtask)는 솔로 판 한정이라, 팀 판의 주기·단위는 이 경로가 유일하다(개인 카빙의 비인격 대체).
-            from .milestone import register_consensus as _ms_reg
-            _pre_open = next((m.ms_id for m in (getattr(flow, "milestones", None) or [])
-                              if m.status not in ("done", "superseded")), None)
-            for _prop in _ranked:
-                _ms, _n_st = _ms_reg(flow, _prop, topic)
-                if not isinstance(_ms, str):
-                    if _pre_open == _ms.ms_id:      # 진행 중 주기의 분해 회의 — 단위 추가 모드
-                        _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 진행 중 주기 {_ms.ms_id}에 단위 "
-                                         f"{_n_st}개 추가. 각자 pick_backlog(desc='내가 할 일')로 자기 "
-                                         f"백로그를 등재해 전담하세요.")
-                    else:
-                        _confirm_note = (f"\n\n[표결 확정] 수렴안 가결 → 마일스톤 {_ms.ms_id} 자동 등록"
-                                         f"(조건 {len(_ms.criteria)}개, 단위 {_n_st}개). 각자 pick_backlog"
-                                         f"(desc='내가 할 일')로 자기 백로그를 등재해 전담하세요.")
-                    _landed_ms, _landed_units, _landed_new = _ms, _n_st, (_pre_open != _ms.ms_id)
-                    if flow.log:
-                        flow.log("ms_confirm_by_vote", ms=_ms.ms_id, proposals=len(conv_props), subtasks=_n_st)
-                    break
-                # [오라벨링 봉합(2026-07-14, 정합 감사)] register_consensus 반환은 조건 거부만이 아니라
-                # 경계 보류(백로그 처리 중·진행 중 주기)일 수 있다 — 각 메시지가 자체 처방을 담으므로
-                # '조건 다듬어 재회의' 획일 접미사를 빼고 그대로 surface(잘못된 처방 제거).
-                _confirm_note = f"\n\n[표결 확정 보류] {_ms}"
-        elif _no_r1:
-            # [수렴안 미동봉 재시도(2026-07-14, 안정성 감사 위험#1)] 파이프라인 회의가 종결됐는데 아무도
-            # [수렴안]을 형식대로 안 넣으면 등록이 0건 — 종전엔 침묵(코칭조차 없음)이라 판이 마일스톤
-            # 없이 겉돌았다(Haiku 형식 실패의 가장 흔한 사망 원인). 열린 주기가 없으면 재회의를 명시 유도.
-            _has_open = any(m.status not in ("done", "superseded")
-                            for m in (getattr(flow, "milestones", None) or []))
-            if not _has_open:
-                # [강제 종합(2026-07-14, 사용자: '형식을 봇 지능·운에 맡기지 말고 돌게 하라')] 회의는
-                # 내용상 수렴했는데(라이브 U-024: 16분 토론 전원 동의) 아무도 [수렴안]으로 포맷 안 해
-                # 빈손 종결 — Haiku 형식 실패의 사망 원인. 재회의 코칭(봇 재시도)은 또 형식 실패한다.
-                # SYS가 앵커에게 '회의록 종합 [수렴안] 작성'을 강제하는 단일 턴을 넣어 논의를 등록으로
-                # 착지시킨다(형식 전환=SYS 구동=A, 내용은 이미 봇이 냄=B). 종합도 거부되면 코칭 폴백.
-                _ctx = "\n".join(minutes[-14:]) or "(발언 없음)"
-                _synth_body = (
-                    f"[회의 종결 — 수렴안 작성(필수)] 주제: {topic}\n회의록:\n{_ctx}\n\n"
-                    "회의가 소진됐습니다. 지금까지 논의를 종합해 아래 형식의 [수렴안]을 **반드시** 작성하세요 "
-                    "— 이것이 이 턴의 유일한 임무입니다(다른 말·도구 호출 금지, [수렴안] 블록만 출력):\n"
-                    "[수렴안]\n단계: <전체 로드맵 1단계(완전한 MVP)>\n단계: <2단계(확장)>\n"
-                    "목표: <이번 주기 목표 한 줄>\n<조건 | 실증절차(run으로 확인)>\n<조건 | 실증절차>\n"
-                    "단위: <분해 단위 | 실증절차>\n단위: <분해 단위 | 실증절차>\n[/수렴안]")
-                _synth = None
-                try:
-                    _synth = await flow.wake(me_id, _synth_body, Kind.INFO)
-                except Exception as _e:
-                    if flow.log:
-                        flow.log("ms_forced_synth_err", err=str(_e)[:100])
-                _c = _ms_extract(_synth) if _synth else None
-                if _c:
-                    from .milestone import register_consensus as _ms_reg2
-                    _ms2, _n2 = _ms_reg2(flow, _c, topic)
-                    if not isinstance(_ms2, str):
-                        _landed_ms, _landed_units, _landed_new = _ms2, _n2, True
-                        if flow.log:
-                            flow.log("ms_forced_synth", ms=_ms2.ms_id, subtasks=_n2)
-                        _confirm_note = (f"\n\n[표결 확정] 수렴안(시스템 종합) → 마일스톤 {_ms2.ms_id} 자동 "
-                                         f"등록(조건 {len(_ms2.criteria)}개, 단위 {_n2}개). 각자 pick_backlog"
-                                         "(desc='내가 할 일')로 자기 백로그를 등재해 전담하세요.")
-                    else:
-                        if flow.log:
-                            flow.log("ms_forced_synth_reject", reason=str(_ms2)[:80])
-                        _confirm_note = (f"\n\n[확정 실패 — 종합 수렴안 거부] {_ms2}\n다시 meet를 열어 조건을 "
-                                         "실증 가능하게 다듬어 재수렴하세요.")
-                if not _confirm_note:
-                    if flow.log:
-                        flow.log("ms_consensus_empty", topic=str(topic)[:60], members=len(members))
-                    _confirm_note = ("\n\n[확정 실패 — 수렴안 미동봉] 회의는 종결됐지만 [수렴안] 블록이 없어 "
-                                     "등록된 것이 0건입니다. **마일스톤이 없으면 판이 진행되지 않습니다** — 다시 "
-                                     "meet를 열고, 종결 시 반드시 이 형식을 동봉하세요:\n[수렴안]\n단계: <로드맵>\n"
-                                     "목표: <이 주기 목표>\n<조건 | 실증절차(run으로 확인)>\n단위: <분해 | 실증>\n"
-                                     "[/수렴안]  (가결되면 자동 등록됩니다.)")
+        if _pipe and _landed_ms is None and not _confirm_note:
+            # 게이트 미충족으로 비용 소진 종료 — 거짓 완료로 넘기지 않고 정직히 상신(사용자 확인 필요)
+            if flow.log:
+                flow.log("ms_consensus_empty", topic=str(topic)[:60], members=len(members))
+            _confirm_note = ("\n\n[확정 실패 — 수렴 소진] 회의가 수렴안을 채택하지 못한 채 발언 예산을 "
+                             "소진했습니다. **거짓 완료로 넘기지 않습니다** — 현재 팀 구성·요구로는 수렴이 "
+                             "어렵습니다. 요구 명확화나 팀 재구성 등 사람 확인이 필요합니다.")
         # [회의 마무리 결론 게시(2026-07-14, 사용자: '회의를 접었을 때 발제된 이유와 결론이 보이면
         # 좋겠다')] 마일스톤 랜드마크([마일스톤 시작])는 회의 블록 밖 별도 메시지라, 회의가 접히면
         # 요약(topic+마지막 발언)에 결론이 안 보였다(마지막 발언=중간 토론). 수렴안이 착지하면 그

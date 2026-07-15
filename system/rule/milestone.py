@@ -701,6 +701,34 @@ def register_consensus(flow, prop: str, origin: str = ""):
         st = open_subtask(flow, ms, u.partition("|")[0].strip(), parse_criteria_lines(u))
         if not isinstance(st, str):
             n += 1
+    # [채택 수렴안 → SYS가 파일 생성(2026-07-14, 사용자: '채택된 수렴안으로 SYS 내부에서 GOAL.md 등
+    # 필요 파일 생성해줘야 해')] 봇이 "GOAL.md 없어 게이트 못 연다"던 파일을, 채택 산물로 시스템이 직접
+    # materialize한다(.collab/T-<id>/ = 시스템 소유 — 봇에게 파일작성을 떠넘기지 않는다). GOAL.md는
+    # 복구 파서(_parse_goal_doc) 계약 헤더 그대로 두고, 로드맵·단위·비준 기록은 CONSENSUS.md로 별도.
+    try:
+        from .._util import dossier_write, dossier_rel
+        _cur2 = getattr(flow, "current", None)
+        if _cur2 is not None:
+            _acc = ("\n".join(f"- {c.desc}" + (f" (실증: {c.verify})" if getattr(c, "verify", "") else "")
+                              for c in (ms.criteria or [])) or (getattr(_cur2, "acceptance", "") or ""))
+            dossier_write(flow, "GOAL.md", (
+                f"# GOAL — Task {_cur2.task_id}\n\n"
+                f"## Purpose\n{(getattr(_cur2.status, 'purpose', '') or '').strip()}\n\n"
+                f"## Goal\n{(goal or '').strip()}\n\n"
+                f"## Acceptance\n{_acc.strip()}\n\n"
+                f"## Standard\n{(getattr(_cur2, 'standard', '') or '').strip()}\n\n"
+                f"## Interfaces\n{(getattr(_cur2, 'interfaces', '') or '').strip()}\n"))
+            _units_md = "\n".join(f"- {u.partition('|')[0].strip()}" for u in units)
+            dossier_write(flow, "CONSENSUS.md", (
+                f"# CONSENSUS — 회의 채택 수렴안 (Task {_cur2.task_id}, 마일스톤 {ms.ms_id})\n\n"
+                f"## 목표\n{(goal or '').strip()}\n\n"
+                + (("## 로드맵\n" + " → ".join(stages) + "\n\n") if stages else "")
+                + "## 완수조건\n" + ("\n".join(f"- {c.desc}" for c in (ms.criteria or [])) or "(없음)") + "\n\n"
+                + (f"## 분해 단위(SubTask)\n{_units_md}\n\n" if _units_md else "")
+                + f"## 채택\n회의 수렴안, 전원 찬성 표결로 채택 — {(origin or '')[:100]}\n"
+                + f"\n(회의록 전문: {dossier_rel(_cur2.task_id)}/MINUTES.md)\n"))
+    except Exception:
+        pass
     return ms, n
 
 
