@@ -430,16 +430,12 @@ async def meet(flow, me_id, args):
         while True:
             _pass += 1
             _before = len(conv_props)
-            if _pass == 1 or not _pipe:
-                await run_conversation(policy, st, _t0,
-                                       _speak, bid=(_bid if tt else None),
-                                       max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
-            else:
-                # [효율적 재응찰(2026-07-14, 라이브 ch70: 재응찰이 32분 토론을 통째 재실행)] 첫 패스로
-                # 논의는 충분하다 — 재응찰은 토론을 반복하지 말고 '지금까지 논의를 [수렴안]으로 정리해
-                # 제출'만 전원 병렬로 요청한다(_bid CLOSE_VOTE, 게이트 전면화). 발언권 소진 재토론(비용
-                # 폭발) 대신 수렴안 형식화만 반복 → 채택까지 빠르게, 비용 상한은 여전히 wake_cap.
-                await _bid(list(members), CLOSE_VOTE)
+            # 재응찰 = 전원 발언권 되살려 다시 토론(사용자 '발언권 다 살려 선택 응찰'). 회의가 단계별로
+            # 작아져(회의 하나당 하나) 재토론 비용이 크지 않다 — 종전의 '효율 재응찰(수렴안만 요청)'은
+            # 큰 회의 대응이었고 단계 분리로 불필요해져 폐지(2026-07-14).
+            await run_conversation(policy, st, _t0,
+                                   _speak, bid=(_bid if tt else None),
+                                   max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
             _flush_minutes()
             if flow.current is None or not _pipe:
                 break                                       # 솔로/orchestrated = 단일 패스(종전 동작)

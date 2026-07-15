@@ -745,10 +745,16 @@ def meeting_stage(flow):
         return None
     if not str(getattr(_cur.status, "goal", "") or "").strip():
         return "goal"                                   # ① Task 회의 — GOAL 미정
-    _open = next((m for m in (getattr(flow, "milestones", None) or [])
-                  if m.status not in ("done", "superseded")), None)
+    _mss = getattr(flow, "milestones", None) or []
+    _open = next((m for m in _mss if m.status not in ("done", "superseded")), None)
     if _open is None:
-        return "milestone"                              # ② 마일스톤 회의 — 열린 주기 없음
+        # ② 마일스톤 회의 — 열린 주기 없음. 단 로드맵이 소진됐으면 더 열 주기 없음(무한 마일스톤 회의
+        # 방지). 첫 마일스톤(아직 아무것도 없음)이거나, 로드맵에 안 지은 단계가 남았을 때만 연다.
+        _road = getattr(flow, "roadmap", None) or []
+        _done = [m for m in _mss if m.status == "done"]
+        if not _mss or (_road and len(_done) < len(_road)):
+            return "milestone"
+        return None                                     # 로드맵 소진 → 작업/완료 단계
     _sts = [st for st in _open.subtasks if st.status != "superseded"]
     if not _sts:
         return "subtask"                                # ③ 서브태스크 회의 — 단위 미분해

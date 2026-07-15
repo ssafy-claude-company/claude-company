@@ -2213,11 +2213,19 @@ class Sys:
             # 안 닫고 턴을 끝내도 SYS가 계속 깨워 회의→조건→릴레이→iter로 주기를 닫게 한다(마감은 조건).
             # 큰 재작성(세그먼트 루프 통째 교체)은 관통 관측 뒤로 — 실 관측 없이 물리를 갈면 리스크만 큼.
             from .rule.milestone import next_milestone as _ms_next, pipeline_on as _ms_on
+            from .rule.milestone import meeting_stage as _ms_stage, stage_agenda as _stage_agenda
+            from .rule.communication import meet as _stage_meet
             def _ms_pending():
                 return _ms_on() and _ms_next(flow) is not None
+            # [단계 회의 체인(2026-07-14, 사용자: 'Task 회의→마일스톤 회의→서브태스크 회의→백로그 회의')]
+            # 이전 단계 결론이 섰고 다음 계획 단계가 남았으면 SYS가 다음 단계 회의를 자동으로 연다 —
+            # 앵커가 부를지에 안 맡긴다(기계적 전환=SYS). 한 회의=한 단계라 여러 단계는 회의 여러 번(순차).
+            def _stage_pending():
+                return _ms_on() and flow.current is not None and _ms_stage(flow) is not None
             # 구조적 연속 실행: 턴 한도로 작업이 끊겼으면(진행 중 Task가 남았거나 '턴 한도' 표시)
             # 같은 세션으로 이어서 완료까지 재호출한다 — '턴 한도 = 무조건 中断' 결함 해소.
             cont = 0
+            _stage_stall, _stage_stall_cap = 0, 3   # 단계 회의가 같은 단계에 계속 막히면 컷(무한 재개 방지)
             # [완료 참칭 방지(2026-07-14, 사용자: '프론트가 답변 하나 뱉고 끝나버린거 아니야')] 선거로 연
             # 제작 요청인데 앵커가 Task도 안 열고(flow.current None) meet도 안 부른 채 평문만 뱉으면, 종전엔
             # 루프 조건이 False라 한 턴에 종료→완료 참칭. '킥오프 미완'을 조건에 더해 SYS가 다시 깨워 **실제
@@ -2233,6 +2241,29 @@ class Sys:
                 if getattr(flow, "_hard_blocked", None):
                     if not await self._hard_block_probe(flow, lead):
                         break
+                # [단계 회의 체인] 계획 단계(GOAL→마일스톤→서브태스크→백로그)가 남았으면 작업-이어가기보다
+                # 먼저 다음 단계 회의를 연다 — 이전 결론 위에서만 열리고, 한 회의가 한 단계만 정한다. 전
+                # 계획 단계가 끝나면(_stage_pending False) 아래 작업-이어가기(위임·검증)로 넘어간다.
+                if _stage_pending() and not flow.cancelled:
+                    _stg = _ms_stage(flow)
+                    _ag, _ = _stage_agenda(_stg)
+                    _op = await self.run_turn(
+                        flow, flow.anchor,
+                        f"다음 회의 안건은 '**{_ag}**'입니다 — 이에 대한 **여는 의견**만 3~5줄으로 "
+                        "내세요(**도구 호출 금지, 텍스트로만**).", Kind.INFO, "leader")
+                    result = await _stage_meet(flow, flow.anchor, {
+                        "topic": f"{_ag} — {(flow.origin_request or body)[:120]}",
+                        "my_opinion": (str(_op or "").strip() or "여는 의견 없음")[:1500], "_sys_open": True})
+                    self._log("stage_meeting_opened", stage=str(_stg), ch=int(flow.user_channel or 0))
+                    # 단계가 진행됐으면(다른 단계로) 무진행 아님 — cont 안 올림. 같은 단계면 정체 카운트.
+                    if _ms_stage(flow) == _stg:
+                        _stage_stall += 1
+                        if _stage_stall >= _stage_stall_cap:
+                            self._log("stage_stall_break", stage=str(_stg), n=_stage_stall)
+                            break                       # 이 단계가 끝내 안 착지 — 무한 재개 차단
+                    else:
+                        _stage_stall = 0
+                    continue
                 # [단일활성 복원] 리더 턴이 끝났는데 위임이 아직 '완주 중'이면(CLI가 도구 호출을 포기해
                 # detach됐거나, 턴 한도로 끊겼지만 deliver 태스크는 살아 있음) — 그 위임을 죽이지 않고
                 # **끝까지 기다린다**. 일하는 owner를 드레인으로 자르던 것(작업 유실·재위임 churn·'오유진
