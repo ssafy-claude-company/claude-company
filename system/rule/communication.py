@@ -577,8 +577,8 @@ async def meet(flow, me_id, args):
                 if _dtxt.strip() and _ph == 0 and _obj == 0:
                     _passed, _diss = await _ratify_vote(
                         f"(공동 결론 파일 {_draft_path} 전문)\n{_dtxt}\n\n"
-                        f"※ 반대하려면 먼저 DRAFT.md 해당 줄에 `> [이의 @직군] …`을 남기세요 — "
-                        f"파일에 근거가 남는 반대만 다음 라운드가 해소할 수 있습니다.")
+                        f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
+                        f"무엇이 빠졌는지 한 줄로 구체히 쓰세요.")
                     if _passed:
                         flow._draft_attr = dict(_dstate.get("attr") or {})   # 발제 귀속 → 등록기
                         _ok, _note = _ms_regstage(flow, _stage, _ms_dprop(_stage, _dtxt), topic)
@@ -592,8 +592,18 @@ async def meet(flow, me_id, args):
                             flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
                         await _say_speech(flow, me_id, "[회의]",
                                           f"결론 파일이 등록 게이트에 보류됐습니다 — {_note} (DRAFT를 다듬어 재수렴)")
-                    elif flow.log:
-                        flow.log("meet_consensus_rejected", passes=_pass, via="draft")
+                    else:
+                        # [부결 이의의 파일 반영 — SYS 서기(2026-07-16, ch76 실측)] 표결은 마이크로 즉답
+                        # (도구 금지)이라 반대자가 이의를 파일에 못 남긴다 → 이의 0 유지 → ready→부결 무한.
+                        # 반대 요지를 SYS가 '> [이의 @표결]'로 DRAFT에 자동 기록(중복 요지는 스킵) — 종결이
+                        # 구조적으로 막히고, 다음 발언 턴들이 그 이의를 해소(내용 채움)하며 수렴한다.
+                        _dtxt2 = str(_dread(flow, "DRAFT.md") or "")
+                        _new = [d for d in (_diss or [])[:5] if d and d[:40] not in _dtxt2]
+                        if _new:
+                            _dwrite(flow, "DRAFT.md", _dtxt2.rstrip("\n") + "\n"
+                                    + "\n".join(f"> [이의 @표결] {d[:150]}" for d in _new) + "\n")
+                        if flow.log:
+                            flow.log("meet_consensus_rejected", passes=_pass, via="draft", filed=len(_new))
                 elif flow.log:
                     flow.log("meet_gate_unmet", passes=_pass, via="draft",
                              placeholders=_ph, objections=_obj)
