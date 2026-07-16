@@ -231,8 +231,8 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                 _fp3 = tool_input.get("file_path") or tool_input.get("path")
                 # [DRAFT 공동 편집 예외] 회의 결론 초안은 협의 '중'에 편집하는 것이 정상 경로다.
                 if _fp3 and os.path.basename(_fp3) == "DRAFT.md":
-                    _mine3 = True
-                if _fp3 and getattr(flow, "file_owner", None) and callable(getattr(flow, "_info", None)):
+                    _mine3 = True                      # 공동 저작 — 소유권 검사가 덮지 못하게(elif)
+                elif _fp3 and getattr(flow, "file_owner", None) and callable(getattr(flow, "_info", None)):
                     _cwd3 = data.get("cwd") or os.getcwd()
                     _rp3 = os.path.realpath(_fp3 if os.path.isabs(_fp3) else os.path.join(_cwd3, _fp3))
                     _od3 = flow.file_owner.get(_rp3)
@@ -255,7 +255,8 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
         if (tool in ("Write", "Edit") and flow is not None and actor is not None
                 and getattr(flow, "current", None) is not None
                 and flow.current.owner and flow.current.owner != actor
-                and actor == getattr(flow, "leader", None)):
+                and actor == getattr(flow, "leader", None)
+                and os.path.basename(tool_input.get("file_path") or tool_input.get("path") or "") != "DRAFT.md"):
             audit.record("tool_denied", actor=actor, role=role, tool=tool,
                          reason="위임된 owner 도메인 대리구현", tool_use_id=tool_use_id)
             return _deny(
@@ -382,6 +383,8 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                 and getattr(flow, "file_owner", None)
                 and callable(getattr(flow, "_info", None))):
             _opath = tool_input.get("file_path") or tool_input.get("path")
+            if _opath and os.path.basename(_opath) == "DRAFT.md":
+                _opath = None                       # [DRAFT 공동 편집 예외] 소유 경계 게이트 비적용(전원 저작)
             if _opath:
                 _ocwd = data.get("cwd") or os.getcwd()
                 _orp = os.path.realpath(_opath if os.path.isabs(_opath) else os.path.join(_ocwd, _opath))
@@ -512,7 +515,9 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                     if _fp:
                         _cwd2 = data.get("cwd") or os.getcwd()
                         _rp = os.path.realpath(_fp if os.path.isabs(_fp) else os.path.join(_cwd2, _fp))
-                        if _rp not in flow.file_owner:
+                        if os.path.basename(_rp) == "DRAFT.md":
+                            pass                        # 공동 결론 초안 — 직군 소유 등록 안 함(독점 오염 차단)
+                        elif _rp not in flow.file_owner:
                             from .guide_tools import _jobs_of, _norm_job
                             _doms = [_norm_job(j) for j in _jobs_of(flow._info(actor) or "") if j.strip()]
                             _doms = [d for d in _doms if d and not d.startswith("예비")]
