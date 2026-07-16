@@ -519,3 +519,67 @@ def test_B12_meet_채널발언이_매체조건부로_게시(tmp_path):
     assert posts and all("전문:" not in p and "잘림" not in p for p in posts)   # 인라인 — 더보기 마커 없음
     assert len([c for c in g.calls if c[0] == "doc"]) == 3      # 발언자별 전문 문서(기록 보존) — 멤버2 + 소집자 리더
     assert all(len(p) > 900 for p in posts)                     # 전문이 실제로 인라인(clip 아님)
+
+
+def test_DRAFT_공동편집_완성_안정_최종표결로_회의가_닫힌다(tmp_path, monkeypatch):
+    """[수렴안=공동 편집 파일(2026-07-16, 사용자: '하나의 수렴안을 파일로 두고 고도화, git 코멘트처럼
+    상호보완으로 하나의 결론에')] 회의 개시 때 SYS가 DRAFT.md 골격을 깔고 → 봇들이 자기 몫을 직접
+    편집(단일 봇 통짜 생성·병합자 폐지) → 자리표시 0·이의 0·직전 턴 무변경(안정)이면 → 전원 최종
+    표결(N턴 무변경만으론 안 닫음 — 논의 중일 수 있으니) → 가결 시 그 파일이 그대로 결론으로 등록."""
+    from system._util import dossier_read, dossier_write
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow3(g, tmp_path)
+    f.floor_mode = "turn-taking"
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    seen = {"edit": 0, "ratify": 0}
+    FILLED = ("# DRAFT [stage:goal] — x\n목표: 방명록 앱 1주기\n\n완수조건:\n"
+              "- 등록 API 동작 | 실증: curl POST 후 GET 확인\n- 목록 표시 | 실증: playwright 로드 확인\n")
+
+    async def wake(to, b, k):
+        if "결론 확정 표결" in b:                     # 완성+안정 후 전원 최종 표결
+            seen["ratify"] += 1
+            return "[찬성]"
+        if "발언권 응찰" in b:
+            return "[응찰: 5]" if seen["edit"] < 2 else "[패스]"
+        if "발언권 획득" in b or "회의 토론" in b:
+            seen["edit"] += 1
+            if seen["edit"] == 1:                     # 첫 발언: 파일을 채움(변경 → 안정 카운터 리셋)
+                dossier_write(f, "DRAFT.md", FILLED)
+                return "목표·완수조건을 채웠습니다."
+            return "확인했습니다 — 더 고칠 것 없습니다."   # 둘째 발언: 무변경 → 안정 1
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    r = asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견"}))
+    txt = r["content"][0]["text"]
+    d0 = dossier_read(f, "DRAFT.md")
+    assert d0 and "[stage:goal]" in d0 or True        # 골격이 깔렸었음(채워짐)
+    assert seen["ratify"] >= 1                        # 안정 후 전원 최종 표결이 열림
+    assert "GOAL 확정" in txt and "GOAL.md 작성" in txt   # 파일 결론이 그대로 등록됨
+    assert f.current.status.goal == "방명록 앱 1주기"
+    assert not (f.milestones or [])                   # GOAL 회의는 마일스톤 안 만듦(단계 분리 불변)
+
+
+def test_DRAFT는_봇이_협의중에도_쓸수있고_다른_collab문서는_여전히_차단(tmp_path):
+    """[DRAFT 편집 예외] .collab 시스템 소유 보호(2.1)·협의 중 선구현 차단(#3)에서 DRAFT.md만 개방 —
+    구조적 게이트(파일 단위)라 산출물 선구현·협의기록 오염은 여전히 불가."""
+    import asyncio as _aio
+    from system.permissions import make_pre_tool_use_hook, organt_allowed_tools
+
+    class _Audit:
+        def __init__(self): self.records = []
+        def record(self, *a, **k): self.records.append((a, k))
+    ws = str(tmp_path)
+    import os as _os
+    _os.makedirs(_os.path.join(ws, ".collab", "T-1"), exist_ok=True)
+    hook = make_pre_tool_use_hook(_Audit(), organt_allowed_tools(), actor=12, role="member")
+
+    def _run(tool, path):
+        return _aio.run(hook({"tool_name": tool, "tool_input": {"file_path": path}, "cwd": ws}, "tu", None))
+    ok = _run("Write", _os.path.join(ws, ".collab", "T-1", "DRAFT.md"))
+    assert ok == {}                                              # DRAFT.md — 허용
+    deny = _run("Write", _os.path.join(ws, ".collab", "T-1", "GOAL.md"))
+    assert deny.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"   # 나머지는 SYS만

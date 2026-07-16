@@ -155,7 +155,12 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
             if path:
                 tgt = os.path.realpath(path if os.path.isabs(path)
                                        else os.path.join(data.get("cwd") or os.getcwd(), path))
-                if ".collab" in tgt.split(os.sep):
+                # [DRAFT 공동 편집 예외(2026-07-16, 사용자: '수렴안을 파일로 두고 고도화')] 회의의
+                #    결론 초안 DRAFT.md는 참여자 전원이 직접 편집(자기 몫 채움·이의 코멘트·해소)하는
+                #    공동 저작 파일 — .collab 중 유일한 봇-쓰기 표면. 나머지 협의 기록은 여전히 SYS만.
+                if ".collab" in tgt.split(os.sep) and os.path.basename(tgt) == "DRAFT.md":
+                    pass                                    # 허용 — 아래 #3 협의-차단도 같은 예외를 둠
+                elif ".collab" in tgt.split(os.sep):
                     audit.record("tool_denied", actor=actor, role=role, tool=tool,
                                  reason=".collab 시스템 소유 문서 쓰기", path=path, tool_use_id=tool_use_id)
                     return _deny("협의 기록(.collab/)은 시스템 소유 — meet/vote/set_goal/보고로만 "
@@ -224,6 +229,9 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
             _mine3 = False
             if woke_info:
                 _fp3 = tool_input.get("file_path") or tool_input.get("path")
+                # [DRAFT 공동 편집 예외] 회의 결론 초안은 협의 '중'에 편집하는 것이 정상 경로다.
+                if _fp3 and os.path.basename(_fp3) == "DRAFT.md":
+                    _mine3 = True
                 if _fp3 and getattr(flow, "file_owner", None) and callable(getattr(flow, "_info", None)):
                     _cwd3 = data.get("cwd") or os.getcwd()
                     _rp3 = os.path.realpath(_fp3 if os.path.isabs(_fp3) else os.path.join(_cwd3, _fp3))

@@ -810,6 +810,56 @@ def stage_agenda(stage):
     return (m[0], m[1]) if m else (None, None)
 
 
+# ── 수렴안 = 공동 편집 파일(DRAFT.md) (2026-07-16, 사용자: '하나의 수렴안을 파일로 두고 고도화,
+# git 코멘트처럼 상호보완으로 하나의 큰 결론에') ─────────────────────────────────────────
+# 한 봇이 수렴안 전체를 한 발화로 생성·병합하는 인지 과부하(+준중앙 병합자)를 제거 — 회의 개시 때
+# SYS가 골격을 깔고, 참여자들이 자기 도메인 몫을 직접 편집·이의 코멘트·해소하며 파일에서 통합된다.
+# 종결 = 골격 완성(자리표시 0)+미해소 이의 0+직전 턴 무변경 → 전원 최종 표결 → 그 파일이 결론.
+
+def stage_draft_template(stage, agenda=""):
+    """회의 개시 때 SYS가 까는 DRAFT.md 골격. 알 수 없는 단계면 None."""
+    body = {
+        "goal": ("목표: <이 Task로 정확히 무엇을 만드는지 — 구체적으로>\n\n완수조건:\n"
+                 "- <조건> | 실증: <run으로 확인하는 절차>\n- <조건> | 실증: <절차>\n"),
+        "milestone": ("단계: <전체 로드맵 — 예: 최소버전 → 확장>\n"
+                      "이번 주기: <이번에 완성해 사용자에게 보여줄 딱 하나>\n\n완수조건:\n"
+                      "- <조건> | 실증: <절차>\n"),
+        "subtask": ("단위: <작업 영역/구성요소> | 실증: <절차>\n단위: <작업 영역/구성요소> | 실증: <절차>\n"),
+        "backlog": ("백로그: <하나씩 처리할 구체 작업>\n백로그: <구체 작업>\n"),
+    }.get(stage)
+    if not body:
+        return None
+    return (f"# DRAFT [stage:{stage}] — {agenda}\n"
+            "(공동 결론 파일 — 규칙: ①자기 도메인 몫을 직접 편집해 채우고 구체화하세요 ②이견은 해당 줄 "
+            "바로 아래 '> [이의 @직군] 한 줄'로 남기세요 ③이의를 해소한 사람이 그 이의 줄을 삭제하세요 "
+            "④꺾쇠 자리표시가 남아 있으면 미완입니다. 이 파일이 그대로 회의의 결론으로 등록됩니다 — "
+            "다음 단계 몫(세부 설계·작업 분해)은 넣지 마세요.)\n\n" + body)
+
+
+def draft_status(text):
+    """DRAFT 상태 → (자리표시 수, 미해소 이의 수). 종결 기계 판정의 원료."""
+    import re as _re
+    t = str(text or "")
+    ph = len(_re.findall(r"<[^>\n]{2,60}>", t))
+    obj = len(_re.findall(r"^\s*>\s*\[이의", t, _re.M))
+    return ph, obj
+
+
+def draft_to_proposal(stage, text):
+    """채택된 DRAFT → register_stage 입력으로 정규화: 헤더·규칙·이의 줄 제거, '- X | 실증: Y' → 'X | Y'."""
+    import re as _re
+    out = []
+    for ln in str(text or "").splitlines():
+        s = ln.strip()
+        if (not s or s.startswith("#") or s.startswith("(") or s.startswith(">")
+                or s == "완수조건:"):
+            continue
+        s = _re.sub(r"^-\s*", "", s)
+        s = _re.sub(r"\|\s*실증\s*[:：]\s*", "| ", s)
+        out.append(s)
+    return "\n".join(out)
+
+
 def stage_context(flow, stage):
     """[안건 타깃 명시(2026-07-16, 정합 감사 A)] 이 단계 회의가 딛고 선 이전 결론을 안건에 못박는다 —
     특히 백로그 회의는 단위마다 열리는데 '어느 단위' 회의인지 없으면 논의와 등록(첫 미충원 단위)이

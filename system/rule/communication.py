@@ -245,6 +245,22 @@ async def meet(flow, me_id, args):
         # 출구라 여러 패스가 필요할 수 있어 파이프라인 회의는 비용 천장을 4배로 — 인위적 라운드 상한은
         # 없고, 이 천장은 무의미 무한스핀(응찰 소진 후 no-op 반복) 방지용 비용 바닥일 뿐이다.
         wake_cap = budget * (len(members) + 1) * (4 if _no_r1 else 1) + 2
+        # [수렴안 = 공동 편집 파일(2026-07-16, 사용자)] 회의 개시 때 SYS가 DRAFT.md 골격을 깔고,
+        # 참여자들이 직접 편집·이의·해소로 파일에서 결론을 통합한다(단일 봇 통짜 생성·병합자 폐지).
+        # 워크스페이스 없는 판(테스트·솔로)은 _draft_path=None → 종전 [수렴안] 채팅블록 경로 폴백.
+        _draft_path = None
+        _dstate = {"h": None, "stable": 0}
+        if _no_r1 and tt and _stage and flow.current is not None:
+            from .milestone import stage_draft_template as _ms_dtmpl, draft_status as _ms_dstat
+            from .milestone import draft_to_proposal as _ms_dprop
+            from .._util import dossier_read as _dread, dossier_write as _dwrite
+            _tmpl = _ms_dtmpl(_stage, (_agenda or topic)[:120])
+            if _tmpl:
+                _ex = _dread(flow, "DRAFT.md")
+                if _ex is None or f"[stage:{_stage}]" not in str(_ex):
+                    _dwrite(flow, "DRAFT.md", _tmpl)        # 새 단계 → 새 골격(같은 단계 재회의면 진행분 보존)
+                if _dread(flow, "DRAFT.md") is not None:    # 쓰기 실패(워크스페이스 없음)면 폴백 유지
+                    _draft_path = f"{dossier_rel(flow.current.task_id)}/DRAFT.md"
         sched_i = {"i": 0}                    # orchestrated 라벨(r)용 — allocator 소비 순서와 1:1
         block = {"label": None, "items": []}  # [B-09] MINUTES.md 블록 버퍼(라운드/토론 단위 flush)
 
@@ -289,9 +305,17 @@ async def meet(flow, me_id, args):
             # 유도(제출 시 전원 찬반 표결 → 전원 찬성이면 확정·종료). 응찰 소진을 기다릴 필요 없음.
             head = ("[회의 토론 — 발언권 획득(당신의 응찰이 선정됨)] 방금 응찰한 그 관점을 지금 발언하세요."
                     if won else "[회의 토론]")
-            _sub = (f"\n\n**이 안건이 충분히 다뤄졌다고 보면, 새 의견을 보태지 말고 아래 [수렴안]을 발언에 "
-                    f"담아 제출하세요 — 전원 찬반 표결에 부쳐지고 전원 찬성이면 확정·종료됩니다"
-                    f"(미완이면 부결되니 다듬어 낼 것):**\n{_stage_tmpl}" if (_no_r1 and _stage_tmpl) else "")
+            if _draft_path is not None:
+                _sub = (f"\n\n**이 회의의 결론은 공동 파일 `{_draft_path}` 에서 만듭니다.** 지금 그 파일을 "
+                        f"Read하고 셋 중 하나를 하세요: ①꺾쇠 자리표시·모호한 부분 중 **당신 도메인 몫을 Edit로 "
+                        f"직접 채우기** ②이견은 해당 줄 아래 `> [이의 @{flow._info(m) or '직군'}] 한 줄` 추가 "
+                        f"③남의 이의 해소(내용 고치고 그 이의 줄 삭제). 그 뒤 채널엔 **무엇을 바꿨는지 한 줄만** "
+                        f"발언하세요(장문 금지). 바꿀 것이 없으면 `[패스]`만 — 자리표시·이의가 0이 되고 변경이 "
+                        f"멎으면 전원 최종 표결로 확정됩니다.")
+            else:
+                _sub = (f"\n\n**이 안건이 충분히 다뤄졌다고 보면, 새 의견을 보태지 말고 아래 [수렴안]을 발언에 "
+                        f"담아 제출하세요 — 전원 찬반 표결에 부쳐지고 전원 찬성이면 확정·종료됩니다"
+                        f"(미완이면 부결되니 다듬어 낼 것):**\n{_stage_tmpl}" if (_no_r1 and _stage_tmpl) else "")
             return (f"{head} 주제: {topic}{_frm}\n못 본 발언:\n{log_txt}\n\n"
                     f"당신({flow._info(m)})의 차례입니다 — 위 안건에 당신 도메인 관점으로 답하세요"
                     f"(근거 필수, 맹목적 동의·이미 나온 것 반복 금지). 3~5줄(최대 1000자). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.{_sub}\n"
@@ -340,7 +364,22 @@ async def meet(flow, me_id, args):
             # [수렴안 조기 제출(2026-07-15, 사용자: '발언 다 안 끝나도 수렴안 제출 → 거기서 찬반')] 응찰
             # 소진(종결표결)을 기다리지 않고, 토론 발언 중 누구든 [수렴안]을 내면 그걸 게이트 루프로 넘겨
             # 즉시 비준(전원 찬성)에 부친다 — 지명 릴레이가 응찰을 막아 종결표결이 안 열리던 교착 우회.
-            if _no_r1 and res:
+            if _no_r1 and _draft_path is not None:
+                # [초안 종결 감지] 매 발언 후 DRAFT 상태 확인 — 자리표시 0·이의 0·직전 턴 무변경(안정)이면
+                # 조기 종료 → 게이트 루프가 전원 최종 표결(한 명의 편집 직후 바로 닫히는 것 방지 = 안정 1턴).
+                import hashlib as _hl
+                _dtxt = str(_dread(flow, "DRAFT.md") or "")
+                _h = _hl.md5(_dtxt.encode()).hexdigest()
+                if _h == _dstate["h"]:
+                    _dstate["stable"] += 1
+                else:
+                    _dstate.update(h=_h, stable=0)
+                _ph, _obj = _ms_dstat(_dtxt)
+                if _dtxt.strip() and _ph == 0 and _obj == 0 and _dstate["stable"] >= 1:
+                    if flow.log:
+                        flow.log("draft_ready", stage=str(_stage), stable=_dstate["stable"])
+                    return None                     # 조기 종료 → 게이트 루프가 최종 표결·등록
+            elif _no_r1 and res:
                 _cprop = _stage_extract(_stage, res)
                 # [자리표시 가드(정합 C)] 템플릿 에코('<…>' 잔존)는 제출로 안 침 — 껍데기 조기종료 방지.
                 import re as _re2
@@ -373,15 +412,24 @@ async def meet(flow, me_id, args):
                     # (사람이 아니라 표결+등록 게이트가 확정). 확정 발화 권력의 비인격 대체.
                     # [단계별 수렴안(2026-07-14, 사용자: '회의 하나당 하나')] 이 회의의 안건에 맞는
                     # 좁은 수렴안만 요청한다 — 목표+마일스톤+단위를 한꺼번에가 아니라 이 단계 결론 하나.
-                    _conv = (f"\n마쳐도 된다면 `[종료]` 다음 줄에 이 회의의 결론을 아래 형식으로 동봉하세요 "
+                    if _draft_path is not None:
+                        _conv = (f"\n마쳐도 되면 `[종료]`만 — 이 회의의 결론은 공동 파일 `{_draft_path}` "
+                                 f"완성(자리표시 0·이의 0)으로 판정됩니다. 아직 빈 곳·이의가 있으면 "
+                                 f"`[계속: N]`으로 발언권을 받아 파일을 다듬으세요.")
+                    else:
+                        _conv = (f"\n마쳐도 된다면 `[종료]` 다음 줄에 이 회의의 결론을 아래 형식으로 동봉하세요 "
                              f"(이 회의 안건 = **{_agenda}**):\n{_stage_tmpl}\n"
                              "(동료가 이미 낸 결론에 동의하면 그대로 복사·수정해 제출 — 전원 찬성 표결로 "
                              "채택됩니다. 이 회의 안건 밖의 것은 넣지 마세요 — 다음 단계 회의에서 정합니다.)"
                              if (_no_r1 and _stage_tmpl) else " 마쳐도 되면 `[종료]`만.")
-                    _gate = ("\n\n**이 회의는 위 형식의 결론이 채택돼야만 끝납니다 — 발언권 소진·지명 릴레이"
-                             "로는 안 끝납니다.** 아직 채택된 결론이 없습니다. 마치려면 반드시 위 코드블록/형식"
-                             "대로 결론을 동봉하세요(누구든). 없으면 회의는 닫히지 않고 다시 열립니다."
-                             if (_no_r1 and _gate_unmet["on"]) else "")
+                    _gate = ((f"\n\n**이 회의는 결론 파일이 완성·가결돼야만 끝납니다 — 발언권 소진·지명 "
+                              f"릴레이로는 안 끝납니다.** `{_draft_path}` 에 아직 빈 곳/이의가 남았거나 표결이 "
+                              f"부결됐습니다 — 발언권을 받아 파일을 채우고 이의를 해소하세요.")
+                             if _draft_path is not None else
+                             ("\n\n**이 회의는 위 형식의 결론이 채택돼야만 끝납니다 — 발언권 소진·지명 릴레이"
+                              "로는 안 끝납니다.** 아직 채택된 결론이 없습니다. 마치려면 반드시 위 코드블록/형식"
+                              "대로 결론을 동봉하세요(누구든). 없으면 회의는 닫히지 않고 다시 열립니다.")
+                             ) if (_no_r1 and _gate_unmet["on"]) else ""
                     return (f"[회의 — 종결 확인] 주제: {topic}\n못 본 발언:\n{_ctx_for(c)}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
                             f"판단하세요. 더 다뤄야 할 것이 있으면 `[계속: N]`(N=1~9)과 무엇인지 한 줄만 "
@@ -497,6 +545,41 @@ async def meet(flow, me_id, args):
             _flush_minutes()
             if flow.current is None or not _pipe:
                 break                                       # 솔로/orchestrated = 단일 패스(종전 동작)
+            if _draft_path is not None:
+                # [초안 모드 종결] 파일 상태가 유일한 진실 — 완성(자리표시 0·이의 0)이면 전원 최종 표결,
+                # 가결 시 그 파일이 그대로 결론으로 등록된다. 부결·미완성이면 회의 계속(revive) — 반대자는
+                # 표결문 요구대로 DRAFT에 이의를 남기므로 다음 패스가 그 이의를 해소하며 수렴한다.
+                _dtxt = str(_dread(flow, "DRAFT.md") or "")
+                _ph, _obj = _ms_dstat(_dtxt)
+                if _dtxt.strip() and _ph == 0 and _obj == 0:
+                    _passed, _diss = await _ratify_vote(
+                        f"(공동 결론 파일 {_draft_path} 전문)\n{_dtxt}\n\n"
+                        f"※ 반대하려면 먼저 DRAFT.md 해당 줄에 `> [이의 @직군] …`을 남기세요 — "
+                        f"파일에 근거가 남는 반대만 다음 라운드가 해소할 수 있습니다.")
+                    if _passed:
+                        _ok, _note = _ms_regstage(flow, _stage, _ms_dprop(_stage, _dtxt), topic)
+                        if _ok:
+                            _landed, _conclusion = True, _note
+                            _confirm_note = "\n\n" + _note
+                            if flow.log:
+                                flow.log("stage_confirmed", stage=str(_stage), passes=_pass, via="draft")
+                            break
+                        if flow.log:
+                            flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
+                        await _say_speech(flow, me_id, "[회의]",
+                                          f"결론 파일이 등록 게이트에 보류됐습니다 — {_note} (DRAFT를 다듬어 재수렴)")
+                    elif flow.log:
+                        flow.log("meet_consensus_rejected", passes=_pass, via="draft")
+                elif flow.log:
+                    flow.log("meet_gate_unmet", passes=_pass, via="draft",
+                             placeholders=_ph, objections=_obj)
+                _gate_unmet["on"] = True
+                _t0 = Turn(speaker=me_id, body="(결론 파일 미완/부결 — 회의 계속)")
+                if wakes["n"] >= wake_cap:
+                    if flow.log:
+                        flow.log("meet_gate_exhausted", passes=_pass)
+                    break
+                continue
             _fresh = conv_props[_before:]                   # 이번 패스에 제출된 수렴안 후보
             if _fresh:
                 _top = Counter(_fresh).most_common(1)[0][0]
