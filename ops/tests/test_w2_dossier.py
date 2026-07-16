@@ -103,7 +103,7 @@ def test_B08_permissions_collab_Write_Edit_거부_처방동봉():
         out = asyncio.run(hook({"tool_name": tool, "cwd": "/ws",
                                 "tool_input": {"file_path": ".collab/T-1/GOAL.md"}}, "t1", None))
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert "meet/vote/set_goal/보고" in out["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "DRAFT.md만 Edit로 직접 편집" in out["hookSpecificOutput"]["permissionDecisionReason"]
     out = asyncio.run(hook({"tool_name": "Write", "cwd": "/ws",
                             "tool_input": {"file_path": "/ws/.collab/x.md"}}, "t2", None))
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"   # 절대경로도 동일
@@ -122,7 +122,7 @@ def test_B08_run_셸_우회도_차단_Read는_잠기지_않음(tmp_path):
                 "rm .collab/T-1/MINUTES.md"):
         r = asyncio.run(t["run"].handler({"command": cmd}))
         txt = r["content"][0]["text"]
-        assert "실행 거부" in txt and "meet/vote/set_goal/보고" in txt
+        assert "실행 거부" in txt and "DRAFT.md만 Edit로 직접 편집" in txt
     ok = asyncio.run(t["run"].handler({"command": "echo hello"}))
     assert "[exit 0]" in ok["content"][0]["text"]
     # 오탐 방지: '.collaboration' 같은 유사 이름은 협의 기록이 아님 — 단어 경계 판정으로 통과

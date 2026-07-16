@@ -163,7 +163,7 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                 elif ".collab" in tgt.split(os.sep):
                     audit.record("tool_denied", actor=actor, role=role, tool=tool,
                                  reason=".collab 시스템 소유 문서 쓰기", path=path, tool_use_id=tool_use_id)
-                    return _deny("협의 기록(.collab/)은 시스템 소유 — meet/vote/set_goal/보고로만 "
+                    return _deny("협의 기록(.collab/)은 시스템 소유 — 회의 결론 초안 DRAFT.md만 Edit로 직접 편집 가능하고, 나머지는 meet/vote/보고로만  "
                                  "기록됩니다(봇은 Read로 열람만).")
 
         # 2.5) [쓰기 리스] 리스(flow.write_lease)가 배정된 행위자는 그 샌드박스 안에만 쓴다 — 병렬

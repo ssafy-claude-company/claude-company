@@ -546,3 +546,26 @@ def test_백로그회의_발제자가_제출자로_등록된다(monkeypatch):
     bl = relay_for(f, st).backlogs
     assert bl[0].submitter == 12                      # 발제자=주인으로 남음
     assert bl[1].submitter == 0                       # 귀속 없는 줄 = 무주(자기선택)
+
+
+def test_백로그_소진되고_주기_미완이면_추가분해회의가_체인에_잡힌다(monkeypatch):
+    """[백로그 소진=회의 트리거의 체인 편입(2026-07-16, 잔재 감사)] 전 단위 백로그가 소진(전부 종결)
+    됐는데 주기가 미완이면 meeting_stage가 'subtask'(추가 분해 회의) — 종전엔 handoff 코칭만 있고
+    stage=None이라 봇이 meet를 불러도 결론 경로가 없었다."""
+    import types
+    from system.rule.milestone import meeting_stage, register_stage
+    from system.rule.backlog import relay_for
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
+                                      status=types.SimpleNamespace(goal="g", purpose=""),
+                                      acceptance="", standard="", interfaces="")
+    register_stage(f, "milestone", "이번 주기: MVP\n동작 | curl 확인")
+    register_stage(f, "subtask", "단위: 백엔드 | curl 확인")
+    st = [m for m in f.milestones if m.status not in ("done", "superseded")][0].subtasks[0]
+    register_stage(f, "backlog", "백로그: API 구현")
+    assert meeting_stage(f) is None                      # 미처리 백로그 존재 → 작업 단계
+    r = relay_for(f, st)
+    b = r.backlogs[0]
+    r.pick(12, b.backlog_id, 12); r.done(12, b.backlog_id, "완료")
+    assert meeting_stage(f) == "subtask"                 # 소진+주기 미완 → 추가 분해 회의(체인 자동)

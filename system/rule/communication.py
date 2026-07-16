@@ -505,7 +505,8 @@ async def meet(flow, me_id, args):
                 _vsum = (f"결론 확정 표결 — 찬성 {_yes} · 반대 {len(_dissents)}"
                          + (" → 확정" if _passed0 else
                             " / 반대 요지: " + " · ".join(d[:60] for d in _dissents[:3])))
-                await _say_speech(flow, me_id, "[표]", _vsum)
+                _ch = (flow.current.thread_id if flow.current else None) or flow.user_channel
+                await flow.guide.post(int(_ch), 0, f"[표] {_vsum}")   # SYS 명의(앵커 발언 착시 방지)
             except Exception:
                 pass
             return _passed0, _dissents

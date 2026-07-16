@@ -765,12 +765,20 @@ def meeting_stage(flow):
     if not _sts:
         return "subtask"                                # ③ 서브태스크 회의 — 단위 미분해
     store = getattr(flow, "backlog_relays", None) or {}
+    _exhausted = True
     for st in _sts:
         if st.status == "done":
             continue
         r = store.get(st.st_id)
         if r is None or not r.backlogs:
             return "backlog"                            # ④ 백로그 회의 — 미충원 단위 존재
+        if not r.all_done():
+            _exhausted = False                          # 처리 중/대기 백로그 존재 → 작업 단계
+    # [백로그 소진 = 회의 트리거(2026-07-16, 잔재 감사 ①)] 전 단위의 백로그가 소진(전부 done/dropped)
+    # 됐는데 주기가 아직 열려 있으면(조건 미충족) 추가 분해 회의 — 종전엔 handoff 코칭('meet를 열어라')
+    # 만 있고 stage가 None이라, 봇이 meet를 불러도 결론 경로가 없었다(수렴 소진 낭비). 체인이 자동 개설.
+    if _exhausted and _open.status == "open":
+        return "subtask"
     return None                                          # 전 단계 완료 → 작업/검증 단계
 
 
@@ -841,7 +849,7 @@ def draft_status(text):
     import re as _re
     t = str(text or "")
     ph = len(_re.findall(r"<[^>\n]{2,60}>", t))
-    obj = len(_re.findall(r"^\s*>\s*\[이의", t, _re.M))
+    obj = len(_re.findall(r"^\s*>", t, _re.M))   # 모든 인용(>) 줄 = 미해소 코멘트(해소=삭제해야 닫힘)
     return ph, obj
 
 
