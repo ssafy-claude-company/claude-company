@@ -840,16 +840,30 @@ def stage_draft_template(stage, agenda=""):
     return (f"# DRAFT [stage:{stage}] — {agenda}\n"
             "(공동 결론 파일 — 규칙: ①자기 도메인 몫을 직접 편집해 채우고 구체화하세요 ②이견은 해당 줄 "
             "바로 아래 '> [이의 @직군] 한 줄'로 남기세요 ③이의를 해소한 사람이 그 이의 줄을 삭제하세요 "
-            "④꺾쇠 자리표시가 남아 있으면 미완입니다. 이 파일이 그대로 회의의 결론으로 등록됩니다 — "
-            "다음 단계 몫(세부 설계·작업 분해)은 넣지 마세요.)\n\n" + body)
+            "④꺾쇠 자리표시가 남아 있으면 미완입니다.\n"
+            "⑤ **'## 결정' 구획만 표결·완성 판정의 대상**입니다 — 그 아래 '## 참고'엔 근거·설계 메모를 "
+            "자유롭게 쌓되, 결정을 바꾸려면 결정 구획을 직접 고치세요. 등록되는 결론 = 결정 구획.)\n\n"
+            "## 결정\n\n" + body + "\n## 참고 (자유 — 판정 대상 아님)\n")
+
+
+def draft_decision_region(text):
+    """[과녁 고정(2026-07-16, 사용자: 'SYS 내용 판단 없이 구조로')] '## 결정' 구획만 추출 — 완성 판정·
+    표결·이의 기록·안정 해시가 전부 이 구획만 본다. 봇이 밖에 참고 섹션을 아무리 늘려도 반대 표면이
+    안 자란다(발산 되먹임 차단). 구획 마커 없으면(구버전 초안) 전체 반환(호환)."""
+    t = str(text or "")
+    i = t.find("## 결정")
+    if i < 0:
+        return t
+    j = t.find("\n## ", i + 4)
+    return t[i:j] if j > 0 else t[i:]
 
 
 def draft_status(text):
-    """DRAFT 상태 → (자리표시 수, 미해소 이의 수). 종결 기계 판정의 원료."""
+    """DRAFT 상태 → (자리표시 수, 미해소 이의 수). '## 결정' 구획만 심사."""
     import re as _re
-    t = str(text or "")
+    t = draft_decision_region(text)
     ph = len(_re.findall(r"<[^>\n]{2,60}>", t))
-    obj = len(_re.findall(r"^\s*>", t, _re.M))   # 모든 인용(>) 줄 = 미해소 코멘트(해소=삭제해야 닫힘)
+    obj = len(_re.findall(r"^\s*>", t, _re.M))   # 구획 내 인용(>) 줄 = 미해소(해소=삭제)
     return ph, obj
 
 
@@ -866,8 +880,9 @@ def draft_norm_line(ln):
 
 
 def draft_to_proposal(stage, text):
-    """채택된 DRAFT → register_stage 입력으로 정규화: 헤더·규칙·이의 줄 제거, '- X | 실증: Y' → 'X | Y'."""
-    out = [n for n in (draft_norm_line(l) for l in str(text or "").splitlines()) if n]
+    """채택된 DRAFT('## 결정' 구획) → register_stage 입력 정규화. 참고 구획은 파일에 남되 등록 안 됨."""
+    region = draft_decision_region(text)
+    out = [n for n in (draft_norm_line(l) for l in region.splitlines()) if n and not n.startswith("## ")]
     return "\n".join(out)
 
 

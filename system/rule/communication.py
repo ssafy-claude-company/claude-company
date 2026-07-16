@@ -372,8 +372,9 @@ async def meet(flow, me_id, args):
                 # [초안 종결 감지] 매 발언 후 DRAFT 상태 확인 — 자리표시 0·이의 0·직전 턴 무변경(안정)이면
                 # 조기 종료 → 게이트 루프가 전원 최종 표결(한 명의 편집 직후 바로 닫히는 것 방지 = 안정 1턴).
                 import hashlib as _hl
+                from .milestone import draft_decision_region as _dregion
                 _dtxt = str(_dread(flow, "DRAFT.md") or "")
-                _h = _hl.md5(_dtxt.encode()).hexdigest()
+                _h = _hl.md5(_dregion(_dtxt).encode()).hexdigest()   # 안정 판정 = 결정 구획만
                 # [발제 귀속 — 턴별 diff(2026-07-16, 사용자: '발제한 애가 주인, 누가 발제했는지 남아야')]
                 # 이 턴에 새로 나타난(또는 고쳐 쓴) '백로그:' 줄은 이 화자의 발제 — 봇 규약(태그) 없이
                 # SYS가 구조적으로 추적한다. 마지막 실질 저자가 주인(고쳐 쓴 사람이 새 주인).
@@ -587,8 +588,10 @@ async def meet(flow, me_id, args):
                 _dtxt = str(_dread(flow, "DRAFT.md") or "")
                 _ph, _obj = _ms_dstat(_dtxt)
                 if _dtxt.strip() and _ph == 0 and _obj == 0:
+                    from .milestone import draft_decision_region as _dregion2
                     _passed, _diss = await _ratify_vote(
-                        f"(공동 결론 파일 {_draft_path} 전문)\n{_dtxt}\n\n"
+                        f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
+                        f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
                         f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
                         f"무엇이 빠졌는지 한 줄로 구체히 쓰세요.")
                     if _passed:
@@ -612,8 +615,12 @@ async def meet(flow, me_id, args):
                         _dtxt2 = str(_dread(flow, "DRAFT.md") or "")
                         _new = [d for d in (_diss or [])[:5] if d and d[:40] not in _dtxt2]
                         if _new:
-                            _dwrite(flow, "DRAFT.md", _dtxt2.rstrip("\n") + "\n"
-                                    + "\n".join(f"> [이의 @표결] {d[:150]}" for d in _new) + "\n")
+                            _blk = "\n".join(f"> [이의 @표결] {d[:150]}" for d in _new)
+                            _ref = _dtxt2.find("\n## 참고")
+                            if _ref > 0:   # 결정 구획 끝(참고 구획 직전)에 삽입 — 판정 대상 유지
+                                _dwrite(flow, "DRAFT.md", _dtxt2[:_ref].rstrip("\n") + "\n" + _blk + "\n" + _dtxt2[_ref:])
+                            else:
+                                _dwrite(flow, "DRAFT.md", _dtxt2.rstrip("\n") + "\n" + _blk + "\n")
                         try:
                             flow.note_activity(0, f"🗳 표결 부결 — 이의 {len(_new)}건 DRAFT 기록, 해소 회의 계속", force=True)
                         except Exception:
