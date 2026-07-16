@@ -256,7 +256,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "**순차 릴레이 — 한 번에 한 백로그.** desc='내가 할 일'로 내 백로그를 풀에 등재한다(st=단위 "
               "id/목표 일부로 소속 지정). 아무도 작업 중이 아니고 내 차례면 즉시 착수, 아니면 대기(내 "
               "차례는 마무리자 선정으로 온다). id='B3'는 **마무리자(직전 완료·중단자)만** — 남은 백로그 중 "
-              "하나를 골라 그 제출자를 다음 수행자로 선정한다. **작업(run/Write)은 착수된 뒤에만.**",
+              "하나를 골라 다음 수행자를 선정한다(수행자=그 제출자, 회의 산물처럼 제출자가 없으면 집는 사람). **작업(run/Write)은 착수된 뒤에만.**",
               {"id": str, "desc": str, "st": str})
         async def pick_backlog(args):
             from .rule.backlog import relay_for, BacklogError, DuplicateBacklog, IN_PROGRESS
@@ -291,7 +291,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     if _assn == int(me_id):
                         _set_pipeline_ctx(flow, me_id)
                         return _ok(f"백로그 {b.backlog_id} 착수 — 작업하세요.")
-                    return _ok(f"[다음 선정] {b.backlog_id} → {_who}(제출자)를 다음 수행자로 선정 — 곧 깨어나 "
+                    return _ok(f"[다음 선정] {b.backlog_id} → {_who}를 다음 수행자로 선정 — 곧 깨어나 "
                                f"착수합니다. 선정 사유는 채널에 남기세요.")
                 elif desc:
                     # [순차 1명 1개(2026-07-14, 사용자: '한명씩 여러개 등록이 아닌 순차적으로 1명씩
@@ -433,7 +433,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         # set_milestone은 '서기' 표면(누구나 — 표결 없이 열 때·복기 때), 재협상도 누구나(게이트=사람 승인).
         @tool("set_milestone",
               "**마일스톤**(Task의 큰 주기: 목표+완수조건)을 등록한다 — 누구나(서기 역할). 정석은 "
-              "meet 회의의 종결 표결에 [수렴안]을 동봉해 가결로 자동 등록되는 것이고, 이 도구는 그 외 "
+              "meet 회의의 공동 결론 파일(DRAFT.md) 완성·가결로 자동 등록되는 것이고, 이 도구는 그 외 "
               "경로(단독 소형 주기·복기)용. goal=목표 한 줄, criteria='조건 | 실증절차' 줄들. "
               "소망형·실행 불가 조건은 등록이 거부된다. 조건 충족이 주기를 닫는다 — 사람이 아니라.",
               {"goal": str, "criteria": str})
@@ -771,8 +771,8 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               ("완전 turn-taking 회의(§4): 소집자가 주제+자기 의견을 발제하면 매 발언권이 응찰"
                "([응찰: N])로 돌아간다 — 강제 라운드 없음. topic=주제, members=쉼표구분(비우면 현재 Task "
                "팀 전원), rounds=발언 예산 배수(기본 2). my_opinion=당신(소집자)의 독립 의견(필수) — 당신도 "
-               "중재자가 아니라 한 참여자다. **회의는 발언권 소진이 아니라 [수렴안] 채택으로 끝난다** — 종결 "
-               "표결 때 각자 그 회의 안건의 [수렴안]을 동봉하고, 전원 찬성이면 자동 등록된다(결정권자·개인 "
+               "중재자가 아니라 한 참여자다. **회의는 공동 결론 파일(DRAFT.md)이 완성·가결돼야 끝난다** — 각자 "
+               "자기 몫을 직접 편집·이의·해소하고, 빈 곳·이의 0이면 전원 표결로 그 파일이 결론이 된다(결정권자·개인 "
                "set_goal/set_milestone 없음 — 폐지). 단계(GOAL/마일스톤/서브태스크/백로그)는 시스템이 상태에서 "
                "정해 다음 회의를 자동으로 연다.") if _pipe_on() else
               ("라운드로빈 회의: 1라운드는 전원의 '독립 의견'을 동시에 수집하고(앵커링 방지), 2라운드부터 "
