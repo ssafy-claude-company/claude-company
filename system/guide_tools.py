@@ -282,7 +282,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     if b.status == IN_PROGRESS and int(b.assignee or 0) == int(me_id):
                         _set_pipeline_ctx(flow, me_id)
                         return _ok(f"백로그 {b.backlog_id}는 이미 당신이 작업 중입니다 — 이어서 하세요.")
-                    _assn = int(b.submitter)
+                    # [무주=자기선택(2026-07-16)] 회의 산물(submitter=0)은 '집는 사람이 한다' — 수행자=나.
+                    # 제출자 있는 항목은 종전대로 수행자=제출자(전담 불변 — 남이 채갈 수 없음).
+                    _assn = int(b.submitter) or int(me_id)
                     r.pick(int(me_id), b.backlog_id, _assn)      # relay가 배분권(마무리자)·순차 잠금 검증
                     _ck(flow)                                     # [갭#1] 선정 즉시 영속(크래시 내구)
                     _who = flow._info(_assn) if hasattr(flow, "_info") else _assn

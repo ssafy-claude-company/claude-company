@@ -490,3 +490,37 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
     ok, _ = register_stage(f, "backlog", "백로그: 폼 UI\n백로그: 제출 검증")
     assert ok
     assert meeting_stage(f) is None                          # 전 단계 완료 → 작업 단계
+
+
+def test_회의산물_무주백로그는_자기선택으로_전담(monkeypatch):
+    """[무주 자기선택(2026-07-16, 사용자 추궁: '전문가가 올려둔 걸 채가나?')] 배분은 수행자=제출자
+    고정이라 자기 등재분은 못 채간다 — 그런데 백로그 회의 수렴안이 만든 팀 산물(submitter=0)은 그
+    규칙으로 수행자=SYS(0)가 되어 배분이 깨졌다(회의→릴레이 접합 결함). 무주 항목은 '집는 사람이
+    한다'(자기선택)로 전담이 붙고, 남의 제출분 채가기는 여전히 구조적으로 불가."""
+    import types
+    from system.rule.milestone import register_stage
+    from system.rule.backlog import relay_for, BacklogError
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
+                                      status=types.SimpleNamespace(goal="g", purpose=""),
+                                      acceptance="", standard="", interfaces="")
+    register_stage(f, "milestone", "이번 주기: MVP\n동작 | curl 확인")
+    ms = [m for m in f.milestones if m.status not in ("done", "superseded")][0]
+    register_stage(f, "subtask", "단위: 백엔드 | curl 확인")
+    st = ms.subtasks[0]
+    ok, _ = register_stage(f, "backlog", "백로그: API 구현\n백로그: 테스트 작성")
+    assert ok
+    r = relay_for(f, st)
+    b = r.backlogs[0]
+    assert b.submitter == 0                              # 회의 산물 = 무주(팀)
+    r.pick(12, b.backlog_id, 12)                         # 봇 12가 자기선택으로 집음
+    assert b.assignee == 12 and b.status == "in_progress"  # 전담 = 집는 사람
+    # 채가기 불가 불변: 봇 11이 12의 자기등재분을 못 가져감
+    mine = r.submit(12, "내 도메인 정리", force=True)
+    r.done(12, b.backlog_id, "완료")                     # 순차 잠금 해제
+    try:
+        r.pick(11, mine.backlog_id, 11)                  # 남의 제출분을 자기에게 — 거부돼야
+        assert False, "남의 제출분 채가기가 허용됨"
+    except BacklogError:
+        pass

@@ -169,7 +169,11 @@ class BacklogRelay:
         self._guard_open()
         b0 = self.get(backlog_id)
         # [돌발 자기착수(2026-07-13)] 자기가 제출한 항목을 자기가 집는 건 배분권 밖.
-        _self_claim = (b0.submitter == int(picker) == int(assignee))
+        # [무주 자기선택(2026-07-16)] 백로그 회의 수렴안이 만든 팀 산물(submitter=0=SYS 서기)은 누구의
+        # 것도 아니다 — '집는 사람이 한다'(자기선택)로 전담이 붙는다. 종전엔 submitter==picker 조건이라
+        # 무주 항목은 self-claim 불가 + 선정 시 수행자=제출자(0=SYS)로 배분이 깨졌다(회의→릴레이 접합 결함).
+        _self_claim = (int(picker) == int(assignee)
+                       and int(b0.submitter or 0) in (0, int(picker)))
         # 순차 잠금 — 이미 누가 작업 중이면 새 착수 불가(그 완료/중단 후 다음).
         _active = next((x for x in self.backlogs if x.status == IN_PROGRESS and x.backlog_id != backlog_id), None)
         if _active is not None:
