@@ -284,7 +284,7 @@ class Sys:
                 strength = next((ln.lstrip("-•* ").strip() for ln in prof.splitlines() if ln.strip()), "") if prof else ""
                 lines.append(f"- {i}: {lbl}" + (f" — 강점: {strength[:80]}" if strength else ""))
             body = ("# 팀 로스터 — 이 협업의 동료(id·직군). recruit 시 갱신.\n\n"
-                    "누구에게 request(위임·질문)할지 헷갈리면 여기서 확인하세요.\n\n" + "\n".join(lines) + "\n")
+                    "동료가 누구인지(직군 질문 상대·회의 참여자) 헷갈리면 여기서 확인하세요 — 작업 배분은 백로그 릴레이가 합니다.\n\n" + "\n".join(lines) + "\n")
             if getattr(flow, "_team_written", None) == body:
                 return
             os.makedirs(os.path.join(ws, ".collab"), exist_ok=True)
