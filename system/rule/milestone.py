@@ -810,6 +810,30 @@ def stage_agenda(stage):
     return (m[0], m[1]) if m else (None, None)
 
 
+def stage_context(flow, stage):
+    """[안건 타깃 명시(2026-07-16, 정합 감사 A)] 이 단계 회의가 딛고 선 이전 결론을 안건에 못박는다 —
+    특히 백로그 회의는 단위마다 열리는데 '어느 단위' 회의인지 없으면 논의와 등록(첫 미충원 단위)이
+    어긋난다. 반환: ' [대상 …: …]' 접미 또는 ''."""
+    try:
+        _cur = getattr(flow, "current", None)
+        if stage == "milestone" and _cur is not None:
+            g = str(getattr(_cur.status, "goal", "") or "").strip()
+            return f" [확정된 GOAL: {g[:80]}]" if g else ""
+        _open = next((m for m in (getattr(flow, "milestones", None) or [])
+                      if m.status not in ("done", "superseded")), None)
+        if stage == "subtask" and _open is not None:
+            return f" [이번 주기: {_open.goal[:80]}]"
+        if stage == "backlog" and _open is not None:
+            store = getattr(flow, "backlog_relays", None) or {}
+            _t = next((st for st in _open.subtasks if st.status not in ("done", "superseded")
+                       and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)), None)
+            if _t is not None:
+                return f" [대상 작업 영역: {_t.goal[:80]}]"
+    except Exception:
+        pass
+    return ""
+
+
 # [매 발언 턴에 스테이지 프레임(2026-07-15, 사용자: '구성원이 지금 어떤 정보를 얻고 있나')] 종결표결
 # 때만 뜨던 '이 회의가 무엇을 정하는 자리인지 + 작업분배 금지'를 매 토론 턴에 주입한다 — 안 그러면
 # 봇이 초반엔 안건에 답하다 몇 턴 뒤 자기 도메인 작업조직으로 드리프트한다(라이브 ch71/72). 파이프라인
@@ -850,6 +874,11 @@ def _write_goal_md(flow, cur, goal):
 
 def register_stage(flow, stage, prop, origin=""):
     """그 회의의 결론 '하나'만 등록. 반환 (landed: bool, note: str). 게이트 거부·형식 미달=(False, 사유)."""
+    import re as _re
+    # [자리표시 가드(2026-07-16, 정합 감사 C)] 봇이 템플릿을 에코하면 '<…>' 자리표시 그대로 제출됨 —
+    # 실값 없는 껍데기 등록 차단(비준 낭비 전에 여기서도 방어).
+    if _re.search(r"<[^>\n]{2,60}>", str(prop or "")):
+        return False, "수렴안에 템플릿 자리표시(<...>)가 남아 있습니다 — 실제 값으로 채워 다시 제출하세요."
     lines = str(prop or "").splitlines()
 
     def _val(prefix):
@@ -884,6 +913,12 @@ def register_stage(flow, stage, prop, origin=""):
                       "다음: 마일스톤 회의를 시스템이 엽니다.")
 
     if stage == "milestone":
+        # [대체 방지 게이트(2026-07-16, 정합 감사 B)] open_milestone 직행은 열린 주기를 조용히 대체
+        # (supersede)할 수 있다 — meeting_stage가 평시엔 막지만, 방어선(gate_new_cycle: 목표 선행·
+        # 미완 주기 보호·내용 주기 보호)을 표결 경로와 동일하게 지난다(U-019 판 파기 재발 방지).
+        _gerr = gate_new_cycle(flow)
+        if _gerr:
+            return False, _gerr
         cyc = _val("이번 주기") or _val("목표") or (str(getattr(_cur.status, "goal", "") or "") if _cur else "")
         stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계:")]
         if stages:

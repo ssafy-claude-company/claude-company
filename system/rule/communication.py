@@ -184,6 +184,9 @@ async def meet(flow, me_id, args):
         # GOAL/마일스톤/서브태스크/백로그. 안건·수렴안 템플릿이 그 단계로 좁혀지고, 채택 시 그 단계만 등록.
         _stage = _ms_stage(flow) if _no_r1 else None
         _agenda, _stage_tmpl = _ms_agenda(_stage)
+        if _agenda:
+            from .milestone import stage_context as _ms_sctx
+            _agenda = _agenda + _ms_sctx(flow, _stage)   # [정합 A] 어느 단위/주기 회의인지 안건에 명시
         _stage_frame = _ms_frame(_stage) if _stage else ""   # 매 발언 턴에 주입할 '이 회의의 정체' 프레임
         conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
         _gate_unmet = {"on": False}   # [게이트=수렴안 채택] 재응찰 시 종결표결 프롬프트를 게이트로 전면화
@@ -339,7 +342,9 @@ async def meet(flow, me_id, args):
             # 즉시 비준(전원 찬성)에 부친다 — 지명 릴레이가 응찰을 막아 종결표결이 안 열리던 교착 우회.
             if _no_r1 and res:
                 _cprop = _stage_extract(_stage, res)
-                if _cprop:
+                # [자리표시 가드(정합 C)] 템플릿 에코('<…>' 잔존)는 제출로 안 침 — 껍데기 조기종료 방지.
+                import re as _re2
+                if _cprop and not _re2.search(r"<[^>\n]{2,60}>", _cprop):
                     conv_props.append(_cprop)
                     if flow.log:
                         flow.log("consensus_in_discussion", who=int(m), stage=str(_stage))

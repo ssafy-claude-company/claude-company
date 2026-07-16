@@ -2247,6 +2247,8 @@ class Sys:
                 if _stage_pending() and not flow.cancelled:
                     _stg = _ms_stage(flow)
                     _ag, _ = _stage_agenda(_stg)
+                    from .rule.milestone import stage_context as _sctx
+                    _ag = f"{_ag}{_sctx(flow, _stg)}"   # [정합 A] 어느 단위/주기 회의인지 안건에 명시
                     _op = await self.run_turn(
                         flow, flow.anchor,
                         f"다음 회의 안건은 '**{_ag}**'입니다 — 이에 대한 **여는 의견**만 3~5줄으로 "
