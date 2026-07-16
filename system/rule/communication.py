@@ -391,7 +391,7 @@ async def meet(flow, me_id, args):
                         f"있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 이유만 "
                         f"답하세요 — 발언 내용은 발언권을 받은 뒤에 말합니다. 없으면 `[패스]`만.")
             out = []
-            for m, res, note in await _fork_collect(flow, me_id, list(cands), body_of):
+            for m, res, note in await _fork_collect(flow, me_id, list(cands), body_of, micro=True):
                 wakes["n"] += 1
                 s = 0 if res is None else _bid_score(res)
                 out.append((m, s))
@@ -428,7 +428,7 @@ async def meet(flow, me_id, args):
                         f"빠진 게 있으면 `[반대: 무엇이 빠졌는지 한 줄]`. **도구 호출·파일 확인 금지 — 지금 "
                         f"이 텍스트만 보고 한 줄로 즉답하세요.** 전원 찬성이어야 확정, 반대는 병합 후 재표결.")
             _yes, _dissents = 0, []
-            for m, res, note in await _fork_collect(flow, me_id, list(members), _rbody):
+            for m, res, note in await _fork_collect(flow, me_id, list(members), _rbody, micro=True):
                 wakes["n"] += 1
                 t = str(res or "")
                 if "반대" in t:
@@ -458,7 +458,8 @@ async def meet(flow, me_id, args):
                      f"스펙) 지적은 **수렴안에 넣지 마세요**(빈 자리표시·'[待 …]'·'추후 규정' 같은 미결 슬롯 "
                      f"금지 — 그건 다음 회의가 정합니다). 갱신된 [수렴안] 전문만 출력:\n{_stage_tmpl}")
             try:
-                _res = await flow.wake(me_id, _body, Kind.INFO)
+                _wm = getattr(flow, "wake_micro", None) or flow.wake
+                _res = await _wm(me_id, _body, Kind.INFO)
                 wakes["n"] += 1
                 return _stage_extract(_stage, _res) or prop
             except Exception:

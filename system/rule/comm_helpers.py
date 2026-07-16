@@ -285,7 +285,7 @@ def _is_substantive(body: str) -> bool:
 
 
 # ── [협업 실행 헬퍼 — guide_tools에서 이관] 그룹핑·스레드 멤버십·병렬 포크수집 ──
-async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO):
+async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO, micro=False):
     """[병렬 Info fork-join] '독립 의견 수집'(표결·회의 1라운드)을 동시에 돈다 — Communication.md
     13–14행("여럿(병렬)은 이 제약을 완화하는 Feature로 둔다")의 구현. 완화는 정확히 이 구간뿐:
     - 가지(branch)는 comm 프레임을 열지 않는다 → 가지 봇은 '활성'이 아니므로 request가 규약
@@ -313,7 +313,8 @@ async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO):
         flow.fork_kind[m] = kind
         try:
             async with sem:
-                return (m, await flow.wake(m, body_of(m), kind), "")
+                _wk = (getattr(flow, "wake_micro", None) if micro else None) or flow.wake
+                return (m, await _wk(m, body_of(m), kind), "")
         except Exception as e:
             return (m, None, f"(수집 실패: {e})")
         finally:

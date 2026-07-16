@@ -383,11 +383,11 @@ class Sys:
         """이 환경의 능력·경계(사실) 노트 — sys_prompt.env_note로 추출(위임만)."""
         return sys_prompt.env_note(self)
 
-    def _prompt(self, body, kind, role, me, leader_id=None, flow=None, first_wake=True):
+    def _prompt(self, body, kind, role, me, leader_id=None, flow=None, first_wake=True, micro=False):
         """턴 프롬프트 조립(캐주얼/리더/멤버 분기) — sys_prompt.prompt로 추출(위임만).
         first_wake=True(첫 wake)면 정적 지식·앵커를 1회 가르치고, resume(False)면 동적 task만 —
         나머지는 되살리기가 아니라 내구 구조(persona·게이트·디스크·report 툴)가 담보."""
-        return sys_prompt.prompt(self, body, kind, role, me, leader_id=leader_id, flow=flow, first_wake=first_wake)
+        return sys_prompt.prompt(self, body, kind, role, me, leader_id=leader_id, flow=flow, first_wake=first_wake, micro=micro)
 
     async def _await_with_idle_watchdog(self, task, flow):
         """task(리더 실행)를 기다리되, flow.last_activity가 idle_timeout 동안 안 바뀌면(=흐름 전체 무진행=행)
@@ -1525,7 +1525,7 @@ class Sys:
             if not task.done():              # 외부 취소·타임아웃 어느 쪽이든 내부 task 누수 방지
                 task.cancel()
 
-    async def run_turn(self, flow: Flow, organt_id, body, kind, role) -> str:
+    async def run_turn(self, flow: Flow, organt_id, body, kind, role, micro=False) -> str:
         # [소속 태깅 수리(2026-07-10)] PIPELINE_CTX를 변이 시점(도구 핸들러=자식 태스크)에 set하면
         # 그 태스크 종료와 함께 증발 — 턴을 스폰하는 이 지점(흐름 태스크)에서 매 턴 갱신해야
         # 자식(SDK·guide.post)이 상속한다. ch53 라이브: 전 메시지 pipe=None이 그 증거.
@@ -1590,6 +1590,21 @@ class Sys:
             # (system_prompt)·게이트, 원문·기준=디스크(Dossier·PLAYBOOK), [경험]=report 툴 필드. 대화 기억이
             # 살아있으면 거기서, 압축돼도 그 구조들에서 — 같은 텍스트를 스케줄로 다시 밀어넣지 않는다.
             _first_wake = flow is None or not getattr(organt, "will_resume", lambda: False)()
+            # [마이크로 wake — 밀린 각인 장부(2026-07-16)] 마이크로 턴(표결·응찰·병합)은 풀 프레임을 안
+            # 싣는다. 그 턴이 하필 세션 첫 wake였으면 '각인 빚'을 기록해 두고, 이 봇의 다음 실질 턴이
+            # 풀 프레임을 대신 받는다(각인은 정확히 1회 — 마이크로가 각인을 태워버리지 않게).
+            if flow is not None:
+                _owed = getattr(flow, "_micro_first", None)
+                if _owed is None:
+                    _owed = flow._micro_first = set()
+                if micro:
+                    if _first_wake:
+                        _owed.add(int(organt_id))
+                    _first_wake = False
+                else:
+                    if int(organt_id) in _owed:
+                        _first_wake = True
+                        _owed.discard(int(organt_id))
             if flow is not None:
                 self._write_team_dossier(flow)   # 로스터가 recruit로 바뀌었으면 TEAM.md 갱신(변경 시에만 기록)
             try:
@@ -1601,8 +1616,8 @@ class Sys:
                 async def _do():
                     if tcm is not None:
                         async with tcm(ch, organt_id):
-                            return await organt.handle(self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake))
-                    return await organt.handle(self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake))
+                            return await organt.handle(self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake, micro=micro))
+                    return await organt.handle(self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake, micro=micro))
 
                 # 리더 턴은 '흐름 전체'(중첩 워커 포함)를 품으므로 여기선 타임아웃 안 건다 — 상위 무진행
                 # 워치독이 흐름 전체를 본다. 워커(비-리더) 턴은 '도구 활동이 turn_timeout 동안 완전히 멈춘'
@@ -2099,6 +2114,8 @@ class Sys:
         if root_id is not None:
             flow.start_root(root_id)
         flow.wake = lambda to, b, k: self.run_turn(flow, to, b, k, "member")
+        # [마이크로 wake] 표결·응찰·병합 등 한 줄 상호작용용 — 풀 프레임 없이 본문만(조립 자체를 좁힘).
+        flow.wake_micro = lambda to, b, k: self.run_turn(flow, to, b, k, "member", micro=True)
         # [§8 관측 — S3 접점 한 줄] 파이프라인 ON이면 로그 관문에서 이벤트 집계를 동승(오버헤드
         # 스냅샷용 요약 — 정본은 flow.jsonl 그대로). OFF면 종전 바인딩 그대로(라이브 불변).
         flow.log = (_wrapup_tally(flow, self._log) if _ms_pipeline_on()

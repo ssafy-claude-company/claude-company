@@ -6005,3 +6005,22 @@ def test_선거복구_갭2_미등록채널은_route_to있어도_재선거():
 
 async def _acoro(v):
     return v
+
+
+def test_마이크로wake는_풀프레임_없이_본문만_각인은_다음_실질턴으로():
+    """[마이크로 wake(2026-07-16, ch75 실측: 한 줄 표결에 11.6K 프롬프트)] 표결·응찰·병합엔 풀 프레임
+    (craft·PRINCIPLE·동료·[경험])을 싣지 않는다 — 'run으로 검증' 지시가 표결에서 파일 탐사를 유발하던
+    모순의 소스 제거(조립 자체를 좁힘). 마이크로가 세션 첫 wake였으면 각인 빚을 기록, 다음 실질 턴이
+    풀 프레임을 받는다(각인 정확히 1회)."""
+    from system import sys_prompt
+
+    class _S:
+        bot_info = {12: "백엔드"}
+        bot_profiles = {}
+        bot_experience = {}
+        capability_ledger = {}
+    out = sys_prompt.prompt(_S(), "[회의 — 결론 확정 표결] …", None, "member", 12, micro=True)
+    assert "받은 요청" in out and "백엔드" in out
+    for marker in ("[협의로 규격", "[run으로", "[경험]", "동료:", "직무 기준", "[실 사용성"):
+        assert marker not in out                    # 풀 프레임 블록 전부 미탑재
+    assert len(out) < 300                           # 본문 위주(조립 최소)

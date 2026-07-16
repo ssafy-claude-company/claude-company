@@ -386,7 +386,15 @@ def env_note(sys) -> str:
     )
 
 
-def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True):
+def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True, micro=False):
+    # [마이크로 wake(2026-07-16, ch75 실측 11.6K 표결 프롬프트)] 표결·응찰·병합 같은 '한 줄 상호작용'엔
+    # 풀 프레임(craft·PRINCIPLE·동료 강점·[경험] 의무)을 싣지 않는다 — 상식은 첫 실질 턴에 1회 각인,
+    # 마이크로 턴은 본문만(기억 오염 최소). 'run으로 검증'·craft 'Read 후 판단' 지시가 표결에 실려
+    # 파일 탐사를 유발하던 모순의 소스 제거(금지 문구 덧칠이 아니라 조립 자체를 좁힘). 밀린 각인은
+    # run_turn의 _micro_first 장부로 다음 실질 턴이 받는다.
+    if micro:
+        return (f"당신의 역할: {sys.bot_info.get(me, '팀원')}\n"
+                f"받은 요청({getattr(kind, 'value', kind)}): {body}")
     # '담당자'는 고정 직책이 아니라 이번 흐름의 To 수신자(=leader)다. 동료 목록엔 직군만 적고, 담당자에게만
     # '(담당자)' 표식을 단다(다른 흐름에선 같은 봇이 한 직원으로 참여).
     def _peer(i):
