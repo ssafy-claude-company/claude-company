@@ -309,7 +309,7 @@ async def meet(flow, me_id, args):
                 _sub = (f"\n\n**이 회의의 결론은 공동 파일 `{_draft_path}` 에서 만듭니다.** 지금 그 파일을 "
                         f"Read하고 셋 중 하나를 하세요: ①꺾쇠 자리표시·모호한 부분 중 **당신 도메인 몫을 Edit로 "
                         f"직접 채우기** ②이견은 해당 줄 아래 `> [이의 @{flow._info(m) or '직군'}] 한 줄` 추가 "
-                        f"③남의 이의 해소(내용 고치고 그 이의 줄 삭제). 그 뒤 채널엔 **무엇을 바꿨는지 한 줄만** "
+                        f"③남의 이의 해소(내용 고치고 그 이의 줄 삭제). 당신이 추가한 백로그 줄은 **당신이 발제자(그 일의 주인)**로 등록됩니다. 그 뒤 채널엔 **무엇을 바꿨는지 한 줄만** "
                         f"발언하세요(장문 금지). 바꿀 것이 없으면 `[패스]`만 — 자리표시·이의가 0이 되고 변경이 "
                         f"멎으면 전원 최종 표결로 확정됩니다.")
             else:
@@ -370,6 +370,17 @@ async def meet(flow, me_id, args):
                 import hashlib as _hl
                 _dtxt = str(_dread(flow, "DRAFT.md") or "")
                 _h = _hl.md5(_dtxt.encode()).hexdigest()
+                # [발제 귀속 — 턴별 diff(2026-07-16, 사용자: '발제한 애가 주인, 누가 발제했는지 남아야')]
+                # 이 턴에 새로 나타난(또는 고쳐 쓴) '백로그:' 줄은 이 화자의 발제 — 봇 규약(태그) 없이
+                # SYS가 구조적으로 추적한다. 마지막 실질 저자가 주인(고쳐 쓴 사람이 새 주인).
+                from .milestone import draft_norm_line as _dnorm
+                _cur_lines = {n for n in (_dnorm(l) for l in _dtxt.splitlines())
+                              if n and n.startswith("백로그:")}
+                _seen_lines = _dstate.setdefault("lines", set())
+                _attr = _dstate.setdefault("attr", {})
+                for _ln in _cur_lines - _seen_lines:
+                    _attr[_ln] = int(m)
+                _dstate["lines"] = _cur_lines
                 if _h == _dstate["h"]:
                     _dstate["stable"] += 1
                 else:
@@ -568,6 +579,7 @@ async def meet(flow, me_id, args):
                         f"※ 반대하려면 먼저 DRAFT.md 해당 줄에 `> [이의 @직군] …`을 남기세요 — "
                         f"파일에 근거가 남는 반대만 다음 라운드가 해소할 수 있습니다.")
                     if _passed:
+                        flow._draft_attr = dict(_dstate.get("attr") or {})   # 발제 귀속 → 등록기
                         _ok, _note = _ms_regstage(flow, _stage, _ms_dprop(_stage, _dtxt), topic)
                         if _ok:
                             _landed, _conclusion = True, _note

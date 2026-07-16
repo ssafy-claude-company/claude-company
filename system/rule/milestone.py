@@ -845,18 +845,21 @@ def draft_status(text):
     return ph, obj
 
 
+def draft_norm_line(ln):
+    """DRAFT 한 줄 정규화 — 발제 귀속(diff 추적)과 등록 파싱이 같은 키를 쓰게 하는 단일 함수."""
+    import re as _re
+    s = str(ln or "").strip()
+    if (not s or s.startswith("#") or s.startswith("(") or s.startswith(">")
+            or s == "완수조건:"):
+        return None
+    s = _re.sub(r"^-\s*", "", s)
+    s = _re.sub(r"\|\s*실증\s*[:：]\s*", "| ", s)
+    return s
+
+
 def draft_to_proposal(stage, text):
     """채택된 DRAFT → register_stage 입력으로 정규화: 헤더·규칙·이의 줄 제거, '- X | 실증: Y' → 'X | Y'."""
-    import re as _re
-    out = []
-    for ln in str(text or "").splitlines():
-        s = ln.strip()
-        if (not s or s.startswith("#") or s.startswith("(") or s.startswith(">")
-                or s == "완수조건:"):
-            continue
-        s = _re.sub(r"^-\s*", "", s)
-        s = _re.sub(r"\|\s*실증\s*[:：]\s*", "| ", s)
-        out.append(s)
+    out = [n for n in (draft_norm_line(l) for l in str(text or "").splitlines()) if n]
     return "\n".join(out)
 
 
@@ -1016,10 +1019,19 @@ def register_stage(flow, stage, prop, origin=""):
         if not items:
             return False, "수렴안에 '백로그: <작업 단위>' 줄이 필요합니다."
         r = relay_for(flow, _target)
+        # [발제자=주인(2026-07-16, 사용자: '백로그 발제한 애가 주인, 누가 발제했는지 남아야')] 회의
+        # DRAFT에 그 줄을 쓴 봇을 SYS가 턴별 diff로 귀속 추적(flow._draft_attr) — 등록 시 그 봇이
+        # 제출자가 되어 수행자=제출자 원칙이 회의 경로에도 이어진다. 귀속 없는 줄만 무주(자기선택).
+        _attr = getattr(flow, "_draft_attr", None) or {}
         n = 0
-        for it in items:
+        for _ln in lines:
+            _s = _ln.strip()
+            if not _s.startswith("백로그:"):
+                continue
+            it = _s.split(":", 1)[1].strip()
             try:
-                r.submit(0, it, force=True)
+                _who = int(_attr.get(draft_norm_line(_s) or _s, 0) or 0)
+                r.submit(_who, it, force=True)
                 n += 1
             except Exception:
                 pass

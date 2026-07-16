@@ -524,3 +524,25 @@ def test_회의산물_무주백로그는_자기선택으로_전담(monkeypatch):
         assert False, "남의 제출분 채가기가 허용됨"
     except BacklogError:
         pass
+
+
+def test_백로그회의_발제자가_제출자로_등록된다(monkeypatch):
+    """[발제자=주인(2026-07-16, 사용자)] 회의 DRAFT에 그 줄을 쓴 봇(SYS가 턴별 diff로 귀속)이 등록 시
+    제출자가 된다 — 수행자=제출자 원칙이 회의 경로에도 이어짐. 귀속 없는 줄은 무주(자기선택 폴백)."""
+    import types
+    from system.rule.milestone import register_stage
+    from system.rule.backlog import relay_for
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
+                                      status=types.SimpleNamespace(goal="g", purpose=""),
+                                      acceptance="", standard="", interfaces="")
+    register_stage(f, "milestone", "이번 주기: MVP\n동작 | curl 확인")
+    register_stage(f, "subtask", "단위: 백엔드 | curl 확인")
+    st = [m for m in f.milestones if m.status not in ("done", "superseded")][0].subtasks[0]
+    f._draft_attr = {"백로그: API 구현": 12}          # 봇 12가 초안에 쓴 줄(diff 귀속)
+    ok, _ = register_stage(f, "backlog", "백로그: API 구현\n백로그: 문서 정리")
+    assert ok
+    bl = relay_for(f, st).backlogs
+    assert bl[0].submitter == 12                      # 발제자=주인으로 남음
+    assert bl[1].submitter == 0                       # 귀속 없는 줄 = 무주(자기선택)
