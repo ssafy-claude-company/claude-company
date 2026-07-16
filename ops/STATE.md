@@ -19,7 +19,27 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  ce6f6de  ← 브레인 — 2026-07-14 ★기계적 킥오프 SYS 구조화(첫 Task·회의를 SYS가 자동 개시 —
+claude-company  7659bea  ← 브레인 — 2026-07-15~16 ★회의 파이프라인 재설계(사용자 설계, 라이브 ch69~74 반복
+                          관측) + Codex 백엔드 스캐폴드. 세션 요지:
+                          [회의=단계별 체인] meeting_stage(상태에서 안건 유도: GOAL→마일스톤→서브태스크(=작업
+                          영역 분리, 개인 아님)→백로그) · register_stage(단계 결론 하나만 등록·GOAL.md 생성) ·
+                          stage_frame(매 발언에 '이 회의가 무엇 정하는지' 구체 질문) · SYS가 이전 결론 위에서
+                          다음 단계 회의 자동 개설(sys_core continue 루프, 단계 정체 cap 3).
+                          [회의=닫힘] ★수렴안 조기 제출(_speech에서 [수렴안] 감지→conv_props→조기종료→비준 —
+                          응찰소진/지명 릴레이 교착 우회) · ★반대사유 병합→재비준(_ratify_vote가 반대 사유 반환,
+                          _merge_dissents가 '내 도메인 빠졌다' 지적을 수렴안에 병합, 만장일치까지 최대 3회 —
+                          '완성된 수렴안이 결과') · ★못 본 발언만 주입(_ctx_for(bot) 봇별 unseen 인덱스, 전체는
+                          MINUTES.md 파일 Read — 누적 재주입 폐지) · '동의/반박/보완하며' 틀 제거(수렴 쪽으로).
+                          [아키텍처 정렬] CLAUDE.md·멤버 wake 프롬프트·meet 도구설명을 옛 위임모델→단계회의 수렴+
+                          백로그 릴레이로 통일 · set_goal 팀 게이트(개인 확정 차단) · 위임 자동합류 계열 dedup.
+                          [e2e 상태] 병합 fix(0f19610) 라이브·러너 재시작 완료. **새 판으로 GOAL→마일스톤→
+                          백로그→빌드 완주 관측 대기**(ch74에서 조기제출·비준·MINUTES 파일읽기 작동 확인, 90%
+                          반대 병목→병합 fix로 해소). L2(craft 증류의 '수치 박고 위임')는 관측 후 재평가.
+                          [Codex] organt/backends.py(AgentBackend 인터페이스·ORGANT_BACKEND=claude|codex 선택,
+                          기본 claude=불변) + organt/CODEX_BACKEND.md(봇 런타임 Codex화 완성 가이드 — 핵심 난제=
+                          guide MCP 도구 브리징). AGENTS.md→CLAUDE.md 심링크. 스위트 621 그린.
+── 이전(2026-07-14) ──────────────────────────────────────────────────────────────
+claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조화(첫 Task·회의를 SYS가 자동 개시 —
                           앵커는 여는 의견=내용만, create_task·meet 호출 결정 안 함; 봇 지능 의존 제거, 완료 참칭 근본) · ★완료 참칭 방지(앵커가 meet·create_task 안 부르고 평문 독백만 하고
                           끝나면 '완료' 참칭하던 것 — 킥오프 강제 meet 재요청 3회, 그래도 산출물 0이면 중단 마감) · ★자동 팀 직군 계열 중복 제거(게임기획자+일반기획·백엔드×2 다 합류하던 것 —
                           리더 계열까지 씨앗으로 계열당 1명, 명시 members=는 존중) · ★소집자/발제 어휘→[회의 시작]/[여는 의견]
