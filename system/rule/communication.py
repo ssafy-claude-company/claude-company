@@ -161,6 +161,7 @@ async def meet(flow, me_id, args):
         rounds = 2
 
     async def _run_meet():
+        nonlocal members   # [심의단 자기선택] 응찰 선발로 재바인딩 — 클로저 지역화 방지
         from .._util import doc_collab_on, dossier_append, dossier_rel
         minutes = []
         r1_full = []       # [B-11] (발언자, 전문) — R2+ '전원 1R 압축' 합성 원료(시스템 기계 압축)
@@ -236,6 +237,35 @@ async def meet(flow, me_id, args):
                             round_robin, run_conversation)
         mode = floor_mode(getattr(flow, "floor_mode", None), default="orchestrated")
         tt = (mode == "turn-taking")
+        # [심의단 자기선택(2026-07-16, 사용자: '근본적으로')] 전원(8~12명) 심의·만장일치는 비용이 N²로
+        # 자라는 근본 병목 — 회의도 선거·백로그와 같은 자기선택 원칙으로. 안건에 자기 도메인이 걸리는
+        # 봇만 응찰해 심의단(상한 5)이 되고, 표결도 심의단 만장일치. 불참자는 피드로 보고 다음 라운드에
+        # 응찰해 언제든 합류 가능(문 열림 — 중앙 배제 아님). 소수 팀(<6)은 종전대로 전원.
+        if _no_r1 and tt and len(members) > 5:
+            def _sb(c):
+                return (f"[회의 소집 — 심의 응찰] 안건: {(_agenda or topic)[:160]}\n"
+                        f"이 결정에 당신({flow._info(c)}) 도메인이 직접 걸립니까? 걸리면 `[응찰: N]`(1~9)과 "
+                        f"한 줄 이유, 아니면 `[패스]`. 불참해도 결과는 피드로 보이고, 회의가 이어지면 다시 "
+                        f"응찰해 합류할 수 있습니다 — 심의는 소수 정예가 빠르게.")
+            _sc = []
+            for _m0, _r0, _n0 in await _fork_collect(flow, me_id, list(members), _sb, micro=True):
+                _s0 = 0 if _r0 is None else _bid_score(_r0)
+                if _s0 > 0:
+                    _sc.append((_s0, _m0))
+            _sc.sort(reverse=True)
+            _sel = [m0 for _s0, m0 in _sc[:5]]
+            if len(_sel) >= 2:
+                members = _sel
+                try:
+                    _chp = (flow.current.thread_id if flow.current else None) or flow.user_channel
+                    await flow.guide.post(int(_chp), 0,
+                        "[심의단] 자기선택 " + str(len(members)) + "명 — "
+                        + " · ".join(str(flow._info(m0) or m0) for m0 in members)
+                        + " (안건에 도메인이 걸린 응찰자, 이후 라운드 재응찰로 합류 가능)")
+                except Exception:
+                    pass
+                if flow.log:
+                    flow.log("meet_panel_selected", n=len(members), stage=str(_stage))
         schedule = [(r, m) for r in range(2, rounds + 1) for m in members]
         budget = len(schedule)                # 토론 발언 예산 — 정책 불문 종전 라운드 비용과 동형
         wakes = {"n": 0}
