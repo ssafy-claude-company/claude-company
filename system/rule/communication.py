@@ -486,7 +486,18 @@ async def meet(flow, me_id, args):
                     _yes += 1
                 if flow.log:
                     flow.log("consensus_ratify_vote", who=m, oppose=("반대" in t))
-            return (len(_dissents) == 0 and _yes >= 1), _dissents
+            # [표결 가시화(2026-07-16, 사용자: '회의 중 표결이 안 보여서 문제')] 결과를 채널 회의
+            # 블록에 [표] 한 줄로 게시 — 종전엔 표결이 침묵이라 사용자 눈엔 판이 멈춘 것처럼 보였다
+            # (ch74~75: 15분+ 무행). 개별 찬반이 아니라 집계+반대 요지만(이벤트 결과 1줄, 스팸 아님).
+            _passed0 = (len(_dissents) == 0 and _yes >= 1)
+            try:
+                _vsum = (f"결론 확정 표결 — 찬성 {_yes} · 반대 {len(_dissents)}"
+                         + (" → 확정" if _passed0 else
+                            " / 반대 요지: " + " · ".join(d[:60] for d in _dissents[:3])))
+                await _say_speech(flow, me_id, "[표]", _vsum)
+            except Exception:
+                pass
+            return _passed0, _dissents
 
         async def _merge_dissents(prop, dissents):
             """[반대 사유 병합(2026-07-15, 사용자: '자기거 없어서 부결난거면 그걸 합쳐야지')] 부결된
