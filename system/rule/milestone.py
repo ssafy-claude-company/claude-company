@@ -850,11 +850,13 @@ def draft_decision_region(text):
     """[과녁 고정(2026-07-16, 사용자: 'SYS 내용 판단 없이 구조로')] '## 결정' 구획만 추출 — 완성 판정·
     표결·이의 기록·안정 해시가 전부 이 구획만 본다. 봇이 밖에 참고 섹션을 아무리 늘려도 반대 표면이
     안 자란다(발산 되먹임 차단). 구획 마커 없으면(구버전 초안) 전체 반환(호환)."""
+    import re as _re
     t = str(text or "")
-    i = t.find("## 결정")
-    if i < 0:
+    m = _re.search(r"^## 결정\s*$", t, _re.M)   # 줄 시작 헤딩만 — 규칙 문장 속 '## 결정' 인용 오매치 방지
+    if not m:
         return t
-    j = t.find("\n## ", i + 4)
+    i = m.start()
+    j = t.find("\n## ", m.end())
     return t[i:j] if j > 0 else t[i:]
 
 
