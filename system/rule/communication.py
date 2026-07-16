@@ -261,6 +261,10 @@ async def meet(flow, me_id, args):
                     _dwrite(flow, "DRAFT.md", _tmpl)        # 새 단계 → 새 골격(같은 단계 재회의면 진행분 보존)
                 if _dread(flow, "DRAFT.md") is not None:    # 쓰기 실패(워크스페이스 없음)면 폴백 유지
                     _draft_path = f"{dossier_rel(flow.current.task_id)}/DRAFT.md"
+                    try:
+                        flow.note_activity(0, "🗳 회의 — 공동 결론 DRAFT 개설(함께 채우는 중)", force=True)
+                    except Exception:
+                        pass
         sched_i = {"i": 0}                    # orchestrated 라벨(r)용 — allocator 소비 순서와 1:1
         block = {"label": None, "items": []}  # [B-09] MINUTES.md 블록 버퍼(라운드/토론 단위 flush)
 
@@ -386,6 +390,10 @@ async def meet(flow, me_id, args):
                 else:
                     _dstate.update(h=_h, stable=0)
                 _ph, _obj = _ms_dstat(_dtxt)
+                try:
+                    flow.note_activity(0, f"🗳 결론 DRAFT — 빈칸 {_ph} · 이의 {_obj}", force=True)
+                except Exception:
+                    pass
                 if _dtxt.strip() and _ph == 0 and _obj == 0 and _dstate["stable"] >= 1:
                     if flow.log:
                         flow.log("draft_ready", stage=str(_stage), stable=_dstate["stable"])
@@ -487,6 +495,10 @@ async def meet(flow, me_id, args):
                         f"빠진 게 있으면 `[반대: 무엇이 빠졌는지 한 줄]`. **도구 호출·파일 확인 금지 — 지금 "
                         f"이 텍스트만 보고 한 줄로 즉답하세요.** 전원 찬성이어야 확정, 반대는 병합 후 재표결.")
             _yes, _dissents = 0, []
+            try:
+                flow.note_activity(0, f"🗳 결론 확정 표결 진행 — {len(members)}명 응답 수집", force=True)
+            except Exception:
+                pass
             for m, res, note in await _fork_collect(flow, me_id, list(members), _rbody, micro=True):
                 wakes["n"] += 1
                 t = str(res or "")
@@ -602,6 +614,10 @@ async def meet(flow, me_id, args):
                         if _new:
                             _dwrite(flow, "DRAFT.md", _dtxt2.rstrip("\n") + "\n"
                                     + "\n".join(f"> [이의 @표결] {d[:150]}" for d in _new) + "\n")
+                        try:
+                            flow.note_activity(0, f"🗳 표결 부결 — 이의 {len(_new)}건 DRAFT 기록, 해소 회의 계속", force=True)
+                        except Exception:
+                            pass
                         if flow.log:
                             flow.log("meet_consensus_rejected", passes=_pass, via="draft", filed=len(_new))
                 elif flow.log:

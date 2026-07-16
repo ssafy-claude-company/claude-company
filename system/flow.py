@@ -236,12 +236,13 @@ class Flow:
 
     _ACT_GUARD = 2000   # 폭주 방어(가드 — UX 상한 아님). 흐름 하나가 이만큼 활동이면 비정상 → 최후로 앞을 버림.
 
-    def note_activity(self, bot, text):
+    def note_activity(self, bot, text, force=False):
         """[진행 가시성] 이 흐름의 활동(도구·추론 스니펫)을 시간순 전체 기록에 append. 직전과 같으면
         ts만 갱신(중복 억제). 임의 상한 없음 — 표시 길이는 UI(고정높이+스크롤)가 맡고, 여긴 폭주 가드만.
         best-effort(관측용 — 실패가 흐름을 못 막음)."""
-        if getattr(self, "_suppress_activity", False):
+        if getattr(self, "_suppress_activity", False) and not force:
             return                                    # [응찰≠생각] floor 프로브·발언 중엔 activity 억제
+        # force=True: 회의 국면(표결 진행·DRAFT 상태) 같은 SYS 상태 노트 — 블랙박스 해소(2026-07-16)
         t = " ".join(str(text or "").split())[:120]
         if not t:
             return
