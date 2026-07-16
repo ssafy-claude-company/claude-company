@@ -512,7 +512,16 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             # [B-08] 거부에 '어디로 기록하나' 처방 동봉(결정 지점 공급 — permissions 훅과 같은 문구).
             return _ok("실행 거부: 협의 기록(.collab/)은 시스템 소유 — 회의 결론 초안 DRAFT.md만 Edit로 직접 편집 가능하고, 나머지는 meet/vote/보고로만  "
                        "기록됩니다(열람은 Read 도구로).")
-        if any(d in cmd.lower() for d in _RUN_DENY):
+        # [작업공간 절대경로 오차단 해소(2026-07-16, ch76: 'ls -la /root/…작업공간'이 /root 패턴에
+        # 걸림)] cwd 앵커가 절대경로 사용을 가르치므로, 자기 작업공간 경로는 마스킹 후 위험 패턴 검사.
+        _scan = cmd
+        try:
+            _ws = str(getattr(flow, "workspace", "") or "")
+            if _ws:
+                _scan = _scan.replace(os.path.realpath(_ws), " ").replace(_ws, " ")
+        except Exception:
+            pass
+        if any(d in _scan.lower() for d in _RUN_DENY):
             return _ok(f"실행 거부(안전): 파괴/저장소/시스템 패턴 포함 — {cmd[:80]}")
         if any(p in cmd for p in _RUN_AUTHOR):
             return _ok("실행 거부: run은 '실행·빌드·검증' 전용입니다 — 파일 작성/수정은 Write/Edit 도구로 "

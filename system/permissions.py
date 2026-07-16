@@ -141,6 +141,10 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
             return _deny(f"'{tool}' 은(는) Organt 허용 도구가 아닙니다." + (" " + hint if hint else ""))
 
         # 2) 파일 쓰기는 작업공간(cwd) 안으로 제한
+        # [DRAFT 단일 판정(2026-07-16)] 공동 결론 초안은 회의 '중' 전원이 편집하는 파일 — Write/Edit
+        # 게이트 전반(협의차단·owner위임·개입목표·리더독식·소유경계)에서 산출물 게이트의 대상이 아니다.
+        _wep = tool_input.get("file_path") or tool_input.get("path") if tool in ("Write", "Edit") else None
+        _is_draft = bool(_wep) and os.path.basename(str(_wep)) == "DRAFT.md"
         if tool in ("Write", "Edit"):
             path = tool_input.get("file_path") or tool_input.get("path")
             cwd = data.get("cwd") or os.getcwd()
@@ -267,7 +271,8 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
 
         # 5) 개입(기존 프로젝트 수정)도 '목표 먼저' — Task의 Goal이 확정되기 전엔 파일 수정 금지. 개입에서
         #    리더가 재현·합의 없이 개인 견해로 즉흥 수정하던 걸 구조적으로 차단(Purpose/Goal 없이 끝나는 문제).
-        if (tool in ("Write", "Edit") and flow is not None and getattr(flow, "intervention", None)):
+        if (tool in ("Write", "Edit") and not _is_draft
+                and flow is not None and getattr(flow, "intervention", None)):
             cur = getattr(flow, "current", None)
             goal = (cur.status.goal or "").strip() if (cur and getattr(cur, "status", None)) else ""
             if not goal:
@@ -280,7 +285,8 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
         #    '위임(Work) 없이' 혼자 다 쓰는 걸 막는다. 기존 #4 훅은 '위임된 owner 도메인 침범'만 잡아서,
         #    리더가 Info로 자문만 받고 한 번도 위임 안 하면(owner 미설정) 통째로 우회됐다. → 팀이 있으면
         #    리더는 한 파일(grace) 직접 쓴 뒤부턴 구현을 동료에게 request(Work)로 위임해야 한다.
-        if (tool in ("Write", "Edit") and flow is not None and actor is not None
+        if (tool in ("Write", "Edit") and not _is_draft
+                and flow is not None and actor is not None
                 and actor == getattr(flow, "leader", None)
                 and getattr(flow, "current", None) is not None):
             cur = flow.current
