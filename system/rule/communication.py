@@ -220,7 +220,11 @@ async def meet(flow, me_id, args):
             # 중립화(권한 착시 제거). 기능은 동일: 주제 제시 + 자기 의견, 이후 전 발언이 응찰.
             _preface = topic + (f"\n[여는 의견] {my_view}" if str(my_view or "").strip() else "")
             minutes.append(f"[회의 시작] {flow._info(me_id) or me_id}: {_speech_clip(_preface)}")
-            await _say_speech(flow, me_id, "[회의 시작]", _preface)
+            # [단계는 필드로(2026-07-17, 사용자: '공용처리·안정적 관리')] 개시 메시지에 런타임 단계를
+            # 기계 마커로 스탬프 — 봇이 자기 topic으로 재개설해도 피드가 같은 단계 회의로 병합·라벨링.
+            # (표시층 guide_format이 마커를 벗기고, feed_assembly가 필드로 승격 — 본문 스크래핑 아님.)
+            await _say_speech(flow, me_id,
+                              "[회의 시작]" + (f"[단계:{_stage}]" if _stage else ""), _preface)
             dossier_append(flow, "MINUTES.md",
                            f"## 회의 — {topic} [완전 TT(§4): 강제 R1 없음]\n"
                            f"{flow._info(me_id) or me_id}: {_preface}")
