@@ -606,3 +606,14 @@ def test_등록_볼드키_파싱과_프리플라이트_동일계약():
     ms = f.milestones[-1]
     assert ms.goal == "카운터 1주기"            # 볼드 키·폴백 오등록 아님
     assert len(ms.criteria) == 1                # 산문(붙은 파이프) 줄은 조건으로 미등록
+
+
+def test_들여쓴_하위설명줄은_조건이_아니다():
+    from system.rule.milestone import draft_to_proposal
+    d = ("## 결정\n\n이번 주기: X\n"
+         "- 조건 A | 실증: pytest tests/a\n"
+         "  ⑥하위 설명: 명도 대비 5.5:1 | 【각주】\n"      # 들여쓴 연속 줄 — 조건 오인 금지
+         "  + 협의사항: ease curve 3자 협의 | 검증: 협의 기록\n"
+         "\n## 참고 (자유 — 판정 대상 아님)\n")
+    prop = draft_to_proposal("milestone", d)
+    assert "조건 A" in prop and "하위 설명" not in prop and "협의사항" not in prop

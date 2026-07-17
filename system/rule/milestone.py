@@ -936,9 +936,12 @@ def draft_norm_line(ln):
 
 
 def draft_to_proposal(stage, text):
-    """채택된 DRAFT('## 결정' 구획) → register_stage 입력 정규화. 참고 구획은 파일에 남되 등록 안 됨."""
+    """채택된 DRAFT('## 결정' 구획) → register_stage 입력 정규화. 참고 구획은 파일에 남되 등록 안 됨.
+    [최상위 줄만(2026-07-17, ch78 실측)] 들여쓴 줄은 마크다운 중첩 = 위 조건의 설명 연속이지 독립
+    조건·키가 아니다 — '  ⑥종료 상태: … | 【…】' 같은 하위 설명이 조건으로 오인돼 등록을 막던 것 차단."""
     region = draft_decision_region(text)
-    out = [n for n in (draft_norm_line(l) for l in region.splitlines()) if n and not n.startswith("## ")]
+    out = [n for n in (draft_norm_line(l) for l in region.splitlines() if not l[:1].isspace())
+           if n and not n.startswith("## ")]
     return "\n".join(out)
 
 

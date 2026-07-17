@@ -670,16 +670,21 @@ async def meet(flow, me_id, args):
                 if _dtxt.strip() and _ph == 0 and _obj == 0:
                     try:
                         from .milestone import stage_preflight as _ms_pre
-                        _pre_errs = [e for e in _ms_pre(_stage, _dtxt) if e and e[:40] not in _dtxt]
+                        _pre_errs = [e for e in _ms_pre(_stage, _dtxt) if e]
                     except Exception:
                         _pre_errs = []
                     if _pre_errs:
-                        _blk0 = "\n".join(f"> [이의 @형식] {e[:200]}" for e in _pre_errs[:6])
-                        _ref0 = _dtxt.find("\n## 참고")
-                        if _ref0 > 0:
-                            _dwrite(flow, "DRAFT.md", _dtxt[:_ref0].rstrip("\n") + "\n" + _blk0 + "\n" + _dtxt[_ref0:])
-                        else:
-                            _dwrite(flow, "DRAFT.md", _dtxt.rstrip("\n") + "\n" + _blk0 + "\n")
+                        # [차단≠기록(2026-07-17, ch78 실측)] 봇이 이의 줄을 참고로 옮기면 '파일에 이미
+                        # 있음' 중복 억제가 차단까지 꺼버려 표결→등록거부 루프 재발 — 차단은 검사 결과로,
+                        # 기록만 중복 억제한다.
+                        _pre_new = [e for e in _pre_errs if e[:40] not in _dtxt]
+                        if _pre_new:
+                            _blk0 = "\n".join(f"> [이의 @형식] {e[:200]}" for e in _pre_new[:6])
+                            _ref0 = _dtxt.find("\n## 참고")
+                            if _ref0 > 0:
+                                _dwrite(flow, "DRAFT.md", _dtxt[:_ref0].rstrip("\n") + "\n" + _blk0 + "\n" + _dtxt[_ref0:])
+                            else:
+                                _dwrite(flow, "DRAFT.md", _dtxt.rstrip("\n") + "\n" + _blk0 + "\n")
                         try:
                             flow._meet_stage_note = f"등록 형식 미달 {len(_pre_errs)}건 — 수리 회의 계속"
                             flow.note_activity(0, f"🗳 등록 사전 검사 — 형식 미달 {len(_pre_errs)}건 DRAFT 기록, 수리 후 표결", force=True)
