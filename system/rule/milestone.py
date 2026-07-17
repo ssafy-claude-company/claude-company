@@ -89,7 +89,8 @@ def gate_criteria(entries) -> Optional[str]:
     형태 요건: desc(무엇이 충족인가) + verify(run으로 실증 가능한 절차) 둘 다. 소망형 desc 거부."""
     items = list(entries or [])
     if not items:
-        return "완수조건이 비어 있습니다 — 최소 1개. 각 항목은 {desc, verify}."
+        return ("완수조건이 비어 있습니다 — 결정 구획에 '- <조건> | 실증: <run으로 확인하는 절차>' "
+                "형식 줄이 최소 1개 필요합니다(산문 속 '실증:'은 집계 안 됨 — 줄 단위 '| 실증:' 구분자).")
     seen = set()
     # [일괄 보고(2026-07-17, ch78 실측: 등록 거부가 첫 불량 1건만 보고 → 사이클당 1개씩 수리, 6~9분×N)]
     # fail-fast 대신 전 조건을 검사해 불량을 모두 모아 반환 — 한 사이클에 전부 고치게.
@@ -581,14 +582,36 @@ def ms_replan(flow, defects) -> Optional[Milestone]:
 
 # ── 봇 도구 표면 (계약 §4 — 회의 수렴을 결정권자가 확정해 주기로 만든다) ─────────
 
+# [조건 구분자 = 라벨(2026-07-17, ch78 실측)] 템플릿 계약은 '조건 | 실증: 절차'. 맨 '|' 분리는 조건
+# 본문의 파이프(JSON enum(buy|pass|…))를 구분자로 오인해 desc/verify를 엉망으로 쪼갠다 — 봇이 고칠 수
+# 없는 벽. 라벨('| 실증:'류)이 있으면 거기서 분리, 없으면 종전 첫 '|' 분리(하위 호환).
+_CRIT_DELIM = None
+
+
+def _crit_delim():
+    global _CRIT_DELIM
+    if _CRIT_DELIM is None:
+        import re as _re
+        # 라벨('| 실증:'류 — 변형은 draft_norm_line이 정본화) 또는 띄어쓴 ' | '만 구분자.
+        # 본문의 붙은 파이프(enum(buy|pass|…))는 구분자가 아니다 — 산문이 조건으로 오인되지 않게.
+        _CRIT_DELIM = _re.compile(r"\|\s*[^|:\n]{0,12}?(?:실증|검증|측정)\s*[:：]|\s\|\s")
+    return _CRIT_DELIM
+
+
 def parse_criteria_lines(text: str):
-    """봇이 쓴 조건 텍스트(한 줄 = '조건 | 실증절차')를 게이트 입력으로. 형식 오류는 게이트가 잡는다."""
+    """봇이 쓴 조건 텍스트(한 줄 = '조건 | 실증: 절차')를 게이트 입력으로. 형식 오류는 게이트가 잡는다."""
     out = []
     for ln in str(text or "").splitlines():
         ln = ln.strip().lstrip("-•* ").strip()
         if not ln:
             continue
-        d, _, v = ln.partition("|")
+        m = _crit_delim().search(ln)
+        if m:
+            d, v = ln[:m.start()], ln[m.end():]
+        else:
+            d, _, v = ln.partition("|")
+        import re as _re
+        v = _re.sub(r"^(?:[\w가-힣]{0,4}\s*)?(?:실증|검증|측정)\s*[:：]\s*", "", v.strip())
         out.append({"desc": d.strip(), "verify": v.strip()})
     return out
 
@@ -904,7 +927,11 @@ def draft_norm_line(ln):
             or s == "완수조건:"):
         return None
     s = _re.sub(r"^-\s*", "", s)
-    s = _re.sub(r"\|\s*실증\s*[:：]\s*", "| ", s)
+    # [라벨 정본화(2026-07-17, ch78 실측)] 종전엔 '| 실증:'을 제거해 맨 '|'만 남겼는데, 그러면 조건
+    # 본문의 파이프(JSON enum(buy|pass|…))와 구분자가 구별 불가 — 스펙 산문이 조건으로 오인돼 등록을
+    # 막았다. 라벨을 지우지 않고 변형('검증:'·'로그 검증:'·'측정:')까지 '| 실증:'으로 통일 — 이 정본
+    # 토큰이 조건 선별·분리의 유일 구분자.
+    s = _re.sub(r"\|\s*(?:[\w가-힣]{0,4}\s*)?(?:실증|검증|측정)\s*[:：]\s*", "| 실증: ", s)
     return s
 
 
@@ -932,7 +959,7 @@ def stage_preflight(stage, text):
     if stage == "milestone" and not (_val("이번 주기") or _val("목표")):
         errs.append("'이번 주기: <이번에 보여줄 딱 하나>' 줄이 필요합니다(줄 시작, 장식 없이).")
     if stage in ("goal", "milestone"):
-        _ct = "\n".join(l for l in lines if "|" in l
+        _ct = "\n".join(l for l in lines if _crit_delim().search(l)
                         and not l.strip().startswith(("단위:", "단계:", "백로그:")))
         _e = gate_criteria(parse_criteria_lines(_ct))
         if _e:
@@ -1019,7 +1046,9 @@ def register_stage(flow, stage, prop, origin=""):
     def _val(prefix):
         return next((l.split(":", 1)[1].strip() for l in lines
                      if l.strip().startswith(prefix) and ":" in l), "")
-    _crit_txt = "\n".join(l for l in lines if "|" in l
+    # [조건 선별 = 라벨 구분자(2026-07-17)] 맨 '|' 포함 줄 전부가 아니라 '| 실증:'류 라벨이 있는 줄만
+    # 조건이다 — 파이프 든 스펙 산문(JSON enum 등)이 조건 게이트로 쓸려 들어와 등록을 막던 것 차단.
+    _crit_txt = "\n".join(l for l in lines if _crit_delim().search(l)
                           and not l.strip().startswith(("단위:", "단계:", "백로그:")))
     _cur = getattr(flow, "current", None)
 

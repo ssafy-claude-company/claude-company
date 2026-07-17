@@ -569,3 +569,40 @@ def test_백로그_소진되고_주기_미완이면_추가분해회의가_체인
     b = r.backlogs[0]
     r.pick(12, b.backlog_id, 12); r.done(12, b.backlog_id, "완료")
     assert meeting_stage(f) == "subtask"                 # 소진+주기 미완 → 추가 분해 회의(체인 자동)
+
+
+# ── [2026-07-17 ch78 실측 회귀 — 조건 파서·게이트 계약] ─────────────────────────
+# 라이브 5h·$45 소진 원인 3종: ①본문 파이프를 구분자로 오인 ②게이트 fail-fast(사이클당 1건 수리)
+# ③볼드 키 매칭 실패(폴백 제목 오등록). 오프라인 예행(rehearse3)으로 확정한 계약을 고정한다.
+
+def test_조건구분자는_라벨_본문파이프는_조건아님():
+    from system.rule.milestone import draft_norm_line, parse_criteria_lines
+    # 라벨 변형('검증:'·'로그 검증:')은 제거가 아니라 '| 실증:'으로 정본화 — 선별·분리·귀속 단일 토큰
+    assert "| 실증: " in draft_norm_line("- 조건 A | 검증: pytest tests/a")
+    assert "| 실증: " in draft_norm_line("- 조건 B | 로그 검증: python cmp.py")
+    # 조건 본문의 붙은 파이프(JSON enum)는 구분자가 아니다 — desc에 그대로 남고, 분리는 라벨/띄어쓴 파이프에서
+    c = parse_criteria_lines("스키마 enum(buy|pass|claim) 유지 | 실증: python check.py --strict")[0]
+    assert c["desc"] == "스키마 enum(buy|pass|claim) 유지" and "python check.py" in c["verify"]
+
+
+def test_게이트는_불량을_일괄보고():
+    bad = [{"desc": "카운터 API", "verify": "확인한다"},
+           {"desc": "버튼 UI", "verify": "잘 살펴본다"}]
+    e = gate_criteria(bad)
+    assert e and "2건" in e and "카운터 API" in e and "버튼 UI" in e   # fail-fast 아님
+
+
+def test_등록_볼드키_파싱과_프리플라이트_동일계약():
+    from system.rule.milestone import register_stage, stage_preflight
+    f = _flow()
+    ok, _ = register_stage(f, "goal", "목표: 카운터 앱\n- 웹 로드 | 실증: curl -s localhost:3000", "t")
+    assert ok
+    prop = ("**이번 주기:** 카운터 1주기\n"
+            "- 스키마 enum(a|b) 유지 | 검증: pytest tests/schema\n"
+            "산문 설명에 붙은 파이프 a|b 있어도 조건 아님\n")
+    assert stage_preflight("milestone", "## 결정\n\n" + prop + "\n## 참고 (자유 — 판정 대상 아님)\n") == []
+    ok2, note = register_stage(f, "milestone", prop.replace("**", ""), "t")
+    assert ok2, note
+    ms = f.milestones[-1]
+    assert ms.goal == "카운터 1주기"            # 볼드 키·폴백 오등록 아님
+    assert len(ms.criteria) == 1                # 산문(붙은 파이프) 줄은 조건으로 미등록
