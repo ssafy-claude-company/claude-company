@@ -70,6 +70,11 @@ def snapshot(flow):
                          "ts": round(time.time() - max(0.0, mono_now - float(m)), 1)})
     except Exception:
         acts = []
+    # [📍 회의 국면 핀(2026-07-17, 사용자: '회의가 하나로 묶여 구분 안 감 — 가시성')] 현재 단계 회의
+    # 국면을 실황 첫 줄에 상주 — 롤링 로그에 쓸려가지 않는 상태 표면(프론트 무변경).
+    _pn = getattr(flow, "_meet_stage_note", None)
+    if _pn:
+        acts.insert(0, {"t": f"📍 {str(_pn)[:120]}", "ts": time.time()})
     project = {"active": int(alive) if _is_bot(alive) else None,
                "stack": stack, "task": task_id, "done": done,
                "activity": acts, "updated": time.time()}

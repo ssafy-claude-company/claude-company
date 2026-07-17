@@ -291,6 +291,9 @@ async def meet(flow, me_id, args):
                     _dwrite(flow, "DRAFT.md", _tmpl)        # 새 단계 → 새 골격(같은 단계 재회의면 진행분 보존)
                 if _dread(flow, "DRAFT.md") is not None:    # 쓰기 실패(워크스페이스 없음)면 폴백 유지
                     _draft_path = f"{dossier_rel(flow.current.task_id)}/DRAFT.md"
+                    _stlbl = {"goal": "① GOAL", "milestone": "② 마일스톤", "subtask": "③ 서브태스크",
+                              "backlog": "④ 백로그"}.get(str(_stage), str(_stage))
+                    flow._meet_stage_note = f"{_stlbl} 회의 — DRAFT 함께 채우는 중"
                     try:
                         flow.note_activity(0, "🗳 회의 — 공동 결론 DRAFT 개설(함께 채우는 중)", force=True)
                     except Exception:
@@ -536,6 +539,7 @@ async def meet(flow, me_id, args):
                         f"이 텍스트만 보고 한 줄로 즉답하세요.** 전원 찬성이어야 확정, 반대는 병합 후 재표결.")
             _yes, _dissents = 0, []
             try:
+                flow._meet_stage_note = f"표결 진행 중 — 심의단 {len(members)}명"
                 flow.note_activity(0, f"🗳 결론 확정 표결 진행 — {len(members)}명 응답 수집", force=True)
             except Exception:
                 pass
@@ -641,6 +645,7 @@ async def meet(flow, me_id, args):
                             _confirm_note = "\n\n" + _note
                             if flow.log:
                                 flow.log("stage_confirmed", stage=str(_stage), passes=_pass, via="draft")
+                            flow._meet_stage_note = None
                             break
                         if flow.log:
                             flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
@@ -661,6 +666,7 @@ async def meet(flow, me_id, args):
                             else:
                                 _dwrite(flow, "DRAFT.md", _dtxt2.rstrip("\n") + "\n" + _blk + "\n")
                         try:
+                            flow._meet_stage_note = f"표결 부결 — 이의 {len(_new)}건 해소 회의 계속"
                             flow.note_activity(0, f"🗳 표결 부결 — 이의 {len(_new)}건 DRAFT 기록, 해소 회의 계속", force=True)
                         except Exception:
                             pass
