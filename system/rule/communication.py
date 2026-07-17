@@ -338,13 +338,18 @@ async def meet(flow, me_id, args):
                 import re as _re
                 _t = _dr(str(_dread(flow, "DRAFT.md") or ""))
                 _phs = _re.findall(r"<[^>\n]{2,60}>", _t)
-                _objs = len(_re.findall(r"^\s*>", _t, _re.M))
-                if not _phs and not _objs:
+                _obj_ls = _re.findall(r"^\s*>\s*(.{0,60})", _t, _re.M)
+                if not _phs and not _obj_ls:
                     return ""
                 _ls = " · ".join(p[:40] for p in _phs[:8]) + (" …" if len(_phs) > 8 else "")
-                return (f"\n[기계 집계] 결정 구획의 빈 곳 {len(_phs)}개: {_ls} / 미해소 이의 {_objs}건. "
-                        f"**지금 못 정하는 세부면 꺾쇠를 지우고 '(후속: …)'로 바꾸거나 참고 구획으로 "
-                        f"옮기세요** — 꺾쇠가 남는 한 회의는 안 닫힙니다.")
+                # [이의도 원문으로(ch78 실측)] '[의견]'·'[검증 대기]' 같은 인용 메모도 전부 미해소로
+                # 집계된다 — 어떤 줄이 막는지 원문을 서빙해야 봇이 해소(반영 후 삭제)하거나 참고로 옮긴다.
+                _os = " · ".join(f"「{o.strip()}…」" for o in _obj_ls[:4])
+                return (f"\n[기계 집계] 결정 구획의 빈 곳 {len(_phs)}개: {_ls} / 미해소 인용(>) {len(_obj_ls)}건"
+                        + (f": {_os}" if _os else "") +
+                        f"\n**지금 못 정하는 세부면 꺾쇠를 지우고 '(후속: …)'로 바꾸거나 참고 구획으로 "
+                        f"옮기세요. 인용(>) 줄은 의견·메모라도 미해소로 집계됩니다 — 반영했으면 그 줄을 "
+                        f"삭제하고, 결정이 아니면 참고 구획으로.** 꺾쇠·인용이 남는 한 회의는 안 닫힙니다.")
             except Exception:
                 return ""
 
