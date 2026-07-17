@@ -2216,7 +2216,9 @@ class Sys:
                             "회의는 시스템이 자동으로 엽니다 — 당신은 이 요청에 대한 **여는 의견**만 3~5줄으로 "
                             "내세요(**도구 호출 금지, 텍스트로만**). 요청: " + (flow.origin_request or body)[:300],
                             Kind.INFO, "leader")
-                        result = await _auto_meet(flow, lead, {"topic": (flow.origin_request or body)[:200],
+                        from .rule.milestone import meeting_stage as _mstg0, stage_agenda as _sagd0
+                        _ag0, _ = _sagd0(_mstg0(flow))
+                        result = await _auto_meet(flow, lead, {"topic": (f"{_ag0} — " if _ag0 else "") + (flow.origin_request or body)[:160],
                                                                "my_opinion": (str(_op or "").strip() or "여는 의견 없음")[:1500],
                                                                "_sys_open": True})
                         _auto_kicked = True
