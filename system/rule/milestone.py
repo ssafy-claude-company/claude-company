@@ -91,34 +91,46 @@ def gate_criteria(entries) -> Optional[str]:
     if not items:
         return "완수조건이 비어 있습니다 — 최소 1개. 각 항목은 {desc, verify}."
     seen = set()
+    # [일괄 보고(2026-07-17, ch78 실측: 등록 거부가 첫 불량 1건만 보고 → 사이클당 1개씩 수리, 6~9분×N)]
+    # fail-fast 대신 전 조건을 검사해 불량을 모두 모아 반환 — 한 사이클에 전부 고치게.
+    errs = []
     for e in items:
         d = str((e.get("desc") if isinstance(e, dict) else getattr(e, "desc", "")) or "").strip()
         v = str((e.get("verify") if isinstance(e, dict) else getattr(e, "verify", "")) or "").strip()
         if not d:
-            return "조건에 desc(무엇이 충족인가)가 없습니다."
+            errs.append("조건에 desc(무엇이 충족인가)가 없습니다.")
+            continue
         if any(w in d for w in _WISHFUL) and not v:
-            return (f"조건 '{d[:40]}'은(는) 소망형입니다 — 측정 가능한 문장으로 바꾸고 "
-                    f"verify(실증 절차)를 붙이세요.")
+            errs.append(f"조건 '{d[:40]}'은(는) 소망형입니다 — 측정 가능한 문장으로 바꾸고 "
+                        f"verify(실증 절차)를 붙이세요.")
+            continue
         if not v:
-            return (f"조건 '{d[:40]}'에 verify(실증 절차)가 없습니다 — run으로 확인 가능한 "
-                    f"명령/절차를 적으세요(예: curl로 상태코드, pytest 파일, 브라우저 로드 확인).")
+            errs.append(f"조건 '{d[:40]}'에 verify(실증 절차)가 없습니다 — run으로 확인 가능한 "
+                        f"명령/절차를 적으세요(예: curl로 상태코드, pytest 파일, 브라우저 로드 확인).")
+            continue
         # [등록 게이트 강화 — 설계 검토 #4(2026-07-09)] verify가 '확인함' 같은 빈 서술이면 churn을
         # 등록 단계로 옮길 뿐. 실행 가능 신호(명령 토큰) 또는 측정 신호(수치·비교)를 최소 1개 요구한다.
         if not _verify_is_executable(v):
-            return (f"조건 '{d[:40]}'의 verify가 실행 가능한 형태가 아닙니다: '{v[:40]}' — "
-                    f"run으로 돌릴 명령(curl/pytest/npm/python/grep/localhost/포트/파일경로 등)이나 "
-                    f"측정 기준(수치·= > < %·회·초·개)을 넣으세요. '확인한다'류 서술은 불가.")
+            errs.append(f"조건 '{d[:40]}'의 verify가 실행 가능한 형태가 아닙니다: '{v[:40]}' — "
+                        f"run으로 돌릴 명령(curl/pytest/npm/python/grep/localhost/포트/파일경로 등)이나 "
+                        f"측정 기준(수치·= > < %·회·초·개)을 넣으세요. '확인한다'류 서술은 불가.")
+            continue
         # [로드맵 오용 차단(2026-07-13, 라이브 U-015: 조건에 M0~M3 로드맵)] 조건은 검증 단위지
         # 하위 마일스톤이 아니다 — 주기 로드맵은 마일스톤 여러 개(계획 큐잉)로.
         import re as _re
         if _re.match(r"^M\d+\b", d) or "owner=" in d:
-            return (f"조건 '{d[:40]}'은(는) 로드맵/배정 표기입니다 — 완수조건은 '검증 가능한 사실' 단위입니다. "
-                    f"주기 계획(M0·M1…)은 set_milestone을 여러 번 불러 마일스톤으로 큐잉하고, 담당은 백로그 배분으로 정하세요.")
+            errs.append(f"조건 '{d[:40]}'은(는) 로드맵/배정 표기입니다 — 완수조건은 '검증 가능한 사실' 단위입니다. "
+                        f"주기 계획(M0·M1…)은 set_milestone을 여러 번 불러 마일스톤으로 큐잉하고, 담당은 백로그 배분으로 정하세요.")
+            continue
         key = d.lower()
         if key in seen:
-            return f"조건 '{d[:40]}'이 중복입니다 — 합치거나 구체화하세요."
+            errs.append(f"조건 '{d[:40]}'이 중복입니다 — 합치거나 구체화하세요.")
+            continue
         seen.add(key)
-    return None
+    if not errs:
+        return None
+    _more = f" (외 {len(errs) - 6}건)" if len(errs) > 6 else ""
+    return f"불량 조건 {len(errs)}건 — 전부 고치세요:\n" + "\n".join(f"{i+1}. {m}" for i, m in enumerate(errs[:6])) + _more
 
 
 # 실행 가능 신호(명령 토큰) — 하나라도 있으면 run으로 돌릴 수 있는 verify로 본다(도메인 중립).
