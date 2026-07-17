@@ -191,7 +191,10 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
         # 2.7) [백로그 선점 게이트 — 파일 경로(2026-07-13, 사용자: '백로그 0인데 작업이 돈다')]
         #      run만 잠그니 Write/Edit(SDK)로 도는 작업이 장부 밖 — 활성 단계의 장부가 열려 있으면
         #      집지 않은 행위자의 산출물 쓰기를 거부한다(.collab는 위에서 이미 차단, 문서 열람은 자유).
-        if tool in ("Write", "Edit") and flow is not None and actor is not None:
+        #      [DRAFT 예외(2026-07-17, ch78 실측)] 단위 등록 직후 열리는 백로그 회의부터 이 게이트가
+        #      공동 결론 파일 편집까지 막아 회의가 파일을 못 채우는 교착 — DRAFT.md는 산출물이 아니라
+        #      회의 표면이라 선점 대상이 아니다(타 게이트들과 동일한 _is_draft 예외).
+        if tool in ("Write", "Edit") and not _is_draft and flow is not None and actor is not None:
             try:
                 from .rule.milestone import pipeline_on as _po
                 if _po():

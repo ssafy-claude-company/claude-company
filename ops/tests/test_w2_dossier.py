@@ -583,3 +583,37 @@ def test_DRAFT는_봇이_협의중에도_쓸수있고_다른_collab문서는_여
     assert ok == {}                                              # DRAFT.md — 허용
     deny = _run("Write", _os.path.join(ws, ".collab", "T-1", "GOAL.md"))
     assert deny.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"   # 나머지는 SYS만
+
+
+def test_백로그선점_게이트도_DRAFT는_예외(tmp_path, monkeypatch):
+    """[ch78 실측(2026-07-17)] 단위 등록 직후 백로그 회의부터 2.7(백로그 선점)이 DRAFT 편집까지 막아
+    회의가 자기 결론 파일을 못 채우는 교착 — DRAFT.md는 회의 표면이라 선점 대상이 아니다."""
+    import asyncio as _aio
+    import os as _os
+    from system.flow import Flow
+    from system.permissions import make_pre_tool_use_hook, organt_allowed_tools
+    from system.rule.milestone import open_milestone, open_subtask
+
+    class _G:
+        def __getattr__(self, k): return None
+
+    class _Audit:
+        def record(self, *a, **k): pass
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = Flow(_G(), 0, 1, 11, {11: "리더", 12: "백엔드"})
+    f.log = None
+    ms = open_milestone(f, "M1", [{"desc": "빌드 통과", "verify": "npm run build 0"}])
+    open_subtask(f, ms, "게임 로직", [{"desc": "로드", "verify": "curl -s /"}])   # 열린 단계 존재
+    ws = str(tmp_path)
+    _os.makedirs(_os.path.join(ws, ".collab", "T-1"), exist_ok=True)
+    hook = make_pre_tool_use_hook(_Audit(), organt_allowed_tools(), actor=12, role="member", flow=f)
+
+    def _run(tool, path):
+        return _aio.run(hook({"tool_name": tool, "tool_input": {"file_path": path}, "cwd": ws}, "tu", None))
+    # 백로그 미선점 상태: 산출물 쓰기는 거부되지만 —
+    deny = _run("Write", _os.path.join(ws, "game.py"))
+    assert deny.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+    assert "백로그" in deny["hookSpecificOutput"]["permissionDecisionReason"]
+    # — 공동 결론 파일(DRAFT.md)은 회의 표면이라 편집 가능해야 한다
+    ok = _run("Edit", _os.path.join(ws, ".collab", "T-1", "DRAFT.md"))
+    assert ok == {}
