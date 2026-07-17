@@ -421,6 +421,15 @@ async def meet(flow, me_id, args):
                 else:
                     _dstate.update(h=_h, stable=0)
                 _ph, _obj = _ms_dstat(_dtxt)
+                from .milestone import draft_missing_key as _dmk
+                _mkey = _dmk(_stage, _dtxt)
+                if _mkey and _ph == 0 and _obj == 0 and "@형식" not in _dtxt:
+                    # 등록 필수 키 부재 — SYS가 형식 이의를 기계 기록(가결-등록거부 루프 선차단)
+                    _ref0 = _dtxt.find("\n## 참고")
+                    _line0 = f"> [이의 @형식] 결정 구획에 '{_mkey}' 로 시작하는 줄이 필요합니다(등록 형식 — 예: {_mkey} <한 줄>)."
+                    _nd = (_dtxt[:_ref0].rstrip("\n") + "\n" + _line0 + "\n" + _dtxt[_ref0:]) if _ref0 > 0 else (_dtxt.rstrip("\n") + "\n" + _line0 + "\n")
+                    _dwrite(flow, "DRAFT.md", _nd)
+                    _dtxt = _nd; _ph, _obj = _ms_dstat(_dtxt)
                 try:
                     flow.note_activity(0, f"🗳 결론 DRAFT — 빈칸 {_ph} · 이의 {_obj}", force=True)
                 except Exception:

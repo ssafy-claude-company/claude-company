@@ -860,6 +860,19 @@ def draft_decision_region(text):
     return t[i:j] if j > 0 else t[i:]
 
 
+_STAGE_KEY = {"goal": "목표", "milestone": "이번 주기", "subtask": "단위:", "backlog": "백로그:"}
+
+
+def draft_missing_key(stage, text):
+    """[등록 형식 기계검사(2026-07-17, ch77 밤샘 루프)] 가결돼도 등록기가 요구하는 키 줄('목표:' 등)이
+    결정 구획에 없으면 거부→소진→재킥오프 무한. ready 전에 키 부재를 잡아 형식 이의로 코칭. 내용 무판단."""
+    k = _STAGE_KEY.get(stage)
+    if not k:
+        return None
+    region = draft_decision_region(text)
+    return None if any(l.strip().startswith(k) for l in region.splitlines()) else k
+
+
 def draft_status(text):
     """DRAFT 상태 → (자리표시 수, 미해소 이의 수). '## 결정' 구획만 심사."""
     import re as _re
