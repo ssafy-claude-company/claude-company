@@ -643,6 +643,7 @@ async def meet(flow, me_id, args):
         _landed, _conclusion = False, ""        # 이 단계 결론이 착지했나 + 결론 요지(회의 마무리 게시용)
         _pipe = bool(_no_r1 and tt)
         _pass = 0
+        _ready_rejects = 0   # [무한 반대의 차기 라우팅] 완성 파일 상태에서의 부결 횟수 — 3회 소진 후 이월 확정
         while True:
             _pass += 1
             _before = len(conv_props)
@@ -667,8 +668,29 @@ async def meet(flow, me_id, args):
                         f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
                         f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
                         f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
-                        f"무엇이 빠졌는지 한 줄로 구체히 쓰세요.")
-                    if _passed:
+                        f"무엇이 빠졌는지 한 줄로 구체히 쓰세요. (완성 파일 기준 표결 3회가 소진되면 잔여 "
+                        f"반대는 차기 주기로 이월 기록되고 결론이 확정됩니다.)")
+                    # [무한 반대의 차기 라우팅(2026-07-17, ch78 실측: 완성 파일에 표결 5연속 부결 — 라운드마다
+                    # 새 다듬기 반대 1건씩)] 반대는 무한 허용하되 종결을 못 막게 — 완성 상태 부결 3회 소진 후
+                    # 잔여 반대는 참고 구획에 '[차기 이월]'로 기록하고 결론을 확정한다(억압 아님: 기록·가시·
+                    # 다음 주기 회의의 입력). 재개설 예산 리셋으로 광택 루프가 무한해지던 것의 구조적 종결 보장.
+                    if not _passed:
+                        _ready_rejects += 1
+                    _carry = (not _passed) and _ready_rejects >= 3
+                    if _passed or _carry:
+                        if _carry:
+                            if _diss:
+                                _dtxt3 = str(_dread(flow, "DRAFT.md") or "")
+                                _blk3 = "\n".join(f"[차기 이월 @표결] {d[:150]}" for d in _diss[:5])
+                                _dwrite(flow, "DRAFT.md", _dtxt3.rstrip("\n") + "\n\n" + _blk3 + "\n")
+                            try:
+                                _ch3 = (flow.current.thread_id if flow.current else None) or flow.user_channel
+                                await flow.guide.post(int(_ch3), 0,
+                                                      f"[표] 표결 3회 소진 — 잔여 반대 {len(_diss or [])}건 차기 주기 이월, 결론 확정")
+                            except Exception:
+                                pass
+                            if flow.log:
+                                flow.log("meet_dissent_carryover", n=len(_diss or []), passes=_pass)
                         flow._draft_attr = dict(_dstate.get("attr") or {})   # 발제 귀속 → 등록기
                         _ok, _note = _ms_regstage(flow, _stage, _ms_dprop(_stage, _dtxt), topic)
                         if _ok:
