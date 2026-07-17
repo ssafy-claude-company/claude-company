@@ -488,9 +488,27 @@ async def meet(flow, me_id, args):
                              "(동료가 이미 낸 결론에 동의하면 그대로 복사·수정해 제출 — 전원 찬성 표결로 "
                              "채택됩니다. 이 회의 안건 밖의 것은 넣지 마세요 — 다음 단계 회의에서 정합니다.)"
                              if (_no_r1 and _stage_tmpl) else " 마쳐도 되면 `[종료]`만.")
+                    # [린터식 게이트 보고(2026-07-17, ch78 실측: 자리표시 12→15 증식)] '빈 곳이 남았다'만
+                    # 말하면 봇이 어디가 막는지 모른 채 새 꺾쇠('<후속 협의>' 표기)를 더한다 — SYS가 기계
+                    # 집계 결과(개수+실제 꺾쇠 목록)를 그대로 보고. 내용 판단 아님(무엇을 채울지는 봇 몫).
+                    def _gate_lint():
+                        try:
+                            from .milestone import draft_decision_region as _dr
+                            import re as _re
+                            _t = _dr(str(_dread(flow, "DRAFT.md") or ""))
+                            _phs = _re.findall(r"<[^>\n]{2,60}>", _t)
+                            _objs = len(_re.findall(r"^\s*>", _t, _re.M))
+                            if not _phs and not _objs:
+                                return ""
+                            _ls = " · ".join(p[:40] for p in _phs[:8]) + (" …" if len(_phs) > 8 else "")
+                            return (f"\n[기계 집계] 결정 구획의 빈 곳 {len(_phs)}개: {_ls} / 미해소 이의 {_objs}건. "
+                                    f"**지금 못 정하는 세부면 꺾쇠를 지우고 '(후속: …)'로 바꾸거나 참고 구획으로 "
+                                    f"옮기세요** — 꺾쇠가 남는 한 회의는 안 닫힙니다.")
+                        except Exception:
+                            return ""
                     _gate = ((f"\n\n**이 회의는 결론 파일이 완성·가결돼야만 끝납니다 — 발언권 소진·지명 "
                               f"릴레이로는 안 끝납니다.** `{_draft_path}` 에 아직 빈 곳/이의가 남았거나 표결이 "
-                              f"부결됐습니다 — 발언권을 받아 파일을 채우고 이의를 해소하세요.")
+                              f"부결됐습니다 — 발언권을 받아 파일을 채우고 이의를 해소하세요.{_gate_lint()}")
                              if _draft_path is not None else
                              ("\n\n**이 회의는 위 형식의 결론이 채택돼야만 끝납니다 — 발언권 소진·지명 릴레이"
                               "로는 안 끝납니다.** 아직 채택된 결론이 없습니다. 마치려면 반드시 위 코드블록/형식"
