@@ -662,7 +662,32 @@ async def meet(flow, me_id, args):
                 # 표결문 요구대로 DRAFT에 이의를 남기므로 다음 패스가 그 이의를 해소하며 수렴한다.
                 _dtxt = str(_dread(flow, "DRAFT.md") or "")
                 _ph, _obj = _ms_dstat(_dtxt)
+                # [등록 프리플라이트(2026-07-17, ch78 실측: 가결→등록거부 사이클에 $3~5×N)] 파일이
+                # 완성돼도 등록 파서가 거부할 형식이면 표결이 낭비 — register_stage와 같은 검사를 표결
+                # 전에 돌려 불량 전부를 '> [이의 @형식]'으로 파일에 기록(기계 검사 보고, 내용 판단 없음).
+                # 봇 비용 0으로 발견하고, 다음 발언 턴들이 일괄 수리한다.
+                _pre_errs = []
                 if _dtxt.strip() and _ph == 0 and _obj == 0:
+                    try:
+                        from .milestone import stage_preflight as _ms_pre
+                        _pre_errs = [e for e in _ms_pre(_stage, _dtxt) if e and e[:40] not in _dtxt]
+                    except Exception:
+                        _pre_errs = []
+                    if _pre_errs:
+                        _blk0 = "\n".join(f"> [이의 @형식] {e[:200]}" for e in _pre_errs[:6])
+                        _ref0 = _dtxt.find("\n## 참고")
+                        if _ref0 > 0:
+                            _dwrite(flow, "DRAFT.md", _dtxt[:_ref0].rstrip("\n") + "\n" + _blk0 + "\n" + _dtxt[_ref0:])
+                        else:
+                            _dwrite(flow, "DRAFT.md", _dtxt.rstrip("\n") + "\n" + _blk0 + "\n")
+                        try:
+                            flow._meet_stage_note = f"등록 형식 미달 {len(_pre_errs)}건 — 수리 회의 계속"
+                            flow.note_activity(0, f"🗳 등록 사전 검사 — 형식 미달 {len(_pre_errs)}건 DRAFT 기록, 수리 후 표결", force=True)
+                        except Exception:
+                            pass
+                        if flow.log:
+                            flow.log("meet_preflight_failed", passes=_pass, n=len(_pre_errs))
+                if _dtxt.strip() and _ph == 0 and _obj == 0 and not _pre_errs:
                     from .milestone import draft_decision_region as _dregion2
                     _passed, _diss = await _ratify_vote(
                         f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "

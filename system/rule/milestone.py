@@ -915,6 +915,35 @@ def draft_to_proposal(stage, text):
     return "\n".join(out)
 
 
+def stage_preflight(stage, text):
+    """[등록 사전 검사(2026-07-17, ch78 실측: 표결 가결 후 등록 거부 사이클 6~9분×N — 봇 비용 낭비)]
+    register_stage와 **같은 파싱**으로 표결 전에 불량을 전부 찾는다(봇 비용 0, 상태 변경 없음).
+    반환: 에러 목록(list[str]) — 비면 통과. 표결·등록의 이중 발견을 게이트 시점 단일 발견으로."""
+    import re as _re
+    prop = draft_to_proposal(stage, text)
+    lines = [l.replace("**", "") for l in str(prop or "").splitlines()]
+    errs = []
+
+    def _val(prefix):
+        return next((l.split(":", 1)[1].strip() for l in lines
+                     if l.strip().startswith(prefix) and ":" in l), "")
+    if stage == "goal" and not _val("목표"):
+        errs.append("'목표: <이 Task로 정확히 무엇을 만드는지>' 줄이 필요합니다(줄 시작, 장식 없이).")
+    if stage == "milestone" and not (_val("이번 주기") or _val("목표")):
+        errs.append("'이번 주기: <이번에 보여줄 딱 하나>' 줄이 필요합니다(줄 시작, 장식 없이).")
+    if stage in ("goal", "milestone"):
+        _ct = "\n".join(l for l in lines if "|" in l
+                        and not l.strip().startswith(("단위:", "단계:", "백로그:")))
+        _e = gate_criteria(parse_criteria_lines(_ct))
+        if _e:
+            errs.extend(ln for ln in _e.splitlines() if ln.strip())
+    if stage == "subtask" and not any(l.strip().startswith("단위:") for l in lines):
+        errs.append("'단위: <작업 영역> | 실증: <절차>' 줄이 1개 이상 필요합니다.")
+    if stage == "backlog" and not any(l.strip().startswith("백로그:") for l in lines):
+        errs.append("'백로그: <구체 작업>' 줄이 1개 이상 필요합니다.")
+    return errs
+
+
 def stage_context(flow, stage):
     """[안건 타깃 명시(2026-07-16, 정합 감사 A)] 이 단계 회의가 딛고 선 이전 결론을 안건에 못박는다 —
     특히 백로그 회의는 단위마다 열리는데 '어느 단위' 회의인지 없으면 논의와 등록(첫 미충원 단위)이
@@ -984,7 +1013,8 @@ def register_stage(flow, stage, prop, origin=""):
     # 실값 없는 껍데기 등록 차단(비준 낭비 전에 여기서도 방어).
     if _re.search(r"<[^>\n]{2,60}>", str(prop or "")):
         return False, "수렴안에 템플릿 자리표시(<...>)가 남아 있습니다 — 실제 값으로 채워 다시 제출하세요."
-    lines = str(prop or "").splitlines()
+    # [마크다운 장식 무력화(2026-07-17, ch78 실측: '**이번 주기:**' 볼드로 키 매칭 실패 → 폴백 제목 오등록)]
+    lines = [l.replace("**", "") for l in str(prop or "").splitlines()]
 
     def _val(prefix):
         return next((l.split(":", 1)[1].strip() for l in lines
