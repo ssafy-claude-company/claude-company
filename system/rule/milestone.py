@@ -235,8 +235,15 @@ def _ms_one(flow, ms, relays):
                 a = str(_fmt(b.assignee) or "") if b.assignee else ""
             except Exception:
                 a = ""
+            # [주인 표면화(2026-07-18, 사용자: '백로그가 누구껀지 안 뜨는데')] 발제자(submitter)=주인 —
+            # 안 집힌 항목도 누구 것인지 보이게 필드로 동봉(수행자 a/aid와 별개, 권한 존재론 그대로).
+            try:
+                sub = str(_fmt(b.submitter) or "") if b.submitter else ""
+            except Exception:
+                sub = ""
             bl.append({"id": b.backlog_id, "d": (b.body or "")[:60], "s": b.status, "a": a,
                        "aid": (str(b.assignee) if b.assignee else None),
+                       "sub": sub, "sid": (str(b.submitter) if b.submitter else None),
                        "t0": b.ts_pick or None, "t1": b.ts_done or None})
         # [백로그=계획 목록(2026-07-10, 사용자: '미리 만들어 두는 건데')] ST 완수조건 = 등록 순간부터
         # 존재하는 계획 단위 — 전 목록을 표면에 준다(passed=✓). 릴레이 bl은 담당·진행의 보강 데이터.
