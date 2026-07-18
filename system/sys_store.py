@@ -73,11 +73,67 @@ def load_personas(session_dir) -> dict:
         return {}
 
 
+# [레지스트리 DB화(2026-07-18, HA 설계 — 러너 페일오버 준비)] projects.json은 러너의 부팅·복구
+# backbone이다. 다중머신에서 인수 러너가 어느 호스트에서든 복원하려면 이 레지스트리가 공유
+# 저장소(DB)에 있어야 한다. 아래는 파일 경로를 *그대로 두고* DB 이중화만 추가한다 — 두 플래그 모두
+# 기본 OFF이라 단일 VPS 부팅·복구는 무변경(파일이 진실원). 다중머신 전환 시 플래그로 DB 통로 활성.
+#   ORGANT_REGISTRY_DB=1        저장 시 DB에도 write-through(레지스트리 블록, 디바운스). 기본 off.
+#   ORGANT_REGISTRY_FROM_DB=1   부팅 로드 시 DB 우선(get_state_sync), 없으면 파일. 기본 off.
+_REG_KIND = "registry"        # ChannelState kind — 레지스트리 블록(channel 0에 단일 행)
+_REG_CH = 0
+_reg_last_push = [0.0]        # 디바운스: 마지막 DB push monotonic(잦은 checkpoint 저장을 완화)
+
+
+def _registry_db_on():
+    return os.environ.get("ORGANT_REGISTRY_DB", "0") not in ("0", "false", "False")
+
+
+def _push_registry_db(sys, data):
+    """레지스트리 블록을 DB로 미러(fire-and-forget) — 실행 루프 있으면 스케줄, 없으면(부팅·SIGTERM) 스킵.
+    디바운스 5초(잦은 저장에 HTTP/DB 부하 완화). 파일 저장과 독립·무해."""
+    if not _registry_db_on():
+        return
+    put = getattr(getattr(sys, "guide", None), "put_state", None)
+    if put is None:
+        return
+    try:
+        now = time.monotonic()
+        if now - _reg_last_push[0] < 5.0:
+            return
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        _reg_last_push[0] = now
+        t = loop.create_task(put(_REG_CH, _REG_KIND, data))
+        _REG_BG.add(t); t.add_done_callback(_REG_BG.discard)
+    except Exception:
+        pass
+
+
+_REG_BG = set()
+
+
 def load_projects(sys):
     """디스크에서 프로젝트 레지스트리 복원 — 프로세스가 끝나도 '원래 작업'에 개입 가능.
     디스크(logs/)가 없으면(컨테이너 리클레임으로 유실) 커밋된 시드에서 복원하되 'seeded' 마커를
     남긴다 — 시드는 커밋 시점에 멈춘 과거라, 부팅 reconcile에서 Discord 채널 토픽(런타임마다
     갱신되는 영속 진실원)이 있으면 그쪽이 이긴다(리더 재지정·워크스페이스가 시드로 원복되던 한계 해소)."""
+    # [다중머신 부팅 복원(플래그 off 기본 — 라이브 무변경)] DB에 레지스트리가 있으면 파일보다 우선.
+    if os.environ.get("ORGANT_REGISTRY_FROM_DB", "0") not in ("0", "false", "False"):
+        get = getattr(getattr(sys, "guide", None), "get_state_sync", None)
+        if get is not None:
+            try:
+                data = get(_REG_CH, _REG_KIND)
+                if data and data.get("projects"):
+                    sys.projects = {int(k): v for k, v in data.get("projects", {}).items()}
+                    sys._proj_n = data.get("n", len(sys.projects))
+                    sys.queue = [tuple(item) for item in data.get("queue", [])
+                                 if isinstance(item, (list, tuple)) and len(item) >= 3]
+                    sys._log("projects_db_restored", n=len(sys.projects))
+                    return
+            except Exception:
+                pass   # DB 실패 → 파일 폴백(아래)
     path, seeded = sys.projects_path, False
     if not path or not os.path.exists(path):
         if sys.seed_path and os.path.exists(sys.seed_path):
@@ -110,6 +166,8 @@ def save_projects(sys):
         data = {"n": sys._proj_n,
                 "projects": {str(k): v for k, v in sys.projects.items()},
                 "queue": [list(item) for item in sys.queue]}
+        # [DB 이중화(플래그 off 기본)] 다중머신 인수 러너를 위해 레지스트리를 DB에도 미러(디바운스·무해).
+        _push_registry_db(sys, data)
         # 원자적 저장: 임시파일에 다 쓰고 flush+fsync 후 교체 → 쓰는 도중 프로세스가 죽어도
         # 원본 projects.json이 '반쪽(깨진 JSON)'으로 남지 않는다(개입 레지스트리 유실 방지).
         tmp = f"{sys.projects_path}.tmp-{time.monotonic_ns()}"   # 병렬 흐름 동시 저장 경합 방지

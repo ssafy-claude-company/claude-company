@@ -75,3 +75,58 @@ def test_로테이팅카운터_주기검사(tmp_path, monkeypatch):
     assert not (tmp_path / "a.jsonl.1").exists()              # 아직 주기 안 참
     rc.tick()
     assert (tmp_path / "a.jsonl.1").exists()                  # 3회째 검사·로테이션
+
+
+# ── [레지스트리 DB화(2026-07-18, HA 설계 — 러너 페일오버 준비)] 플래그 off 무변경·on 왕복 ──
+def test_레지스트리_writethrough_플래그(monkeypatch):
+    import asyncio
+    from system import sys_store
+    sys_store._reg_last_push[0] = 0.0
+
+    class _G:
+        def __init__(self): self.pushed = []
+        async def put_state(self, ch, kind, data): self.pushed.append((ch, kind, data))
+
+    class _S:
+        def __init__(self): self.guide = _G()
+
+    async def run(on):
+        s = _S()
+        if on:
+            monkeypatch.setenv("ORGANT_REGISTRY_DB", "1")
+        else:
+            monkeypatch.delenv("ORGANT_REGISTRY_DB", raising=False)
+        sys_store._reg_last_push[0] = 0.0
+        sys_store._push_registry_db(s, {"n": 1, "projects": {"9": {"id": "P-9"}}, "queue": []})
+        await asyncio.sleep(0.01)
+        return s.guide.pushed
+
+    assert asyncio.run(run(False)) == []                      # 플래그 off = 무동작(라이브 무변경)
+    pushed = asyncio.run(run(True))
+    assert len(pushed) == 1 and pushed[0][0] == 0 and pushed[0][1] == "registry"
+
+
+def test_레지스트리_DB부팅복원_플래그(monkeypatch):
+    from system import sys_store
+
+    class _G:
+        def get_state_sync(self, ch, kind):
+            return {"n": 3, "projects": {"7": {"id": "P-7"}}, "queue": []}
+
+    class _S:
+        def __init__(self):
+            self.guide = _G(); self.projects = {}; self._proj_n = 0; self.queue = []
+            self.projects_path = None; self.seed_path = None; self.logs = []
+        def _log(self, ev, **k): self.logs.append(ev)
+        def _save_projects(self): pass
+
+    # 플래그 off → DB 무시(파일 경로, projects_path None이라 무복원)
+    monkeypatch.delenv("ORGANT_REGISTRY_FROM_DB", raising=False)
+    s = _S(); sys_store.load_projects(s)
+    assert s.projects == {}                                   # DB 안 봄
+
+    # 플래그 on → DB에서 복원
+    monkeypatch.setenv("ORGANT_REGISTRY_FROM_DB", "1")
+    s2 = _S(); sys_store.load_projects(s2)
+    assert s2.projects == {7: {"id": "P-7"}} and s2._proj_n == 3
+    assert "projects_db_restored" in s2.logs

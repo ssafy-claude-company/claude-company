@@ -173,6 +173,15 @@ class MurmurGuide:
         except Exception:
             pass
 
+    def get_state_sync(self, channel_id, kind):
+        """[부팅 복원용 — sync(이벤트루프 전)] 공유 DB에서 채널 상태를 되읽는다. 없으면/실패면 None
+        (호출부가 파일 폴백). 러너 부팅은 async 루프 전이라 sync HTTP를 쓴다."""
+        try:
+            r = self._get_sync("/api/guide/state/", {"channel_id": int(channel_id), "kind": str(kind)})
+            return (r or {}).get("data")
+        except Exception:
+            return None
+
     def _track_last(self, ch, thread_id, msg_id):
         """[댓글형 시각화] 채널·스레드별 마지막 기록 msg_id — 관찰([의견])을 직전 결과에 붙일 근거."""
         try:
