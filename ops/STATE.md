@@ -19,7 +19,19 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  6e4a290  ← 브레인 — 2026-07-17 ★회의 수렴 종결 보장 스택(ch78 라이브+오프라인 예행으로 5개 층
+claude-company  9e4688a  ← 브레인 — 2026-07-18 ★보안 감사(에이전트 2 + 직접, 코드확인). 수리 배치:
+                          [봇 파이프라인] Read/Glob/Grep 작업공간 경계 강제(종전 무제한 → /etc/murmur-web.env·
+                          /proc/environ·~/.ssh 탈취 봉쇄) · run _RUN_DENY에 메타데이터IP·SSH키·/proc/·내부API
+                          (/api/guide·deploy_creds) 추가(curl SSRF·`..` 우회 차단). guide 토큰은 Read게이트+
+                          env스크럽 이중 차단 확인(별도 분리 불요화). 회귀 6건.
+                          [murmur 백엔드 = murmur 06aa85c] monitor.agent_detail 비공개채널 pid/task/goal 인가 ·
+                          _pub is_admin 비노출(자기 me만) · 프로덕션 fail-closed(SECRET_KEY·VAULT_KEY 없으면
+                          기동거부) · 프록시 쿠키 Secure/HSTS. 회귀 2건. 백엔드 보안스위트 53 그린.
+                          [인프라 — 사용자 실행 대기] nginx /api/atelier/·/codex/ 외부차단 + ATELIER_WORKHOOK_SECRET
+                          설정 + 잔재 codex/http.server 정리(scratchpad/nginx-murmur.new 검증완료, `!` 명령 대기).
+                          ★C1 라이브 취약 확정: /api/atelier/work/ 무인증(시크릿 기본값 '!') → 봇 임의주입, HTTP
+                          403 도달 실증. 봇 절반(비밀읽기)은 배포로 차단됨, 진입문(nginx)은 사용자 실행으로 닫힘.
+                          (이전 6e4a290) 2026-07-17 ★회의 수렴 종결 보장 스택(ch78 라이브+오프라인 예행으로 5개 층
                           순차 확정): ①[단계:x] 개시 마커→피드 필드(봇 재개설 병합) ②린터식 게이트(_draft_lint —
                           꺾쇠·인용 원문을 발언 턴·응찰 양쪽에 서빙, 내용 판단 없음) ③완성 파일 표결 부결 3회
                           소진→잔여 반대 [차기 이월]·확정(무한 반대 허용+종결 보장) ④등록 프리플라이트(표결 전
