@@ -19,7 +19,15 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  fcd67c6  ← 브레인 — 2026-07-18 ★HA/수평확장 설계 + P0 착수. 설계문서=아티팩트
+claude-company  0bfdd6b  ← 브레인 — 2026-07-18 ★HA/수평확장 설계 + 착수(P0·P1코드·상태DB화 시작).
+                          ★상태 DB화(scale-out 준비, murmur e24200d): ms_status를 로컬파일→DB(ChannelState)로
+                          이중 미러 — 러너가 guide.put_state(fire-and-forget)로 upsert, 웹이 DB-우선 읽기(파일
+                          폴백). 웹/러너 다중머신 통로 준비(단일 VPS 무회귀). 이게 나머지 파일상태(projects.json
+                          스냅샷·활동로그) DB화의 레퍼런스 패턴. ORGANT_STATE_DB=0 비활성.
+                          ★★사고+수리(투명): 보안 fail-closed(settings.py 프로덕션 키 검증)가 manage.py
+                          run_organt_sns까지 죽여 러너 크래시루프 → 봇 런타임 다운. fail-closed·쿠키/HSTS를 웹
+                          서핑면(gunicorn)에만 걸고 관리명령 제외로 수리, 라이브 러너 복구 확인. 회귀 3건.
+                          ★HA/수평확장 설계 + P0 착수. 설계문서=아티팩트
                           (상태고정지도·목표구조·단계표). 진단: 큐 픽업만 이미 CAS 다중러너 안전, 그 위
                           전부가 단일러너+로컬디스크 전제(점유장부·흐름레지스트리·봇세션·워크스페이스).
                           [P0 완료·배포] organt/botpool.py 전역 서브프로세스 세마포어(ORGANT_MAX_SUBPROCS=8)+
