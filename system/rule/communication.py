@@ -257,6 +257,27 @@ async def meet(flow, me_id, args):
                             round_robin, run_conversation)
         mode = floor_mode(getattr(flow, "floor_mode", None), default="orchestrated")
         tt = (mode == "turn-taking")
+        # ══ [2층 stance seam(2026-07-18) — 발화 타입·인접쌍 기대(CA-Lab RFC-003 2층)] 기본 OFF:
+        # ORGANT_FLOOR_L2=stance(또는 flow.floor_l2)이고 TT일 때만. 켜면 ①발언 첫 줄 [주장]/[질문]/
+        # [반박]/[지지] 자기 선언을 Turn.stype으로 운반 ②[질문]/[반박]+[지명]이 인접쌍(답 의무)을 열고
+        # ③합의 종결 직전 미해소 의무자에게 발언권 1회(StanceFloor 래퍼 — 배선은 정책 교체 한 줄).
+        from .stance import StanceFloor, StanceLedger, floor_l2_mode, parse_stance
+        _l2 = bool(tt and floor_l2_mode(getattr(flow, "floor_l2", None)) == "stance")
+        _ledger = StanceLedger() if _l2 else None
+
+        def _l2_obs(name, p):
+            if flow.log:   # 관측: 인접쌍 수명주기 — CA-Lab 2층 실험(기대·해소·종결블록)의 원자료
+                flow.log(name, opener=p.opener, target=p.target, ptype=p.ptype,
+                         how=(p.resolved or None))
+
+        def _l2_note(t):
+            # [2층 장부 기입 = 턴 생성 지점(stance.py 계약)] next_after 기입은 예산 컷의 마지막 턴을
+            # 유실한다(§6-2 동기 사례가 그 자리) — 여기서 전 턴을 정확히 1회 기입한다.
+            if _ledger is not None:
+                for _ev, _p in _ledger.note_turn(st.turn_no, t.speaker, getattr(t, "stype", None),
+                                                 t.addressee, t.passed, participants=list(members)):
+                    _l2_obs(_ev, _p)
+            return t
         # [심의단 자기선택(2026-07-16, 사용자: '근본적으로')] 전원(8~12명) 심의·만장일치는 비용이 N²로
         # 자라는 근본 병목 — 회의도 선거·백로그와 같은 자기선택 원칙으로. 안건에 자기 도메인이 걸리는
         # 봇만 응찰해 심의단(상한 5)이 되고, 표결도 심의단 만장일치. 불참자는 피드로 보고 다음 라운드에
@@ -375,7 +396,7 @@ async def meet(flow, me_id, args):
             except Exception:
                 return ""
 
-        def _mk_body(m, r, won=False):
+        def _mk_body(m, r, won=False, answer=False):
             """토론 발언 프롬프트 — r(int)=종전 라운드 문구(바이트 동일), r=None=TT(발언권 규약 동봉,
             won=응찰 낙찰 발언)."""
             log_txt = _ctx_for(m)
@@ -391,7 +412,10 @@ async def meet(flow, me_id, args):
             # [수렴 쪽으로(2026-07-15, 사용자)] '동의/반박/보완'(=덧붙여라) 틀 제거 — 그게 무한 누적의
             # 원천이었다. 대신 안건에 답하되, 충분히 다뤄졌으면 새로 보태지 말고 [수렴안]을 제출하도록
             # 유도(제출 시 전원 찬반 표결 → 전원 찬성이면 확정·종료). 응찰 소진을 기다릴 필요 없음.
-            head = ("[회의 토론 — 발언권 획득(당신의 응찰이 선정됨)] 방금 응찰한 그 관점을 지금 발언하세요."
+            head = ("[회의 토론 — 답 슬롯] 동료의 [질문]/[반박]이 당신의 답을 기다립니다 — 그에 답하세요"
+                    "(짧아도 됩니다. 답할 수 없으면 그 이유가 답입니다)."
+                    if answer else
+                    "[회의 토론 — 발언권 획득(당신의 응찰이 선정됨)] 방금 응찰한 그 관점을 지금 발언하세요."
                     if won else "[회의 토론]")
             if _draft_path is not None:
                 _sub = (f"\n\n**이 회의의 결론은 공동 파일 `{_draft_path}` 에서 만듭니다.** 지금 그 파일을 "
@@ -404,11 +428,14 @@ async def meet(flow, me_id, args):
                 _sub = (f"\n\n**이 안건이 충분히 다뤄졌다고 보면, 새 의견을 보태지 말고 아래 [수렴안]을 발언에 "
                         f"담아 제출하세요 — 전원 찬반 표결에 부쳐지고 전원 찬성이면 확정·종료됩니다"
                         f"(미완이면 부결되니 다듬어 낼 것):**\n{_stage_tmpl}" if (_no_r1 and _stage_tmpl) else "")
+            _l2_rule = (" 발언 성격은 첫 줄 `[주장]`/`[질문]`/`[반박]`/`[지지]`로 밝힐 수 있습니다 — "
+                        "`[질문]`/`[반박]`을 `[지명]`과 함께 쓰면 그 동료의 답 전엔 회의가 닫히지 않습니다."
+                        if _l2 else "")
             return (f"{head} 주제: {topic}{_frm}\n못 본 발언:\n{log_txt}\n\n"
                     f"당신({flow._info(m)})의 차례입니다 — 위 안건에 당신 도메인 관점으로 답하세요"
                     f"(근거 필수, 맹목적 동의·이미 나온 것 반복 금지). 3~5줄(최대 1000자). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.{_sub}\n"
                     f"[발언권 규약] 특정 동료의 답이 꼭 필요하면 발언 마지막 줄에 `[지명: 이름]` — "
-                    f"더 보탤 것이 없으면 `[패스]`만.")
+                    f"더 보탤 것이 없으면 `[패스]`만.{_l2_rule}")
 
         async def _speech(m, body, label):
             """발언 1회 — 정책 불문 단일 실행 경로. 반환 Turn(지명·패스 신호) / None=회의 중단."""
@@ -422,7 +449,7 @@ async def meet(flow, me_id, args):
                 # 멤버만 건너뛴다(부분 진행). 베턴 경합(아래)과 달리 시스템 문제가 아니다.
                 minutes.append(f"[{label}] {flow._info(m) or m}: (타 흐름({e.holder_scope}) "
                                f"참여 중 — 이 라운드 불참)")
-                return Turn(speaker=m, passed=True, body="(타 흐름 참여 중 — 불참)")
+                return _l2_note(Turn(speaker=m, passed=True, body="(타 흐름 참여 중 — 불참)"))
             except CommError as e:
                 minutes.append(f"(회의 중단 — 베턴 경합: {str(e)[:60]})")
                 return None
@@ -439,7 +466,7 @@ async def meet(flow, me_id, args):
             _who = flow._info(m) or m
             if passed:
                 minutes.append(f"[{label}] {_who}: (패스)")
-                return Turn(speaker=m, passed=True, body=res or "")
+                return _l2_note(Turn(speaker=m, passed=True, body=res or ""))
             minutes.append(f"[{label}] {_who}: {_speech_clip(res)}")
             if block["label"] != label:
                 _flush_minutes()
@@ -501,11 +528,16 @@ async def meet(flow, me_id, args):
                     if flow.log:
                         flow.log("consensus_in_discussion", who=int(m), stage=str(_stage))
                     return None                     # 조기 종료 → 게이트 루프가 비준·등록
-            return Turn(speaker=m, addressee=addressee, body=res or "")
+            _sty = parse_stance(res) if _l2 else None
+            if _sty and flow.log:
+                flow.log("stance_turn", who=int(m), stype=_sty)
+            return _l2_note(Turn(speaker=m, addressee=addressee, body=res or "", stype=_sty))
 
         async def _speak(speaker, alloc):
             if tt:
-                return await _speech(speaker, _mk_body(speaker, None, won=(alloc.kind == SELF)), "토론")
+                _ans = (alloc.reason or "").startswith("2층")   # 종결 블록의 답 슬롯 배분
+                return await _speech(speaker, _mk_body(speaker, None, won=(alloc.kind == SELF),
+                                                       answer=_ans), "토론")
             r, m2 = schedule[min(sched_i["i"], len(schedule) - 1)]
             sched_i["i"] += 1
             return await _speech(m2, _mk_body(m2, r), f"{r}R")
@@ -548,10 +580,19 @@ async def meet(flow, me_id, args):
                               "로는 안 끝납니다.** 아직 채택된 결론이 없습니다. 마치려면 반드시 위 코드블록/형식"
                               "대로 결론을 동봉하세요(누구든). 없으면 회의는 닫히지 않고 다시 열립니다.")
                              ) if (_no_r1 and _gate_unmet["on"]) else ""
+                    _l2_pend = ""
+                    if _ledger is not None:
+                        _pp = _ledger.pending_targeted(members)
+                        if _pp:   # [2층] 표결자에게 왜 닫힘이 보류될 수 있는지 서빙(기계 집계, 판단 없음)
+                            _l2_pend = ("\n[미해소 인접쌍] " + " · ".join(
+                                f"{flow._info(p.target) or p.target}에게 "
+                                f"{'질문' if p.ptype == 'question' else '반박'}"
+                                f"({flow._info(p.opener) or p.opener})" for p in _pp[:3])
+                                + " — 의무자의 답 전엔 합의 종결이 보류됩니다.")
                     return (f"[회의 — 종결 확인] 주제: {topic}\n못 본 발언:\n{_ctx_for(c)}\n\n"
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
                             f"판단하세요. 더 다뤄야 할 것이 있으면 `[계속: N]`(N=1~9)과 무엇인지 한 줄만 "
-                            f"— 발언권을 받아 직접 발언하게 됩니다.{_conv}{_gate}")
+                            f"— 발언권을 받아 직접 발언하게 됩니다.{_l2_pend}{_conv}{_gate}")
                 return (f"[회의 — 발언권 응찰] 주제: {topic}\n못 본 발언:\n{_ctx_for(c)}\n\n"
                         f"지금 발언권이 비어 있습니다. 당신({flow._info(c)})이 **지금** 발언할 필요가 "
                         f"있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 이유만 "
@@ -662,9 +703,14 @@ async def meet(flow, me_id, args):
                 st.record(Turn(speaker=m, body="(1R)"))     # R1 발언을 침묵 장부에 반영(오퍼 공정성)
         policy = (make_floor("turn-taking") if tt
                   else make_floor("orchestrated", allocator=round_robin([m for _, m in schedule])))
+        if _l2:
+            # [2층] 래퍼 한 겹 — 배분 위임, 개입은 합의 종결 직전 미해소 인접쌍 1지점(stance.py §4).
+            policy = StanceFloor(policy, _ledger, observer=_l2_obs)
         # [§4] 완전 TT의 시작 턴 = 소집자 발제(내용 발화가 아니라 주제 제시) — 이후 전 발언이 응찰.
         _t0 = (Turn(speaker=me_id, body="(발제)") if _no_r1
                else Turn(speaker=members[-1], body="(1R 마지막 발언)"))
+        if _ledger is not None:
+            _l2_note(_t0)   # 전 턴 기입 불변식 — 개시 턴도 1회(게이트 루프가 _t0를 재사용해도 여기뿐)
         # [게이트 = 채택된 수렴안(2026-07-14, 사용자: '회의에 상한 두지 말고 — 수렴안 채택돼야만 끝난다')]
         # 종료 조건을 '발언권 소진'이 아니라 '수렴안이 표결로 채택됨'으로 바꾼다. 파이프라인 TT 회의는
         # 한 패스 돌린다 → 이번에 [수렴안]이 제출됐나? 없으면 전원 발언권 되살려 재응찰(인위적 상한 없음).

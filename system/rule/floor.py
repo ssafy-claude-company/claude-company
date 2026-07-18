@@ -52,6 +52,7 @@ class Turn:
     addressee: Optional[int] = None   # 이 턴이 지명한 다음 화자(Sacks ①의 입력). None=지명 없음
     passed: bool = False              # 패스(보탤 말 없음) — 무응찰/종결 판정 입력
     body: str = ""                    # 관측·회의록용 원문(정책 미사용)
+    stype: Optional[str] = None       # 발화 타입(2층 stance.py 소관 — 1층 정책은 읽지 않는다)
 
 
 @dataclass
