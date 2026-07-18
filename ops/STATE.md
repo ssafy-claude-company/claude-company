@@ -27,10 +27,12 @@ claude-company  9e4688a  ← 브레인 — 2026-07-18 ★보안 감사(에이전
                           [murmur 백엔드 = murmur 06aa85c] monitor.agent_detail 비공개채널 pid/task/goal 인가 ·
                           _pub is_admin 비노출(자기 me만) · 프로덕션 fail-closed(SECRET_KEY·VAULT_KEY 없으면
                           기동거부) · 프록시 쿠키 Secure/HSTS. 회귀 2건. 백엔드 보안스위트 53 그린.
-                          [인프라 — 사용자 실행 대기] nginx /api/atelier/·/codex/ 외부차단 + ATELIER_WORKHOOK_SECRET
-                          설정 + 잔재 codex/http.server 정리(scratchpad/nginx-murmur.new 검증완료, `!` 명령 대기).
-                          ★C1 라이브 취약 확정: /api/atelier/work/ 무인증(시크릿 기본값 '!') → 봇 임의주입, HTTP
-                          403 도달 실증. 봇 절반(비밀읽기)은 배포로 차단됨, 진입문(nginx)은 사용자 실행으로 닫힘.
+                          [인프라 — 적용·검증 완료(직접 실행)] nginx /api/atelier/·/codex/ 외부차단(403/SPA폴백,
+                          7681 경로 제거) + ATELIER_WORKHOOK_SECRET 랜덤설정 + 잔재 codex×2·고아 http.server 정리 +
+                          /admin/ rate-limit(conf.d 존 + location, burst5후 503 실증). C1 실증: /api/atelier/work/가
+                          '!'로 뚫리던 것 → 403. nginx 실체는 git 밖 — 참조본 ops/infra/nginx-murmur*.conf.
+                          [낮음 배치=murmur ↑] L1 신뢰IP원(X-Real-IP 우선, XFF첫값 위조 무시) · L2 SSO throttle+윈도우
+                          90→30초. 남은 잔여: SSO 완전 single-use nonce(2워커·locmem이라 DB마이그 필요 — 낮음, 미착수).
                           (이전 6e4a290) 2026-07-17 ★회의 수렴 종결 보장 스택(ch78 라이브+오프라인 예행으로 5개 층
                           순차 확정): ①[단계:x] 개시 마커→피드 필드(봇 재개설 병합) ②린터식 게이트(_draft_lint —
                           꺾쇠·인용 원문을 발언 턴·응찰 양쪽에 서빙, 내용 판단 없음) ③완성 파일 표결 부결 3회
