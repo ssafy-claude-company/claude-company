@@ -20,12 +20,12 @@
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
 claude-company  37d929b  ← 브레인 — 2026-07-18 ★HA/수평확장 설계 + 착수(P0·P1코드·상태DB화).
-                          ★레지스트리(projects.json) DB 이중화(murmur 2363700): 러너 페일오버 준비 — 파일
+                          ★레지스트리(projects.json) DB 이중화(murmur 2363700): 러너 페일오버 준비(murmur 6a41239) — 파일
                           경로 그대로, DB 통로만 추가(플래그 2개 기본 off라 단일VPS 부팅·복구 무변경). save→
                           write-through(ORGANT_REGISTRY_DB, 디바운스5s·fire-forget), load→DB우선(ORGANT_
                           REGISTRY_FROM_DB, sync HTTP get_state_sync). guide/state GET 엔드포인트. 다중머신
                           전환 시 플래그로 활성. 라이브 러너 클린 부팅 확인(fail-closed 수리 후). 643 그린.
-                          ★HA/수평확장 설계 + 착수(P0·P1코드·상태DB화 시작).
+                          ★HA 설계 + 상태 외부화 완료(P0·Redis·ms_status·레지스트리·워크스페이스 DB해석 — 전부 플래그로 다중머신 준비, 단일VPS 무회귀). 남은 인프라게이트: 오브젝트스토리지(S3)·DB HA·러너 리스샤딩.
                           ★상태 DB화(scale-out 준비, murmur e24200d): ms_status를 로컬파일→DB(ChannelState)로
                           이중 미러 — 러너가 guide.put_state(fire-and-forget)로 upsert, 웹이 DB-우선 읽기(파일
                           폴백). 웹/러너 다중머신 통로 준비(단일 VPS 무회귀). 이게 나머지 파일상태(projects.json
