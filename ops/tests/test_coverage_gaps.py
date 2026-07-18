@@ -305,3 +305,22 @@ def test_위임_자동합류_같은직군계열_차단():
     # 대조: 새 계열(배포/인프라)은 정상 자동합류(과차단 아님)
     out2 = asyncio.run(_req_gate_team(f, 11, 40, "tag"))
     assert out2 is None and 40 in f.current.team
+
+
+# ── [보안 감사(2026-07-18)] Read/Glob 작업공간 경계 ──────────────────────────────
+def test_Read는_작업공간_밖_비밀_거부():
+    a = _Audit()
+    hook = make_pre_tool_use_hook(a, ALLOWED, actor=12, role="member")
+    for p in ("/etc/murmur-web.env", "/root/.ssh/id_rsa", "/proc/self/environ", "../../etc/passwd"):
+        out = _run(hook, "Read", {"file_path": p}, cwd="/ws")
+        assert out.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", p
+    assert any(r[1].get("reason") == "작업공간 밖 읽기/탐색" for r in a.records)
+
+
+def test_Read_Glob_작업공간_안은_허용():
+    hook = make_pre_tool_use_hook(_Audit(), ALLOWED, actor=12, role="member")
+    assert _run(hook, "Read", {"file_path": "src/app.py"}, cwd="/ws") == {}
+    assert _run(hook, "Read", {"file_path": "/ws/GOAL.md"}, cwd="/ws") == {}
+    assert _run(hook, "Glob", {"pattern": "**/*.py"}, cwd="/ws") == {}          # path 없음 = cwd
+    assert _run(hook, "Glob", {"pattern": "*", "path": "/etc"}, cwd="/ws")\
+        .get("hookSpecificOutput", {}).get("permissionDecision") == "deny"       # 밖 탐색 거부

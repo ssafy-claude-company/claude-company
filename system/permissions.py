@@ -145,6 +145,21 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
         # 게이트 전반(협의차단·owner위임·개입목표·리더독식·소유경계)에서 산출물 게이트의 대상이 아니다.
         _wep = tool_input.get("file_path") or tool_input.get("path") if tool in ("Write", "Edit") else None
         _is_draft = bool(_wep) and os.path.basename(str(_wep)) == "DRAFT.md"
+
+        # 2.0) [읽기·탐색도 작업공간 경계(2026-07-18, 보안 감사)] Read/Glob은 종전 무제한이었다 — 봇이
+        #      `Read /etc/murmur-web.env`(SECRET_KEY·VAULT_KEY·GUIDE_TOKEN·GH_PAT·RENDER_KEY)·
+        #      `/proc/self/environ`·`~/.ssh/id_rsa`로 러너 비밀을 통째로 탈취 가능(파일 도구는 러너
+        #      인프로세스 root라 run 셸의 강등·deny 방어와 무관). 쓰기와 같은 작업공간 경계를 강제한다.
+        #      (SYS의 협의 문서 읽기는 dossier_read 직접 IO라 이 훅을 안 탄다 — 봇 Read만 제약.)
+        if tool in ("Read", "Glob", "Grep"):
+            _rp = tool_input.get("file_path") or tool_input.get("path")
+            cwd = data.get("cwd") or os.getcwd()
+            if _rp and not _within(cwd, _rp):
+                audit.record("tool_denied", actor=actor, role=role, tool=tool,
+                             reason="작업공간 밖 읽기/탐색", path=_rp, tool_use_id=tool_use_id)
+                return _deny(f"작업공간 밖은 읽을 수 없습니다: {_rp} — 이 판의 워크스페이스 안에서만 "
+                             f"작업하세요(비밀·타 흐름 파일 보호). 외부 자원은 request/WebFetch 경로로.")
+
         if tool in ("Write", "Edit"):
             path = tool_input.get("file_path") or tool_input.get("path")
             cwd = data.get("cwd") or os.getcwd()

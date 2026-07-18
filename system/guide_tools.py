@@ -30,6 +30,13 @@ _RUN_DENY = ("rm -rf", "rm -r ", "sudo", "shutdown", "reboot", "mkfs", "dd if=",
              "pkill", "kill -9 1 ", "wget ", "ssh ", "scp ", "npm publish", "history",
              # 비밀 읽기 차단(심층방어) — 권한강등이 1차 방어, 이건 비루트 폴백·명시 차단.
              ".guide_env", "/environ", "/tmp/claude-0",
+             # [보안 감사(2026-07-18)] SSRF·비밀 경로 명시 차단(강등 실패·`..`/심볼릭 우회 방어).
+             # 클라우드 메타데이터(자격증명 유출) — AWS/GCP/Azure/Alibaba 공통 링크로컬.
+             "169.254.169.254", "metadata.google", "100.100.100.200",
+             # SSH 키·자격 파일(워크스페이스 마스킹 뒤 `/../.ssh` 우회까지 차단).
+             ".ssh", "id_rsa", "id_ed25519", "authorized_keys", "/proc/",
+             # 내부 API 직격(guide 토큰 탈취 시 금고 자격증명 복호 엔드포인트) — 러너 전용 경로.
+             "/api/guide", "/api/atelier", "deploy_creds",
              # [B-08 — Task Dossier 쓰기 보호 2중] permissions 훅은 Write/Edit만 잡는다 —
              # bash `cp/mv/sed -i/rm` 우회(_RUN_AUTHOR는 heredoc·cat>·tee만 차단)를 여기서 막는다.
              # 슬래시 포함형만 deny-tuple에(x.collaboration.js 오탐 방지) — 무슬래시는 아래 전용

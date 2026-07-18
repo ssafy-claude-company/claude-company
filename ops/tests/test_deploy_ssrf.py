@@ -28,3 +28,16 @@ def test_verify_live_assets_사설URL_자동fetch안함(tmp_path):
     # 커스텀 fetch를 주면(테스트) 가드 우회 — 정상 대조 경로는 유지
     assert _verify_live_assets("http://127.0.0.1/", str(tmp_path), fetch=spy) == []
     assert fetched  # 커스텀 fetch는 호출됨
+
+
+def test_run_deny에_SSRF_비밀경로_토큰_포함():
+    """[보안 감사(2026-07-18)] run 셸 deny-list가 메타데이터·SSH키·/proc·내부API를 막는지.
+    워크스페이스 마스킹(prefix 치환) 뒤에도 이 토큰들이 남아 걸린다 — `..`/심볼릭 우회 방어."""
+    from system.guide_tools import _RUN_DENY
+    dl = "|".join(_RUN_DENY).lower()
+    for tok in ("169.254.169.254", ".ssh", "id_rsa", "/proc/", "/api/guide", "/api/atelier", "deploy_creds"):
+        assert tok.lower() in dl, tok
+    # 마스킹으로 워크스페이스 /root/... 접두가 지워져도 민감 표적 토큰이 남아 차단됨
+    ws = "/root/organt_workspace"
+    masked = f"cat {ws}/../.ssh/id_rsa".replace(ws, " ").lower()   # run()의 _scan 마스킹 재현
+    assert any(d in masked for d in _RUN_DENY)                     # .ssh·id_rsa로 여전히 걸림
