@@ -130,3 +130,34 @@ def test_레지스트리_DB부팅복원_플래그(monkeypatch):
     s2 = _S(); sys_store.load_projects(s2)
     assert s2.projects == {7: {"id": "P-7"}} and s2._proj_n == 3
     assert "projects_db_restored" in s2.logs
+
+
+def test_레지스트리_디바운스_트레일링_push(monkeypatch):
+    """[검수 2026-07-18] 디바운스 창 안 저장은 버려지지 않고 최신본으로 창 끝 1회 push —
+    '마지막 저장'이 DB에 영영 안 실리던 유실(페일오버 부팅이 낡은 레지스트리) 봉합."""
+    import asyncio
+    from system import sys_store
+
+    class _G:
+        def __init__(self): self.pushed = []
+        async def put_state(self, ch, kind, data): self.pushed.append(data)
+
+    class _S:
+        def __init__(self): self.guide = _G()
+
+    monkeypatch.setenv("ORGANT_REGISTRY_DB", "1")
+    monkeypatch.setattr(sys_store, "_REG_DEBOUNCE_S", 0.1)
+
+    async def run():
+        s = _S()
+        sys_store._reg_last_push[0] = 0.0
+        sys_store._reg_pending[0] = None
+        sys_store._push_registry_db(s, {"n": 1})     # 창 밖 — 즉시 push
+        sys_store._push_registry_db(s, {"n": 2})     # 창 안 — 트레일링 예약
+        sys_store._push_registry_db(s, {"n": 3})     # 창 안 — 최신본으로 교체
+        await asyncio.sleep(0.3)                     # 창(0.1s) 경과 — 트레일링 발화
+        return s.guide.pushed
+
+    pushed = asyncio.run(run())
+    assert pushed and pushed[0]["n"] == 1                       # 즉시 push
+    assert pushed[-1]["n"] == 3 and len(pushed) == 2            # 최신본만 1회(중간분 병합)

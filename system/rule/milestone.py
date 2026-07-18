@@ -218,8 +218,15 @@ def ms_status_snapshot(flow):
         out_list.append(_ms_one(flow, ms, relays))
     cur = next((m for m in reversed(out_list) if m["status"] not in ("done", "superseded")), out_list[-1])
     # [사람 대기 표면화(2026-07-18, 감사)] 조건 재협상으로 사람 승인 대기 중이면 HUD에 노출 — 교착이
-    # 조용히 지속되지 않게(사람이 개입해야 할 지점이 드러난다).
+    # 조용히 지속되지 않게(사람이 개입해야 할 지점이 드러난다). 플래그(awaiting_human)는 휘발 캐시라
+    # 재시작이면 비는데, 조건 상태(blocked_pending)는 체크포인트를 넘으므로 거기서 파생한다(검수 수리).
     _aw = getattr(flow, "awaiting_human", None)
+    if not _aw:
+        _pw = pending_waivers(flow)
+        if _pw:
+            _aw = (f"조건 재협상 대기: '{_pw[0].desc[:40]}'"
+                   + (f" — {_pw[0].block_reason[:80]}" if getattr(_pw[0], "block_reason", "") else "")
+                   + " (채널에 '조건 승인' 또는 '조건 반려'로 답해주세요)")
     return {**cur, "list": out_list, "ts": time.time(), "awaiting_human": (str(_aw)[:200] if _aw else None)}
 
 
@@ -542,6 +549,39 @@ def renegotiate_criterion(flow, obj, target: str, reason: str) -> str:
             pass
     return (f"조건 '{c.desc[:40]}' 재협상 요청 — 사람 승인 대기(blocked_pending). 사유: {c.block_reason[:80]}. "
             f"승인 오면 그 조건은 포기(waive)되고 나머지로 주기가 진행됩니다. 그 사이 다른 조건을 진행하세요.")
+
+
+def pending_waivers(flow):
+    """[사람 대기 = 파생 사실(2026-07-18, 검수)] 흐름의 blocked_pending 조건 전부(마일스톤+서브태스크).
+    '사람 승인 대기'의 진실원은 flow.awaiting_human(휘발 캐시)이 아니라 조건 상태다 — 조건은 체크포인트에
+    동승·복원되므로, 러너 재시작 후에도 이 함수가 대기를 정확히 판정한다(플래그만 믿으면 재시작이
+    사람 승인 경로를 끊어 교착이 재발한다)."""
+    out = []
+    for m in (getattr(flow, "milestones", None) or []):
+        for obj in [m] + list(getattr(m, "subtasks", None) or []):
+            for c in (getattr(obj, "criteria", None) or []):
+                if getattr(c, "status", "") == "blocked_pending":
+                    out.append(c)
+    return out
+
+
+def parse_waiver_reply(text: str):
+    """사람 답변 → 'approve'|'deny'|None. 부정문('승인 안/않/하지/보류/아직')은 승인으로 읽지 않는다 —
+    광역 `'승인' in text`가 '승인 안 할게요'까지 전 조건 waive하던 것 교정(2026-07-18 검수)."""
+    t = str(text or "")
+    if not t.strip():
+        return None
+    _neg = re.search(r"승인[^\n]{0,6}(?:안|않|하지|말|보류|어렵|못|없|아직|아니)|(?:아직|나중)[^\n]{0,8}승인", t)
+    _explicit = any(k in t for k in ("조건 승인", "포기 승인", "재협상 승인"))
+    if _explicit and not _neg:
+        return "approve"
+    if "반려" in t or "거부" in t:
+        return "deny"
+    if _neg:
+        return None
+    if "승인" in t:
+        return "approve"
+    return None
 
 
 def approve_waiver(flow, obj, target: str, approve: bool = True) -> str:

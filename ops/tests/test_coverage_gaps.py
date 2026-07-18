@@ -324,3 +324,14 @@ def test_Read_Glob_작업공간_안은_허용():
     assert _run(hook, "Glob", {"pattern": "**/*.py"}, cwd="/ws") == {}          # path 없음 = cwd
     assert _run(hook, "Glob", {"pattern": "*", "path": "/etc"}, cwd="/ws")\
         .get("hookSpecificOutput", {}).get("permissionDecision") == "deny"       # 밖 탐색 거부
+
+
+def test_Glob_pattern_절대경로_거부():
+    """[검수 2026-07-18] path 없이 pattern에 절대경로/`..`/`~`를 실으면 밖 파일 *이름* 열거(정찰)가
+    됐다 — pattern 접두에도 같은 작업공간 경계."""
+    hook = make_pre_tool_use_hook(_Audit(), ALLOWED, actor=12, role="member")
+    for pat in ("/etc/*", "../*", "~/.ssh/*", "src/../../etc/*"):
+        assert _run(hook, "Glob", {"pattern": pat}, cwd="/ws")\
+            .get("hookSpecificOutput", {}).get("permissionDecision") == "deny", pat
+    assert _run(hook, "Glob", {"pattern": "src/**/*.py"}, cwd="/ws") == {}     # 상대(안) 그대로
+    assert _run(hook, "Glob", {"pattern": "/ws/src/*"}, cwd="/ws") == {}       # 절대라도 안이면 허용

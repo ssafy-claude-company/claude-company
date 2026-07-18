@@ -672,3 +672,52 @@ def test_조건재협상_교착출구_왕복():
     assert c.status == "blocked_pending"
     approve_waiver(f, ms, "결제 연동", approve=True)
     assert c.status == "waived" and f.awaiting_human is None  # 승인 반영 + 대기 해제
+
+
+def test_사람대기_파생_재시작에도_승인경로_유지():
+    """[검수 2026-07-18] awaiting_human(휘발 플래그)은 재시작에 비지만, blocked_pending 조건은
+    체크포인트를 넘는다 — 대기 판정·HUD 노출을 조건에서 파생해 재시작 후 승인도 반영되게."""
+    from system.rule.milestone import (open_milestone, renegotiate_criterion, approve_waiver,
+                                       ms_to_dict, ms_from_dict, pending_waivers, ms_status_snapshot)
+    f = _flow()
+    ms = open_milestone(f, "M1", [{"desc": "결제 연동", "verify": "grep paid cfg.json"},
+                                  {"desc": "배포 200", "verify": "curl -s localhost/"}])
+    renegotiate_criterion(f, ms, "결제 연동", "유료 계정 없음")
+    # 러너 재시작 시뮬레이션: 조건은 ckpt 왕복 복원, 플래그는 증발
+    f2 = _flow()
+    f2.milestones = [ms_from_dict(ms_to_dict(m)) for m in f.milestones]
+    f2.awaiting_human = None
+    pw = pending_waivers(f2)
+    assert pw and "결제" in pw[0].desc                          # 파생 대기 감지
+    snap = ms_status_snapshot(f2)
+    assert snap and snap.get("awaiting_human") and "결제" in snap["awaiting_human"]   # HUD 파생 노출
+    approve_waiver(f2, f2.milestones[0], "결제 연동", approve=True)
+    assert not pending_waivers(f2)                              # 승인 반영 — 대기 자연 소멸
+    assert ms_status_snapshot(f2).get("awaiting_human") is None
+
+
+def test_사람답변_파서_부정문은_승인아님():
+    """[검수 2026-07-18] 광역 `'승인' in text`가 '승인 안 할게요'까지 전 조건 waive하던 것 —
+    부정문은 무동작, 반려·거부는 deny."""
+    from system.rule.milestone import parse_waiver_reply
+    assert parse_waiver_reply("조건 승인") == "approve"
+    assert parse_waiver_reply("포기 승인할게요") == "approve"
+    assert parse_waiver_reply("승인합니다") == "approve"
+    assert parse_waiver_reply("승인 안 할게요") is None
+    assert parse_waiver_reply("아직 승인하지 마") is None
+    assert parse_waiver_reply("승인 보류할게") is None
+    assert parse_waiver_reply("조건 반려") == "deny"
+    assert parse_waiver_reply("거부할게요") == "deny"
+    assert parse_waiver_reply("승인 말고 반려로 해줘") == "deny"
+    assert parse_waiver_reply("이 조건이 왜 안 되는지 설명해줘") is None
+
+
+def test_표결_파서_찬성부정은_찬성아님():
+    """[검수 2026-07-18] '찬성하지 않/할 수 없'이 선두 '찬성' 토큰으로 for 오집계되던 것 — 기권.
+    유보 찬성('찬성하지만 …')은 그대로 찬성."""
+    from system.rule.comm_helpers import _classify_vote
+    assert _classify_vote("찬성하지 않습니다") == "abstain"
+    assert _classify_vote("찬성할 수 없습니다") == "abstain"
+    assert _classify_vote("찬성하기 어렵습니다") == "abstain"
+    assert _classify_vote("찬성하지만 일정 우려 있습니다") == "for"
+    assert _classify_vote("[찬성] 스키마 확인했습니다") == "for"

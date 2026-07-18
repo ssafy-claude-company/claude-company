@@ -81,6 +81,7 @@ def load_personas(session_dir) -> dict:
 #   ORGANT_REGISTRY_FROM_DB=1   부팅 로드 시 DB 우선(get_state_sync), 없으면 파일. 기본 off.
 _REG_KIND = "registry"        # ChannelState kind — 레지스트리 블록(channel 0에 단일 행)
 _REG_CH = 0
+_REG_DEBOUNCE_S = 5.0         # 디바운스 창(초) — 테스트가 줄여 잡을 수 있게 상수
 _reg_last_push = [0.0]        # 디바운스: 마지막 DB push monotonic(잦은 checkpoint 저장을 완화)
 
 
@@ -90,28 +91,46 @@ def _registry_db_on():
 
 def _push_registry_db(sys, data):
     """레지스트리 블록을 DB로 미러(fire-and-forget) — 실행 루프 있으면 스케줄, 없으면(부팅·SIGTERM) 스킵.
-    디바운스 5초(잦은 저장에 HTTP/DB 부하 완화). 파일 저장과 독립·무해."""
+    디바운스 5초(잦은 저장에 HTTP/DB 부하 완화) — 단 창 안의 저장은 버리지 않고 **최신본으로 트레일링
+    push를 예약**한다(종전엔 그냥 return이라 '마지막 저장'이 DB에 영영 안 실려, 페일오버 러너가 한
+    사이클 낡은 레지스트리로 부팅할 수 있었다 — 2026-07-18 검수). 파일 저장과 독립·무해."""
     if not _registry_db_on():
         return
     put = getattr(getattr(sys, "guide", None), "put_state", None)
     if put is None:
         return
     try:
-        now = time.monotonic()
-        if now - _reg_last_push[0] < 5.0:
-            return
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
+
+    def _fire(d):
+        try:
+            _reg_last_push[0] = time.monotonic()
+            t = loop.create_task(put(_REG_CH, _REG_KIND, d))
+            _REG_BG.add(t); t.add_done_callback(_REG_BG.discard)
+        except Exception:
+            pass
+
     try:
-        _reg_last_push[0] = now
-        t = loop.create_task(put(_REG_CH, _REG_KIND, data))
-        _REG_BG.add(t); t.add_done_callback(_REG_BG.discard)
+        remain = _REG_DEBOUNCE_S - (time.monotonic() - _reg_last_push[0])
+        if remain > 0:
+            first = _reg_pending[0] is None
+            _reg_pending[0] = data               # 창 안 저장은 최신본으로 갱신만
+            if first:                             # 첫 도착만 타이머 — 창 끝에 최신본 1회 push
+                def _trail():
+                    d, _reg_pending[0] = _reg_pending[0], None
+                    if d is not None:
+                        _fire(d)
+                loop.call_later(max(0.05, remain), _trail)
+            return
+        _fire(data)
     except Exception:
         pass
 
 
 _REG_BG = set()
+_reg_pending = [None]   # 디바운스 창 안에 도착한 최신 데이터(트레일링 push 예약분)
 
 
 def load_projects(sys):

@@ -187,10 +187,14 @@ class MurmurGuide:
 
     def get_state_sync(self, channel_id, kind):
         """[부팅 복원용 — sync(이벤트루프 전)] 공유 DB에서 채널 상태를 되읽는다. 없으면/실패면 None
-        (호출부가 파일 폴백). 러너 부팅은 async 루프 전이라 sync HTTP를 쓴다."""
+        (호출부가 파일 폴백). 러너 부팅은 async 루프 전이라 sync HTTP를 쓴다.
+        단발·짧은 타임아웃(5s) — _get_sync의 3회×30s 재시도를 타면 '웹이 죽어 있는 페일오버 부팅'이
+        최악 ~99초 정지한다(2026-07-18 검수). 부팅 복원은 즉시 파일 폴백이 맞다."""
         try:
-            r = self._get_sync("/api/guide/state/", {"channel_id": int(channel_id), "kind": str(kind)})
-            return (r or {}).get("data")
+            r = self._s.get(f"{self.base}/api/guide/state/",
+                            params={"channel_id": int(channel_id), "kind": str(kind)}, timeout=5)
+            r.raise_for_status()
+            return ((r.json() if r.content else {}) or {}).get("data")
         except Exception:
             return None
 

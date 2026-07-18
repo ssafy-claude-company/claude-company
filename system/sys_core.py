@@ -2623,16 +2623,19 @@ class Sys:
                 f.pending_info.setdefault(tgt, []).append(text)            # 대상 봇이 다음 턴에 직접 본다
                 if tgt != lead:                                            # 리더는 '누구에게 갔는지' 인지(라우터·응답)
                     f.pending_info.setdefault(lead, []).append(f"[{bi.get(tgt, tgt)}에게 전달됨] {text}")
-                # [조건 승인 귀환(2026-07-18, 감사)] escalate_to_human이 사람 조치를 요청한 상태(awaiting_human)
-                # 에서 사람이 '조건 승인/반려'로 답하면 blocked_pending 조건에 approve_waiver를 적용한다 —
-                # 종전엔 approve_waiver로 가는 사람-입력 경로가 없어 승인해도 반영 안 됐다(교착 지속).
+                # [조건 승인 귀환(2026-07-18, 감사)] 사람 승인 대기 중에 사람이 '조건 승인/반려'로 답하면
+                # blocked_pending 조건에 approve_waiver를 적용한다 — 종전엔 approve_waiver로 가는 사람-입력
+                # 경로가 없어 승인해도 반영 안 됐다(교착 지속). 대기 판정은 awaiting_human 플래그(휘발)가
+                # 아니라 조건 상태에서 파생(pending_waivers) — 러너 재시작 후의 승인도 반영된다(검수 수리).
                 try:
-                    if getattr(f, "awaiting_human", None):
-                        if any(k in text for k in ("조건 승인", "포기 승인", "재협상 승인")) or ("승인" in text and "반려" not in text):
+                    from .rule.milestone import pending_waivers, parse_waiver_reply
+                    if pending_waivers(f):
+                        _ans = parse_waiver_reply(text)
+                        if _ans == "approve":
                             n = self._apply_waiver(f, approve=True)
                             if n:
                                 f.pending_info.setdefault(lead, []).append(f"[조건 조정] 사람 승인 반영 — {n}개 조건 포기, 나머지로 진행.")
-                        elif "반려" in text or "거부" in text:
+                        elif _ans == "deny":
                             self._apply_waiver(f, approve=False)
                 except Exception:
                     pass

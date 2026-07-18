@@ -298,9 +298,12 @@ def _classify_vote(text: str) -> str:
     _neg_against = bool(_re_vote.search(r"반대\s*(?:는|하지|할)?\s*(?:없|않|아니|이유\s*(?:가)?\s*없)", t))
     _mark_against = ("[반대" in t) or bool(_re_vote.match(r"^\s*반대", t))
     _mark_for = ("[찬성" in t) or bool(_re_vote.match(r"^\s*찬성", t)) or "조건부 동의" in t or "동의합니다" in t
+    # '찬성하지 않/못/할 수 없/어렵' = 찬성의 부정 — 선두 '찬성' 토큰이라도 찬성으로 세지 않는다(기권).
+    # 명시 [반대 마커는 위 against 분기가 따로 잡는다. (2026-07-18 검수)
+    _neg_for = bool(_re_vote.search(r"찬성[^\n]{0,4}(?:하지\s*(?:않|못|말)|않|안\s*하|못\s*하|할\s*수\s*없|어렵|불가)", t))
     if _mark_against and not _neg_against:
         return "against"
-    if _mark_for or _neg_against:
+    if (_mark_for and not _neg_for) or _neg_against:
         return "for"
     return "abstain"
 

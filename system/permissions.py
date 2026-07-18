@@ -3,6 +3,7 @@
 Step 2 증명의 '권한 밖 툴 호출 시 훅이 차단하고 거부 사유가 로그에 남는다'를 담당한다.
 """
 import os
+import re
 import time
 
 
@@ -159,6 +160,18 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                              reason="작업공간 밖 읽기/탐색", path=_rp, tool_use_id=tool_use_id)
                 return _deny(f"작업공간 밖은 읽을 수 없습니다: {_rp} — 이 판의 워크스페이스 안에서만 "
                              f"작업하세요(비밀·타 흐름 파일 보호). 외부 자원은 request/WebFetch 경로로.")
+            # [Glob pattern 자체의 경계(2026-07-18, 검수)] path 없이 pattern에 절대경로/`..`를 실으면
+            # (예: pattern="/etc/*") 위 path 검사를 안 타고 밖의 파일 *이름*이 열거된다(내용은 Read가
+            # 막지만 존재 정찰은 됨). glob 문자 앞 접두를 잘라 같은 _within 검사를 건다.
+            if tool == "Glob" and not _rp:
+                _pat = str(tool_input.get("pattern") or "")
+                _pref = re.split(r"[*?\[]", _pat, 1)[0]
+                if _pref and (os.path.isabs(_pref) or _pref.startswith("~") or ".." in _pref) \
+                        and not _within(cwd, os.path.expanduser(_pref)):
+                    audit.record("tool_denied", actor=actor, role=role, tool=tool,
+                                 reason="작업공간 밖 읽기/탐색", path=_pat, tool_use_id=tool_use_id)
+                    return _deny(f"작업공간 밖은 탐색할 수 없습니다: {_pat} — 이 판의 워크스페이스 "
+                                 f"안에서만 작업하세요(비밀·타 흐름 파일 보호).")
 
         if tool in ("Write", "Edit"):
             path = tool_input.get("file_path") or tool_input.get("path")

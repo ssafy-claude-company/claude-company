@@ -77,7 +77,9 @@ mount -a
 박스 A 것 복사 후 다음만 변경/추가:
 ```
 ORGANT_GUIDE_TOKEN=<박스A와 동일 토큰>   # 필수 — guide 인증
-ORGANT_STATE_DB=1                        # ms_status DB 미러
+ORGANT_STATE_DB=1                        # ms_status DB 미러 — 코드 기본값이 이미 1(박스 A 러너도 지금
+                                         # 미러 중). 여기 명시는 문서화 목적 — 0으로 끄지 말 것(웹이
+                                         # DB-우선이라 남은 행이 동결돼 HUD가 낡는다).
 ORGANT_REGISTRY_DB=1                     # 레지스트리 DB write-through
 ORGANT_REGISTRY_FROM_DB=1                # 부팅 때 DB에서 레지스트리 복원(로컬 파일 아님)
 # DATABASE_URL 은 러너에 불필요(HTTP 전용) — 넣지 말 것(넣으면 fail-closed 무관하나 혼선)
