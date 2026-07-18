@@ -257,14 +257,51 @@ def _ms_one(flow, ms, relays):
             "cr": ms_cr, "sts": sts}
 
 
+_MS_BG_TASKS = set()   # [GC 방어] fire-and-forget DB push 태스크 참조 보존
+
+
+def _push_state_db(flow, ch, kind, data):
+    """[스케일아웃 상태 저장(2026-07-18, HA 설계)] guide.put_state로 채널 상태를 웹 DB에 미러 —
+    sync 문맥(persist_ms_status)에서 부르므로, 실행 중 루프가 있으면 fire-and-forget으로 스케줄한다
+    (루프 없으면=테스트 무동작). ORGANT_STATE_DB=0이면 비활성. 파일 미러는 별개로 유지(폴백)."""
+    if os.environ.get("ORGANT_STATE_DB", "1") in ("0", "false", "False"):
+        return
+    put = getattr(getattr(flow, "guide", None), "put_state", None)
+    if put is None:
+        return
+    try:
+        import asyncio as _aio
+        loop = _aio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        t = loop.create_task(put(int(ch), kind, data))
+        _MS_BG_TASKS.add(t)
+        t.add_done_callback(_MS_BG_TASKS.discard)
+    except Exception:
+        pass
+
+
 def persist_ms_status(flow):
-    """마일스톤 현황을 상태파일(ms_status.json, 채널 키)로 미러 — 웹이 읽기 전용으로 서빙(HUD).
-    브리지 payload 확장 없이 같은 호스트 파일이 통로. ORGANT_PJT 미설정(테스트)이면 무동작,
-    실패는 흐름에 무해."""
+    """마일스톤 현황을 (1) 상태파일 ms_status.json 미러 + (2) 웹 DB(guide.put_state)로 이중 기록 —
+    웹이 DB-우선으로 서빙(HUD). 파일은 단일머신 폴백·DB 순단 방어로 유지, DB는 다중머신 통로.
+    ORGANT_PJT 미설정(테스트)이면 파일은 스킵. 실패는 흐름에 무해."""
+    ch = getattr(flow, "user_channel", None)
+    if ch is None:
+        return
+    try:
+        snap = ms_status_snapshot(flow)
+    except Exception:
+        snap = None
+    # (2) DB 미러 — 다중머신 대비(러너/웹 분리에도 통로 유지). 파일과 독립적으로 시도.
+    try:
+        _push_state_db(flow, ch, "ms", snap or None)
+    except Exception:
+        pass
+    # (1) 파일 미러 — 현행 경로(같은 호스트) 및 DB 순단 폴백.
     try:
         pjt = os.environ.get("ORGANT_PJT")
-        ch = getattr(flow, "user_channel", None)
-        if not pjt or ch is None:
+        if not pjt:
             return
         d = os.path.join(pjt, "ops", "var", "organt_sns_state")
         if not os.path.isdir(d):
@@ -275,7 +312,6 @@ def persist_ms_status(flow):
                 cur = json.load(f)
         except Exception:
             cur = {}
-        snap = ms_status_snapshot(flow)
         key = str(int(ch))
         if snap:
             cur[key] = snap

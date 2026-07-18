@@ -164,6 +164,15 @@ class MurmurGuide:
             self._track_last(ch, channel_id, res.get("msg_id"))   # 앵커=마지막 '봇' 발화 — SYS 게시([배포 결과] 등)에 의견이 달리는 어색함 방지(사용자)
         return str(res.get("msg_id"))
 
+    async def put_state(self, channel_id, kind, data):
+        """[스케일아웃 상태 저장(2026-07-18, HA 설계)] 채널 런타임 상태를 웹 DB로 upsert(HTTP) —
+        로컬 파일 미러의 다중머신 대체. data=None이면 삭제. 실패는 무해(파일 폴백이 있음)."""
+        try:
+            await self._post("/api/guide/ingest/", {
+                "op": "put_state", "channel_id": int(channel_id), "kind": str(kind), "data": data})
+        except Exception:
+            pass
+
     def _track_last(self, ch, thread_id, msg_id):
         """[댓글형 시각화] 채널·스레드별 마지막 기록 msg_id — 관찰([의견])을 직전 결과에 붙일 근거."""
         try:
