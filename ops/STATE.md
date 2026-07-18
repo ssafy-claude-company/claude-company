@@ -19,7 +19,18 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  9e4688a  ← 브레인 — 2026-07-18 ★보안 감사(에이전트 2 + 직접, 코드확인). 수리 배치:
+claude-company  fcd67c6  ← 브레인 — 2026-07-18 ★HA/수평확장 설계 + P0 착수. 설계문서=아티팩트
+                          (상태고정지도·목표구조·단계표). 진단: 큐 픽업만 이미 CAS 다중러너 안전, 그 위
+                          전부가 단일러너+로컬디스크 전제(점유장부·흐름레지스트리·봇세션·워크스페이스).
+                          [P0 완료·배포] organt/botpool.py 전역 서브프로세스 세마포어(ORGANT_MAX_SUBPROCS=8)+
+                          메모리 입장제어(MemAvailable<ORGANT_MEM_FLOOR_MB면 스폰지연) — 회의 병렬심의단×흐름으로
+                          동시 CLI 무바운드→OOM 나던 것 상한(0이면 비활성 무회귀). system/logrotate.py audit/
+                          flow.jsonl 크기 로테이션(ORGANT_LOG_MAX_MB=50). 회귀 6건, 641 그린.
+                          [P1 코드분=murmur fca7759] REDIS_URL 있으면 공유 RedisCache(throttle·SSO·rate-limit
+                          인스턴스 일관), 없으면 LocMem 무회귀. ★남음(인프라 프로비저닝 필요): P1 ms_status→DB·
+                          오브젝트스토리지 / P2 관리형PG·PgBouncer·읽기복제 / P3 공유FS / P4 러너 채널샤딩+리스.
+                          현재 단일 VPS(웹+러너 동거)라 파일통로 정상 — 다중머신 결정 시 착수.
+                          (이전 9e4688a) ★보안 감사(에이전트 2 + 직접, 코드확인). 수리 배치:
                           [봇 파이프라인] Read/Glob/Grep 작업공간 경계 강제(종전 무제한 → /etc/murmur-web.env·
                           /proc/environ·~/.ssh 탈취 봉쇄) · run _RUN_DENY에 메타데이터IP·SSH키·/proc/·내부API
                           (/api/guide·deploy_creds) 추가(curl SSRF·`..` 우회 차단). guide 토큰은 Read게이트+
