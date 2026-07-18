@@ -123,10 +123,27 @@ class TurnTakingFloor(FloorPolicy):
       매 반복이 배분 하나를 소비하고 max_turns가 절대 상한이다."""
     name = "turn-taking"
 
+    def __init__(self):
+        # [응찰 큐(2026-07-18, wake 축소)] 한 번의 응찰 수집에서 상위 K명을 순차 배분한다 — 종전엔
+        # 발언 교체마다 후보 전원을 재프로브(수집당 패널 전원 LLM 마이크로 턴, 07-17 실측 1,835회/일 =
+        # 마이크로 비용의 최대 항목)했다. 깊이 = ORGANT_BID_QUEUE(기본 1 = **현행과 동일**: 승자만 쓰고
+        # 나머지 응찰은 버림 — 무회귀). 큐 수명 = 이 정책 인스턴스(= 회의 1개). 지명(①)은 항상 큐보다
+        # 우선하고, 이탈자·방금 화자는 pop에서 걸러진다. 신선도 비용: 큐 소비자는 직전 수집 시점의
+        # 자기판단으로 발언권을 받는다 — 깊이 2~3 권장(한두 발언 지연 내).
+        try:
+            self._qdepth = max(1, int(os.environ.get("ORGANT_BID_QUEUE", "1") or 1))
+        except ValueError:
+            self._qdepth = 1
+        self._queue: List[int] = []
+
     def next_after(self, st: FloorState, turn: Turn) -> Allocation:
         a = turn.addressee
         if a is not None and a in st.participants and a != turn.speaker:
             return Allocation(NOMINATE, next=a, reason="①현재 화자 지명")
+        while self._queue:                                   # [응찰 큐] 수집 없이 다음 응찰자 배분
+            c = self._queue.pop(0)
+            if c in st.participants and c != turn.speaker:
+                return Allocation(SELF, next=c, reason="②자기선택 — 응찰 큐")
         cands = st.silence_order(exclude=(turn.speaker,))
         if cands:
             return Allocation(OPEN, candidates=cands, reason="②자기선택 응찰")
@@ -136,15 +153,20 @@ class TurnTakingFloor(FloorPolicy):
         order = {c: i for i, c in enumerate(st.silence_order(exclude=(turn.speaker,)))}
         positive = [(c, int(s)) for c, s in (bids or []) if int(s) > 0 and c in order]
         if positive:
-            # 최고 응찰 승 — 동률이면 침묵 오래된 순(order 앞) 우대(-order가 커서 max에 유리).
-            c, s = max(positive, key=lambda cs: (cs[1], -order[cs[0]]))
+            # 최고 응찰 승 — 동률이면 침묵 오래된 순(order 앞) 우대. 차순위(2..K위)는 큐에 적재해
+            # 다음 배분들이 재수집 없이 소비(깊이 1이면 종전대로 승자만).
+            ranked = sorted(positive, key=lambda cs: (-cs[1], order[cs[0]]))
+            c, s = ranked[0]
+            self._queue = [cc for cc, _ in ranked[1:self._qdepth]]
             return Allocation(SELF, next=c, reason=f"②자기선택 — 응찰 {s}")
+        self._queue = []
         return Allocation(CLOSE_VOTE, candidates=st.silence_order(),
                           reason="무응찰 — 종결 확인 표결")
 
     def resolve_close_vote(self, st: FloorState, turn: Turn, bids) -> Allocation:
         """종결 확인 판정 — [계속: N]은 곧 발언 의무를 진 응찰이다: 반대자가 발언권을 받아 직접
         말한다(말 없이 회의만 연장하는 무한 계속 차단 — 반대=발언). 전원 [종료]면 합의 종결."""
+        self._queue = []                                     # [응찰 큐] 종결 국면 — 낡은 큐 방어적 폐기
         order = {c: i for i, c in enumerate(st.silence_order())}
         positive = [(c, int(s)) for c, s in (bids or []) if int(s) > 0 and c in order]
         if positive:

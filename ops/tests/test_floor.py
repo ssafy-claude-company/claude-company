@@ -498,3 +498,127 @@ def test_세그먼트open_TT_응찰승자_발언은_동봉되고_참여인정(tm
     assert "자기선택 발언" in out and "백업 경로" in out
     assert any("발언권 획득" in b for _, b in calls)              # 낙찰자 정식 발언 경로
     assert 12 in f.current.participated and f.comm.alive == 11
+
+
+# ── [응찰 큐 + 쿨다운(2026-07-18, wake 축소)] ────────────────────────────────────
+
+
+def _tt_state(parts):
+    from system.rule.floor import FloorState
+    st = FloorState(participants=set(parts))
+    return st
+
+
+def test_응찰큐_기본1은_현행과_동일(monkeypatch):
+    """ORGANT_BID_QUEUE 미설정(=1) — 승자만 배분, 다음 전이는 다시 OPEN(무회귀)."""
+    monkeypatch.delenv("ORGANT_BID_QUEUE", raising=False)
+    from system.rule.floor import TurnTakingFloor, Turn, SELF, OPEN
+    p = TurnTakingFloor()
+    st = _tt_state([1, 2, 3, 4])
+    t = Turn(speaker=1, body="발제")
+    st.record(t)
+    a = p.resolve_open(st, t, [(2, 5), (3, 3), (4, 1)])
+    assert a.kind == SELF and a.next == 2                    # 최고 응찰 승(종전 동일)
+    t2 = Turn(speaker=2, body="발언")
+    st.record(t2)
+    assert p.next_after(st, t2).kind == OPEN                 # 큐 없음 → 매 전이 재수집(현행)
+
+
+def test_응찰큐_깊이3_재수집없이_순차배분(monkeypatch):
+    monkeypatch.setenv("ORGANT_BID_QUEUE", "3")
+    from system.rule.floor import TurnTakingFloor, Turn, SELF, OPEN
+    p = TurnTakingFloor()
+    st = _tt_state([1, 2, 3, 4, 5])
+    t = Turn(speaker=1, body="발제")
+    st.record(t)
+    a = p.resolve_open(st, t, [(2, 5), (3, 3), (4, 1), (5, 0)])
+    assert a.kind == SELF and a.next == 2                    # 1위 즉시
+    t = Turn(speaker=2, body="발언")
+    st.record(t)
+    a = p.next_after(st, t)
+    assert a.kind == SELF and a.next == 3                    # 2위 — 수집 없이(응찰 큐)
+    t = Turn(speaker=3, body="발언")
+    st.record(t)
+    a = p.next_after(st, t)
+    assert a.kind == SELF and a.next == 4                    # 3위 — 수집 없이
+    t = Turn(speaker=4, body="발언")
+    st.record(t)
+    assert p.next_after(st, t).kind == OPEN                  # 큐 소진 → 재수집
+
+
+def test_응찰큐_지명우선_이탈자스킵(monkeypatch):
+    monkeypatch.setenv("ORGANT_BID_QUEUE", "3")
+    from system.rule.floor import TurnTakingFloor, Turn, SELF, NOMINATE
+    p = TurnTakingFloor()
+    st = _tt_state([1, 2, 3, 4])
+    t = Turn(speaker=1, body="발제")
+    st.record(t)
+    p.resolve_open(st, t, [(2, 5), (3, 3), (4, 2)])          # 큐: [3, 4]
+    t = Turn(speaker=2, body="발언", addressee=4)
+    st.record(t)
+    a = p.next_after(st, t)
+    assert a.kind == NOMINATE and a.next == 4                # ①지명이 큐보다 우선
+    st.participants.remove(3)                                # 3 이탈
+    t = Turn(speaker=4, body="발언")
+    st.record(t)
+    a = p.next_after(st, t)
+    assert a.next != 3                                       # 이탈자 스킵(큐 잔여 4는 방금 화자 → OPEN)
+
+
+def test_응찰큐_종결표결이_큐_폐기(monkeypatch):
+    monkeypatch.setenv("ORGANT_BID_QUEUE", "3")
+    from system.rule.floor import TurnTakingFloor, Turn, CLOSE
+    p = TurnTakingFloor()
+    st = _tt_state([1, 2, 3])
+    t = Turn(speaker=1, body="발제")
+    st.record(t)
+    p.resolve_open(st, t, [(2, 5), (3, 3)])                  # 큐: [3]
+    a = p.resolve_close_vote(st, t, [])                      # 전원 [종료]
+    assert a.kind == CLOSE and p._queue == []                # 낡은 큐 폐기
+
+
+def test_응찰_쿨다운_패스봇_제외와_복귀():
+    from system.rule.comm_helpers import _cooldown_probe
+    cool = {}
+    assert _cooldown_probe([1, 2, 3], cool, 0) == [1, 2, 3]  # n=0 = 무동작(현행)
+    cool = {2: 1}
+    assert _cooldown_probe([1, 2, 3], cool, 1) == [1, 3]     # 패스봇 제외
+    assert cool == {}                                        # 감쇠 소진
+    assert _cooldown_probe([1, 2, 3], cool, 1) == [1, 2, 3]  # 복귀
+    cool = {1: 1, 2: 1, 3: 1}
+    assert _cooldown_probe([1, 2, 3], cool, 1) == [1, 2, 3]  # 전원 쿨다운 → 폴백(종결표결 오발동 방지)
+
+
+def test_응찰큐_엔진관통_프로브절감_예행(monkeypatch):
+    """[오프라인 예행(봇 비용 0)] 같은 대본(발언 예산 12·5인 패널)에서 깊이 3이 발언당 프로브
+    (응찰 LLM 콜)를 절반 이하로 — 절감률이 무너지면 이 가드가 잡는다."""
+    import asyncio
+    from system.rule.floor import TurnTakingFloor, FloorState, Turn, run_conversation
+
+    def sim(depth):
+        monkeypatch.setenv("ORGANT_BID_QUEUE", str(depth))
+        p = TurnTakingFloor()
+        st = FloorState(participants=[1, 2, 3, 4, 5])
+        probes = {"n": 0}; spoke = {"n": 0}
+
+        async def bid(cands, purpose):
+            if purpose != "open":
+                return []                                    # 종결 표결 — 전원 [종료]
+            probes["n"] += len(cands)                        # 프로브 = 후보 전원 마이크로 턴
+            if spoke["n"] < 12:
+                return [(c, c % 9 + 1) for c in cands]       # 예산 안 — 전원 응찰
+            return [(c, 0) for c in cands]                   # 예산 소진 — 전원 패스
+
+        async def speak(who, alloc):
+            spoke["n"] += 1
+            return Turn(speaker=who, body=f"발언{spoke['n']}")
+
+        t0 = Turn(speaker=1, body="발제")
+        st.record(t0)
+        asyncio.run(run_conversation(p, st, t0, speak, bid=bid, max_turns=64))
+        return probes["n"], spoke["n"]
+
+    p1, s1 = sim(1)
+    p3, s3 = sim(3)
+    assert s1 >= 12 and s3 >= 12                             # 토론량(발언)은 동등 수준 유지
+    assert (p3 / s3) <= 0.55 * (p1 / s1), (p1, s1, p3, s3)   # 발언당 프로브 절반 이하

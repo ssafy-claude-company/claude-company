@@ -56,7 +56,7 @@ from .comm_engine import (  # noqa: F401 (M9 베턴엔진 재수출)
     CommError, RedoLimitExceeded, BusyInOtherFlow, Engagement, Frame, CommunicationManager)
 from .comm_helpers import (  # noqa: F401
     _CAPS, _HOLLOW_PING, _JOB_SEP, _SPARE_LABEL, _add_members, _body_overlap,
-    _capability_gaps, _clarify_hold, _find_variant_job, _fork_collect,
+    _capability_gaps, _clarify_hold, _cooldown_probe, _find_variant_job, _fork_collect,
     _classify_vote, _free_alternatives, _group_of, _is_spare, _is_substantive, _job_tokens,
     _jobs_of, _kw, _needed_caps_coverage, _norm_job, _same_job, _offdomain_capability_hit,
     _resolve_members, _say, _say_speech, _uniq)
@@ -289,6 +289,12 @@ async def meet(flow, me_id, args):
         schedule = [(r, m) for r in range(2, rounds + 1) for m in members]
         budget = len(schedule)                # 토론 발언 예산 — 정책 불문 종전 라운드 비용과 동형
         wakes = {"n": 0}
+        # [응찰 쿨다운(2026-07-18, wake 축소)] OPEN 수집에서 직전 패스 봇 제외 횟수 — 기본 0(현행).
+        try:
+            _cool_n = max(0, int(os.environ.get("ORGANT_BID_COOLDOWN", "0") or 0))
+        except ValueError:
+            _cool_n = 0
+        _cool = {}                            # 봇 → 남은 스킵 수집 수(_cooldown_probe가 감쇠)
         # 총 wake 상한(발언+응찰) — TT 비용·폭주 백스톱. 응찰은 open마다 후보 전원(≤인원-1)이라
         # 상한을 인원 배수로 잡는다(회의는 소수 인원 표면 — 응찰이 곧 '전원이 눈치보는' 비용).
         # [게이트 회의는 재응찰 여지 확보(2026-07-14, 사용자: '상한 두지 마라')] 수렴안 채택이 유일
@@ -512,6 +518,9 @@ async def meet(flow, me_id, args):
             발언권을 받은 발언만 대화 사실(낙찰자·반대자는 _speak 경로로 정식 발언)."""
             if wakes["n"] >= wake_cap:
                 return []
+            # [응찰 쿨다운(2026-07-18, wake 축소)] OPEN 수집에서 직전 패스 봇을 _cool_n회 제외 —
+            # 스킵 = 강도 0과 동형(비용 0). 종결 표결은 전원(회의 닫힘 판정이라 표본 축소 금지).
+            probe = list(cands) if purpose == CLOSE_VOTE else _cooldown_probe(cands, _cool, _cool_n)
             def body_of(c):
                 if purpose == CLOSE_VOTE:
                     # [결정권자 폐지 — 종결 표결이 곧 확정(2026-07-09, 사용자)] 파이프라인 회의에서
@@ -548,10 +557,12 @@ async def meet(flow, me_id, args):
                         f"있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 이유만 "
                         f"답하세요 — 발언 내용은 발언권을 받은 뒤에 말합니다. 없으면 `[패스]`만.")
             out = []
-            for m, res, note in await _fork_collect(flow, me_id, list(cands), body_of, micro=True):
+            for m, res, note in await _fork_collect(flow, me_id, list(probe), body_of, micro=True):
                 wakes["n"] += 1
                 s = 0 if res is None else _bid_score(res)
                 out.append((m, s))
+                if purpose != CLOSE_VOTE and _cool_n > 0 and res is not None and s == 0:
+                    _cool[m] = _cool_n           # [응찰 쿨다운] 명시 패스 → 다음 _cool_n회 수집 제외
                 if purpose == CLOSE_VOTE and _no_r1 and res:
                     # [종결 표결 동봉 결론 수집] 단계별 형식으로 추출 — goal은 GOAL.md 파일블록, 그 외
                     # [수렴안]. 가결 시 register_stage로 자동 등록의 원료(제출 순서 보존).

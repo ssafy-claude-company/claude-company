@@ -308,6 +308,22 @@ def _classify_vote(text: str) -> str:
     return "abstain"
 
 
+def _cooldown_probe(cands, cool: dict, n: int):
+    """[응찰 쿨다운(2026-07-18, wake 축소)] 직전 수집에서 패스(강도 0)한 봇을 n회 수집 동안 프로브
+    제외 — '방금 보탤 말 없다'던 봇을 매 교체마다 재프로브하던 낭비 절감(실측 패스율 24%). cool
+    (봇→남은 스킵 수집 수)을 이 자리에서 1 감쇠시키고 이번 프로브 대상을 돌려준다. 전원 제외면
+    원본 폴백 — 프로브 0명이 '무응찰'로 읽혀 스퓨리어스 종결 표결이 열리는 것 방지. n<=0 = 무동작
+    (현행). 지명(①)·종결 표결은 이 필터를 안 탄다(호출부 책임)."""
+    if n <= 0:
+        return list(cands)
+    probe = [m for m in cands if cool.get(m, 0) <= 0]
+    for m in list(cool):
+        cool[m] -= 1
+        if cool[m] <= 0:
+            cool.pop(m)
+    return probe or list(cands)
+
+
 # ── [협업 실행 헬퍼 — guide_tools에서 이관] 그룹핑·스레드 멤버십·병렬 포크수집 ──
 async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO, micro=False):
     """[병렬 Info fork-join] '독립 의견 수집'(표결·회의 1라운드)을 동시에 돈다 — Communication.md
