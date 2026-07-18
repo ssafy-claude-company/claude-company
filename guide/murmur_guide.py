@@ -173,6 +173,18 @@ class MurmurGuide:
         except Exception:
             pass
 
+    async def report_usage(self, channel_id, cost_usd, tokens_out):
+        """[사용량 귀속(2026-07-18, 운영/과금)] 봇 턴 비용을 채널 단위로 웹에 보고(HTTP) → 웹이 보드 주인
+        원장에 적립. 실패는 무해(flow.jsonl에 원본 남아 후속 대사 가능). 비용 0이면 스킵."""
+        if not cost_usd:
+            return
+        try:
+            await self._post("/api/guide/ingest/", {
+                "op": "usage", "channel_id": int(channel_id),
+                "cost_usd": float(cost_usd), "tokens_out": int(tokens_out or 0)})
+        except Exception:
+            pass
+
     def get_state_sync(self, channel_id, kind):
         """[부팅 복원용 — sync(이벤트루프 전)] 공유 DB에서 채널 상태를 되읽는다. 없으면/실패면 None
         (호출부가 파일 폴백). 러너 부팅은 async 루프 전이라 sync HTTP를 쓴다."""

@@ -15,6 +15,8 @@ from system.config import Config
 from system.tool_names import FLOW_TOOLS, LEADER_TOOLS
 from system.protocol import Marker
 from .organt import Organt, build_options, load_persona, pinned_cwd
+
+_USAGE_BG = set()   # [GC 방어] fire-and-forget 사용량 보고 태스크 참조 보존
 from system.permissions import make_pre_tool_use_hook
 
 # 워커 기본 도구(WebSearch 포함 — RFC-011 M1 자원동원). 매체-중립 Rule 자산.
@@ -91,6 +93,20 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                     if getattr(flow, "log", None):
                         flow.log("turn_done", bot=organt_id, role=label, **rec)
                 except Exception:
+                    pass
+                # [사용량 귀속(2026-07-18, 운영/과금)] 턴 비용을 채널 단위로 웹에 보고 → 보드 주인 원장 적립.
+                # sync 콜백이라 실행 루프 있으면 fire-and-forget(없으면=테스트 스킵). 손실은 소폭 과소청구
+                # (사용자 유리)이고 flow.jsonl에 원본이 남아 후속 대사 가능.
+                try:
+                    _cost = rec.get("cost_usd")
+                    _rep = getattr(getattr(flow, "guide", None), "report_usage", None)
+                    _ch = getattr(flow, "user_channel", None)
+                    if _cost and _rep and _ch is not None:
+                        import asyncio as _aio
+                        _loop = _aio.get_running_loop()
+                        _t = _loop.create_task(_rep(int(_ch), float(_cost), int(rec.get("tokens_out") or 0)))
+                        _USAGE_BG.add(_t); _t.add_done_callback(_USAGE_BG.discard)
+                except Exception:   # 실행 루프 없음(테스트)·기타 → 스킵(과금은 best-effort)
                     pass
         # organt의 파일 도구(cwd)는 '현재 흐름의 작업공간'을 따른다 — 프로젝트별 폴더 분리와 정합
         # (cwd가 base 고정이면 run은 프로젝트 폴더, Write는 base로 가는 분열이 생긴다).
