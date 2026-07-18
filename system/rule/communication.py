@@ -130,6 +130,22 @@ async def meet(flow, me_id, args):
     _hold = _clarify_hold(flow, me_id)   # [G2 — clarify 행동 잠금(B-02)]
     if _hold:
         return _hold
+    # [작업 단계 회의 가드(2026-07-17, ch78 실측)] 백로그가 서 있는 작업 단계의 회의는 등록 경로가
+    # 없는(단계 None) 자유 회의 — 결론 없이 발언 예산만 태운다(재시작 복원·봇 습관 양쪽에서 반복 관측,
+    # 회당 ~$5). '회의 하나=결론 하나' 계약: 지금 정할 것이 없으면 회의가 아니라 릴레이가 맞다.
+    # (조건 갈등은 renegotiate_criterion, 도메인 질문은 request(Info), 다음 회의는 백로그 소진이 연다.)
+    try:
+        from .milestone import meeting_stage as _mg0, pipeline_on as _po0
+        if _po0() and _mg0(flow) is None:
+            _rls0 = getattr(flow, "backlog_relays", None) or {}
+            if any(b.status in ("open", "in_progress", "blocked") for r in _rls0.values() for b in r.backlogs):
+                if flow.log:
+                    flow.log("meet_deferred_workstage", who=int(me_id))
+                return ("[작업 단계] 지금은 정할 단계가 없고 집을 백로그가 남아 있습니다 — 회의 대신 "
+                        "**pick_backlog로 하나 집어 실작업**을 진행하세요. 조건 문제는 renegotiate_criterion, "
+                        "동료 질문은 request(Info)로. 다음 단계 회의는 백로그가 소진되면 시스템이 엽니다.")
+    except Exception:
+        pass
     if (any(not x.done() for x in getattr(flow, "inflight_tasks", ()))
             and flow.comm.alive != me_id and not flow.comm.done):
         return ("[대기] 직전 위임이 아직 진행 중입니다 — 회의는 그 결과를 받은 뒤 여세요.")

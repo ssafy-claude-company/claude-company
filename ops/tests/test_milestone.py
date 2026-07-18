@@ -622,3 +622,24 @@ def test_들여쓴_하위설명줄은_조건이_아니다():
          "\n## 참고 (자유 — 판정 대상 아님)\n")
     prop = draft_to_proposal("milestone", d)
     assert "조건 A" in prop and "하위 설명" not in prop and "협의사항" not in prop
+
+
+def test_작업단계에는_meet가_거부되고_릴레이로_코칭(monkeypatch):
+    """[ch78 실측(2026-07-18)] 백로그가 서 있는 작업 단계의 회의는 단계 None 자유 회의 — 등록 경로
+    없이 예산만 소모(재시작 복원·봇 습관 양쪽 반복). '회의 하나=결론 하나': 정할 게 없으면 릴레이."""
+    import asyncio as _aio
+    import types
+    from system.rule.communication import meet
+    from system.rule.milestone import open_milestone, open_subtask
+    from system.rule.backlog import BacklogRelay
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.current = types.SimpleNamespace(team=[11, 12], task_id="T1",
+                                      status=types.SimpleNamespace(goal="목표"))
+    ms = open_milestone(f, "M1", [{"desc": "빌드", "verify": "npm run build 0"}])
+    st = open_subtask(f, ms, "로직", [{"desc": "로드", "verify": "curl /"}])
+    r = BacklogRelay(subtask_id=st.st_id)
+    r.submit(12, "카드 상수 정의")                      # 집을 백로그 존재 → 작업 단계
+    f.backlog_relays = {st.st_id: r}
+    out = _aio.run(meet(f, 11, {"topic": "그냥 회의"}))
+    assert "작업 단계" in out and "pick_backlog" in out   # 회의 거부 + 릴레이 코칭
