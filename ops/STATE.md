@@ -184,7 +184,18 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  3b1acf2   ← HEAD — ★2층 stance 정본(FLOOR_2F_2026-07-18)+BACKLOG G 갱신(이현준-5, docs만)
+murmur  778f933   ← HEAD — ★완성작 직접 서빙(이현준-5, 사용자 '서비스 전반 개선'): 공개 판 배포 링크
+                          전수 404/503 실측(Render 소멸) → /api/projects/<pid>/works/가 워크스페이스
+                          정적 앱을 서빙(실 DB 실측 공개 7판 보유 — U-007 RPG·U-016 틱택토·U-012/018/
+                          019 ToDo·U-004/P-005 포폴). 표면=목록·쇼케이스 '완성작' 칩+산출물 보드
+                          '바로 실행' 1급. 보안=봇 HTML CSP sandbox 불투명 출처(신규 works+기존 파일
+                          API 동일 봉합 — 종전 앱 origin 실행이라 토큰 노출 결), frames 미들웨어 CSP
+                          덮어쓰기→병합 수리, 라이브니스 프로브 root 404='라이브' 오판 교정. sns 400
+                          그린(+6). ★활성 = murmur-web 재시작 대기(사용자 승인 — 프론트 빌드는 반영됨,
+                          has_work/works는 재시작 후 노출). ★안정성 점검(같은 세션): 4서비스 active·
+                          24h 무오류(사고 잔재만)·TLS 10월·디스크 45% — 갭=DB 백업 0개 →
+                          ops/backup_db.sh(1회 실행 검증 2.2MB, 크론 등재 승인 대기).
+                          · (이전 3b1acf2) ★2층 stance 정본(FLOOR_2F_2026-07-18)+BACKLOG G 갱신(이현준-5, docs만)
                           · (이전 519f169) ★1층 관측 실측 문서(FLOOR_OBS_2026-07-18)+BACKLOG G 종결(이현준-5, docs만)
                           · (이전 aec79b9) ★공개 정리 완결: 최종 12 보관(재분류 — P-031·U-005는 이벤트 실적로 복원)
                           + 게스트 표면(둘러보기·공개목록·쇼케이스) archived 제외 수리. 라이브 확인
@@ -305,7 +316,7 @@ murmur  3b1acf2   ← HEAD — ★2층 stance 정본(FLOOR_2F_2026-07-18)+BACKLO
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **321**(2026-07-09 현재 **3건 실패** — RequeueStuck·PendingQueue·PendingQueryBudget, 변도진-1 브리지 착지/WIP 영역, 세션에 통지됨)  ·  system unittest: **86**  ·  브레인 pytest(ops/tests): **591**  ·  프론트 빌드 OK.
+- sns: **400 OK** · system unittest: OK · 브레인 pytest(ops/tests): **667** · 프론트 빌드 OK. (2026-07-18 현행 — 종전 07-09 기재 '321/3건 실패·591'은 낡은 수치라 교정. 정확한 현재치는 항상 `bash ops/verify.sh` 출력이 정본.)
 
 ## 파이프라인 재설계 — **라이브 영구 적용 (2026-07-09, 사용자 승인)**
 - **`ORGANT_PIPELINE=milestone`이 라이브 기본값** — `/etc/organt-runner.env`에 영구 반영. 이제 **러너 재시작 자유**(누가 언제 재시작해도 새 파이프라인 유지). probe 격리 러너(`/root/wt/probe`) 폐지 — 단일 러너 복원. ON/OFF 이중수용 코드는 그대로(끄려면 env 한 줄 제거).
