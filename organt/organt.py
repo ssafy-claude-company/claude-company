@@ -24,6 +24,7 @@ from claude_agent_sdk import (
 )
 
 from system.config import ROOT, Config
+from . import botpool
 
 # Organt 기본 인격(폴백). CLAUDE.md가 없거나 비면 이걸 system_prompt로 쓴다.
 ORGANT_PERSONA = (
@@ -250,7 +251,9 @@ class Organt:
         opts = dataclasses.replace(self._options_for_call(), stderr=_collect_stderr)
         _alive = None
         try:
-            async with ClaudeSDKClient(options=opts) as client:
+            # [P0 봇풀 바운딩] 전역 서브프로세스 세마포어 + 메모리 입장 제어 통과 후 CLI 스폰 —
+            # 회의 병렬 심의단 × 다중 흐름으로 동시 서브프로세스가 무바운드로 자라 OOM 나던 것 상한.
+            async with botpool.slot(), ClaudeSDKClient(options=opts) as client:
                 await client.query(prompt)
                 _alive = asyncio.ensure_future(_inflight_alive())
                 async for msg in client.receive_response():

@@ -85,10 +85,13 @@ class AuditLog:
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        from .logrotate import RotatingCounter   # [P0] 무한 증가 방지
+        self._rot = RotatingCounter(self.path)
 
     def record(self, event: str, **fields) -> dict:
         """이벤트 한 건을 기록하고, 기록한 entry를 돌려준다."""
         entry = {"ts": time.time(), "event": event, **fields}
+        self._rot.tick()   # 주기적으로 크기 상한 검사·로테이션(무해 실패)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
         return entry

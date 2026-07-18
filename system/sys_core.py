@@ -96,6 +96,9 @@ class Sys:
         self.queue = []                        # 진행 중 들어온 명령(순차 처리 대기)
         self.flow_log = []
         self.flow_log_path = (os.path.join(session_dir, "flow.jsonl") if session_dir else None)
+        if self.flow_log_path:   # [P0 로그 로테이션] flow.jsonl 무한 증가 방지
+            from .logrotate import RotatingCounter
+            self._flow_rot = RotatingCounter(self.flow_log_path)
         # [관측 v1 — 2026-07-07] 봉투: seq(프로세스 단조 정수·동시흐름 순서)·trace_id(현재 처리 중인
         # 요청의 상관 id — user_request 진입 시 설정, flow/audit 이벤트에 실려 끝단 추적 가능).
         self._obs_seq = 0
@@ -355,6 +358,7 @@ class Sys:
             pass
         if self.flow_log_path:   # 메모리만이던 continue_incomplete/flow_done/req_sent를 디스크로 영속(관측)
             try:
+                self._flow_rot.tick()   # 주기적 크기 상한 검사·로테이션
                 with open(self.flow_log_path, "a", encoding="utf-8") as fp:
                     fp.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
             except OSError:
