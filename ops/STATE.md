@@ -19,7 +19,17 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  37d929b  ← 브레인 — 2026-07-18 ★HA/수평확장 설계 + 착수(P0·P1코드·상태DB화).
+claude-company  2c3613e  ← 브레인 — 2026-07-18(검수 세션) ★직전 세션 전 배치 검수 완료(커밋 정독+
+                          645 스위트+플래그 감사) — 골격 전부 건전 판정, 발견 결함 7건 즉시 수리:
+                          ①사람 승인 경로 재시작 단절(awaiting_human 휘발 → blocked_pending 조건에서
+                          파생 — pending_waivers, 근본) ②사람 답변 '승인' 광역 매칭(부정문 오발동 →
+                          parse_waiver_reply 가드) ③찬성-부정 오집계(_classify_vote) ④Glob pattern
+                          경계(밖 파일명 정찰 차단) ⑤레지스트리 디바운스 마지막 쓰기 유실(트레일링
+                          push) ⑥페일오버 부팅 ~99s 정지(get_state_sync 단발 5s) ⑦웹 배턴 비공개
+                          채널 노출+ms_status DB오류 500(murmur da09ac3). 회귀 테스트 7건, 650 그린.
+                          ★러너 재시작 대기(①~④ 반영엔 필요 — 사용자 승인 후). ORGANT_STATE_DB는
+                          코드 기본 1(라이브 미러 중 — RUNBOOK 명확화, '기본 off' 오독 교정).
+                          (이전 37d929b) 2026-07-18 ★HA/수평확장 설계 + 착수(P0·P1코드·상태DB화).
                           ★레지스트리(projects.json) DB 이중화(murmur 2363700): 러너 페일오버 준비(murmur 6a41239) — 파일
                           경로 그대로, DB 통로만 추가(플래그 2개 기본 off라 단일VPS 부팅·복구 무변경). save→
                           write-through(ORGANT_REGISTRY_DB, 디바운스5s·fire-forget), load→DB우선(ORGANT_
@@ -147,7 +157,11 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  0f6c129   ← HEAD — ★운영·과금·제품감사(07-18): 회원별 사용량 원장(Person.plan·UsageLedger·마이그0028)·크레딧 요금제(MURMUR_PLANS)·보드주인 귀속(guide report_usage)·한도 게이트(MURMUR_QUOTA_ENFORCE 기본off)·GET me/usage · StatsView 전역블록 8초캐시(폴링 확장성) · 파괴액션 확인 3종(게스트 로그아웃·친구삭제·작업종료) · 계정 자기관리 UI(비번변경·탈퇴, 백엔드 기존·UI 신규) · 중복 interject 제거 · (이전 6a41239) ★HA/스케일아웃 상태 외부화(07-18): ChannelState DB 상태저장(마이그0026 SsoUsedCode·0027 ChannelState) · ms_status DB-우선 읽기(파일 폴백) · guide put_state/state 엔드포인트 + get_state_sync · _workspace 레지스트리 DB해석(하드코딩 로컬경로 제거) · Redis 캐시 플래그(REDIS_URL) · fail-closed 러너 제외(관리명령 웹서핑면 아님) · 보안(monitor 인가·is_admin 비노출·SSO 1회용 nonce·admin rate-limit). 전부 플래그 off 기본 단일VPS 무회귀 · (이전 ce75b3c) ★회의 구조 필드화(meet_open/topic/close/stage — 텍스트 스크래핑 폐지)·회의별 nego 행(단계 칩+정식 제목+3줄 결론 카드)·단일 활성 회의 불변식 · ★Task 내부 디자인 일괄 감사 수리(07-17: SYS [단계:x] 마커→필드 승격(봇 재개설도 같은 단계 병합), 표결 블록 '회의' 칩 사칭·영구 '진행 중' 제거, 완료/중단 판 회의 전부 종료 표기, 목표 목록 **·'1.' 번호 정리, 죽은 마일스톤 '구성 중…' 제거 — U-019 실증·U-033 무회귀. 쌍: system 1cbfd16) · (이전) atelier 요소만 서빙 부트(49b92c5) · atelier 고립 응답(475eb4b) · atelier 창스크롤 보정·재센터 1회화(248beef) · atelier flash 가시화(42bfcdd)·앵커 정규화(36c15ca) · atelier 앵커 정규화(fbdom textContent, 36c15ca) · ★[회의 시작]/[여는 의견] 회의 분류 등록(밖으로 튀어나오던 것 봉합)·응찰 점수 비표시·중지 판 Task 박스 수리 — ★새 파이프라인 마커 렌더([마일스톤 보고]·로드맵·다음단계·다음선정·백로그소진·중지상신 화이트리스트+라벨/색) · ★중지 판 Task 박스 수리(stopped 요청 pending 제외 — board-root 유지, U-019 taskhead 0→1)
+murmur  da09ac3   ← HEAD — ★검수 수리(07-18): 배턴(무인증 대시보드) 비공개 채널 발화·프로젝트명
+                          비노출(공개 채널만 후보 — H3 인가 수리의 잔여 봉합) · ms_status DB-우선
+                          읽기의 DB오류 파일 폴백(공개 폴링 500 방지) · (이전 d5d9d60) 사용량 크레딧
+                          게이지 — 프로필 모달 이번 달 사용/한도(과금 사용자 표면 완결) · (이전
+                          0f6c129) ★운영·과금·제품감사(07-18): 회원별 사용량 원장(Person.plan·UsageLedger·마이그0028)·크레딧 요금제(MURMUR_PLANS)·보드주인 귀속(guide report_usage)·한도 게이트(MURMUR_QUOTA_ENFORCE 기본off)·GET me/usage · StatsView 전역블록 8초캐시(폴링 확장성) · 파괴액션 확인 3종(게스트 로그아웃·친구삭제·작업종료) · 계정 자기관리 UI(비번변경·탈퇴, 백엔드 기존·UI 신규) · 중복 interject 제거 · (이전 6a41239) ★HA/스케일아웃 상태 외부화(07-18): ChannelState DB 상태저장(마이그0026 SsoUsedCode·0027 ChannelState) · ms_status DB-우선 읽기(파일 폴백) · guide put_state/state 엔드포인트 + get_state_sync · _workspace 레지스트리 DB해석(하드코딩 로컬경로 제거) · Redis 캐시 플래그(REDIS_URL) · fail-closed 러너 제외(관리명령 웹서핑면 아님) · 보안(monitor 인가·is_admin 비노출·SSO 1회용 nonce·admin rate-limit). 전부 플래그 off 기본 단일VPS 무회귀 · (이전 ce75b3c) ★회의 구조 필드화(meet_open/topic/close/stage — 텍스트 스크래핑 폐지)·회의별 nego 행(단계 칩+정식 제목+3줄 결론 카드)·단일 활성 회의 불변식 · ★Task 내부 디자인 일괄 감사 수리(07-17: SYS [단계:x] 마커→필드 승격(봇 재개설도 같은 단계 병합), 표결 블록 '회의' 칩 사칭·영구 '진행 중' 제거, 완료/중단 판 회의 전부 종료 표기, 목표 목록 **·'1.' 번호 정리, 죽은 마일스톤 '구성 중…' 제거 — U-019 실증·U-033 무회귀. 쌍: system 1cbfd16) · (이전) atelier 요소만 서빙 부트(49b92c5) · atelier 고립 응답(475eb4b) · atelier 창스크롤 보정·재센터 1회화(248beef) · atelier flash 가시화(42bfcdd)·앵커 정규화(36c15ca) · atelier 앵커 정규화(fbdom textContent, 36c15ca) · ★[회의 시작]/[여는 의견] 회의 분류 등록(밖으로 튀어나오던 것 봉합)·응찰 점수 비표시·중지 판 Task 박스 수리 — ★새 파이프라인 마커 렌더([마일스톤 보고]·로드맵·다음단계·다음선정·백로그소진·중지상신 화이트리스트+라벨/색) · ★중지 판 Task 박스 수리(stopped 요청 pending 제외 — board-root 유지, U-019 taskhead 0→1)
                           · ★협의 Task 레벨화 완결(마일스톤 확정 전 preNego도 taskhead.nego로 — 임시 msblock 틀 제거, U-018 실증·U-016 무회귀, 빌드 배포됨)
                           · ★중지/취소된 최신 요청이 옛 완료 이벤트로 '완료' 오표시되던 것 수리 · ★역할적합 시소러스 system.role_fit 재수출(단일 진실원) · ★완료 보고 시스템 종합·Task 하위 끝 섹션(개인 마감 응답 억제) · ★상태칩 4종 지속화
                           · ★상태칩 4종 지속화(완료=done_ts·중단=stopped·작업중=live·대기=pending, context.terminal)
