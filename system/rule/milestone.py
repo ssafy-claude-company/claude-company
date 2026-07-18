@@ -805,10 +805,16 @@ def meeting_stage(flow):
         if st.status == "done":
             continue
         r = store.get(st.st_id)
+        # [게으른 백로그 회의(2026-07-17, ch78 실측: 단위 9개 → 회의 9개(~1h씩)를 다 끝내야 실작업)]
+        # 집을 일이 남은 단위가 있으면 작업이 먼저다 — 다음 단위의 백로그 회의는 앞 단위 소진이 연다
+        # ('백로그 소진 = 회의 트리거' 철학 그대로, 스캔만 조급→게으름). 계획 전량 선행이 아니라
+        # 릴레이: 일하면서 다음 단위가 닿을 때 그 단위 회의.
+        if r is not None and r.backlogs and not r.all_done():
+            return None                                 # 대기/진행 백로그 존재 → 작업 단계 우선
         if r is None or not r.backlogs:
-            return "backlog"                            # ④ 백로그 회의 — 미충원 단위 존재
+            return "backlog"                            # ④ 백로그 회의 — 지금 닿은 미충원 단위
         if not r.all_done():
-            _exhausted = False                          # 처리 중/대기 백로그 존재 → 작업 단계
+            _exhausted = False                          # (도달 불가 — 위에서 반환) 방어 유지
     # [백로그 소진 = 회의 트리거(2026-07-16, 잔재 감사 ①)] 전 단위의 백로그가 소진(전부 done/dropped)
     # 됐는데 주기가 아직 열려 있으면(조건 미충족) 추가 분해 회의 — 종전엔 handoff 코칭('meet를 열어라')
     # 만 있고 stage가 None이라, 봇이 meet를 불러도 결론 경로가 없었다(수렴 소진 낭비). 체인이 자동 개설.

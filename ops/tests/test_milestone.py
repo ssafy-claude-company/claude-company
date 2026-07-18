@@ -486,10 +486,15 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
     assert meeting_stage(f) == "backlog"
     ok, _ = register_stage(f, "backlog", "백로그: POST /guestbook 구현\n백로그: GET 목록 구현")
     assert ok
-    assert meeting_stage(f) == "backlog"                     # 둘째 단위 아직 미충원 → 또 백로그 회의
+    # [게으른 백로그 회의(2026-07-17, ch78 실측: 단위 9개면 회의 9개를 다 끝내야 실작업 — ~1h×9 선행
+    # 낭비)] 집을 일이 남았으면 작업이 먼저 — 둘째 단위 회의는 첫 단위 백로그 '소진'이 연다(릴레이).
+    assert meeting_stage(f) is None                          # 첫 단위에 집을 일 있음 → 작업 단계 우선
+    for b in f.backlog_relays[_ms.subtasks[0].st_id].backlogs:
+        b.status = "done"                                    # 첫 단위 백로그 소진 시뮬레이션
+    assert meeting_stage(f) == "backlog"                     # 소진 → 이제 둘째 단위 백로그 회의
     ok, _ = register_stage(f, "backlog", "백로그: 폼 UI\n백로그: 제출 검증")
     assert ok
-    assert meeting_stage(f) is None                          # 전 단계 완료 → 작업 단계
+    assert meeting_stage(f) is None                          # 둘째 단위에 집을 일 → 작업 단계
 
 
 def test_회의산물_무주백로그는_자기선택으로_전담(monkeypatch):
