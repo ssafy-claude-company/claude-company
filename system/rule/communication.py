@@ -745,6 +745,14 @@ async def meet(flow, me_id, args):
                             if flow.log:
                                 flow.log("stage_confirmed", stage=str(_stage), passes=_pass, via="draft")
                             flow._meet_stage_note = None
+                            # [마커 즉시 게시(2026-07-18, ch78 실측)] _pnote는 누적만 하고 도구 래퍼만
+                            # flush — 회의-경유 등록의 [마일스톤 시작]·[SubTask 개설] 마커가 재시작에서
+                            # 증발해 피드에 마일스톤 블록이 안 떴다. 등록 성공 즉시 여기서 flush.
+                            try:
+                                from .milestone import flush_pipeline_notes as _fpn
+                                await _fpn(flow)
+                            except Exception:
+                                pass
                             break
                         if flow.log:
                             flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
@@ -803,6 +811,11 @@ async def meet(flow, me_id, args):
                         _confirm_note = "\n\n" + _note
                         if flow.log:
                             flow.log("stage_confirmed", stage=str(_stage), passes=_pass, merges=_mrg)
+                        try:
+                            from .milestone import flush_pipeline_notes as _fpn
+                            await _fpn(flow)   # [마커 즉시 게시] 도구 래퍼 밖 등록도 피드 마커 유실 없음
+                        except Exception:
+                            pass
                         break                               # 채택 완료 — 회의 종료
                     if flow.log:
                         flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
