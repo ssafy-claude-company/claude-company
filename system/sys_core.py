@@ -2120,6 +2120,10 @@ class Sys:
         flow.wake = lambda to, b, k: self.run_turn(flow, to, b, k, "member")
         # [마이크로 wake] 표결·응찰·병합 등 한 줄 상호작용용 — 풀 프레임 없이 본문만(조립 자체를 좁힘).
         flow.wake_micro = lambda to, b, k: self.run_turn(flow, to, b, k, "member", micro=True)
+        # [사람 에스컬레이트 배선(2026-07-18, 감사)] 종전 escalate_to_human=None이라 조건 재협상이
+        # 사람에게 통지조차 안 됐다(달성 불가 조건 = 영구 교착·무통지). 이제 채널에 [사람 조치 필요]로
+        # 게시(피드 가시)하고 awaiting_human 플래그를 세운다 — 파이프라인의 유일한 '막힘 출구'.
+        flow.escalate_to_human = lambda msg: self._escalate_human(flow, msg)
         # [§8 관측 — S3 접점 한 줄] 파이프라인 ON이면 로그 관문에서 이벤트 집계를 동승(오버헤드
         # 스냅샷용 요약 — 정본은 flow.jsonl 그대로). OFF면 종전 바인딩 그대로(라이브 불변).
         flow.log = (_wrapup_tally(flow, self._log) if _ms_pipeline_on()
@@ -2619,6 +2623,19 @@ class Sys:
                 f.pending_info.setdefault(tgt, []).append(text)            # 대상 봇이 다음 턴에 직접 본다
                 if tgt != lead:                                            # 리더는 '누구에게 갔는지' 인지(라우터·응답)
                     f.pending_info.setdefault(lead, []).append(f"[{bi.get(tgt, tgt)}에게 전달됨] {text}")
+                # [조건 승인 귀환(2026-07-18, 감사)] escalate_to_human이 사람 조치를 요청한 상태(awaiting_human)
+                # 에서 사람이 '조건 승인/반려'로 답하면 blocked_pending 조건에 approve_waiver를 적용한다 —
+                # 종전엔 approve_waiver로 가는 사람-입력 경로가 없어 승인해도 반영 안 됐다(교착 지속).
+                try:
+                    if getattr(f, "awaiting_human", None):
+                        if any(k in text for k in ("조건 승인", "포기 승인", "재협상 승인")) or ("승인" in text and "반려" not in text):
+                            n = self._apply_waiver(f, approve=True)
+                            if n:
+                                f.pending_info.setdefault(lead, []).append(f"[조건 조정] 사람 승인 반영 — {n}개 조건 포기, 나머지로 진행.")
+                        elif "반려" in text or "거부" in text:
+                            self._apply_waiver(f, approve=False)
+                except Exception:
+                    pass
                 # [G4 해제 — 사용자 개입(B-03)] '연속 무응답' 하드블록은 사람의 진행 중 개입도 해제 트리거다
                 # (loop_escalated의 사용자 해제 패턴과 동형 — 사람이 온 것 자체가 '판정·방향'의 신호).
                 try:
@@ -2636,6 +2653,48 @@ class Sys:
                 self._log("human_info_delivered", channel=cid, target=tgt)
                 return True
         return False
+
+    def _escalate_human(self, flow, msg):
+        """[사람 에스컬레이트 배선(2026-07-18, 감사)] 조건 재협상 등 '사람 조치 필요'를 채널에 게시(피드
+        가시) + awaiting_human 플래그(HUD/ms_status가 '사람 대기' 표시). 조건 재협상(sync)에서 불릴 수
+        있어 채널 게시는 fire-and-forget. 이게 없던 탓에 달성 불가 조건이 무통지 교착이었다."""
+        try:
+            flow.awaiting_human = str(msg)[:300]
+            flow.note_activity(0, f"🔔 [사람 조치 필요] {msg}", force=True)
+        except Exception:
+            pass
+        try:
+            import asyncio as _aio
+            ch = getattr(flow, "user_channel", None)
+            if ch is not None and getattr(flow, "guide", None):
+                loop = _aio.get_running_loop()
+                _t = loop.create_task(flow.guide.post(int(ch), 0,
+                    f"[사람 조치 필요] {msg}\n— 이 채널에 '조건 승인'(그 조건 없이 진행) 또는 '조건 반려'로 답해주세요."))
+                if not hasattr(self, "_esc_bg"):
+                    self._esc_bg = set()
+                self._esc_bg.add(_t); _t.add_done_callback(self._esc_bg.discard)
+        except Exception:
+            pass
+        try:
+            self._log("escalate_human", channel=int(getattr(flow, "user_channel", 0) or 0), msg=str(msg)[:80])
+        except Exception:
+            pass
+
+    def _apply_waiver(self, flow, approve=True):
+        """[사람 승인 적용] flow의 열린 마일스톤·서브태스크의 blocked_pending 조건 전부에 approve_waiver.
+        반환: 적용 개수. 적용되면 awaiting_human 해제(교착 출구 닫힘)."""
+        from .rule.milestone import approve_waiver
+        mss = getattr(flow, "milestones", None) or []
+        objs = list(mss) + [st for m in mss for st in getattr(m, "subtasks", [])]
+        n = 0
+        for obj in objs:
+            for c in list(getattr(obj, "criteria", []) or []):
+                if getattr(c, "status", "") == "blocked_pending":
+                    approve_waiver(flow, obj, c.desc, approve=approve)
+                    n += 1
+        if n:
+            flow.awaiting_human = None
+        return n
 
     def _flow_idle(self, channel_id):
         """이 채널 활성 흐름의 '무진행 시간'(초) — 봇 활동(last_activity)이 멈춘 지. 흐름 없으면 None.

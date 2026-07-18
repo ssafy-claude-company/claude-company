@@ -217,7 +217,10 @@ def ms_status_snapshot(flow):
     for ms in all_ms[-6:]:
         out_list.append(_ms_one(flow, ms, relays))
     cur = next((m for m in reversed(out_list) if m["status"] not in ("done", "superseded")), out_list[-1])
-    return {**cur, "list": out_list, "ts": time.time()}
+    # [사람 대기 표면화(2026-07-18, 감사)] 조건 재협상으로 사람 승인 대기 중이면 HUD에 노출 — 교착이
+    # 조용히 지속되지 않게(사람이 개입해야 할 지점이 드러난다).
+    _aw = getattr(flow, "awaiting_human", None)
+    return {**cur, "list": out_list, "ts": time.time(), "awaiting_human": (str(_aw)[:200] if _aw else None)}
 
 
 def _ms_one(flow, ms, relays):
@@ -553,6 +556,14 @@ def approve_waiver(flow, obj, target: str, approve: bool = True) -> str:
     if flow.log:
         if approve: _pnote(flow, f"[조건 조정] '{c.desc[:40]}' 환경 제약으로 조정(사람 승인)")
         flow.log("criterion_waiver", id=oid, target=c.desc[:60], approved=bool(approve))
+    # [사람 대기 해제(2026-07-18, 감사)] 흐름에 남은 blocked_pending 조건이 없으면 awaiting_human 해제 —
+    # HUD의 '사람 대기'가 사라지고 교착 출구가 닫힌다(자기완결, 호출자 무관).
+    _mss = getattr(flow, "milestones", None) or []
+    _any_blocked = any(x.status == "blocked_pending" for m in _mss
+                       for x in (list(getattr(m, "criteria", []) or [])
+                                 + [cc for st in getattr(m, "subtasks", []) for cc in getattr(st, "criteria", [])]))
+    if not _any_blocked and getattr(flow, "awaiting_human", None):
+        flow.awaiting_human = None
     _ckpt(flow)
     return (f"조건 '{c.desc[:40]}' {'포기 승인됨(waived) — 나머지 조건으로 주기 진행' if approve else '반려됨 — 다시 충족해야 함'}.")
 

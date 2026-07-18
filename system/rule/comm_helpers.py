@@ -284,6 +284,27 @@ def _is_substantive(body: str) -> bool:
     return not (len(b) <= 30 and any(h in low for h in _HOLLOW_PING))
 
 
+import re as _re_vote
+
+
+def _classify_vote(text: str) -> str:
+    """[표결 응답 분류(2026-07-18, 감사)] 'for'|'against'|'abstain'. 명시 마커([찬성]/[반대] 또는 선두
+    토큰)만 확답으로 인정하고, '반대 없/않/아니' 부정은 찬성, 그 외 비확답은 기권.
+    종전 부분문자열 매칭이 '반대 없습니다'→반대(거짓 부결), 비확답 산문→찬성(거짓 통과)으로 새던 것 교정."""
+    t = str(text or "").strip()
+    if not t:
+        return "abstain"
+    # '반대 없다/않는다/아니다/할 이유 없다' = 반대의 부정 → 찬성 신호
+    _neg_against = bool(_re_vote.search(r"반대\s*(?:는|하지|할)?\s*(?:없|않|아니|이유\s*(?:가)?\s*없)", t))
+    _mark_against = ("[반대" in t) or bool(_re_vote.match(r"^\s*반대", t))
+    _mark_for = ("[찬성" in t) or bool(_re_vote.match(r"^\s*찬성", t)) or "조건부 동의" in t or "동의합니다" in t
+    if _mark_against and not _neg_against:
+        return "against"
+    if _mark_for or _neg_against:
+        return "for"
+    return "abstain"
+
+
 # ── [협업 실행 헬퍼 — guide_tools에서 이관] 그룹핑·스레드 멤버십·병렬 포크수집 ──
 async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO, micro=False):
     """[병렬 Info fork-join] '독립 의견 수집'(표결·회의 1라운드)을 동시에 돈다 — Communication.md

@@ -57,7 +57,7 @@ from .comm_engine import (  # noqa: F401 (M9 베턴엔진 재수출)
 from .comm_helpers import (  # noqa: F401
     _CAPS, _HOLLOW_PING, _JOB_SEP, _SPARE_LABEL, _add_members, _body_overlap,
     _capability_gaps, _clarify_hold, _find_variant_job, _fork_collect,
-    _free_alternatives, _group_of, _is_spare, _is_substantive, _job_tokens,
+    _classify_vote, _free_alternatives, _group_of, _is_spare, _is_substantive, _job_tokens,
     _jobs_of, _kw, _needed_caps_coverage, _norm_job, _same_job, _offdomain_capability_hit,
     _resolve_members, _say, _say_speech, _uniq)
 from .comm_ceremonies import vote, vote_stop, parallel_work, recruit  # noqa: F401 (M9 재수출)
@@ -593,13 +593,19 @@ async def meet(flow, me_id, args):
             for m, res, note in await _fork_collect(flow, me_id, list(members), _rbody, micro=True):
                 wakes["n"] += 1
                 t = str(res or "")
-                if "반대" in t:
+                # [표결 파서 엄격화(2026-07-18, 감사)] 종전 `"반대" in t`는 '반대 없습니다'·'반대할 이유
+                # 없이 찬성'을 반대로 오집계(거짓 부결→회의 팽창)했고, `_is_substantive`는 비확답 산문을
+                # 찬성으로 셌다(거짓 통과→품질 신호 희석). 이제 명시 마커([찬성]/[반대] 또는 선두 토큰)만
+                # 인정하고, '반대 없/않' 부정은 찬성, 그 외 비확답은 '기권'(찬성도 반대도 아님)으로 분리.
+                _vote = _classify_vote(t)
+                if _vote == "against":
                     _r = t.split("반대", 1)[1].lstrip(":： ]").strip().splitlines()[0][:150] if "반대" in t else ""
                     _dissents.append(_r or "(사유 미기재)")
-                elif "찬성" in t or _is_substantive(t):
+                elif _vote == "for":
                     _yes += 1
+                # abstain = 집계 안 함(찬성 오집계 방지) — 만장일치 게이트는 yes>=1이라 전원 기권이면 미통과
                 if flow.log:
-                    flow.log("consensus_ratify_vote", who=m, oppose=("반대" in t))
+                    flow.log("consensus_ratify_vote", who=m, vote=_vote)
             # [표결 가시화(2026-07-16, 사용자: '회의 중 표결이 안 보여서 문제')] 결과를 채널 회의
             # 블록에 [표] 한 줄로 게시 — 종전엔 표결이 침묵이라 사용자 눈엔 판이 멈춘 것처럼 보였다
             # (ch74~75: 15분+ 무행). 개별 찬반이 아니라 집계+반대 요지만(이벤트 결과 1줄, 스팸 아님).

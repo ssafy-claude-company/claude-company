@@ -643,3 +643,32 @@ def test_작업단계에는_meet가_거부되고_릴레이로_코칭(monkeypatch
     f.backlog_relays = {st.st_id: r}
     out = _aio.run(meet(f, 11, {"topic": "그냥 회의"}))
     assert "작업 단계" in out and "pick_backlog" in out   # 회의 거부 + 릴레이 코칭
+
+
+def test_표결_파서_엄격화():
+    """[감사 2026-07-18] '반대 없습니다'는 찬성, 비확답은 기권(찬성 오집계 아님)."""
+    from system.rule.comm_helpers import _classify_vote
+    assert _classify_vote("[찬성]") == "for"
+    assert _classify_vote("반대 없습니다") == "for"          # 부정 = 찬성
+    assert _classify_vote("반대할 이유 없이 동의합니다") == "for"
+    assert _classify_vote("[반대: 스키마 빠짐]") == "against"
+    assert _classify_vote("반대합니다") == "against"
+    assert _classify_vote("자료 검토했습니다 좋아보여요") == "abstain"   # 비확답 → 기권(찬성 아님)
+    assert _classify_vote("") == "abstain"
+
+
+def test_조건재협상_교착출구_왕복():
+    """[감사 2026-07-18] renegotiate→escalate(사람 통지)→blocked→approve_waiver→waived.
+    종전 escalate_to_human=None이라 무통지 교착이던 것 배선 회귀."""
+    from system.rule.milestone import open_milestone, renegotiate_criterion, approve_waiver
+    f = _flow()
+    ms = open_milestone(f, "M1", [{"desc": "배포 200", "verify": "curl -s localhost/"},
+                                  {"desc": "결제 연동", "verify": "grep paid cfg.json"}])
+    esc = []
+    f.escalate_to_human = lambda m: (setattr(f, "awaiting_human", m), esc.append(m))
+    renegotiate_criterion(f, ms, "결제 연동", "유료 계정 없음")
+    assert esc and f.awaiting_human                          # 사람에게 통지됨
+    c = next(x for x in ms.criteria if "결제" in x.desc)
+    assert c.status == "blocked_pending"
+    approve_waiver(f, ms, "결제 연동", approve=True)
+    assert c.status == "waived" and f.awaiting_human is None  # 승인 반영 + 대기 해제
