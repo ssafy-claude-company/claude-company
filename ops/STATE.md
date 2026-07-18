@@ -31,8 +31,10 @@ claude-company  9e4688a  ← 브레인 — 2026-07-18 ★보안 감사(에이전
                           7681 경로 제거) + ATELIER_WORKHOOK_SECRET 랜덤설정 + 잔재 codex×2·고아 http.server 정리 +
                           /admin/ rate-limit(conf.d 존 + location, burst5후 503 실증). C1 실증: /api/atelier/work/가
                           '!'로 뚫리던 것 → 403. nginx 실체는 git 밖 — 참조본 ops/infra/nginx-murmur*.conf.
-                          [낮음 배치=murmur ↑] L1 신뢰IP원(X-Real-IP 우선, XFF첫값 위조 무시) · L2 SSO throttle+윈도우
-                          90→30초. 남은 잔여: SSO 완전 single-use nonce(2워커·locmem이라 DB마이그 필요 — 낮음, 미착수).
+                          [낮음 배치=murmur ef59f3a] L1 신뢰IP원(X-Real-IP 우선, XFF첫값 위조 무시) · L2 SSO
+                          throttle+윈도우 90→30초 + ★완전 1회용 nonce(SsoUsedCode unique, 마이그0026 라이브 적용 —
+                          across-worker 리플레이 DB차단). e2e판(ch78) 중지(StopSignal, 구조검증 완료). 보안 감사
+                          전 항목 종결. 회귀: 브레인 636 + murmur 보안스위트(sso 3·admin 2·ip 2 등).
                           (이전 6e4a290) 2026-07-17 ★회의 수렴 종결 보장 스택(ch78 라이브+오프라인 예행으로 5개 층
                           순차 확정): ①[단계:x] 개시 마커→피드 필드(봇 재개설 병합) ②린터식 게이트(_draft_lint —
                           꺾쇠·인용 원문을 발언 턴·응찰 양쪽에 서빙, 내용 판단 없음) ③완성 파일 표결 부결 3회
