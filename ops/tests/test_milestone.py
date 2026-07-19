@@ -378,6 +378,22 @@ def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monke
     assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
 
 
+def test_등록_허용목록_전수_대조_회귀가드(monkeypatch):
+    """[ch79 실측 회귀(2026-07-19) — 손 고른 부분집합 가드의 구멍] pick_backlog가 등록만 되고
+    허용목록에 빠져 봇 선점이 전원 '권한 밖 도구' 거부 → 작업 전이 교착의 숨은 뿌리.
+    가드를 등록 기반 전수 대조로: 멤버/리더 세션에 실제 등록되는 guide 도구 전부가
+    그 역할의 허용 집합(FLOW / FLOW∪LEADER)에 있어야 한다."""
+    from system.tool_names import FLOW_TOOLS, LEADER_TOOLS
+    from test_sys import FakeGuide, _flow as _sys_flow, _tools
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _sys_flow(FakeGuide())
+    flow_set, lead_set = set(FLOW_TOOLS), set(FLOW_TOOLS) | set(LEADER_TOOLS)
+    member_names = {f"mcp__guide__{n}" for n in _tools(f, 12, "member")}
+    leader_names = {f"mcp__guide__{n}" for n in _tools(f, 11, "leader")}
+    assert member_names <= flow_set, f"멤버 등록-허용 불일치: {sorted(member_names - flow_set)}"
+    assert leader_names <= lead_set, f"리더 등록-허용 불일치: {sorted(leader_names - lead_set)}"
+
+
 def test_조건_불가능_출구_정체경보와_재협상_포기(monkeypatch):
     """[설계검토 #1 · 결정권자 폐지] 진전 없는 반복 미충족이 임계 도달 시 정체 경보 → **누구나**
     재협상 상신 → 사람 승인 포기(waive) → 나머지 조건으로 주기 진행(무한 iter 차단)."""

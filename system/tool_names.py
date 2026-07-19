@@ -21,6 +21,10 @@ FLOW_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL, RUN_TOOL,
               # [결정권자 폐지(2026-07-09, 사용자)] 확정=종결 표결(자동 등록)이므로 set_milestone은
               # '서기'(누구나) 표면이고, 재협상도 누구나(진짜 게이트=사람 승인) — 둘 다 공통 이동.
               "mcp__guide__set_milestone", "mcp__guide__renegotiate_criterion",
+              # [백로그 릴레이(2026-07-19, ch79 실측 — 등록↔허용 한 세트 회귀)] pick/drop/block이
+              # 등록만 되고 여기 빠져 '권한 밖 도구' 거부 — 봇들이 선점하려다 전원 차단돼 작업 전이
+              # 교착의 숨은 뿌리였다. 릴레이는 전 멤버 표면(자기 등재·선정·중단·차단).
+              "mcp__guide__pick_backlog", "mcp__guide__drop_backlog", "mcp__guide__block_backlog",
               "mcp__guide__deploy",   # [배포 탈중앙화(2026-07-08, 사용자)] deploy는 전원 — 검증 끝낸 owner가 직접 공개(리더 독점 폐지)
               "mcp__guide__atelier"]  # [P0 B-2(2026-07-13)] 공유 판 — 전원, 사용은 자발(산출물·증거 남김, 승격 핀 done 회신)
 # 리더(코디네이터) 흐름 도구: 조율만(run 없음) — 구현·실행은 owner/QA가 한다.
