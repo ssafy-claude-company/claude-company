@@ -1529,6 +1529,32 @@ class Sys:
             if not task.done():              # 외부 취소·타임아웃 어느 쪽이든 내부 task 누수 방지
                 task.cancel()
 
+    async def _claim_kick(self, flow):
+        """[첫 선점 킥(2026-07-19, ch79/P-032 실측 수리)] 작업 단계에서 대기 백로그의 제출자를 1회
+        깨워 선점·착수를 구조로 강제 — 판단은 rule(claim_kick_target), 여기는 wake 배선만.
+        백로그당 1회(flow._claim_kicked)·in_progress 있으면 no-op — 이어가기 루프에서 매 세그 호출해도
+        조용하다(회의 직후 전이·복원 재개 양쪽을 같은 자리에서 덮는다)."""
+        try:
+            from .rule.milestone import claim_kick_target
+            t = claim_kick_target(flow)
+            if not t:
+                return
+            who, b, st_id = t
+            kicked = getattr(flow, "_claim_kicked", None)
+            if kicked is None:
+                kicked = flow._claim_kicked = set()
+            kicked.add(b.backlog_id)
+            self._log("claim_kick", st=str(st_id), backlog=str(b.backlog_id), to=int(who))
+            await self.run_turn(
+                flow, who,
+                f"[작업 시작] 회의는 끝났고 지금은 **작업 단계**입니다. 당신이 등재한 백로그 "
+                f"{b.backlog_id}(\"{(b.body or '')[:80]}\")가 대기 중입니다 — 지금 "
+                f"pick_backlog(id=\"{b.backlog_id}\")로 선점하고 **바로 실작업**(파일 생성·코드 작성·"
+                f"실행)을 시작하세요. 발언·회의 소집이 아니라 작업입니다. 끝나면 결과를 보고하고 "
+                f"다음 수행자를 pick_backlog(id=…)로 선정하세요.", Kind.INFO, "worker")
+        except Exception as e:
+            self._log("claim_kick_error", err=str(e)[:80])
+
     async def run_turn(self, flow: Flow, organt_id, body, kind, role, micro=False) -> str:
         # [소속 태깅 수리(2026-07-10)] PIPELINE_CTX를 변이 시점(도구 핸들러=자식 태스크)에 set하면
         # 그 태스크 종료와 함께 증발 — 턴을 스폰하는 이 지점(흐름 태스크)에서 매 턴 갱신해야
@@ -2293,6 +2319,11 @@ class Sys:
                     else:
                         _stage_stall = 0
                     continue
+                # [첫 선점 킥(2026-07-19, ch79 실측)] 계획 단계가 끝난 작업 단계 — 대기 백로그가 있는데
+                # 아무도 안 집었으면 제출자를 깨워 선점을 강제(백로그당 1회, 자가 가드라 매 세그 호출 무해).
+                # 회의 직후 전이와 중단→재개(복원) 양쪽이 이 한 자리로 덮인다.
+                if _ms_on() and not flow.cancelled:
+                    await self._claim_kick(flow)
                 # [단일활성 복원] 리더 턴이 끝났는데 위임이 아직 '완주 중'이면(CLI가 도구 호출을 포기해
                 # detach됐거나, 턴 한도로 끊겼지만 deliver 태스크는 살아 있음) — 그 위임을 죽이지 않고
                 # **끝까지 기다린다**. 일하는 owner를 드레인으로 자르던 것(작업 유실·재위임 churn·'오유진

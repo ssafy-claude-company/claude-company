@@ -93,6 +93,36 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag):
     assert [e for e, _ in events].count(E2E_PASS) == 1
 
 
+def test_claim_kick_target_작업단계_선점킥_규칙(onflag):
+    """[ch79/P-032 라이브 실측 수리 — 2026-07-19] 회의가 백로그를 등록하고 작업 단계로 전이했는데
+    아무도 선점하지 않던 교착: SYS가 깨울 대상을 규칙으로 고른다 — 제출자에게 백로그당 1회,
+    in_progress가 생기면 침묵(순차 1활성), 킥을 씹으면 다음 open으로 한 번씩만 확대."""
+    from system.rule.backlog import BacklogRelay
+    from system.rule.milestone import SubTask, claim_kick_target
+    g = FakeGuide()
+    f = _flow(g)
+    lead = _tools(f, 11, "leader")
+    _drive(lead, "set_milestone", {"goal": "게임", "criteria": "판정 정확 | pytest 50회 확인"})
+    ms = f.milestones[0]
+    st = SubTask(st_id=f"{ms.ms_id}/ST-1", goal="메커닉", criteria=[])
+    ms.subtasks.append(st)
+    r = BacklogRelay(st.st_id)
+    f.backlog_relays = {st.st_id: r}
+    b1 = r.submit(12, "메커닉 정의서 작성", force=True)
+    b2 = r.submit(13, "저장 스키마 확정", force=True)
+
+    who, b, st_id = claim_kick_target(f)
+    assert (who, b.backlog_id, st_id) == (12, b1.backlog_id, st.st_id)   # 첫 open의 제출자
+    f._claim_kicked = {b1.backlog_id}                                    # 킥했는데 씹힘 → 다음 open 1회
+    who2, b_2, _ = claim_kick_target(f)
+    assert (who2, b_2.backlog_id) == (13, b2.backlog_id)
+    b1.status = "in_progress"                                            # 누가 집으면 침묵
+    assert claim_kick_target(f) is None
+    b1.status = "done"
+    f._claim_kicked = {b1.backlog_id, b2.backlog_id}                     # 전부 킥 소진 → 침묵
+    assert claim_kick_target(f) is None
+
+
 def test_rehearsal_boundary_gate_blocks_early_open(onflag):
     """미완 마일스톤이 있으면 e2e_open이 거부 — Task 경계 규약이 도구 표면에서도 산다."""
     g = FakeGuide()

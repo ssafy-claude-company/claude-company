@@ -873,6 +873,39 @@ def register_consensus(flow, prop: str, origin: str = ""):
 # elif), 회의 자체는 단일 활성 베턴이라 두 회의가 동시에 못 돈다. 종전의 '수렴안 하나가 목표+마일스톤+
 # 단위 다 만들기'(너무 큰 회의 — 라이브 ch70 32분 겉돎)를 대체한다.
 
+def claim_kick_target(flow):
+    """[첫 선점 킥 — 2026-07-19 e2e(P-032) 교착 수리] 작업 단계에서 '깨워 선점시킬' 다음 대상 하나를
+    고른다 — (봇 id, Backlog, st_id) 또는 None(킥 불요).
+
+    배경(라이브 실측): 회의가 백로그 5건을 등록하고 작업 단계로 전이했는데, 등록 반환문("각자
+    pick_backlog로 전담하세요")은 회의를 연 앵커 세션에만 남고 이어가기도 앵커만 깨워 — 봇들이
+    "선점해야 한다"고 말하면서 아무도 선점하지 않은 채 76분 공전 후 킥오프 소진 마감(ch79).
+    구조 수리: 첫 착수를 SYS가 킥한다(자기 등재 원칙 그대로 — 제출자를 깨워 '네가 등재한 것을
+    선점하라'. 배분권 개입 아님). 릴레이는 순차 1활성이라 첫 선점만 서면 이후는 마무리자 선정이 잇는다.
+
+    규칙: 열린 주기의 미완 단위에서 ①in_progress가 하나라도 있으면 None(이미 손에 든 사람 있음)
+    ②open 중 아직 킥 안 한(flow._claim_kicked) 첫 건의 제출자 — 봇이 킥을 씹으면 다음 open으로
+    한 번씩만 확대(백로그당 1회 상한, 무한 wake 없음)."""
+    mss = getattr(flow, "milestones", None) or []
+    ms = next((m for m in mss if m.status not in ("done", "superseded")), None)
+    if ms is None:
+        return None
+    store = getattr(flow, "backlog_relays", None) or {}
+    kicked = getattr(flow, "_claim_kicked", None) or set()
+    for st in ms.subtasks:
+        if st.status in ("done", "superseded"):
+            continue
+        r = store.get(st.st_id)
+        if r is None or not r.backlogs:
+            continue
+        if any(b.status == "in_progress" for b in r.backlogs):
+            return None                          # 순차 1활성 — 진행 중이면 킥 불요
+        for b in r.backlogs:
+            if b.status == "open" and b.backlog_id not in kicked and int(b.submitter or 0):
+                return (int(b.submitter), b, st.st_id)
+    return None
+
+
 def meeting_stage(flow):
     """현 상태에서 이 회의가 정할 단 하나를 도출. 'goal'|'milestone'|'subtask'|'backlog'|None(작업 단계)."""
     _cur = getattr(flow, "current", None)
