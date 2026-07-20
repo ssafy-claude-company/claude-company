@@ -786,11 +786,36 @@ def next_milestone(flow) -> Optional[Milestone]:
 
 # ── 복기 진입점 (계약 §6 — S3의 e2e_fail이 호출) ───────────────────────────────
 
+def _replan_defect_count(origin) -> int:
+    """복기 마일스톤 origin("e2e:d1 | d2 | …")의 결함 수 — 복기 진전 판정의 원자(이력에서 파생)."""
+    return len([s for s in str(origin or "")[4:].split(" | ") if s.strip()])
+
+
 def ms_replan(flow, defects) -> Optional[Milestone]:
     """e2e 전수 실패 → 결함 목록으로 새 마일스톤을 연다. 조건 초안은 결함의 부정형(각 결함 해소를
     조건으로) — **확정은 회의 몫**(조건 결정은 turn-taking 회의, 계약 §4). 여기는 진입점만."""
     ds = [str(d).strip() for d in (defects or []) if str(d).strip()]
     if not ds:
+        return None
+    # [복기 진전 게이트(2026-07-20, 사용자: '무한반복·불안정 다 잡고 e2e — 비용 트레이드오프')]
+    # e2e→복기→e2e의 마지막 무상한 경로: 결함 수가 줄지 않는 복기가 이어지면(반복이 결과를 못
+    # 바꿈 — 재픽·이월과 같은 '진전' 철학) 새 복기 주기를 열지 않는다. 첫 재시도는 허용, 2회
+    # 연속 비개선부터 컷 — 정직 중단(사람 조치 게시는 reap 몫, 비용 최종 백스톱=크레딧 캡).
+    # 판정은 마일스톤 이력(origin)에서 파생 — 무상태·재시작 생존.
+    _runs = [_replan_defect_count(m.origin) for m in (getattr(flow, "milestones", None) or [])
+             if str(getattr(m, "origin", "")).startswith("e2e:")]
+    _stuck = 1 if (_runs and len(ds) >= _runs[-1]) else 0
+    if _stuck:
+        for i in range(len(_runs) - 1, 0, -1):
+            if _runs[i] >= _runs[i - 1]:
+                _stuck += 1
+            else:
+                break
+    if _stuck >= 2:
+        if flow.log:
+            flow.log("ms_replan_stuck", rounds=_stuck, defects=len(ds))
+        _pnote(flow, f"[e2e 복기 정체] 결함 {len(ds)}건이 복기 {_stuck}회째 줄지 않습니다 — 같은 접근의 "
+                     "반복을 멈춥니다(사람 확인 필요: 요청 구체화 또는 재개로 방향 제시).")
         return None
     entries = [{"desc": f"결함 해소: {d[:80]}",
                 "verify": f"run으로 재현 절차 재실행 → 재현 0회 확인: {d[:120]}"} for d in ds]
