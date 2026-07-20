@@ -2046,6 +2046,25 @@ class Sys:
                     self._checkpoint_open_task(flow)
                 except Exception:
                     pass
+            # [파킹 해제 = 사람 답(2026-07-20, U-035 rung2)] 사람 대기(blocked_pending) 판에 온 새
+            # 사용자 메시지를 먼저 승인/반려로 해석해 반영한다 — 종전엔 진행 중 interject 경로만
+            # 파싱해(deliver_human_info), 파킹으로 흐름이 닫힌 뒤 도착한 답은 어디에도 반영되지 않고
+            # 판이 다시 파킹되는 영구 교착이었다. 해석 불가면 일반 개입으로 진행(봇이 답하고 재파킹).
+            try:
+                from .rule.milestone import parse_waiver_reply as _pwr
+                from .rule.milestone import pending_waivers as _pwv
+                if _pwv(flow):
+                    _ans = _pwr(user_text)
+                    if _ans:
+                        _wn = self._apply_waiver(flow, approve=(_ans == "approve"))
+                        self._log("waiver_reply_at_start", channel=int(channel_id),
+                                  answer=_ans, applied=int(_wn or 0))
+                        body = ((f"[조건 조정 — 사람 승인 반영] 막혔던 조건 {_wn}개를 포기(waived)했습니다 — "
+                                 f"나머지 조건으로 주기를 이어가세요.\n\n") if _ans == "approve" else
+                                ("[조건 반려 — 사람 결정] 재협상이 반려됐습니다 — 그 조건은 유지되며 "
+                                 "다시 충족을 시도해야 합니다.\n\n")) + body
+            except Exception:
+                pass
             resume_note = ""
             if _unescalated_by_user:
                 resume_note += ("[수렴 경보 해제 — 사용자가 방향을 제시함] 이전에 교차검증 루프로 '사람 판정 대기'였던 "
@@ -2279,6 +2298,7 @@ class Sys:
             # 큰 재작성(세그먼트 루프 통째 교체)은 관통 관측 뒤로 — 실 관측 없이 물리를 갈면 리스크만 큼.
             from .rule.milestone import next_milestone as _ms_next, pipeline_on as _ms_on
             from .rule.milestone import meeting_stage as _ms_stage, stage_agenda as _stage_agenda
+            from .rule.milestone import pending_waivers as _pending_waivers
             from .rule.communication import meet as _stage_meet
             def _ms_pending():
                 return _ms_on() and _ms_next(flow) is not None
@@ -2328,6 +2348,28 @@ class Sys:
                     except Exception:
                         pass
                     self._log("quota_halt", ch=int(flow.user_channel or 0))
+                    break
+                # [사람 대기 파킹(2026-07-20, U-035 근본 rung3)] 조건 재협상(blocked_pending)으로 사람
+                # 승인을 기다리는 판은 봇을 굴릴 자격이 없다 — 종전엔 경보 스팸만 죽이고(milestone.py
+                # §iter_stuck) 루프는 계속 돌아, 결정·게이트에 막힌 봇들이 세그먼트를 조율 잡담·기충족
+                # 조건 재보고·회의개설-즉시미룸으로 채웠고(사용자 관측 "이상한 말"), 그 잡담이
+                # act_count/last_activity를 트립해 정체 감지(무진전 cont·idle reap)까지 무력화했다.
+                # quota_halt와 동형 파킹: 안내 1회 게시 후 break — '완료'도 '정체/실패'도 아닌 '사람
+                # 대기'. 진실원 = 조건 상태(체크포인트 동승·재시작 생존)이지 휘발 flow.awaiting_human이
+                # 아니다. 재개 입구 = 사람의 승인/반려 답(route 시작 파싱) 또는 재개 버튼.
+                _pw_list = _pending_waivers(flow)
+                if _pw_list:
+                    if not hasattr(self, "_flow_awaiting_human"):
+                        self._flow_awaiting_human = {}
+                    self._flow_awaiting_human[int(flow.user_channel or 0)] = True
+                    try:
+                        await flow.guide.post(int(flow.user_channel), 0,
+                                              "[사람 대기] 조건 승인/반려 답을 기다리며 작업을 멈춥니다 — 이 채널에 "
+                                              "'조건 승인'(그 조건 없이 진행) 또는 '조건 반려'(조건 유지)로 답해주시면 "
+                                              "이어서 진행해요.")
+                    except Exception:
+                        pass
+                    self._log("awaiting_human_parked", ch=int(flow.user_channel or 0), n=len(_pw_list))
                     break
                 # [정밀 재개 — GOAL 정본 복원(2026-07-20, ch79 낭비 실측)] 재픽·복원된 판이 Task GOAL만
                 # 잃고 목표 회의부터 재실행하던 것 — 등록 때 쓴 GOAL.md(파일 정본)가 있으면 목표를
@@ -2902,7 +2944,10 @@ class Sys:
                             _cn = int(_info.get("repick_n") or 0)
                             _prog = getattr(self, "_flow_cycle_progress", {}).pop(int(_info["ch"]), False)
                             _qhalt = getattr(self, "_flow_quota_halt", {}).pop(int(_info["ch"]), False)
-                            if _open and _prog and not _qhalt:
+                            # [사람 대기 파킹(2026-07-20, U-035)] 파킹 판은 장부가 전진했어도 재픽 금지 —
+                            # 재픽이 곧 재주입 루프(봇 잡담 재개)였다. 사람의 답만이 재개 입구.
+                            _ahum = getattr(self, "_flow_awaiting_human", {}).pop(int(_info["ch"]), False)
+                            if _open and _prog and not _qhalt and not _ahum:
                                 seen.discard(_mid)
                                 await guide.pick(_mid, unpick=True)
                                 self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
@@ -2912,7 +2957,7 @@ class Sys:
                                 # stopped 표기)는 done 마감 **전에** — 웹 op가 'picked & not done_ts'
                                 # 요청만 표기하므로, done을 먼저 찍으면 stopped가 안 남아 재개 버튼이
                                 # 0건 반환(안내 문구와 모순되는 유령 중단, resume 불가).
-                                if _qhalt or _open:
+                                if _qhalt or _open or _ahum:
                                     try:
                                         await self.guide.mark_stopped(int(_info["ch"]))
                                     except Exception:
@@ -2923,6 +2968,13 @@ class Sys:
                                 if _qhalt:
                                     self._log("quota_halt_closed", mid=_mid, ch=_info["ch"])
                                     log.info("■ 크레딧 한도 — 정지 마감: msg_id=%s", _mid)
+                                elif _ahum:
+                                    # [사람 대기 마감(2026-07-20, U-035)] 파킹 판의 정직한 종결 — 정체
+                                    # (stalled_stopped)와 구분되는 전용 상태. 안내는 파킹 시 이미 게시
+                                    # (재게시 스팸 없음). done_ts가 찍혀 재배달이 멎고(bridge pending
+                                    # 종결 필터), 재개 = 승인/반려 답(새 요청) 또는 재개 버튼뿐.
+                                    self._log("awaiting_human_closed", mid=_mid, ch=_info["ch"])
+                                    log.info("⏸ 사람 대기 — 파킹 마감(승인/반려 답 대기): msg_id=%s", _mid)
                                 elif _open:
                                     # [무진전 미완 = 정직한 중단 + 사람 호출(2026-07-20)] 반복해도 같은
                                     # 결과인 판을 '완료'로 둔갑시키지도, 조용히 되돌리지도 않는다 —

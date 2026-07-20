@@ -293,6 +293,250 @@ def test_고아장부_last_task_2차복원(monkeypatch, tmp_path):
     assert out and f.current is not None and f.current.task_id == _tid   # 원 Task 되살림
     assert "open_task_fallback_last" in logs and "open_task_restored" in logs
 
+# ── 사람 대기 파킹(2026-07-20, U-035 근본원인 핸드오프 A·B·D — rung2·3·5 절단) ──────────
+
+def _blocked_run_turn(calls):
+    """seg1에서 Task+열린 주기+blocked_pending(조건 재협상=사람 대기)을 세우고 미완으로 반환하는
+    대본 — 이후 세그먼트가 도는지(파킹 실패)를 calls로 계수한다."""
+    from system.guide_tools import TaskRef
+    from system.protocol import TaskStatus
+    from system.rule.milestone import open_milestone
+
+    async def run_turn(flow, oid, body, kind, role, **kw):
+        calls.append(role)
+        if len(calls) == 1:
+            st = TaskStatus(task_id="t1", purpose="p", status="진행", goal="가위바위보",
+                            owner="", group=[])
+            flow.current = TaskRef(task_id="t1", thread_id="thr", block_id="blk",
+                                   status=st, team=[11, 12], owner=0)
+            ms = open_milestone(flow, "단판", [{"desc": "모션 타이밍 100ms 준수",
+                                                "verify": "run 스크립트로 타이밍 측정"}])
+            ms.criteria[0].status = "blocked_pending"     # 재협상 = 사람 대기(진실원=조건 상태)
+            return "작업 중 (⚠ 턴 한도 도달 — 미완)"
+        return "계속"
+    return run_turn
+
+
+def test_awaiting_human_파킹_봇발화0(monkeypatch, tmp_path):
+    """[핸드오프 A — rung3 핵심 절단] blocked_pending이 서면 continue 루프는 quota_halt와 동형으로
+    파킹(안내 1회+break) — 신규 봇 세그먼트 0, 단계 회의 개설 0. 종전엔 경보만 죽이고 계속 돌아
+    봇들이 조율 잡담·재보고로 세그먼트를 채웠다(사용자 관측 '이상한 말')."""
+    from system.sys_core import Sys
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "백엔드"},
+            workspace=str(tmp_path), max_continue=6)
+    calls = []
+    s.run_turn = _blocked_run_turn(calls)
+    asyncio.run(s.handle_user_input(500, 11, "가위바위보 웹게임", root_id="r"))
+    assert len(calls) == 1                                 # 파킹 후 신규 봇 세그먼트 발화 0
+    evs = [e["event"] for e in s.flow_log]
+    assert "awaiting_human_parked" in evs
+    assert "stage_meeting_opened" not in evs               # 회의개설-즉시미룸 재발 0
+    assert s._flow_awaiting_human.get(500) is True         # reap 마감 신호 세팅
+    assert sum(1 for c in g.calls if c[0] == "post" and "[사람 대기]" in str(c[3])) == 1
+
+
+class _RunGuide:
+    """Sys.run 관통용 최소 배달 계약 — 요청 1건을 서빙하고 픽·마감·중지 표기를 기록한다."""
+    autoproject = False
+
+    def __init__(self, ch=500, mid=900):
+        self.ch, self.mid = ch, mid
+        self.served = False
+        self.calls, self.picks, self.stopped = [], [], []
+
+    async def get_pending(self):
+        if self.served:
+            return []
+        self.served = True
+        return [{"msg_id": self.mid, "channel_id": self.ch, "to_id": 11, "kind": "W",
+                 "body": "가위바위보 웹게임", "repick_n": 0}]
+
+    async def pick(self, mid, done=False, unpick=False, touch=False, **kw):
+        self.picks.append({"mid": mid, "done": done, "unpick": unpick, "touch": touch})
+        return True
+
+    def set_origin(self, ch):
+        pass
+
+    async def heartbeat(self):
+        pass
+
+    async def all_stops(self):
+        return []
+
+    async def check_interject(self, ch):
+        return []
+
+    async def check_stop(self, ch):
+        return False
+
+    async def mark_stopped(self, ch):
+        self.stopped.append(ch)
+
+    async def post(self, ch, sender, content, reply_to=None):
+        self.calls.append(("post", ch, sender, content))
+        return "m1"
+
+    async def send_response(self, thr, sender, req, body):
+        self.calls.append(("resp", body))
+        return "r1"
+
+    async def open_task(self, ch, status):
+        return "blk", "thr"
+
+    async def update_status(self, ch, blk, status):
+        return blk
+
+    async def send_request(self, thr, sender, to, kind, body):
+        return "reqid"
+
+    async def create_project_channel(self, gid, name):
+        return 9001
+
+
+def test_사람대기_reap은_재픽없이_전용마감(monkeypatch, tmp_path):
+    """[핸드오프 A 수용 — reap] 파킹 판은 장부가 전진했어도 재픽(=원요청 재주입) 금지 — done 마감+
+    중지 표기(재개 버튼 생존)+awaiting_human_closed 전용 이벤트(정체 stalled_stopped와 구분)."""
+    from system.sys_core import Sys
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = _RunGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "백엔드"},
+            workspace=str(tmp_path), max_continue=6)
+    calls = []
+    s.run_turn = _blocked_run_turn(calls)
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.05, once=True))
+    evs = [e["event"] for e in s.flow_log]
+    assert "awaiting_human_parked" in evs and "awaiting_human_closed" in evs
+    assert "request_repick" not in evs and "stalled_stopped" not in evs
+    assert any(p["done"] for p in g.picks)                 # 요청 done — bridge 재배달 종결
+    assert not any(p["unpick"] for p in g.picks)           # 재픽 0 = intervention 재주입 0
+    assert g.stopped == [500]                              # 중지 표기 — 재개 버튼 경로 생존
+
+
+def test_파킹판_사람답이_흐름시작에서_반영(monkeypatch, tmp_path):
+    """[핸드오프 B — rung2 출구] 파킹으로 흐름이 닫힌 뒤 온 '조건 승인/반려' 답은 interject가 아니라
+    새 요청으로 들어온다 — 복원 직후 파싱해 waiver를 반영한다(종전엔 이 경로가 없어 답이 증발,
+    판이 재파킹되는 영구 교착). 승인=waived, 반려=active 복귀."""
+    import asyncio as _aio
+    from system.rule.milestone import ms_to_dict, open_milestone, pending_waivers
+    from system.sys_core import Sys
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+
+    def _mk(ch, ans):
+        g = FakeGuide()
+        s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "백엔드"},
+                workspace=str(tmp_path), max_continue=6)
+        seed = Flow(g, channel_id=ch, guild_id=1, leader_id=11, bot_info={11: "L", 12: "백엔드"})
+        seed.workspace = str(tmp_path)
+        ms = open_milestone(seed, "단판", [{"desc": "모션 타이밍 100ms 준수",
+                                            "verify": "run 스크립트로 타이밍 측정"}])
+        ms.criteria[0].status = "blocked_pending"
+        s.projects[ch] = {"id": f"P-{ch}", "workspace": str(tmp_path),
+                          "open_task": {"task_id": "t1", "thread_id": "thr", "block_id": "blk",
+                                        "team": [11, 12], "purpose": "p", "goal": "가위바위보",
+                                        "owner": 0, "owner_name": ""},
+                          "milestones": [ms_to_dict(m) for m in seed.milestones],
+                          "backlog_relays": {}}
+        got = {}
+
+        async def run_turn(flow, oid, body, kind, role, **kw):
+            got["flow"] = flow
+            flow.cancelled = True                          # 반영 확인이 목적 — 세그먼트 즉시 종료
+            return "확인"
+        s.run_turn = run_turn
+        _aio.run(s.handle_user_input(ch, 11, ans, root_id="rw"))
+        return s, got["flow"]
+
+    s1, f1 = _mk(700, "조건 승인")
+    assert any(e["event"] == "waiver_reply_at_start" and e.get("answer") == "approve"
+               for e in s1.flow_log)
+    assert not pending_waivers(f1)                          # 대기 해소
+    assert f1.milestones[0].criteria[0].status == "waived"  # 승인 = 포기 확정
+    s2, f2 = _mk(701, "조건 반려")
+    assert any(e["event"] == "waiver_reply_at_start" and e.get("answer") == "deny"
+               for e in s2.flow_log)
+    assert f2.milestones[0].criteria[0].status == "active"  # 반려 = 조건 유지(재시도)
+
+
+def test_단위분해전_주기도_새Task금지(monkeypatch, tmp_path):
+    """[핸드오프 D] 서브태스크가 아직 없는 열린 주기(마일스톤만 선 판)에서도 create_task 거부 —
+    종전 '열린 단위까지 있어야'가 구멍(U-035: 그 창에서 표류 Task 143035 출생·목표 표류)."""
+    from system.rule.milestone import open_milestone
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "가위바위보 웹게임"
+    open_milestone(f, "단판", [{"desc": "한 루프 동작", "verify": "curl로 200 확인"}])
+    f.current = None                                       # 포인터 유실 재현(단위 분해 전)
+    r = asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    assert "새 Task 거부" in str(r) and f.current is None
+
+
+def test_고아장부_단위분해전에도_last_task복원(monkeypatch, tmp_path):
+    """[핸드오프 D] 서브태스크 없는 열린 주기 + open_task 유실에서도 last_task 2차 복원이 발동 —
+    종전 '열린 단위' 요구로 폴백이 침묵, current 없이 가동돼 표류 Task의 창이 됐다."""
+    import asyncio as _aio
+    from system import sys_recovery
+    from system.rule.milestone import ms_to_dict, open_milestone
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    _aio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "가위바위보 웹게임"
+    open_milestone(f, "단판", [{"desc": "한 루프", "verify": "curl 200 확인"}])
+    _tid = f.current.task_id
+    snap = {"task_id": _tid, "thread_id": f.current.thread_id, "block_id": f.current.block_id,
+            "team": [11, 12], "purpose": "p", "goal": "가위바위보 웹게임", "owner": 0, "owner_name": ""}
+    proj = {"open_task": None, "last_task": snap,
+            "milestones": [ms_to_dict(m) for m in f.milestones], "backlog_relays": {}}
+    f.current = None
+    logs = []
+
+    class _Sys:
+        def _log(self, ev, **kw):
+            logs.append(ev)
+    out = _aio.run(sys_recovery.restore_open_task(_Sys(), f, proj))
+    assert out and f.current is not None and f.current.task_id == _tid
+    assert "open_task_fallback_last" in logs and "open_task_restored" in logs
+
+
+def test_마일스톤회의_완수조건_이번주기_스코프(monkeypatch):
+    """[핸드오프 E — rung1 예방] 마일스톤 회의 안건·골격이 완수조건을 '이번 주기' 범위로 못박는다 —
+    최소버전 주기에 완제품 사양(모션 세부·디자인 토큰)이 실려 dead-end 되던 상류 차단."""
+    from system.rule.milestone import stage_agenda, stage_draft_template
+    _, tpl = stage_agenda("milestone")
+    assert "완수조건은 '이번 주기' 범위만" in tpl
+    draft = stage_draft_template("milestone", "안건")
+    assert "'이번 주기' 범위의 조건만" in draft
+
+
+def test_기충족조건_재보고는_미매칭아님(monkeypatch, tmp_path):
+    """[핸드오프 F] 이미 통과한 조건의 퍼지 재보고가 iter_result_unmatched로 계고돼 봇이 같은 보고를
+    반복 제출하던 공회전 차단 — 흡수(접수 안내)하고 미매칭 0."""
+    from system.rule.milestone import iter_verify, open_milestone
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "가위바위보"
+    ms = open_milestone(f, "단판", [
+        {"desc": "(기획) 단판 로직: 승/패/무 판정 규칙 명시", "verify": "node game-rules 검증 스크립트 실행"},
+        {"desc": "(프론트) 버튼 클릭 결과 표시", "verify": "curl로 페이지 200 확인"}])
+    ms.criteria[0].passed = True
+    ms.criteria[0].evidence = "MECHANICS.md 작성 · node 검증 통과"
+    events = []
+    f.log = lambda ev, **kw: events.append(ev)
+    ok, note = iter_verify(f, ms, [{"desc": "게임 규칙 정의 완료 — 판정 규칙 명시", "passed": True,
+                                    "evidence": "node game-rules 검증 스크립트 실행 통과"}])
+    assert not ok
+    assert "iter_result_unmatched" not in events           # 미매칭 계고 0(재보고 루프의 연료 차단)
+    assert "iter_result_rereported" in events
+    assert "이미 충족된 조건 재보고" in note
+
+
 def test_iter_무한검증은_진전아님(monkeypatch, tmp_path):
     """[U-035 실측: iter 4·5·6차 내리 충족 1/4 고정인데 무한 continue] 진전 = 검증 결과(충족조건 수)이지
     시도 횟수(iter_n)가 아니다 — report_iter만 헛돌면 ledger_signature 무변화(정체 감지 작동)."""

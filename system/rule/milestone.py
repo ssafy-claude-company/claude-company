@@ -431,8 +431,18 @@ def iter_verify(flow, obj, results):
     def _toks(s):
         return set(re.findall(r"[a-z0-9가-힣_/.:-]{2,}", str(s or "").lower()))
 
+    def _tok_hits(rt, ct):
+        # [토큰 부분일치(2026-07-20, 매칭 강건화 F)] 완전 일치에 더해 3자+ 토큰의 포함('판정'⊂
+        # '승패판정')도 겹침으로 센다 — 조사·합성어 표기차로 성실한 보고가 미끄러지던 것 보강.
+        # 임계(4)는 유지: 우연 겹침 차단.
+        n = 0
+        for a in rt:
+            if a in ct or (len(a) >= 3 and any(len(b) >= 3 and (a in b or b in a) for b in ct)):
+                n += 1
+        return n
+
     _unclaimed = [c for c in obj.criteria if not c.passed and c.status != "waived"]
-    _unmatched = []
+    _unmatched, _rereported = [], []
     for r in (results or []):
         d = str(r.get("desc") or "").strip()
         c = by_desc.get(d)
@@ -446,10 +456,25 @@ def iter_verify(flow, obj, results):
                 c = next((x for x in _unclaimed if x.desc.strip() == m.group(1)), None)
         if c is None and _unclaimed:
             rt = _toks(d) | _toks(r.get("evidence"))
-            best = max(_unclaimed, key=lambda x: len(rt & (_toks(x.desc) | _toks(x.verify))))
-            _ov = rt & (_toks(best.desc) | _toks(best.verify))
-            if len(_ov) >= 4:      # 우연 겹침 차단 임계 — 명령/경로 토큰 4개 이상 공유 시 동일 조건으로 본다
+            best = max(_unclaimed, key=lambda x: _tok_hits(rt, _toks(x.desc) | _toks(x.verify)))
+            if _tok_hits(rt, _toks(best.desc) | _toks(best.verify)) >= 4:   # 우연 겹침 차단 임계
                 c = best
+        if c is None:
+            # [기충족 재보고 흡수(2026-07-20, U-035 rung3 부수)] 이미 통과한 조건의 재보고(퍼지 표기)
+            # 가 '미매칭'으로 계고돼 봇이 같은 보고를 반복 제출하던 공회전 차단 — 통과분과 맞으면
+            # 접수됐음을 알리고 흡수한다(중복 점유·증거 덮어쓰기 없음).
+            _done_pool = [x for x in obj.criteria if x.passed]
+            nd = _norm(d)
+            cp = next((x for x in _done_pool if _norm(x.desc)
+                       and (_norm(x.desc) in nd or nd in _norm(x.desc))), None)
+            if cp is None and _done_pool:
+                rt = _toks(d) | _toks(r.get("evidence"))
+                bestp = max(_done_pool, key=lambda x: _tok_hits(rt, _toks(x.desc) | _toks(x.verify)))
+                if _tok_hits(rt, _toks(bestp.desc) | _toks(bestp.verify)) >= 4:
+                    cp = bestp
+            if cp is not None:
+                _rereported.append(cp.desc[:40])
+                continue
         if c is None:
             _unmatched.append(d[:60])
             continue
@@ -461,6 +486,9 @@ def iter_verify(flow, obj, results):
     if _unmatched and flow.log:
         flow.log("iter_result_unmatched", id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""),
                  n=len(_unmatched), descs=_unmatched[:4])
+    if _rereported and flow.log:
+        flow.log("iter_result_rereported", id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""),
+                 n=len(_rereported))
     # [조건 재협상 #1] waived(사람 승인 포기) 조건은 '충족'처럼 제외 — 미충족 목록에 안 남는다.
     remain = [c.desc for c in obj.criteria if not c.passed and c.status != "waived"]
     kind = "ms" if isinstance(obj, Milestone) else "st"
@@ -506,6 +534,10 @@ def iter_verify(flow, obj, results):
         obj.iter_stuck += 1
     _ckpt(flow)
     note = "미충족: " + " · ".join(d[:40] for d in remain)
+    if _rereported:
+        note += ("\n[이미 충족된 조건 재보고 " + str(len(_rereported)) + "건 — 접수돼 있습니다] "
+                 "그 조건은 다시 보고하지 말고 위 미충족 조건만 진행하세요: "
+                 + " · ".join(_rereported[:3]))
     if _unmatched:
         # 매칭 실패를 봇에게 되돌린다 — 조용한 폐기가 공회전의 뿌리였다. 조건 desc 원문을 그대로 준다.
         note += ("\n[결과 " + str(len(_unmatched)) + "건 미착지 — desc 불일치] report_iter의 results[].desc는 "
@@ -1001,7 +1033,9 @@ _STAGE_META = {
              "이번 주기: <이번에 완성해 사용자가 실제로 써볼 수 있는 딱 하나>\n"
              "<완수조건 | 실증절차>\n[/수렴안]\n"
              "★이 회의가 답할 질문 하나: **'이번에 완성해서 사용자에게 보여줄 하나는 무엇인가?'** "
-             "— 전체를 한 번에 만들려 하지 마세요(달구지부터). 작업 분해·담당자는 다음 회의."),
+             "— 전체를 한 번에 만들려 하지 마세요(달구지부터). 작업 분해·담당자는 다음 회의. "
+             "**완수조건은 '이번 주기' 범위만** — 뒤 단계 몫(모션 세부·디자인 토큰·폴리시 같은 완제품 "
+             "사양)을 여기 넣으면 이번 주기가 영영 안 끝납니다(그건 그 단계 주기의 조건으로)."),
     "subtask": ("이번에 만들 것을 **어떤 작업 영역(구성요소)들로 나눌지** 정한다",
              "[수렴안]\n단위: <작업 영역/구성요소 — 무슨 부분인지> | <실증절차>\n"
              "단위: <작업 영역/구성요소> | <실증절차>\n[/수렴안]\n"
@@ -1034,8 +1068,13 @@ def stage_draft_template(stage, agenda=""):
     body = {
         "goal": ("목표: <이 Task로 정확히 무엇을 만드는지 — 구체적으로>\n\n완수조건:\n"
                  "- <조건> | 실증: <run으로 확인하는 절차>\n- <조건> | 실증: <절차>\n"),
+        # [완수조건 = 이번 주기 범위(2026-07-20, U-035 rung1)] 최소버전 주기에 모션 타이밍·디자인
+        # 토큰 등 완제품 전량이 조건으로 실려 met이 영구 미달(1/4 고정) → 재협상 dead-end로 빠지던
+        # 상류 방아쇠 — 회의 골격이 스코프를 못박는다(뒤 단계 몫은 그 단계 주기의 조건).
         "milestone": ("단계: <전체 로드맵 — 예: 최소버전 → 확장>\n"
                       "이번 주기: <이번에 완성해 사용자에게 보여줄 딱 하나>\n\n완수조건:\n"
+                      "(주의: **'이번 주기' 범위의 조건만** — 뒤 단계 몫(모션 세부·디자인 토큰 등 완제품 "
+                      "사양)을 넣으면 이번 주기가 영영 안 끝납니다. 그건 그 단계 주기에서.)\n"
                       "- <조건> | 실증: <절차>\n"),
         "subtask": ("단위: <작업 영역/구성요소> | 실증: <절차>\n단위: <작업 영역/구성요소> | 실증: <절차>\n"),
         "backlog": ("백로그: [영역명] <구체 작업 1>\n백로그: [영역명] <구체 작업 2>\n백로그: [영역명] <구체 작업 …(필요한 만큼)>\n"),

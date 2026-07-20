@@ -179,10 +179,12 @@ async def create_task(flow, args):
     # 개설 금지: 그 판의 원 Task는 시스템이 복원(open_task/last_task 스냅샷)하고, 봇의 다음 수는
     # 이어가기(pick_backlog·meet·report_iter)다. (U-035 실측: 복원 구멍에서 봇이 새 Task를 열어
     # goal 회의 재주행·목표 표류 — 이 게이트가 그 경로를 봉쇄)
+    # [서브태스크 요구 제거(2026-07-20, 근본원인 핸드오프 D)] 종전 '열린 서브태스크까지 있어야'는
+    # 구멍 — 단위 분해 전(마일스톤만 선) 주기에서 포인터가 유실되면 게이트가 안 걸려 표류 Task가
+    # 태어났다. 열린 마일스톤 자체가 미완 주기 장부다(단위·백로그 유무 무관).
     _open_ms = next((m for m in (getattr(flow, "milestones", None) or [])
                      if m.status not in ("done", "superseded")), None)
-    if _open_ms is not None and any(st.status not in ("done", "superseded")
-                                    for st in getattr(_open_ms, "subtasks", []) or []):
+    if _open_ms is not None:
         return (f"새 Task 거부: Task는 사용자 요청이 낳습니다 — 이 판엔 미완 주기 {_open_ms.ms_id}가 "
                 "있고 그 Task는 시스템이 복원합니다. 새로 열지 말고 **그 주기를 이어가세요**: 실작업은 "
                 "pick_backlog, 조율·확정은 meet, 검증은 report_iter.")
