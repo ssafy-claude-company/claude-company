@@ -100,6 +100,33 @@ def test_부결은_해소위임_fastpath로_재토론없이_확정(monkeypatch, 
     assert str(f.current.status.goal or "").startswith("방명록 1주기")
 
 
+def test_심의단_도메인커버리지_1석_구제(monkeypatch, tmp_path):
+    """[U-035 실측: 게임 판 목표 회의에 게임 기획자 무발언] 안건 최고 적합 직군이 응찰했는데
+    점수순에서 밀리면 1석 구제 — 자기선택(패스=존중)은 유지, 배제만 막는다. 응찰은 전수 관측."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
+                                      15: "PM", 16: "게임 기획자", 17: "데이터 엔지니어"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+
+    async def wake(to, b, k):
+        if "심의 응찰" in b:                            # 고점 3명(12·13·14) + 게임 기획자는 저점 응찰
+            return {12: "[응찰: 8]", 13: "[응찰: 7]", 14: "[응찰: 7]", 16: "[응찰: 2]"}.get(to, "[패스]")
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16,17"}))
+    asyncio.run(t["meet"].handler({"topic": "가위바위보 웹게임 목표", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    ev = dict((e, kw) for e, kw in events if e in ("panel_topfit_added", "meet_panel_selected"))
+    assert ev.get("panel_topfit_added", {}).get("who") == 16          # 게임 기획자 1석 구제
+    assert ev.get("meet_panel_selected", {}).get("n") == 3            # cap ceil(6×⅓)=2 + 구제 1
+    assert sum(1 for e, _ in events if e == "meet_panel_bid") == 6    # 응찰 전수 관측
+
+
 def test_무진전_패스는_즉시중단_사람호출(monkeypatch, tmp_path):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path)

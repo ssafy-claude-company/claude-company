@@ -44,10 +44,20 @@ def _hints_for(role):
     return out
 
 
+def _overlap(qs, ts):
+    """[합성어 매칭(2026-07-20, U-035 실측)] 정확 일치만 보면 한국어 합성어를 놓친다 —
+    '웹게임' 과제에 '게임 기획자'가 0점(웹게임≠게임). 2글자 이상 토큰의 부분포함을 겹침으로
+    인정(한방향 아님 — 양방향 포함, 보수적 길이 가드)."""
+    n = 0
+    for t in ts:
+        if any(t == q or (len(t) >= 2 and t in q) or (len(q) >= 2 and q in t) for q in qs):
+            n += 1
+    return n
+
+
 def role_fit(query, role):
     """직군이 과제(query)에 얼마나 맞나 — 정수 점수. 직군명 직접 겹침 ×2 + 의미 힌트 겹침 ×1.
     직군명 하드 매칭이 아니라 시소러스 기반이라, 같은 계열(기획 vs 게임 기획자)에서 과제 도메인의
     전문가가 더 높게 나온다. 후보 비교용(절대값 의미 없음, 상대 순위만)."""
     q = set(tokens(query))
-    role_tok = set(tokens(role))
-    return len(q & role_tok) * 2 + len(q & _hints_for(role))
+    return _overlap(q, set(tokens(role))) * 2 + _overlap(q, _hints_for(role))

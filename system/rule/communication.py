@@ -293,17 +293,40 @@ async def meet(flow, me_id, args):
         _panel_cap = max(2, int(len(members) * _pratio + 0.999))   # ceil
         if _no_r1 and tt and len(members) > _panel_cap:
             def _sb(c):
-                return (f"[회의 소집 — 심의 응찰] 안건: {(_agenda or topic)[:160]}\n"
+                # [도메인 가시화(2026-07-20, U-035)] 단계 안건은 일반문 — 응찰 판단엔 주제(원문 도메인)가
+                # 먼저 보여야 한다('웹게임'이 안 보이면 게임 기획자가 패스한다).
+                return (f"[회의 소집 — 심의 응찰] 주제: {str(topic)[:80]} / 안건: {(_agenda or topic)[:120]}\n"
                         f"이 결정에 당신({flow._info(c)}) 도메인이 직접 걸립니까? 걸리면 `[응찰: N]`(1~9)과 "
                         f"한 줄 이유, 아니면 `[패스]`. 불참해도 결과는 피드로 보이고, 회의가 이어지면 다시 "
                         f"응찰해 합류할 수 있습니다 — 심의는 소수 정예가 빠르게.")
             _sc = []
             for _m0, _r0, _n0 in await _fork_collect(flow, me_id, list(members), _sb, micro=True):
                 _s0 = 0 if _r0 is None else _bid_score(_r0)
+                if flow.log:   # [관측(2026-07-20, U-035 실측 갭)] 심의 응찰이 무기록이라 '왜 그 봇이
+                    flow.log("meet_panel_bid", who=int(_m0), score=int(_s0))   # 빠졌나'를 진단 못 했다
                 if _s0 > 0:
                     _sc.append((_s0, _m0))
             _sc.sort(reverse=True)
             _sel = [m0 for _s0, m0 in _sc[:_panel_cap]]
+            # [도메인 커버리지 1석(2026-07-20, U-035 실측: 게임 판 목표 회의에 게임 기획자 무발언)]
+            # 자기선택은 유지하되 — 안건 최고 적합 직군(role_fit)이 **응찰했는데** 점수순에서 밀렸으면
+            # 1석 구제(cap+1). 패스했으면 자발 존중, 단 로그로 가시화(질 감사가 보게).
+            try:
+                from ..role_fit import role_fit as _prf
+                # 적합 질의 = 주제+원문(도메인 어휘가 실린 곳) — 단계 안건은 일반문이라 부적합.
+                _fitq = f"{topic} {str(getattr(flow, 'origin_request', '') or '')[:200]}"
+                _fit = lambda m0: _prf(_fitq, str(flow.bot_info.get(int(m0)) or ""))
+                _top = max(members, key=_fit)
+                if _fit(_top) > 0 and _top not in _sel:
+                    _bidded = next((s for s, m0 in _sc if m0 == _top), 0)
+                    if _bidded > 0:
+                        _sel.append(_top)
+                        if flow.log:
+                            flow.log("panel_topfit_added", who=int(_top), score=int(_bidded))
+                    elif flow.log:
+                        flow.log("panel_topfit_passed", who=int(_top))
+            except Exception:
+                pass
             if len(_sel) >= 2:
                 members = _sel
                 try:
