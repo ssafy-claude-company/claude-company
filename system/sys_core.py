@@ -585,7 +585,11 @@ class Sys:
             f"반드시 아래 형식만으로 답하세요:\n[개인기준] {label}\n(개선된 개인 기준 줄들)\n[/개인기준]"
         )
         try:
-            out = await organt.handle(prompt)
+            # [증류 경량화(2026-07-20, 실측 $0.241/회)] 증류는 원석→기준 텍스트의 즉답 생성 — 도구가
+            # 필요 없는데 guide 도구 스키마가 매회 실렸다. micro(무도구)로 스키마 제거(인격·본문 유지).
+            out = await organt.handle(prompt, micro=True)
+        except TypeError:
+            out = await organt.handle(prompt)            # 구형 빌더/스텁 호환(테스트 등)
         except Exception as e:
             self._log("bot_distill_failed", bot=mid, err=str(e)[:80])
             return False
@@ -1053,6 +1057,11 @@ class Sys:
                 if await self.endow_craft(mid):
                     break
             # [격리] 직군 증류 폐지 — 수면 = ⓪ 온보딩(이름·인격) + ① 사수 전수(시작 기준) + ② 개인 증류.
+            # [전역 유휴 게이트(2026-07-20, 실측: 증류 81%가 판 활동 중 발생)] 증류는 '수면'이다 —
+            # 판이 도는 동안엔 서브프로세스 슬롯·자원을 판에 양보하고, 전역 유휴일 때만 소비한다
+            # (학습 지연일 뿐 유실 아님 — 원석은 쌓여 있다).
+            if any(self.engaged.holder(int(m)) is not None for m in self.bot_info):
+                return
             for mid in self.pick_distill_bots():
                 if self.engaged.holder(mid) is not None:
                     continue                 # 그 봇은 흐름 참여 중 → 다음 후보
