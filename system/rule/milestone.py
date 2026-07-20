@@ -1099,6 +1099,27 @@ def draft_to_proposal(stage, text):
     return "\n".join(out)
 
 
+def parse_units(lines):
+    """'단위:' 항목 수집 — 등록·preflight 공용(같은 파싱 = 같은 판정).
+    한 줄 정식(단위: <목표> | 실증: <절차>)에 더해, 제목만 쓴 '단위:' 줄의 본문이 **바로 다음
+    최상위 줄**(| 포함, 새 키 아님)에 오는 자연 표기를 흡수한다 — U-035 실측: 봇 전원이 제목/본문
+    2줄로 썼고 파서가 제목만 집어 6개 단위 전부 '조건 없음'으로 전멸, 회의만 3회 재개설."""
+    ls = list(lines or [])
+    out = []
+    for i, l in enumerate(ls):
+        s = str(l).strip()
+        if not s.startswith("단위:"):
+            continue
+        u = s[3:].strip()
+        if "|" not in u:
+            nx = next((str(x).strip() for x in ls[i + 1:] if str(x).strip()), "")
+            if "|" in nx and not nx.startswith(("단위:", "단계:", "백로그:", "##")):
+                u = f"{u} — {nx}" if u else nx
+        if u:
+            out.append(u)
+    return out
+
+
 def stage_preflight(stage, text):
     """[등록 사전 검사(2026-07-17, ch78 실측: 표결 가결 후 등록 거부 사이클 6~9분×N — 봇 비용 낭비)]
     register_stage와 **같은 파싱**으로 표결 전에 불량을 전부 찾는다(봇 비용 0, 상태 변경 없음).
@@ -1121,8 +1142,17 @@ def stage_preflight(stage, text):
         _e = gate_criteria(parse_criteria_lines(_ct))
         if _e:
             errs.extend(ln for ln in _e.splitlines() if ln.strip())
-    if stage == "subtask" and not any(l.strip().startswith("단위:") for l in lines):
-        errs.append("'단위: <작업 영역> | 실증: <절차>' 줄이 1개 이상 필요합니다.")
+    if stage == "subtask":
+        _units = parse_units(lines)
+        if not _units:
+            errs.append("'단위: <작업 영역> | 실증: <절차>' 줄이 1개 이상 필요합니다.")
+        # [등록과 같은 깊이(2026-07-20, U-035 실측)] 존재만 보고 통과시키면 표결 가결 후 등록
+        # (open_subtask=gate_criteria)에서 전멸 — 단위별 조건 게이트를 표결 전에 그대로 돌린다.
+        for u in _units:
+            _e = gate_criteria(parse_criteria_lines(u))
+            if _e:
+                errs.extend(f"단위 '{u.partition('|')[0].strip()[:36]}': {ln.strip()}"
+                            for ln in _e.splitlines() if ln.strip())
     if stage == "backlog" and not any(l.strip().startswith("백로그:") for l in lines):
         errs.append("'백로그: <구체 작업>' 줄이 1개 이상 필요합니다.")
     return errs
@@ -1259,18 +1289,27 @@ def register_stage(flow, stage, prop, origin=""):
                       if m.status not in ("done", "superseded")), None)
         if _open is None:
             return False, "열린 마일스톤이 없습니다 — 마일스톤 회의가 먼저입니다."
-        units = [l.strip()[3:].strip() for l in lines if l.strip().startswith("단위:")]
+        units = parse_units(lines)
         if not units:
             return False, "수렴안에 '단위: <목표> | <실증>' 줄이 필요합니다."
+        # [거부 사유 은닉 봉합(2026-07-20, U-035 실측: 가결→등록 0건→'단위: 줄을 확인' 오진 → 봇이
+        # 멀쩡한 단위 줄만 재확인·재가결하는 무한 사이클×2회의)] open_subtask(gate_criteria)의 단위별
+        # 거부 사유를 버리지 않고 그대로 돌려준다 — 고칠 수 있는 진단만이 사이클을 끝낸다.
         n = 0
+        _errs = []
         for u in units:
             st = open_subtask(flow, _open, u.partition("|")[0].strip(), parse_criteria_lines(u))
-            if not isinstance(st, str):
+            if isinstance(st, str):
+                _errs.append(f"단위 '{u.partition('|')[0].strip()[:36]}' — {st.splitlines()[0][:160]}")
+            else:
                 n += 1
         if flow.log:
-            flow.log("subtasks_by_meeting", ms=_open.ms_id, n=n)
-        return (n > 0), (f"[표결 확정] 서브태스크 {n}개 등록. 다음: 각 단위의 백로그 회의를 시스템이 엽니다."
-                         if n else "등록된 단위가 없습니다 — '단위:' 줄을 확인하세요.")
+            flow.log("subtasks_by_meeting", ms=_open.ms_id, n=n, rejected=len(_errs))
+        _etxt = ("\n".join(_errs))[:900]
+        return (n > 0), ((f"[표결 확정] 서브태스크 {n}개 등록."
+                          + (f" (미등록 {len(_errs)}건 — 사유: {_etxt})" if _errs else "")
+                          + " 다음: 각 단위의 백로그 회의를 시스템이 엽니다.")
+                         if n else f"등록 거부 — 단위 {len(units)}건 전부 조건 게이트 불통과:\n{_etxt}")
 
     if stage == "backlog":
         _open = next((m for m in (getattr(flow, "milestones", None) or [])
