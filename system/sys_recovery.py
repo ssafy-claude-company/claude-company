@@ -214,7 +214,18 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
             pass
     snap = proj.get("open_task")
     if not snap:
-        return None
+        # [고아 장부 2차 복원(2026-07-20, U-035 실측: open_task 스냅샷 유실 → current 없이 가동 →
+        # 봇이 Task 안에서 새 Task 개설·goal 재주행)] 열린 주기에 살아있는 단위가 남았는데 활성
+        # 스냅샷이 없으면, 마지막 보관본(last_task — 마감 시 이관 보관)이 곧 잃어버린 그 Task다.
+        # 사용자 확정: 'Task는 사용자 요청이 낳는다' — 복원이 새 개설이 아니라 원 Task를 되살린다.
+        _ms_alive = any(m.status not in ("done", "superseded")
+                        and any(st.status not in ("done", "superseded")
+                                for st in getattr(m, "subtasks", []) or [])
+                        for m in (flow.milestones or []))
+        snap = proj.get("last_task") if _ms_alive else None
+        if not snap:
+            return None
+        sys._log("open_task_fallback_last", task=snap.get("task_id"))
     team = [int(x) for x in snap.get("team", []) if int(x) in flow.pool]
     if flow.leader not in team:
         team = [flow.leader] + team

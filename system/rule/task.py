@@ -174,6 +174,18 @@ async def create_task(flow, args):
         return (f"현재 Task({flow.current.task_id}: {(flow.current.status.purpose or '미정')[:24]})가 아직 "
                    f"'진행'입니다 — 단일흐름은 한 번에 Task 하나만. complete_task로 먼저 마감한 뒤 "
                    f"다음 Task를 여세요(여러 산출물도 하나씩 순차로).")
+    # [Task는 사용자 요청이 낳는다(2026-07-20, 사용자 확정: 'Task 안에서 Task 생성은 절대 안 돼')]
+    # 위 활성 Task 게이트에 더해, 미완 주기 장부가 살아 있으면 — Task 프레임이 유실됐어도 — 새 Task
+    # 개설 금지: 그 판의 원 Task는 시스템이 복원(open_task/last_task 스냅샷)하고, 봇의 다음 수는
+    # 이어가기(pick_backlog·meet·report_iter)다. (U-035 실측: 복원 구멍에서 봇이 새 Task를 열어
+    # goal 회의 재주행·목표 표류 — 이 게이트가 그 경로를 봉쇄)
+    _open_ms = next((m for m in (getattr(flow, "milestones", None) or [])
+                     if m.status not in ("done", "superseded")), None)
+    if _open_ms is not None and any(st.status not in ("done", "superseded")
+                                    for st in getattr(_open_ms, "subtasks", []) or []):
+        return (f"새 Task 거부: Task는 사용자 요청이 낳습니다 — 이 판엔 미완 주기 {_open_ms.ms_id}가 "
+                "있고 그 Task는 시스템이 복원합니다. 새로 열지 말고 **그 주기를 이어가세요**: 실작업은 "
+                "pick_backlog, 조율·확정은 meet, 검증은 report_iter.")
     ch = flow.project_channel or flow.user_channel
     tid = flow.next_task_id()
     pool = flow.project_team or flow.pool
@@ -244,34 +256,6 @@ async def create_task(flow, args):
     flow.tasks.append(ref)
     flow.current = ref
     flow.comm.reset_task_tracking()   # 새 산출물 단위 → '완료/Redo' 추적 초기화(Redo는 같은 Task 안에서만)
-    # [정밀 복구 = 승계(2026-07-20, 사용자 재교정: '한 서버에 Task 여러 개 돌 수 있다 — 거부는 잘못된
-    # 처방')] 미완 주기 장부가 살아 있으면 새 Task는 대체가 아니라 그 판의 승계 — 목표를 정본(GOAL.md)
-    # 에서 이어받아 goal 회의 재주행·목표 표류를 차단하고, 단계 체인은 장부(주기·단위·백로그) 위에서
-    # 이어진다. (U-035 실측: 복원 구멍 → 새 Task가 빈 목표로 goal 재주행, 단판→3라운드 표류)
-    _open_ms = next((m for m in (getattr(flow, "milestones", None) or [])
-                     if m.status not in ("done", "superseded")), None)
-    _inherit = ""
-    if _open_ms is not None and any(st.status not in ("done", "superseded")
-                                    for st in getattr(_open_ms, "subtasks", []) or []):
-        _g0 = ""
-        try:
-            import os as _os
-            for _r0, _d0, _f0 in _os.walk(str(getattr(flow, "workspace", "") or "")):
-                if "GOAL.md" in _f0:
-                    _t0 = open(_os.path.join(_r0, "GOAL.md"), encoding="utf-8").read()
-                    _g0 = next((l.split(":", 1)[1].strip() for l in _t0.splitlines()
-                                if l.strip().startswith("목표:")), "")
-                    _g0 = _g0 or next((l.strip() for l in _t0.splitlines()
-                                       if l.strip() and not l.strip().startswith("#")), "")
-                    break
-        except Exception:
-            _g0 = ""
-        if _g0:
-            status.goal = _g0[:300]
-            _inherit = (f"\n[승계] 미완 주기 {_open_ms.ms_id}의 판입니다 — 목표는 기존 정본을 이었습니다"
-                        "(목표 회의 불필요). 실작업은 pick_backlog, 조율·확정은 meet로 그 주기를 이어가세요.")
-            if getattr(flow, "log", None):
-                flow.log("task_ledger_inherited", ms=_open_ms.ms_id, task=tid)
     _ckpt(flow)                       # 크래시-세이프: 열린 즉시 영속(동면·강제종료에도 같은 Task로 복구)
     # [공급 원칙 — RFC-005 / 매직넘버 제거(사용자 원칙 2026-06-13)] '소통 비용은 인원²'은
     # 보편 이치(Brooks)지만 '6명+'라는 트리거는 임의값(4항목과 같은 부류). 크기 임계를 빼고
@@ -280,7 +264,7 @@ async def create_task(flow, args):
                  "전문가는 검증·자문(request Info)으로 두는 편이 좋습니다 — 소통·조율 비용은 실행 "
                  "인원이 늘수록 가파르게 커집니다(필요 이상 큰 실행 팀은 비효율). 회의·검증엔 전원, "
                  "실행엔 핵심만.")
-    return (f"task={tid} (빈 껍데기·담당자가 팀 선정) thread={thread_id} 팀={flow._names(team)}{size_note}{_inherit} — 이 팀은 "
+    return (f"task={tid} (빈 껍데기·담당자가 팀 선정) thread={thread_id} 팀={flow._names(team)}{size_note} — 이 팀은 "
                f"당신이 고른 구성입니다(직군이 부족하면 recruit(role=)로 더하세요). 배정된 팀과 **meet(회의)로 "
                f"'Purpose(풀 문제)·Goal(성공기준)·각자 도메인 할 일'을 함께 정한 뒤** set_goal로 확정하세요 — "
                f"meet은 독립의견을 동시에 모으고(앵커링 방지) 토론·회의록(합의)까지 남깁니다(1:1 request(Info)를 "
