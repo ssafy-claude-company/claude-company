@@ -922,8 +922,20 @@ def claim_kick_target(flow):
         if any(b.status == "in_progress" for b in r.backlogs):
             return None                          # 순차 1활성 — 진행 중이면 킥 불요
         for b in r.backlogs:
-            if b.status == "open" and b.backlog_id not in kicked and int(b.submitter or 0):
+            if b.status != "open" or b.backlog_id in kicked:
+                continue
+            if int(b.submitter or 0):
                 return (int(b.submitter), b, st.st_id)
+            # [무주 백로그 킥(2026-07-20, U-035 실측)] 회의 등록분은 이의 개서로 발제 귀속이 유실될 수
+            # 있다(_draft_attr 키 드리프트 → submitter 0) — 무주면 킥이 침묵해 ch79형 '아무도 선점 안
+            # 함' 공전이 재발한다. 적임(role_fit) 봇을 깨워 '적임자로서 선점 검토' — 배분 강제가 아니라
+            # 첫 착수 신호(자기선택은 pick 시점에 유지).
+            _bots = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
+            if _bots:
+                from ..role_fit import role_fit as _rf
+                _q = f"{getattr(st, 'goal', '')} {b.body}"
+                _bid = max(_bots, key=lambda k: _rf(_q, _bots[k]))
+                return (int(_bid), b, st.st_id)
     return None
 
 
@@ -1334,6 +1346,25 @@ def register_stage(flow, stage, prop, origin=""):
         # DRAFT에 그 줄을 쓴 봇을 SYS가 턴별 diff로 귀속 추적(flow._draft_attr) — 등록 시 그 봇이
         # 제출자가 되어 수행자=제출자 원칙이 회의 경로에도 이어진다. 귀속 없는 줄만 무주(자기선택).
         _attr = getattr(flow, "_draft_attr", None) or {}
+
+        def _attr_of(_key):
+            """정확 일치 → 토큰 과반 겹침 회복. [키 드리프트(2026-07-20, U-035 실측: 이의 개서로 줄이
+            바뀌어 전원 무주 → 주인 표기·선점 킥 둘 다 유실)] 개서돼도 발제자가 남게."""
+            import re as _re2
+            _v = int(_attr.get(_key, 0) or 0)
+            if _v:
+                return _v
+            _qt = set(_re2.findall(r"[A-Za-z가-힣0-9]{2,}", str(_key)))
+            best, bid = 0.0, 0
+            for _k2, _v2 in _attr.items():
+                _t2 = set(_re2.findall(r"[A-Za-z가-힣0-9]{2,}", str(_k2)))
+                if not _qt or not _t2:
+                    continue
+                _ov = len(_qt & _t2) / max(len(_qt), 1)
+                if _ov > best:
+                    best, bid = _ov, int(_v2 or 0)
+            return bid if best >= 0.5 else 0
+
         n = 0
         for _ln in lines:
             _s = _ln.strip()
@@ -1341,7 +1372,7 @@ def register_stage(flow, stage, prop, origin=""):
                 continue
             it = _s.split(":", 1)[1].strip()
             try:
-                _who = int(_attr.get(draft_norm_line(_s) or _s, 0) or 0)
+                _who = _attr_of(draft_norm_line(_s) or _s)
                 r.submit(_who, it, force=True)
                 n += 1
             except Exception:
