@@ -217,3 +217,28 @@ def test_단위_2줄_자연표기_흡수_preflight_등록_동일판정(monkeypat
     # 게이트 불통과 단위는 사유가 메시지에 그대로 나온다('단위: 줄을 확인' 오진 금지)
     landed2, note2 = register_stage(f, "subtask", "## 결정\n단위: 조건 없는 단위\n")
     assert not landed2 and "조건 없는 단위" in note2 and "단위: 줄을 확인" not in note2
+
+def test_iter주기_정본_집을것있으면_작업_충전은_일괄배분(monkeypatch, tmp_path):
+    """[2026-07-20 사용자 교정: '전부 소진/중지 → 점검 → 다음 회의가 다수 한번에'] 07-17 게으른 스캔이
+    '앞 영역 소진 → 다음 영역 회의'(영역당 순차 회의)로 좁힌 표류 반전 — ①어디든 집을 백로그가 있으면
+    빈 영역이 남아도 작업 단계 ②충전 회의 1번이 [영역명] 접두로 여러 영역 몫을 일괄 등록."""
+    from system.rule.milestone import meeting_stage, open_milestone, open_subtask, register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "가위바위보 웹게임"
+    ms = open_milestone(f, "단판", [{"desc": "한 루프 동작", "verify": "curl로 페이지 200 확인"}])
+    for nm in ("게임 규칙", "판정 로직", "화면 UI"):
+        open_subtask(f, ms, nm, [{"desc": nm + " 완성", "verify": "node 스크립트로 확인"}])
+    assert meeting_stage(f) == "backlog"                 # 전 영역 전무 → 충전 회의
+    landed, note = register_stage(f, "backlog", (
+        "## 결정\n백로그: [게임 규칙] 승패 규칙 표 작성\n"
+        "백로그: [판정 로직] 9가지 조합 판정 구현\n백로그: 접두 없는 항목\n"))
+    assert landed and "3개" in note
+    store = f.backlog_relays
+    by = {st.goal: len((store.get(st.st_id).backlogs if store.get(st.st_id) else []))
+          for st in ms.subtasks}
+    assert by["게임 규칙"] >= 1 and by["판정 로직"] >= 1   # [영역명] 배분
+    # 집을 게 생겼으면 — 빈 영역(화면 UI)이 남아 있어도 작업 단계(영역당 회의 캐스케이드 금지)
+    assert meeting_stage(f) is None

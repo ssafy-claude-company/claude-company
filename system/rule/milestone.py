@@ -960,25 +960,21 @@ def meeting_stage(flow):
     if not _sts:
         return "subtask"                                # ③ 서브태스크 회의 — 단위 미분해
     store = getattr(flow, "backlog_relays", None) or {}
-    _exhausted = True
-    for st in _sts:
-        if st.status == "done":
-            continue
-        r = store.get(st.st_id)
-        # [게으른 백로그 회의(2026-07-17, ch78 실측: 단위 9개 → 회의 9개(~1h씩)를 다 끝내야 실작업)]
-        # 집을 일이 남은 단위가 있으면 작업이 먼저다 — 다음 단위의 백로그 회의는 앞 단위 소진이 연다
-        # ('백로그 소진 = 회의 트리거' 철학 그대로, 스캔만 조급→게으름). 계획 전량 선행이 아니라
-        # 릴레이: 일하면서 다음 단위가 닿을 때 그 단위 회의.
-        if r is not None and r.backlogs and not r.all_done():
-            return None                                 # 대기/진행 백로그 존재 → 작업 단계 우선
-        if r is None or not r.backlogs:
-            return "backlog"                            # ④ 백로그 회의 — 지금 닿은 미충원 단위
-        if not r.all_done():
-            _exhausted = False                          # (도달 불가 — 위에서 반환) 방어 유지
+    # [iter 주기 정본 복원(2026-07-20, 사용자: '현존하는 모든 백로그를 끝내거나 중지하고 → 점검 →
+    # 다음 회의가 다수를 한번에')] 07-17 '게으른 스캔'이 이를 '앞 영역 소진 → 다음 영역 회의'(영역당
+    # 회의 1개씩 순차)로 좁혀놨던 표류 교정. 정본: **어디든 집을 백로그가 하나라도 있으면 작업 단계** —
+    # 회의는 전 영역이 소진(또는 첫 시작으로 전무)됐을 때만 열리고, 그 한 회의가 미충원 영역들 몫을
+    # 일괄 충전한다(iter 경계 = 소진→점검(report_iter 코칭+조건 장부)→일괄 충전).
+    _alive = [st for st in _sts if st.status != "done"]
+    if any((store.get(st.st_id) is not None and (store.get(st.st_id).backlogs or [])
+            and not store.get(st.st_id).all_done()) for st in _alive):
+        return None                                     # 집을/진행 중 백로그 존재 → 작업 단계 우선
+    if any(store.get(st.st_id) is None or not store.get(st.st_id).backlogs for st in _alive):
+        return "backlog"                                # ④ 백로그 회의 — 소진/전무: 다음 iter 일감 일괄 충전
     # [백로그 소진 = 회의 트리거(2026-07-16, 잔재 감사 ①)] 전 단위의 백로그가 소진(전부 done/dropped)
     # 됐는데 주기가 아직 열려 있으면(조건 미충족) 추가 분해 회의 — 종전엔 handoff 코칭('meet를 열어라')
     # 만 있고 stage가 None이라, 봇이 meet를 불러도 결론 경로가 없었다(수렴 소진 낭비). 체인이 자동 개설.
-    if _exhausted and _open.status == "open":
+    if _alive and _open.status == "open":
         return "subtask"
     return None                                          # 전 단계 완료 → 작업/검증 단계
 
@@ -1006,11 +1002,12 @@ _STAGE_META = {
              "★이 회의가 답할 질문 하나: **'이번 것을 어떤 작업 영역(덩어리)들로 쪼갤 것인가?'** — 이건 "
              "**누가 맡느냐가 아니라 순수한 작업 분리**입니다(예: 저장 계층 · 게임 로직 · 화면 UI). 한 영역을 "
              "여러 명이 나눠 할 수도 있습니다. 개인이 하나씩 맡는 건 그 영역 안의 백로그(다음 회의)입니다."),
-    "backlog": ("한 작업 영역을 완수 기준까지 끌고 갈 **작업 항목 전부**를 열거한다(처리는 하나씩 선점)",
-             "[수렴안]\n백로그: <구체 작업 1>\n백로그: <구체 작업 2>\n백로그: <구체 작업 …(영역 완수에 필요한 만큼 — 줄 수 제한 없음)>\n[/수렴안]\n"
-             "★이 회의가 답할 질문 하나: **'이 영역을 완수 기준까지 끌고 가는 데 필요한 작업 항목 전부는 "
-             "무엇인가?'** — 한두 개만 남기지 마세요(목록이 곧 릴레이의 연료). 처리는 각자 pick_backlog로 "
-             "하나씩 전담합니다."),
+    "backlog": ("미충원 작업 영역들의 **다음 일감 전부**를 한 번에 열거한다(처리는 하나씩 선점)",
+             "[수렴안]\n백로그: [영역명] <구체 작업 1>\n백로그: [영역명] <구체 작업 2>\n백로그: [영역명] <구체 작업 …(각 영역 완수에 필요한 만큼 — 줄 수 제한 없음)>\n[/수렴안]\n"
+             "★이 회의가 답할 질문 하나: **'미충원 영역들을 완수 기준까지 끌고 가는 데 필요한 작업 항목 "
+             "전부는 무엇인가?'** — 항목마다 [영역명]을 달아 어느 영역 몫인지 명시하고, 한두 개만 남기지 "
+             "마세요(이 목록이 다음 iter의 연료 — 소진되면 점검 후에야 다음 회의). 처리는 각자 "
+             "pick_backlog로 하나씩 전담합니다."),
 }
 
 
@@ -1035,7 +1032,7 @@ def stage_draft_template(stage, agenda=""):
                       "이번 주기: <이번에 완성해 사용자에게 보여줄 딱 하나>\n\n완수조건:\n"
                       "- <조건> | 실증: <절차>\n"),
         "subtask": ("단위: <작업 영역/구성요소> | 실증: <절차>\n단위: <작업 영역/구성요소> | 실증: <절차>\n"),
-        "backlog": ("백로그: <구체 작업 1>\n백로그: <구체 작업 2>\n백로그: <구체 작업 …(완수까지 필요한 만큼)>\n"),
+        "backlog": ("백로그: [영역명] <구체 작업 1>\n백로그: [영역명] <구체 작업 2>\n백로그: [영역명] <구체 작업 …(필요한 만큼)>\n"),
     }.get(stage)
     if not body:
         return None
@@ -1188,10 +1185,11 @@ def stage_context(flow, stage):
             return f" [이번 주기: {_open.goal[:80]}]"
         if stage == "backlog" and _open is not None:
             store = getattr(flow, "backlog_relays", None) or {}
-            _t = next((st for st in _open.subtasks if st.status not in ("done", "superseded")
-                       and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)), None)
-            if _t is not None:
-                return f" [대상 작업 영역: {_t.goal[:80]}]"
+            _es = [st for st in _open.subtasks if st.status not in ("done", "superseded")
+                   and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)]
+            if _es:
+                _names = " · ".join(str(st.goal or "").split(" — ")[0].split(" | ")[0][:24] for st in _es[:7])
+                return f" [미충원 영역: {_names}]"
     except Exception:
         pass
     return ""
@@ -1211,9 +1209,9 @@ _STAGE_FRAME = {
     "subtask": "지금은 이번 것을 **어떤 작업 영역(덩어리)으로 나눌지** 정하는 단계입니다 — 개인 배정이 "
             "아니라 순수 작업 분리(예: 저장 계층·게임 로직·화면 UI). **'어떤 영역들로 쪼갤까'** 에만 답하세요. "
             "구체 작업 항목·담당은 다음(백로그) 회의.",
-    "backlog": "지금은 한 작업 영역을 완수 기준까지 끌고 갈 **작업 항목 전부를 열거**하는 단계입니다. "
-            "**'이 영역 완수에 필요한 작업 항목 전부는?'** 에만 답하세요 — 한두 개로 끝내지 말고 "
-            "목록을 채우세요(처리는 나중에 하나씩 선점).",
+    "backlog": "지금은 미충원 작업 영역들의 **다음 일감 전부를 한 번에 열거**하는 단계입니다. "
+            "**'미충원 영역들 완수에 필요한 작업 항목 전부는?'** 에만 답하세요 — 항목마다 [영역명]을 "
+            "달고, 한두 개로 끝내지 말고 목록을 채우세요(처리는 나중에 하나씩 선점).",
 }
 
 
@@ -1334,14 +1332,33 @@ def register_stage(flow, stage, prop, origin=""):
             return False, "열린 마일스톤이 없습니다."
         from .backlog import relay_for
         store = getattr(flow, "backlog_relays", None) or {}
-        _target = next((st for st in _open.subtasks if st.status not in ("done", "superseded")
-                        and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)), None)
-        if _target is None:
+        _alive_sts = [st for st in _open.subtasks if st.status not in ("done", "superseded")]
+        _empty_sts = [st for st in _alive_sts
+                      if store.get(st.st_id) is None or not store.get(st.st_id).backlogs]
+        if not _alive_sts:
             return False, "백로그를 채울 서브태스크가 없습니다."
         items = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("백로그:")]
         if not items:
             return False, "수렴안에 '백로그: <작업 단위>' 줄이 필요합니다."
-        r = relay_for(flow, _target)
+
+        # [iter 일괄 충전(2026-07-20, 사용자: '다음 회의로 백로그 여러개 다수 한번에')] 한 회의가 한
+        # 영역이 아니라 미충원 영역들 몫을 함께 등록한다 — '백로그: [영역명] 항목'의 [영역명]으로 배분
+        # (토큰 겹침 최고 영역), 접두 없으면 첫 미충원 영역(하위호환).
+        import re as _re3
+
+        def _dest_of(_it):
+            m3 = _re3.match(r"^\[([^\]]{1,40})\]\s*(.*)$", _it)
+            if m3:
+                _ht = set(_re3.findall(r"[A-Za-z가-힣0-9]{2,}", m3.group(1)))
+                best, hit = 0.0, None
+                for _st3 in _alive_sts:
+                    _gt = set(_re3.findall(r"[A-Za-z가-힣0-9]{2,}", str(getattr(_st3, "goal", "") or "")))
+                    _ov = len(_ht & _gt) / max(len(_ht), 1)
+                    if _ov > best:
+                        best, hit = _ov, _st3
+                if hit is not None and best >= 0.34 and (m3.group(2) or "").strip():
+                    return hit, m3.group(2).strip()
+            return (_empty_sts[0] if _empty_sts else _alive_sts[0]), _it
         # [발제자=주인(2026-07-16, 사용자: '백로그 발제한 애가 주인, 누가 발제했는지 남아야')] 회의
         # DRAFT에 그 줄을 쓴 봇을 SYS가 턴별 diff로 귀속 추적(flow._draft_attr) — 등록 시 그 봇이
         # 제출자가 되어 수행자=제출자 원칙이 회의 경로에도 이어진다. 귀속 없는 줄만 무주(자기선택).
@@ -1366,21 +1383,29 @@ def register_stage(flow, stage, prop, origin=""):
             return bid if best >= 0.5 else 0
 
         n = 0
+        _per = {}
         for _ln in lines:
             _s = _ln.strip()
             if not _s.startswith("백로그:"):
                 continue
             it = _s.split(":", 1)[1].strip()
             try:
+                _st_d, _body = _dest_of(it)
                 _who = _attr_of(draft_norm_line(_s) or _s)
-                r.submit(_who, it, force=True)
+                relay_for(flow, _st_d).submit(_who, _body, force=True)
                 n += 1
+                _per[_st_d.st_id] = _per.get(_st_d.st_id, 0) + 1
             except Exception:
                 pass
-        _target.backlog_ids = [b.backlog_id for b in r.backlogs]
+        for _st4 in _alive_sts:
+            _r4 = store.get(_st4.st_id) or relay_for(flow, _st4)
+            if _st4.st_id in _per:
+                _st4.backlog_ids = [b.backlog_id for b in _r4.backlogs]
         if flow.log:
-            flow.log("backlogs_by_meeting", st=_target.st_id, n=n)
-        return (n > 0), (f"[표결 확정] 서브태스크 {_target.st_id}에 백로그 {n}개 등록. 각자 pick_backlog로 전담하세요."
+            flow.log("backlogs_by_meeting", n=n,
+                     sts=" ".join(f"{k}:{v}" for k, v in _per.items())[:120])
+        _dist = " · ".join(f"{k.rsplit('/', 1)[-1]} {v}개" for k, v in _per.items())
+        return (n > 0), (f"[표결 확정] 백로그 {n}개 등록({_dist}). 각자 pick_backlog로 전담하세요."
                          if n else "등록된 백로그가 없습니다.")
 
     return False, "알 수 없는 회의 단계입니다."
