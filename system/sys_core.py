@@ -2359,6 +2359,19 @@ class Sys:
                 # 아니다. 재개 입구 = 사람의 승인/반려 답(route 시작 파싱) 또는 재개 버튼.
                 _pw_list = _pending_waivers(flow)
                 if _pw_list:
+                    # [이월 자체 해소 — 사람 개입 최소화(2026-07-20, 사용자: '개입 최대한 줄여')]
+                    # 막힌 조건이 로드맵 후속 주기로 옮겨질 수 있으면 사람 없이 즉시 해소하고 계속
+                    # 진행한다 — 파킹(사람 대기)은 못 옮길 때(로드맵 소진·마지막 잣대)만의 최후수단.
+                    # 이 코드 이전에 blocked로 굳은 판(복원 포함)도 여기서 소급 해소된다.
+                    try:
+                        from .rule.milestone import resolve_blocked_by_defer as _rbd
+                        _n_def = _rbd(flow)
+                    except Exception:
+                        _n_def = 0
+                    if _n_def:
+                        self._log("blocked_deferred", ch=int(flow.user_channel or 0), n=_n_def)
+                        _pw_list = _pending_waivers(flow)
+                if _pw_list:
                     if not hasattr(self, "_flow_awaiting_human"):
                         self._flow_awaiting_human = {}
                     self._flow_awaiting_human[int(flow.user_channel or 0)] = True

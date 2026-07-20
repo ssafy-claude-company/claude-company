@@ -460,6 +460,84 @@ def test_파킹판_사람답이_흐름시작에서_반영(monkeypatch, tmp_path)
     assert f2.milestones[0].criteria[0].status == "active"  # 반려 = 조건 유지(재시도)
 
 
+# ── 조건 이월 = 사람 없는 1차 해소(2026-07-20, 사용자: '개입 최대한 줄여') ─────────────
+
+def test_조건이월_사람없이_자체해소(monkeypatch, tmp_path):
+    """로드맵에 후속 주기가 있고 잣대가 남으면, 재협상은 사람 승인 없이 '다음 주기 이월'로 즉시
+    해소된다 — 잣대를 버리는 게 아니라 옮기는 것(carried 원장). 사람 호출·사람 대기 0."""
+    from system.rule.milestone import open_milestone, pending_waivers, renegotiate_criterion
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.roadmap = ["최소버전", "확장"]
+    esc = []
+    f.escalate_to_human = lambda m: esc.append(m)
+    ms = open_milestone(f, "최소버전", [{"desc": "한 루프 동작", "verify": "curl로 200 확인"},
+                                        {"desc": "모션 타이밍 100ms", "verify": "run 스크립트로 측정"}])
+    out = renegotiate_criterion(f, ms, "모션 타이밍", "최소버전 범위 밖")
+    assert "이월" in out and not esc                       # 사람 호출 0
+    assert not pending_waivers(f)                          # 사람 대기 0
+    assert [c.desc for c in ms.criteria] == ["한 루프 동작"]
+    assert ms.carried and "모션 타이밍" in ms.carried[0]["desc"]
+
+
+def test_이월불가면_기존_사람경로(monkeypatch, tmp_path):
+    """이월은 구조가 받아줄 때만 — ①로드맵 없음(후속 주기 없음) ②마지막 잣대(잣대 0개 주기 금지)면
+    종전 blocked_pending+사람 에스컬레이트(최후수단) 그대로."""
+    from system.rule.milestone import open_milestone, renegotiate_criterion
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    esc = []
+    f.escalate_to_human = lambda m: esc.append(m)
+    ms = open_milestone(f, "단판", [{"desc": "루프 동작", "verify": "curl 확인"},
+                                    {"desc": "화면 표시", "verify": "node 확인"}])
+    out = renegotiate_criterion(f, ms, "화면 표시", "범위 밖")   # 로드맵 없음
+    assert "승인 대기" in out and ms.criteria[1].status == "blocked_pending" and len(esc) == 1
+    g2, f2 = _meet_flow(tmp_path)
+    f2.roadmap = ["최소버전 → 확장"]                       # 띄운 화살표 한 줄 표기 = 2단계
+    esc2 = []
+    f2.escalate_to_human = lambda m: esc2.append(m)
+    ms2 = open_milestone(f2, "최소버전", [{"desc": "한 루프", "verify": "curl 확인"}])
+    out2 = renegotiate_criterion(f2, ms2, "한 루프", "무리")   # 마지막 잣대
+    assert "승인 대기" in out2 and len(esc2) == 1
+
+
+def test_이월조건은_다음주기에_기계합류(monkeypatch, tmp_path):
+    """이월=버리기 아님의 핵심 — 다음 open_milestone이 이월분을 새 주기 잣대로 자동 합류(원장 소진,
+    같은 desc를 회의가 이미 실었으면 중복 주입 없음). 직렬화 왕복도 원장을 보존한다."""
+    from system.rule.milestone import (ms_from_dict, ms_to_dict, open_milestone,
+                                        renegotiate_criterion)
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.roadmap = ["최소버전", "확장"]
+    ms1 = open_milestone(f, "최소버전", [{"desc": "한 루프", "verify": "curl 확인"},
+                                          {"desc": "모션 타이밍", "verify": "run 측정"}])
+    renegotiate_criterion(f, ms1, "모션 타이밍", "범위 밖")
+    rt = ms_from_dict(ms_to_dict(ms1))                     # 체크포인트 왕복
+    assert rt.carried and rt.carried[0]["desc"] == "모션 타이밍"
+    ms1.status = "done"
+    ms2 = open_milestone(f, "확장", [{"desc": "점수판", "verify": "node 확인"}])
+    descs = [c.desc for c in ms2.criteria]
+    assert descs.count("모션 타이밍") == 1 and not ms1.carried   # 합류 1회 + 원장 소진
+
+
+def test_파킹전_blocked도_이월로_소급해소(monkeypatch, tmp_path):
+    """[파킹 직전 훅] 이 코드 이전에 blocked_pending으로 굳은 판(복원 포함)도 이월 가능하면 사람
+    없이 풀리고 awaiting_human이 걷힌다 — 파킹은 잔여 blocked가 있을 때만."""
+    from system.rule.milestone import (open_milestone, pending_waivers,
+                                        resolve_blocked_by_defer)
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.roadmap = ["최소버전", "확장"]
+    ms = open_milestone(f, "최소버전", [{"desc": "한 루프", "verify": "curl 확인"},
+                                        {"desc": "모션 타이밍", "verify": "run 측정"}])
+    ms.criteria[1].status = "blocked_pending"
+    ms.criteria[1].block_reason = "최소버전 범위 밖"
+    f.awaiting_human = "조건 재협상 대기: '모션 타이밍'"
+    n = resolve_blocked_by_defer(f)
+    assert n == 1 and not pending_waivers(f) and f.awaiting_human is None
+    assert ms.carried and ms.carried[0]["desc"] == "모션 타이밍"
+
+
 def test_단위분해전_주기도_새Task금지(monkeypatch, tmp_path):
     """[핸드오프 D] 서브태스크가 아직 없는 열린 주기(마일스톤만 선 판)에서도 create_task 거부 —
     종전 '열린 단위까지 있어야'가 구멍(U-035: 그 창에서 표류 Task 143035 출생·목표 표류)."""
