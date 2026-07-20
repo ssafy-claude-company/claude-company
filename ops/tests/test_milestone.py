@@ -513,7 +513,7 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
     assert meeting_stage(f) is None                          # 둘째 단위에 집을 일 → 작업 단계
 
 
-def test_회의산물_무주백로그는_자기선택으로_전담(monkeypatch):
+def test_회의산물_백로그도_주인을_갖고_태어난다(monkeypatch):
     """[무주 자기선택(2026-07-16, 사용자 추궁: '전문가가 올려둔 걸 채가나?')] 배분은 수행자=제출자
     고정이라 자기 등재분은 못 채간다 — 그런데 백로그 회의 수렴안이 만든 팀 산물(submitter=0)은 그
     규칙으로 수행자=SYS(0)가 되어 배분이 깨졌다(회의→릴레이 접합 결함). 무주 항목은 '집는 사람이
@@ -534,8 +534,10 @@ def test_회의산물_무주백로그는_자기선택으로_전담(monkeypatch):
     assert ok
     r = relay_for(f, st)
     b = r.backlogs[0]
-    assert b.submitter == 0                              # 회의 산물 = 무주(팀)
-    r.pick(12, b.backlog_id, 12)                         # 봇 12가 자기선택으로 집음
+    # [2026-07-20 재결정(사용자: '선점 대기는 불가능 — 애초에 주인이 있어야')] 무주 출생 금지:
+    # 귀속 실패분은 적임(role_fit) 지정 주인으로 태어난다. 자기선택·채가기 불가 불변은 그대로.
+    assert int(b.submitter) in (11, 12)                  # 무주(0) 출생 금지 — 지정 주인
+    r.pick(12, b.backlog_id, 12)                         # 집는 자기선택은 여전히 열려 있음
     assert b.assignee == 12 and b.status == "in_progress"  # 전담 = 집는 사람
     # 채가기 불가 불변: 봇 11이 12의 자기등재분을 못 가져감
     mine = r.submit(12, "내 도메인 정리", force=True)
@@ -547,7 +549,7 @@ def test_회의산물_무주백로그는_자기선택으로_전담(monkeypatch):
         pass
 
 
-def test_백로그회의_발제자가_제출자로_등록된다(monkeypatch):
+def test_백로그회의_발제자_귀속과_무주출생금지(monkeypatch):
     """[발제자=주인(2026-07-16, 사용자)] 회의 DRAFT에 그 줄을 쓴 봇(SYS가 턴별 diff로 귀속)이 등록 시
     제출자가 된다 — 수행자=제출자 원칙이 회의 경로에도 이어짐. 귀속 없는 줄은 무주(자기선택 폴백)."""
     import types
@@ -566,7 +568,8 @@ def test_백로그회의_발제자가_제출자로_등록된다(monkeypatch):
     assert ok
     bl = relay_for(f, st).backlogs
     assert bl[0].submitter == 12                      # 발제자=주인으로 남음
-    assert bl[1].submitter == 0                       # 귀속 없는 줄 = 무주(자기선택)
+    # [2026-07-20 재결정] 귀속 없는 줄도 무주(0)가 아니라 적임 지정 주인으로 — 무주 출생 금지
+    assert int(bl[1].submitter) in (11, 12)
 
 
 def test_백로그_소진되고_주기_미완이면_추가분해회의가_체인에_잡힌다(monkeypatch):

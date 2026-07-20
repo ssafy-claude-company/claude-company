@@ -174,6 +174,17 @@ async def create_task(flow, args):
         return (f"현재 Task({flow.current.task_id}: {(flow.current.status.purpose or '미정')[:24]})가 아직 "
                    f"'진행'입니다 — 단일흐름은 한 번에 Task 하나만. complete_task로 먼저 마감한 뒤 "
                    f"다음 Task를 여세요(여러 산출물도 하나씩 순차로).")
+    # [정밀 복구 = 이어가기(2026-07-20, U-035 실측)] 복원 구멍으로 current가 유실되자 봇이 조율용
+    # 새 Task를 개설 → 빈 목표라 goal 회의부터 재주행·목표 표류(단판→3라운드). Task가 안 보여도
+    # 판 장부(열린 주기 + 살아있는 단위)가 미완이면 새 Task 금지 — 그 주기를 잇는 게 다음 수다
+    # (set_milestone iter>0 거부와 같은 축). 조율은 meet, 실작업은 pick_backlog.
+    _open_ms = next((m for m in (getattr(flow, "milestones", None) or [])
+                     if m.status not in ("done", "superseded")), None)
+    if _open_ms is not None and any(st.status not in ("done", "superseded")
+                                    for st in getattr(_open_ms, "subtasks", []) or []):
+        return (f"새 Task 거부: 미완 주기 {_open_ms.ms_id}가 진행 중입니다 — 새 판을 열지 말고 "
+                "**그 주기를 이어가세요**(정밀 복구 원칙): 실작업은 pick_backlog, 조율·확정은 meet, "
+                "검증은 report_iter. 이 주기가 완수(wrapup)로 닫힌 뒤에만 다음 Task를 엽니다.")
     ch = flow.project_channel or flow.user_channel
     tid = flow.next_task_id()
     pool = flow.project_team or flow.pool

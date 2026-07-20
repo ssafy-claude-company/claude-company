@@ -245,3 +245,19 @@ def test_iter주기_정본_집을것있으면_작업_충전은_일괄배분(monk
                for st in ms.subtasks for b in ((store.get(st.st_id).backlogs if store.get(st.st_id) else [])))
     # 집을 게 생겼으면 — 빈 영역(화면 UI)이 남아 있어도 작업 단계(영역당 회의 캐스케이드 금지)
     assert meeting_stage(f) is None
+
+def test_미완주기_있으면_새Task_거부(monkeypatch, tmp_path):
+    """[U-035 실측] 복원 구멍으로 current 유실 → 봇이 새 Task 개설 → goal 회의 재주행·목표 표류.
+    Task가 안 보여도 열린 주기+살아있는 단위가 있으면 create_task 거부(이어가기 처방)."""
+    from system.rule.milestone import open_milestone, open_subtask
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "가위바위보 웹게임"
+    ms = open_milestone(f, "단판", [{"desc": "한 루프 동작", "verify": "curl로 200 확인"}])
+    open_subtask(f, ms, "게임 규칙", [{"desc": "규칙 정의", "verify": "node 스크립트로 확인"}])
+    f.current = None                                     # 복원 구멍 재현 — Task 유실
+    r = asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    assert "미완 주기" in str(r) and "이어가세요" in str(r)
+    assert f.current is None                             # 새 Task가 만들어지지 않았다
