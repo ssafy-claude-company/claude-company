@@ -873,6 +873,27 @@ def register_consensus(flow, prop: str, origin: str = ""):
 # elif), 회의 자체는 단일 활성 베턴이라 두 회의가 동시에 못 돈다. 종전의 '수렴안 하나가 목표+마일스톤+
 # 단위 다 만들기'(너무 큰 회의 — 라이브 ch70 32분 겉돎)를 대체한다.
 
+def ledger_signature(flow):
+    """[진전 기반 재픽(2026-07-20, 사용자: '상한 3회 경위가 옳은가')] 판 장부의 상태 서명 —
+    사이클 전후 비교로 '이 사이클이 판을 전진시켰는가'를 판정한다. 발언·도구 사용(회의 소음)이
+    아니라 **장부의 전진**만 센다: 목표 확정·로드맵·주기/단위 등록·상태 전이·iter·백로그 종결 수.
+    재픽의 옳은 조건은 횟수가 아니라 이것 — 전진했으면 이어갈 가치가 있고(제한 없음, 상한은
+    소유자 크레딧 캡이 담당), 무진전이면 한 번의 반복도 낭비다(사람 호출이 맞다)."""
+    cur = getattr(flow, "current", None)
+    sig = [bool(str(getattr(getattr(cur, "status", None), "goal", "") or "").strip()),
+           tuple(getattr(flow, "roadmap", None) or [])]
+    store = getattr(flow, "backlog_relays", None) or {}
+    for m in (getattr(flow, "milestones", None) or []):
+        sts = []
+        for st in (getattr(m, "subtasks", None) or []):
+            r = store.get(st.st_id)
+            bl = getattr(r, "backlogs", None) or []
+            sts.append((st.st_id, st.status,
+                        sum(1 for b in bl if b.status in ("done", "dropped")), len(bl)))
+        sig.append((m.ms_id, m.status, getattr(m, "iter_n", 0), tuple(sts)))
+    return tuple(sig)
+
+
 def claim_kick_target(flow):
     """[첫 선점 킥 — 2026-07-19 e2e(P-032) 교착 수리] 작업 단계에서 '깨워 선점시킬' 다음 대상 하나를
     고른다 — (봇 id, Backlog, st_id) 또는 None(킥 불요).

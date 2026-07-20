@@ -123,6 +123,31 @@ def test_claim_kick_target_작업단계_선점킥_규칙(onflag):
     assert claim_kick_target(f) is None
 
 
+def test_ledger_signature_장부전진만_센다(onflag):
+    """[진전 기반 재픽(2026-07-20)] 재픽 판정 = 장부 서명 변화. 발언·도구 소음은 서명을 안 바꾸고,
+    목표 확정·단위 등록·백로그 종결 같은 장부 전진만 바꾼다 — '상한 N회' 수치 판정의 대체."""
+    from system.rule.backlog import BacklogRelay
+    from system.rule.milestone import SubTask, ledger_signature
+    g = FakeGuide()
+    f = _flow(g)
+    s0 = ledger_signature(f)
+    assert ledger_signature(f) == s0                        # 아무 일 없음 = 동일(발언은 장부 아님)
+    lead = _tools(f, 11, "leader")
+    _drive(lead, "set_milestone", {"goal": "게임", "criteria": "판정 정확 | pytest 50회 확인"})
+    s1 = ledger_signature(f)
+    assert s1 != s0                                         # 주기 등록 = 전진
+    ms = f.milestones[0]
+    st = SubTask(st_id=f"{ms.ms_id}/ST-1", goal="메커닉", criteria=[])
+    ms.subtasks.append(st)
+    r = BacklogRelay(st.st_id)
+    f.backlog_relays = {st.st_id: r}
+    b = r.submit(12, "정의서", force=True)
+    s2 = ledger_signature(f)
+    assert s2 != s1                                         # 단위·백로그 등록 = 전진
+    b.status = "done"
+    assert ledger_signature(f) != s2                        # 백로그 종결 = 전진
+
+
 def test_rehearsal_boundary_gate_blocks_early_open(onflag):
     """미완 마일스톤이 있으면 e2e_open이 거부 — Task 경계 규약이 도구 표면에서도 산다."""
     g = FakeGuide()

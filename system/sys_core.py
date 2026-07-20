@@ -2286,6 +2286,13 @@ class Sys:
             # 제작 요청인데 앵커가 Task도 안 열고(flow.current None) meet도 안 부른 채 평문만 뱉으면, 종전엔
             # 루프 조건이 False라 한 턴에 종료→완료 참칭. '킥오프 미완'을 조건에 더해 SYS가 다시 깨워 **실제
             # meet 호출을 강제**한다(최대 kickoff_cap회 — 그래도 안 되면 완료 아닌 중단으로 마감·아래).
+            # [진전 기반 재픽 — 기준선(2026-07-20)] 이 사이클 시작 시점의 장부 서명. 사이클이 끝날 때
+            # 비교해 '전진 없는 미완'이면 재픽하지 않는다(reap 판정 원천).
+            try:
+                from .rule.milestone import ledger_signature as _lsig0
+                flow._ledger_sig0 = _lsig0(flow)
+            except Exception:
+                flow._ledger_sig0 = None
             _kickoff_cap, _kicks = 3, 0
             def _needs_kickoff():
                 return getattr(flow, "was_elect", False) and flow.current is None and _kicks < _kickoff_cap
@@ -2567,6 +2574,16 @@ class Sys:
         if not hasattr(self, "_flow_open_task"):
             self._flow_open_task = {}
         self._flow_open_task[int(flow.user_channel or 0)] = flow.current is not None
+        # [진전 기반 재픽(2026-07-20)] 이 사이클이 판 장부를 전진시켰는가 — reap의 재픽 판정 원천.
+        # 판정 실패는 '전진'으로 폴백(판을 조기에 죽이는 쪽보다 이어가는 쪽이 안전).
+        try:
+            from .rule.milestone import ledger_signature as _lsig1
+            _prog1 = (_lsig1(flow) != getattr(flow, "_ledger_sig0", None))
+        except Exception:
+            _prog1 = True
+        if not hasattr(self, "_flow_cycle_progress"):
+            self._flow_cycle_progress = {}
+        self._flow_cycle_progress[int(flow.user_channel or 0)] = bool(_prog1)
         # [완료 참칭 방지(2026-07-14)] 선거로 연 제작 요청인데 Task도 안 열린 채(flow.current None) 끝났으면
         # = 앵커가 아무것도 안 만든 것(평문 독백). done으로 마감하면 '완료' 참칭이라, 이 채널을 '산출물 0'로
         # 표시해 reap이 done 대신 **중단**으로 닫게 한다(정직한 미완).
@@ -2850,15 +2867,20 @@ class Sys:
                             # 일찍 done, 운영자 수동 요청이 없었으면 판이 조용히 죽었음). 미완이면 unpick으로
                             # 같은 요청을 되살려 다음 픽이 잇는다(상한 3회 — 무한 재픽 차단, 초과 시 정직 done).
                             _open = getattr(self, "_flow_open_task", {}).pop(int(_info["ch"]), False)
-                            # [재픽 상한 영속(2026-07-20)] 판정 원천 = 픽업 때 실어온 payload 카운터
-                            # (unpick마다 웹이 +1 영속). 메모리 dict는 폐지 — 재시작 리셋 루프의 뿌리였다.
+                            # [진전 기반 재픽(2026-07-20, 사용자: '상한 3회 경위가 옳은가')] 재픽의 옳은
+                            # 조건은 횟수가 아니라 **직전 사이클이 판 장부를 전진시켰는가**다: 전진한 미완은
+                            # 이어갈 가치가 있고(횟수 제한 없음 — 총 상한은 소유자 크레딧 캡이 담당), 무진전
+                            # 미완은 한 번의 반복도 같은 결과라 재픽하지 않고 정직한 중단+사람 호출로 마감.
+                            # 종전 '상한 3회'는 2026-07-12 ch53 수리 때의 임의 백스톱이었음(트레이드오프
+                            # 근거 없음) — 수치 판정 폐기. payload.repick_n은 관측 기록으로만 유지.
                             _cn = int(_info.get("repick_n") or 0)
+                            _prog = getattr(self, "_flow_cycle_progress", {}).pop(int(_info["ch"]), False)
                             _qhalt = getattr(self, "_flow_quota_halt", {}).pop(int(_info["ch"]), False)
-                            if _open and _cn < 3 and not _qhalt:
+                            if _open and _prog and not _qhalt:
                                 seen.discard(_mid)
                                 await guide.pick(_mid, unpick=True)
                                 self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
-                                log.info("↻ Task 미완 — 같은 요청 재픽 예약(%d/3): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
+                                log.info("↻ Task 미완·장부 전진 — 같은 요청 재픽(누계 %d): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
                             else:
                                 await guide.pick(_mid, done=True)
                                 # [크레딧 한도 정지(2026-07-20)] 한도 소진 마감 = 재배달 없이 정직 종결
@@ -2870,6 +2892,19 @@ class Sys:
                                         pass
                                     self._log("quota_halt_closed", mid=_mid, ch=_info["ch"])
                                     log.info("■ 크레딧 한도 — 정지 마감: msg_id=%s", _mid)
+                                elif _open:
+                                    # [무진전 미완 = 정직한 중단 + 사람 호출(2026-07-20)] 반복해도 같은
+                                    # 결과인 판을 '완료'로 둔갑시키지도, 조용히 되돌리지도 않는다 —
+                                    # 중단 표시 + 무엇이 필요한지 피드에 게시(재개 버튼이 출구).
+                                    try:
+                                        await self.guide.mark_stopped(int(_info["ch"]))
+                                        await self.guide.post(int(_info["ch"]), 0,
+                                            "[사람 조치 필요] 작업이 더 나아가지 못한 채 멈췄어요 — 요청을 "
+                                            "구체화하거나 '재개'를 누르면 이어서 다시 시도해요.")
+                                    except Exception:
+                                        pass
+                                    self._log("stalled_stopped", mid=_mid, ch=_info["ch"], repicks=_cn)
+                                    log.info("■ 무진전 미완 — 중단 마감·사람 호출: msg_id=%s", _mid)
                                 # [완료 참칭 방지] 선거 제작 요청인데 산출물 0(Task 미개설)이면 done_ts는
                                 # 찍히되 **중단**으로 표시 — 피드가 '완료'가 아니라 '중단'으로 렌더(정직).
                                 if getattr(self, "_flow_no_deliverable", {}).pop(int(_info["ch"]), False):
