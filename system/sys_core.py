@@ -2295,7 +2295,11 @@ class Sys:
                 flow._ledger_sig0 = None
             _kickoff_cap, _kicks = 3, 0
             def _needs_kickoff():
-                return getattr(flow, "was_elect", False) and flow.current is None and _kicks < _kickoff_cap
+                # [작업 단계 회의 강요 봉합(2026-07-20, e2e 실측: 미룸 5회·강제 2회)] 킥오프 meet 강제는
+                # **계획 장부가 백지일 때만** — 장부(마일스톤·백로그)가 이미 있으면 회의가 아니라
+                # 이어가기·선점 킥이 옳은 다음 수다(재픽·복원 판에서 meet 강요↔작업단계 미룸의 모순 루프 제거).
+                return (getattr(flow, "was_elect", False) and flow.current is None
+                        and not (getattr(flow, "milestones", None) or []) and _kicks < _kickoff_cap)
             while ((flow.current is not None or "턴 한도 도달" in (result or "") or _ms_pending() or _needs_kickoff())
                    and cont < self.max_continue and not flow.cancelled):   # [사용자 중지] 이어가기 멈춤
                 # [하드블록 종결/자기치유(B-03 G4)] 봇이 못 푸는 인프라 벽(배포 자격증명 등)에 막히면 재시도

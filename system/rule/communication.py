@@ -732,15 +732,19 @@ async def meet(flow, me_id, args):
         _pipe = bool(_no_r1 and tt)
         _pass = 0
         _ready_rejects = 0   # [무한 반대의 차기 라우팅] 완성 파일 상태에서의 부결 횟수 — 3회 소진 후 이월 확정
+        _skip_discuss = False   # [이의 해소 fastpath(2026-07-20)] 해소 위임 직후엔 재토론 없이 재검·재표결
+        _last_pass_hash = None  # [무진전 패스 감지(2026-07-20)] 초안 결정구획 해시 — 무변화 패스=즉시 중단
         while True:
             _pass += 1
             _before = len(conv_props)
             # 재응찰 = 전원 발언권 되살려 다시 토론(사용자 '발언권 다 살려 선택 응찰'). 회의가 단계별로
             # 작아져(회의 하나당 하나) 재토론 비용이 크지 않다 — 종전의 '효율 재응찰(수렴안만 요청)'은
             # 큰 회의 대응이었고 단계 분리로 불필요해져 폐지(2026-07-14).
-            await run_conversation(policy, st, _t0,
-                                   _speak, bid=(_bid if tt else None),
-                                   max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
+            if not _skip_discuss:
+                await run_conversation(policy, st, _t0,
+                                       _speak, bid=(_bid if tt else None),
+                                       max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
+            _skip_discuss = False
             _flush_minutes()
             if flow.current is None or not _pipe:
                 break                                       # 솔로/orchestrated = 단일 패스(종전 동작)
@@ -851,10 +855,50 @@ async def meet(flow, me_id, args):
                             pass
                         if flow.log:
                             flow.log("meet_consensus_rejected", passes=_pass, via="draft", filed=len(_new))
+                        # [이의별 해소 위임(2026-07-20, 사용자: '부결의 근간')] 부결마다 전원 재토론 패스가
+                        # 돌던 것(실측: 표결 12라운드·부결 7·$수십) — 이의는 그 도메인 적임 1명이 파일에서
+                        # 해소하면 된다. role_fit으로 이의별 적임을 골라 편집 위임(실작업 wake) 후, 다음
+                        # 루프는 재토론 없이(fastpath) 완성 검사→재표결로 직행. 해소가 안 됐으면(해시
+                        # 무변화) 아래 무진전 감지가 전원 패스 폴백/중단을 판정 — 제한이 아니라 낭비 제거.
+                        try:
+                            from ..role_fit import role_fit as _rfit
+                            for _dv in (_new or [])[:5]:
+                                _cand = max(members, key=lambda m0: _rfit(_dv, str(flow.bot_info.get(int(m0)) or "")))
+                                wakes["n"] += 1
+                                await flow.wake(int(_cand),
+                                    f"[이의 해소] 공동 결론 파일 `{_draft_path}` 에 방금 기록된 이의를 당신 "
+                                    f"도메인으로 해소하세요 — 내용을 실제로 채우고(Edit) 그 이의(>) 줄을 "
+                                    f"삭제: «{_dv[:160]}». 해소 후 한 줄만 보고하세요.", Kind.INFO)
+                            _skip_discuss = True
+                            if flow.log:
+                                flow.log("dissent_resolution_delegated", n=len(_new or []))
+                        except Exception:
+                            pass
                 elif flow.log:
                     flow.log("meet_gate_unmet", passes=_pass, via="draft",
                              placeholders=_ph, objections=_obj)
                 _gate_unmet["on"] = True
+                # [무진전 패스 = 즉시 중단(2026-07-20, 사용자: '수치가 아니라 근간')] 이 패스가 초안
+                # 결정구획을 한 글자도 못 바꿨으면 같은 반복은 같은 결과다 — 재픽과 같은 진전 판정.
+                # 사람을 부르고 정직하게 닫는다(억지 반복 대신 상신 — 중단이지 완료 아님).
+                try:
+                    import hashlib as _hl2
+                    from .milestone import draft_decision_region as _dr3
+                    _hh = (_hl2.md5(_dr3(str(_dread(flow, "DRAFT.md") or "")).encode()).hexdigest()
+                           if _draft_path is not None else None)
+                except Exception:
+                    _hh = None
+                if _hh is not None and _hh == _last_pass_hash:
+                    try:
+                        await flow.guide.post(int(flow.user_channel), 0,
+                                              "[사람 조치 필요] 회의가 진전 없이 맴돌아 여기서 멈춥니다 — "
+                                              "안건을 구체화해 주시면 이어서 진행해요.")
+                    except Exception:
+                        pass
+                    if flow.log:
+                        flow.log("meet_no_progress_break", passes=_pass)
+                    break
+                _last_pass_hash = _hh
                 _t0 = Turn(speaker=me_id, body="(결론 파일 미완/부결 — 회의 계속)")
                 if wakes["n"] >= wake_cap:
                     if flow.log:
