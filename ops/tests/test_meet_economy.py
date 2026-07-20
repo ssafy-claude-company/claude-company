@@ -100,6 +100,51 @@ def test_부결은_해소위임_fastpath로_재토론없이_확정(monkeypatch, 
     assert str(f.current.status.goal or "").startswith("방명록 1주기")
 
 
+def test_해소위임_무변화면_재토론_폴백_조기중단_아님(monkeypatch, tmp_path):
+    """[U-035 라이브 실측 조합 버그] 위임된 해소가 파일을 못 바꾸면 → 전원 재토론 폴백이 먼저,
+    조기 중단(무진전 브레이크)은 '토론까지 돈 패스'의 무변화에만."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+    prompts = []
+    votes = {"round": 0}
+
+    async def wake(to, b, k):
+        prompts.append((to, b))
+        if "[이의 해소]" in b:
+            return "확인했습니다"                      # 해소 실패 대본 — 파일 무변화(no-op)
+        if "결론 확정 표결" in b:
+            if votes["round"] < 2:
+                votes["round"] += 1
+                return "[반대: 검증 절차가 모호합니다]" if to == 13 else "[찬성]"
+            return "[찬성]"
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "발언권 획득" in b or "차례입니다" in b:
+            _fill_draft(tmp_path)
+            if votes["round"] >= 1:                    # 재토론 폴백 턴이 이의를 해소
+                _resolve_objections(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "dissent_resolution_delegated" in names
+    assert "meet_no_progress_break" not in names       # 위임 실패 직후 조기 중단 금지
+    # 위임 실패 후 재토론(발언권 응찰)이 실제로 다시 돌았다 — 폴백 경로
+    i_rej = next(i for i, n in enumerate(names) if n == "meet_consensus_rejected")
+    assert any("발언권 응찰" in b for _, b in prompts[-(len(prompts) // 2):])
+    assert "stage_confirmed" in names                  # 폴백 경유 최종 확정
+    assert i_rej >= 0
+
+
 def test_심의단_도메인커버리지_1석_구제(monkeypatch, tmp_path):
     """[U-035 실측: 게임 판 목표 회의에 게임 기획자 무발언] 안건 최고 적합 직군이 응찰했는데
     점수순에서 밀리면 1석 구제 — 자기선택(패스=존중)은 유지, 배제만 막는다. 응찰은 전수 관측."""

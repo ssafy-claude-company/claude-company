@@ -763,6 +763,7 @@ async def meet(flow, me_id, args):
             # 재응찰 = 전원 발언권 되살려 다시 토론(사용자 '발언권 다 살려 선택 응찰'). 회의가 단계별로
             # 작아져(회의 하나당 하나) 재토론 비용이 크지 않다 — 종전의 '효율 재응찰(수렴안만 요청)'은
             # 큰 회의 대응이었고 단계 분리로 불필요해져 폐지(2026-07-14).
+            _ran_discuss = not _skip_discuss   # 이번 패스가 실제 토론을 돌았는가(무진전 판정의 전제)
             if not _skip_discuss:
                 await run_conversation(policy, st, _t0,
                                        _speak, bid=(_bid if tt else None),
@@ -911,7 +912,10 @@ async def meet(flow, me_id, args):
                            if _draft_path is not None else None)
                 except Exception:
                     _hh = None
-                if _hh is not None and _hh == _last_pass_hash:
+                # [조합 수리(2026-07-20, U-035 라이브 실측)] 해소 위임(fastpath) 패스가 파일을 못
+                # 바꿨을 땐 전원 재토론 폴백이 먼저다 — 브레이크는 '토론까지 돈 패스'의 무변화에만.
+                # (종전엔 위임 실패 43초 만에 조기 중단+사람 호출 — 폴백 없이 브레이크가 선점했다.)
+                if _hh is not None and _hh == _last_pass_hash and _ran_discuss:
                     try:
                         await flow.guide.post(int(flow.user_channel), 0,
                                               "[사람 조치 필요] 회의가 진전 없이 맴돌아 여기서 멈춥니다 — "
