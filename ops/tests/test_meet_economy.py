@@ -497,6 +497,30 @@ def test_마일스톤보고_확인링크와_2단계승계_체인(monkeypatch, tm
     assert "https://murmur-ai.duckdns.org/apps/rps/" in "\n".join(f._pipeline_notes)
 
 
+# ── e2e 복기 진전 게이트(2026-07-20, 사용자: '무한반복 다 잡고 e2e — 비용 트레이드오프') ──
+
+def test_복기_결함이_안줄면_2회연속에서_컷(monkeypatch, tmp_path):
+    """e2e→복기→e2e의 마지막 무상한 경로 — 결함 수 비개선 복기가 2회 연속이면 새 복기를 열지 않고
+    정직 중단 경로로(첫 재시도는 허용 — 진전 철학은 재픽·이월과 동형). 결함이 줄면 계속 허용."""
+    from system.rule.milestone import ms_replan
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    events = []
+    f.log = lambda ev, **kw: events.append(ev)
+    d3 = ["버튼이 500 응답", "저장이 안 됨", "화면 깨짐"]
+    ms1 = ms_replan(f, d3)                                  # 1차 복기 — 허용
+    assert ms1 is not None
+    ms1.status = "done"
+    ms2 = ms_replan(f, d3)                                  # 2차 — 같은 3건(비개선 1회째) 허용
+    assert ms2 is not None
+    ms2.status = "done"
+    ms3 = ms_replan(f, d3)                                  # 3차 — 비개선 2회 연속 → 컷
+    assert ms3 is None and "ms_replan_stuck" in events
+    # 결함이 줄면(진전) 카운트 리셋 — 계속 허용
+    ms4 = ms_replan(f, d3[:1])
+    assert ms4 is not None
+
+
 # ── 조건 이월 = 사람 없는 1차 해소(2026-07-20, 사용자: '개입 최대한 줄여') ─────────────
 
 def test_조건이월_사람없이_자체해소(monkeypatch, tmp_path):
