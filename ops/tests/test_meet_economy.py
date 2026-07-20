@@ -240,5 +240,8 @@ def test_iter주기_정본_집을것있으면_작업_충전은_일괄배분(monk
     by = {st.goal: len((store.get(st.st_id).backlogs if store.get(st.st_id) else []))
           for st in ms.subtasks}
     assert by["게임 규칙"] >= 1 and by["판정 로직"] >= 1   # [영역명] 배분
+    # [무주 출생 금지] 귀속 실패분도 적임 지정으로 주인을 갖고 태어난다
+    assert all(int(b.submitter or 0) in (11, 12, 13)
+               for st in ms.subtasks for b in ((store.get(st.st_id).backlogs if store.get(st.st_id) else [])))
     # 집을 게 생겼으면 — 빈 영역(화면 UI)이 남아 있어도 작업 단계(영역당 회의 캐스케이드 금지)
     assert meeting_stage(f) is None

@@ -1382,6 +1382,18 @@ def register_stage(flow, stage, prop, origin=""):
                     best, bid = _ov, int(_v2 or 0)
             return bid if best >= 0.5 else 0
 
+        # [무주 출생 금지(2026-07-20, 사용자: '선점 대기는 불가능하지 — 애초에 주인이 있어야')] 발제
+        # 귀속이 끝내 실패해도 무주로 태어나지 않는다 — 적임(role_fit)을 주인으로 지정(발제자=주인
+        # 원칙의 폴백. '선점 대기'는 담당 이탈 같은 예외에만 존재).
+        _bots_o = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
+
+        def _owner_fb(_st_o, _body_o):
+            if not _bots_o:
+                return 0
+            from ..role_fit import role_fit as _rf2
+            _q2 = f"{getattr(_st_o, 'goal', '')} {_body_o}"
+            return int(max(_bots_o, key=lambda k: _rf2(_q2, _bots_o[k])))
+
         n = 0
         _per = {}
         for _ln in lines:
@@ -1391,7 +1403,7 @@ def register_stage(flow, stage, prop, origin=""):
             it = _s.split(":", 1)[1].strip()
             try:
                 _st_d, _body = _dest_of(it)
-                _who = _attr_of(draft_norm_line(_s) or _s)
+                _who = _attr_of(draft_norm_line(_s) or _s) or _owner_fb(_st_d, _body)
                 relay_for(flow, _st_d).submit(_who, _body, force=True)
                 n += 1
                 _per[_st_d.st_id] = _per.get(_st_d.st_id, 0) + 1
