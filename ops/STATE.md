@@ -2,6 +2,11 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-06.
 
+## ★ U-035 무한 "이상한 말" — 근본원인 수리 착지(2026-07-20 이현준-6, 라이브 반영 대기)
+- 이현준-5 규명(정본: [`murmur/docs/2026-07-20-무한헛돎-근본원인-핸드오프.md`](../murmur/docs/2026-07-20-무한헛돎-근본원인-핸드오프.md) — 5단 인과사슬·수리안 A~F·수용기준) → **이 세션(이현준-6)이 A~F 전량 구현·회귀 박고 착지**. 세부는 아래 레포 HEAD 항목(b13ba0b).
+- 판 P-033(ch80) 자체는 07-20 07:44 사용자 중지로 정지 유지(중지 요청=재큐 제외). 재개하면 파킹→액션 바(조건 승인/반려)가 출구.
+- **라이브 반영 남음**: 러너 재시작(브레인 A·B·D·E·F) + murmur-web 재시작(bridge C) — 세션 규율상 사용자 승인 대기. 프론트(dist)는 착지 즉시 서빙.
+
 ## 자격증명·환경변수 모델 (2026-07-06 라이브 적용 — migrate 0022~0024 + 웹 재시작 완료)
 - **granular 환경변수 grant** (860bee0 live): 개인 금고(PersonSecret) **private**, 프로젝트/봇에 **명시 부여만** 노출. `ProjectEnv`·`AgentEnv`(금고 FK 참조=로테이션전파·CASCADE revoke, or 직접입력). `deploy_creds`/sns_guide → `resolve_env_for`(우선순위 opt-in금고<봇env<프로젝트grant). `Project.share_anchor_vault` opt-in(anchor 본인만 토글·transfer 리셋). **per-contributor**: 멤버 각자 추가·**내가 추가한 것만 삭제**(added_by)·소유자 전체·남의것 덮어쓰기 차단. UI=`EnvEditor.vue`(Channel 멤버팝업·AgentDetail). 무중단 마이그 0024(기존 프로젝트 배포4키 자동 grant).
 - **confused-deputy 차단 + owner 단일의존 제거** (442bfc7 live): `deploy_creds`가 채널 picked 요청자(payload.requester_id)를 owner/active멤버 검증(제3자가 owner 키로 배포 트리거 차단). `Project.deploy_account`(이관 앵커) + `/projects/{pid}/transfer/`(소유권·배포앵커 이관, owner 전용·active멤버 대상). sns 275·brain 483.
@@ -19,7 +24,22 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  0a3bc48  ← 브레인 — 2026-07-20(이현준-5) ★무주 출생 금지+새Task 게이트: 회의 등록 백로그 귀속
+claude-company  b13ba0b  ← 브레인 — 2026-07-20(이현준-6) ★U-035 무한 헛돎 5단 사슬 절단(근본원인 핸드오프
+                          A~F 전량 구현): [A·핵심] 사람 대기 파킹 — blocked_pending(진실원=조건 상태)
+                          이면 continue 루프가 quota_halt 동형 break(안내 1회)·reap은 재픽 없이
+                          awaiting_human_closed 전용 마감(중지 표기=재개 버튼 생존). 종전엔 경보만
+                          죽이고 봇이 계속 돌아 잡담이 정체 감지까지 무력화("이상한 말"의 실체).
+                          [B] 답 도달 — 파킹 후 온 '조건 승인/반려'를 흐름 시작에서 파싱·반영
+                          (waiver_reply_at_start — 종전 interject 전용이라 파킹 뒤 답 증발) + 판 화면
+                          원클릭 액션 바(murmur .await-bar). [C·murmur] 파킹 판 재배달 부적격 — bridge
+                          pending이 stale-pick 재큐만 선별 차단(사람 답 새 요청은 통과=출구 보존).
+                          [D] 표류 Task 구멍 — create_task 게이트·last_task 2차 복원의 '열린 서브태스크'
+                          요구 제거(열린 마일스톤=미완 주기 — 단위 분해 전 창에서 표류 Task 출생).
+                          [E] 완수조건='이번 주기' 범위 스코프(회의 골격 — 최소버전 주기에 완제품
+                          사양 실려 met 1/4 고정되던 상류 방아쇠). [F] 기충족 조건 재보고 흡수+토큰
+                          부분일치(미매칭 계고=재보고 루프 연료 차단). 회귀 브레인 7+bridge 3,
+                          686+405 그린. 러너·웹 재시작 반영 대기(상단 절 참조).
+                          (이전 0a3bc48) 2026-07-20(이현준-5) ★무주 출생 금지+새Task 게이트: 회의 등록 백로그 귀속
                           ★(추가 스탬프 07-20 오후) Task=사용자 요청 존재론(안에서 생성 절대금지+last_task
                           2차 복원) · verify에 UI 정본 계약 가드 편입. murmur: 아바타/무리 정본 단일화
                           (AvatarStack)·표면 감사 일괄·가드 적발 2건 수리 — 세부는 두 레포 git log 07-20.
@@ -258,7 +278,13 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  c21d858   ← HEAD — ★표면 정밀 감사 일괄(사용자 '내부까지 정밀히'): 헤더 1줄 복구(●지금 중복 제거)·
+murmur  c21d858   ← HEAD — ★사람 대기 재배달 차단+원클릭 승인/반려(이현준-6, U-035 C·B): pending이
+                          파킹 판(ms.awaiting_human) stale-pick 재큐를 선별 스킵(사람 답 새 요청은
+                          통과=출구)·채널 화면 .await-bar([조건 승인]/[조건 반려] → 새 요청으로 러너
+                          복원 시 반영). bridge 회귀 3. 웹 재시작 반영 대기.
+                          · (이전, 변도진 계열 07-20) 셰브런 회전 정본 1곳·회의 행 제목=안건만·유령
+                          줄 봉합 — 세부는 murmur git log.
+                          · (이전 c21d858) ★표면 정밀 감사 일괄(사용자 '내부까지 정밀히'): 헤더 1줄 복구(●지금 중복 제거)·
                           '아직 작업 없음' 조립기 메타 폐지·회의 행 스크럽(대괄호·ID·지시문)·발언 N
                           어휘 통일·모바일 붕괴 복구·메타 레일·서사 순서(회의→일감)·백로그만(기준 행
                           비노출)·개입 Task당 1개. · (이전) ★유령 점유 봉합+빈 대기 서사(이현준-5): pending 재큐 '응답 존재' 차단 제거
