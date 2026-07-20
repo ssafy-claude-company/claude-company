@@ -2426,8 +2426,11 @@ class Sys:
                 # progressed·tool_use 0·floor 3868 → 2.5시간 무한루프, 사용자 관측: "리더 작업 중만 몇 시간").
                 # [파이프라인 §5] 주기 진행(iter 전진·주기 종료)도 '진전'으로 센다 — 결정권자가 도구로
                 # 주기를 굴리면 act_count가 안 올라도 정체가 아니다(무진행 컷 오판 방지).
-                _ms_now = _ms_next(flow) if _ms_on() else None
-                _ms_sig = (getattr(_ms_now, "ms_id", ""), getattr(_ms_now, "iter_n", 0)) if _ms_now else None
+                # [무한 검증 봉합(2026-07-20, U-035 실측)] 종전엔 (ms_id, iter_n) — iter_n은 검증 '시도'라
+                # 봇이 아무것도 못 채워도 report_iter만 돌리면 진전으로 오판, 정체 감지가 불발(iter 4·5·6차
+                # 충족 1/4 고정인데 무한 continue). 장부 서명(충족조건·백로그 종결 수 — 시도 아닌 결과)으로 교체.
+                from .rule.milestone import ledger_signature as _lsig
+                _ms_sig = _lsig(flow) if _ms_on() else None
                 progressed = (flow.act_count > acts_seg or bool(str(drained).strip())
                               or (_ms_on() and _ms_sig != getattr(flow, "_last_ms_sig", None)))
                 flow._last_ms_sig = _ms_sig

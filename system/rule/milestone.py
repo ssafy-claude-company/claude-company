@@ -876,9 +876,14 @@ def register_consensus(flow, prop: str, origin: str = ""):
 def ledger_signature(flow):
     """[진전 기반 재픽(2026-07-20, 사용자: '상한 3회 경위가 옳은가')] 판 장부의 상태 서명 —
     사이클 전후 비교로 '이 사이클이 판을 전진시켰는가'를 판정한다. 발언·도구 사용(회의 소음)이
-    아니라 **장부의 전진**만 센다: 목표 확정·로드맵·주기/단위 등록·상태 전이·iter·백로그 종결 수.
+    아니라 **장부의 전진**만 센다: 목표 확정·로드맵·주기/단위 등록·상태 전이·충족조건 수·백로그 종결 수.
     재픽의 옳은 조건은 횟수가 아니라 이것 — 전진했으면 이어갈 가치가 있고(제한 없음, 상한은
-    소유자 크레딧 캡이 담당), 무진전이면 한 번의 반복도 낭비다(사람 호출이 맞다)."""
+    소유자 크레딧 캡이 담당), 무진전이면 한 번의 반복도 낭비다(사람 호출이 맞다).
+
+    [무한 검증 봉합(2026-07-20, U-035 실측: iter 4·5·6차 내리 충족 1/4 고정인데 무한 continue)]
+    종전엔 iter_n(검증 '시도' 횟수)을 진전으로 셌다 — 봇이 아무것도 못 채워도 report_iter만 돌리면
+    iter_n↑ → '진전'으로 오판 → 정체 감지가 영영 불발(무한 루프). 진전 = **검증 결과(충족조건 수)**
+    이지 시도 횟수가 아니다. iter_n을 충족조건 수(passed criteria)로 교체."""
     cur = getattr(flow, "current", None)
     sig = [bool(str(getattr(getattr(cur, "status", None), "goal", "") or "").strip()),
            tuple(getattr(flow, "roadmap", None) or [])]
@@ -890,7 +895,8 @@ def ledger_signature(flow):
             bl = getattr(r, "backlogs", None) or []
             sts.append((st.st_id, st.status,
                         sum(1 for b in bl if b.status in ("done", "dropped")), len(bl)))
-        sig.append((m.ms_id, m.status, getattr(m, "iter_n", 0), tuple(sts)))
+        _passed = sum(1 for c in (getattr(m, "criteria", None) or []) if getattr(c, "passed", False))
+        sig.append((m.ms_id, m.status, _passed, tuple(sts)))
     return tuple(sig)
 
 

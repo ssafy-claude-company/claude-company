@@ -292,3 +292,24 @@ def test_고아장부_last_task_2차복원(monkeypatch, tmp_path):
     out = _aio.run(sys_recovery.restore_open_task(_Sys(), f, proj))
     assert out and f.current is not None and f.current.task_id == _tid   # 원 Task 되살림
     assert "open_task_fallback_last" in logs and "open_task_restored" in logs
+
+def test_iter_무한검증은_진전아님(monkeypatch, tmp_path):
+    """[U-035 실측: iter 4·5·6차 내리 충족 1/4 고정인데 무한 continue] 진전 = 검증 결과(충족조건 수)이지
+    시도 횟수(iter_n)가 아니다 — report_iter만 헛돌면 ledger_signature 무변화(정체 감지 작동)."""
+    from system.rule.milestone import open_milestone, open_subtask, ledger_signature
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "가위바위보"
+    ms = open_milestone(f, "단판", [{"desc": "판정 동작", "verify": "node 스크립트로 9조합 확인"},
+                                    {"desc": "화면 표시", "verify": "curl로 페이지 200 확인"}])
+    open_subtask(f, ms, "규칙", [{"desc": "규칙 정의", "verify": "node로 확인"}])
+    sig0 = ledger_signature(f)
+    # 검증만 반복(iter_n++) — 충족·백로그 상태 불변
+    ms.iter_n += 1
+    ms.iter_n += 1
+    assert ledger_signature(f) == sig0                   # iter_n 증가는 진전 아님(무한 검증 감지)
+    # 조건 하나 실제 충족 → 진전
+    ms.criteria[0].passed = True
+    assert ledger_signature(f) != sig0
