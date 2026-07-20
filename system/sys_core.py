@@ -2354,6 +2354,12 @@ class Sys:
                 # 먼저 다음 단계 회의를 연다 — 이전 결론 위에서만 열리고, 한 회의가 한 단계만 정한다. 전
                 # 계획 단계가 끝나면(_stage_pending False) 아래 작업-이어가기(위임·검증)로 넘어간다.
                 if _stage_pending() and not flow.cancelled:
+                    # [위임 완주 우선(2026-07-20, U-035 실측)] 리더가 자유 위임(동료 질문)을 걸어둔 채
+                    # 단계 회의를 열면 meet 게이트가 '[대기] 위임 진행 중'으로 즉시 거절 — 여는 의견
+                    # 턴만 3회 태우고 stage_stall_break 오컷(백로그 단계 진입 실패로 판 중단). 게이트가
+                    # 거절할 것을 알면서 두드리지 않는다 — 위임을 먼저 완주(단일 활성·완료 게이트)하고 연다.
+                    if any(not x.done() for x in getattr(flow, "inflight_tasks", ())):
+                        await self._drain_inflight(flow)
                     _stg = _ms_stage(flow)
                     _ag, _ = _stage_agenda(_stg)
                     from .rule.milestone import stage_context as _sctx
@@ -2596,7 +2602,11 @@ class Sys:
             _prog1 = True
         if not hasattr(self, "_flow_cycle_progress"):
             self._flow_cycle_progress = {}
-        self._flow_cycle_progress[int(flow.user_channel or 0)] = bool(_prog1)
+        # [픽 단위 누적(2026-07-20, U-035 실측)] 한 픽 안에서 handle이 여러 번 돌 수 있다(위임 결과
+        # 배달 등 꼬리 사이클) — 마지막 사이클만 보면 '단위 7개 등록' 픽이 드레인 꼬리의 무진전으로
+        # 오판돼 중단 마감됐다. 판정은 픽 전체: 한 사이클이라도 전진했으면 전진(reap pop이 리셋).
+        _ch1 = int(flow.user_channel or 0)
+        self._flow_cycle_progress[_ch1] = bool(_prog1) or bool(self._flow_cycle_progress.get(_ch1))
         # [완료 참칭 방지(2026-07-14)] 선거로 연 제작 요청인데 Task도 안 열린 채(flow.current None) 끝났으면
         # = 앵커가 아무것도 안 만든 것(평문 독백). done으로 마감하면 '완료' 참칭이라, 이 채널을 '산출물 0'로
         # 표시해 reap이 done 대신 **중단**으로 닫게 한다(정직한 미완).
