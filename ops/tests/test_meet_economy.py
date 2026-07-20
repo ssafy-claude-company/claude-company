@@ -460,6 +460,43 @@ def test_파킹판_사람답이_흐름시작에서_반영(monkeypatch, tmp_path)
     assert f2.milestones[0].criteria[0].status == "active"  # 반려 = 조건 유지(재시도)
 
 
+# ── 마일스톤 보고 확인 링크 + 2단계 승계 체인(2026-07-20, e2e 사전 분석) ───────────────
+
+def test_마일스톤보고_확인링크와_2단계승계_체인(monkeypatch, tmp_path):
+    """[e2e 예행] ms1 완주 → [마일스톤 보고]에 열어볼 주소 동봉(배포 URL 우선·완성작 주소 폴백) +
+    [다음 단계] 코칭 → 단계 유도가 2번째 마일스톤 회의를 열고, 이월분이 새 주기 잣대로 합류한다 —
+    사용자 확인 자료·승계 체인의 관통 대본."""
+    from system.rule.milestone import (iter_verify, meeting_stage, open_milestone,
+                                        renegotiate_criterion, wrapup_done)
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "가위바위보 웹게임"
+    f.roadmap = ["최소버전", "확장"]
+    f.project_id = "P-099"
+    g.work_url = lambda pid: f"https://example.test/api/projects/{pid}/works/"   # 매체 능력(duck-typed)
+    ms1 = open_milestone(f, "최소버전", [
+        {"desc": "한 루프 동작", "verify": "curl로 200 확인"},
+        {"desc": "모션 타이밍 100ms", "verify": "run 스크립트로 측정"}])
+    renegotiate_criterion(f, ms1, "모션 타이밍", "최소버전 범위 밖")             # 이월(사람 0)
+    ok, _ = iter_verify(f, ms1, [{"desc": "한 루프 동작", "passed": True, "evidence": "curl 200"}])
+    assert ok and wrapup_done(f, ms1) == "done"
+    notes = "\n".join(f._pipeline_notes)
+    assert "[마일스톤 보고]" in notes
+    assert "https://example.test/api/projects/P-099/works/" in notes             # 확인 링크(완성작 폴백)
+    assert "[다음 단계]" in notes                                                # 승계 코칭
+    assert meeting_stage(f) == "milestone"                                       # 2번째 주기 회의 유도
+    ms2 = open_milestone(f, "확장", [{"desc": "점수판 표시", "verify": "node로 확인"}])
+    assert any(c.desc == "모션 타이밍 100ms" for c in ms2.criteria)              # 이월 잣대 합류
+    # 배포 URL이 생기면 보고 링크는 그것이 우선(실 배포 주소가 최상의 확인 자료)
+    f._deploy_url = "https://murmur-ai.duckdns.org/apps/rps/"
+    ok2, _ = iter_verify(f, ms2, [{"desc": c.desc, "passed": True, "evidence": "run 출력 OK"}
+                                  for c in ms2.criteria])
+    assert ok2 and wrapup_done(f, ms2) == "done"
+    assert "https://murmur-ai.duckdns.org/apps/rps/" in "\n".join(f._pipeline_notes)
+
+
 # ── 조건 이월 = 사람 없는 1차 해소(2026-07-20, 사용자: '개입 최대한 줄여') ─────────────
 
 def test_조건이월_사람없이_자체해소(monkeypatch, tmp_path):
