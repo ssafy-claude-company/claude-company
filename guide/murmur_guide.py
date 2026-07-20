@@ -85,6 +85,13 @@ class MurmurGuide:
     # 자동 등록해도 안전(디스코드처럼 새 채널을 만드는 매체는 미선언 → 자동 등록 안 함).
     autoproject = True
 
+    def work_url(self, project_id):
+        """[확인 링크(2026-07-20, 사용자: '마일스톤 끝날 때마다 확인할 수 있는 자료')] 이 판 산출물의
+        사용자-열람 주소(완성작 인앱 실행 엔드포인트). 공개 도메인은 env(MURMUR_PUBLIC_URL) 우선 —
+        러너의 base(로컬 직결 127.0.0.1)는 사용자용 주소가 아니다. SYS는 duck-typing으로만 묻는다."""
+        pub = (os.environ.get("MURMUR_PUBLIC_URL") or "https://murmur-ai.duckdns.org").rstrip("/")
+        return f"{pub}/api/projects/{project_id}/works/"
+
     def set_origin(self, channel_id):
         """[배달 계약] 이 요청의 origin 채널을 task-로컬로 — 뒤이어 create_task되는 흐름이 이 채널로 라우팅(동시 안전)."""
         ORIGIN_CHANNEL.set(int(channel_id))

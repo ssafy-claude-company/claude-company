@@ -307,6 +307,11 @@ async def deploy(flow, args, me_id=None):
         # 안 먹었다. _deploy_live는 sys_recovery가 영속·복원해 재개 후에도 완료 인식이 유지된다.
         if isinstance(r, str) and r.startswith("배포 성공"):
             flow._deploy_live = True
+            # [확인 링크 원천(2026-07-20, 사용자: '마일스톤 끝날 때마다 배포된 링크')] 결과문의 라이브
+            # URL을 흐름에 보관 — [마일스톤 보고]가 사용자에게 열어볼 주소를 동봉한다(영속: 스냅샷 동승).
+            _m_url = re.search(r"https?://[^\s)\"']+", r)
+            if _m_url:
+                flow._deploy_url = _m_url.group(0)
         # [런어웨이 cap 정정(2026-07, 사용자: 'cap을 고쳐 배포 되게')] cap의 목적은 *깨진 앱을 계속
         # 재배포*(P-028: push는 성공했으나 앱이 깨진 채 23회) 차단이다. push/설정 단계 실패(계정·리포·
         # 인증·크기·비-일시)는 *앱까지 가보지도 못한 설정 문제*라 고치면 성공한다 — 이걸 앱-런어웨이 cap에

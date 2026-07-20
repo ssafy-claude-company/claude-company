@@ -752,8 +752,21 @@ def wrapup_done(flow, obj) -> str:
         # 보고')] 주기 완수 = 사용자 가시 보고 게시(조건+증거) — 로드맵이 있으면 다음 단계 회의 코칭.
         _ev = "\n".join(f"· {c.desc[:70]} — {(c.evidence or '실증 기록')[:90]}"
                         for c in obj.criteria[:8] if c.status != "waived")
+        # [확인 링크 동봉(2026-07-20, 사용자: '마일스톤 끝날 때마다 배포된 링크라든지 확인할 수 있는
+        # 자료')] '체감 검증하세요'로 끝나지 않게 실제 열어볼 주소를 준다 — ①라이브 배포 URL(있으면)
+        # ②매체의 완성작 주소(guide가 알면 — duck-typed, 구현체 import 없음) ③'완성작' 버튼 안내.
+        _url = str(getattr(flow, "_deploy_url", "") or "")
+        if not _url:
+            _wu = getattr(getattr(flow, "guide", None), "work_url", None)
+            _pid = getattr(flow, "project_id", None)
+            if callable(_wu) and _pid:
+                try:
+                    _url = str(_wu(str(_pid)) or "")
+                except Exception:
+                    _url = ""
+        _chk = (f"바로 열어 확인: {_url}" if _url else "채널 상단 '완성작' 버튼에서 바로 실행해 확인하세요")
         _pnote(flow, f"[마일스톤 보고] ({obj.ms_id}) {obj.goal[:100]}\n{_ev}\n"
-                     f"→ 사용자 확인 단위입니다 — 라이브에서 체감 검증하세요.")
+                     f"→ 사용자 확인 단위입니다 — {_chk}")
         _rm = list(getattr(flow, "roadmap", None) or [])
         _done_n = sum(1 for m in flow.milestones if m.status == "done")
         if _done_n < len(_rm):
