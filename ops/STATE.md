@@ -9,7 +9,7 @@
 ## 라이브 (2026-07-03 VPS 단일화 — Render 폐기)
 - **웹: https://murmur-ai.duckdns.org** (VPS). nginx(TLS, Let's Encrypt 자동갱신) → gunicorn `murmur-web` systemd(127.0.0.1:8000) → Django. SPA+API 한 서비스.
 - **DB: 로컬 Postgres**(`murmur` DB, DATABASE_URL=`/root/ClaudeCompany/.dburl`). 영속 — 재시작해도 데이터 유지. 웹 env=`/etc/murmur-web.env`.
-- **atelier(2026-07-11 독립 분리)**: 사람+AI 공유 캔버스 플랫폼 — **별개 제품**(자체 레포 `/root/atelier`·venv·sqlite·systemd `atelier`). murmur와의 연결은 선택적 로그인 브리지(/api/me 위임)뿐. 접속: 기존 `/dev/` 경로(nginx가 8100 프록시) — 자기 도메인은 사용자 지정 대기(sslip 인증서는 게이트로 미발급). 워크스페이스 자동복제 폐지(등록=사람/Organt 선택, 현재 claude-company·murmur 예제 2개). claude-company의 ops/dev는 제거됨.
+- **atelier(2026-07-11 독립 분리)**: 사람+AI 공유 캔버스 플랫폼 — **별개 제품**(자체 레포 `/root/atelier`·venv·sqlite·systemd `atelier`). murmur와의 연결은 선택적 SSO 로그인 브리지(1회용 코드 교환)뿐 — 종전 '/api/me 위임' 서술은 자체 계정 전환(07-11)으로 폐지된 낡은 사실(07-20 교정). 접속: 기존 `/dev/` 경로(nginx가 8100 프록시) — 자기 도메인은 사용자 지정 대기(sslip 인증서는 게이트로 미발급). 워크스페이스 자동복제 폐지(등록=사람/Organt 선택, 현재 claude-company·murmur 예제 2개). claude-company의 ops/dev는 제거됨.
 - 러너: systemd `organt-runner` → `--remote http://127.0.0.1:8000` | **nginx가 외부 /api/guide/* 403 차단(H3): 러너만 로컬 직결로 사용.**(같은 호스트 로컬). ORGANT_GUIDE_TOKEN은 웹 env와 일치.
 - **배포 방식(Render API 아님!)**: 백엔드 변경 → `systemctl restart murmur-web`. 프론트 변경 → `cd murmur/frontend && npm run build`(gunicorn이 dist 서빙). 마이그레이션 → env 걸고 `manage.py migrate`. VPS 체크아웃(`/root/ClaudeCompany`)이 곧 소스라 git pull 불필요(여기서 편집).
 - Render 웹서비스(srv-d8tnrdog4nts73d4gcfg)는 **미사용**(러너가 안 봄) — 정지/삭제 가능. 단 *봇이 만든 프로젝트 배포*(deploy.py)는 여전히 Render API 사용(별개).
@@ -19,7 +19,16 @@
 
 ## 레포 HEAD (verify.sh가 대조하는 기준선)
 ```
-claude-company  338af34  ← 브레인 — 2026-07-19~20(이현준-5) ★실서비스 준비 배치 + e2e 실판(U-034/ch79,
+claude-company  6303383  ← 브레인 — 2026-07-20(변도진-4) ★검증 자기-트리 수리(전반 파악 후속 감사):
+                          계약 seam 스캔 _ROOT 하드코딩(/root/murmur-stack)→자기 트리 유도 + 빈 스캔=
+                          가짜 통과 가드 · flywheel 정본 절대경로→자기 트리 · verify.sh/claim.sh 기본
+                          R=스크립트 소재 트리(워크트리 세션이 정본 아닌 "자기 수정분"을 검증 — 종전
+                          가짜 초록. land.sh는 MURMUR_ROOT 명시라 착지 경로 불변) · atelier 서술 교정
+                          (/api/me 위임→SSO 코드 교환, 아래 라이브 절). atelier 레포(별도 커밋): 토큰
+                          하드코딩 제거(env/tokens.env 로드)·README/settings 현행화·빚 2건 등재
+                          (**토큰 git 이력 잔존 = 러너 ATELIER_TOKEN 동일 — 원격 push 전 로테이션
+                          필수** · SECRET_KEY 기본값 기동, 서명 사용처 0이라 현재 실해 없음).
+                          (이전 338af34) 2026-07-19~20(이현준-5) ★실서비스 준비 배치 + e2e 실판(U-034/ch79,
                           사용자 승인·총 $53): 예행 3/3·스모크 통과 → 실판이 **구조 결함 3개** 실측:
                           ①백로그 등록 후 작업 전이 교착(선점 코칭이 앵커 세션에만) → 첫 선점 킥
                           (claim_kick, 93a41a3) ②pick/drop/block_backlog 허용목록 누락('권한 밖 도구'
