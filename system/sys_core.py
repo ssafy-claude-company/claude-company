@@ -2905,14 +2905,19 @@ class Sys:
                                 self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
                                 log.info("↻ Task 미완·장부 전진 — 같은 요청 재픽(누계 %d): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
                             else:
-                                await guide.pick(_mid, done=True)
-                                # [크레딧 한도 정지(2026-07-20)] 한도 소진 마감 = 재배달 없이 정직 종결
-                                # (충전/승인 후 사용자가 재개 — 피드는 '중단' 표시).
-                                if _qhalt:
+                                # [재개 가능한 종결 순서(2026-07-20, U-035 실측)] mark_stopped(요청에
+                                # stopped 표기)는 done 마감 **전에** — 웹 op가 'picked & not done_ts'
+                                # 요청만 표기하므로, done을 먼저 찍으면 stopped가 안 남아 재개 버튼이
+                                # 0건 반환(안내 문구와 모순되는 유령 중단, resume 불가).
+                                if _qhalt or _open:
                                     try:
                                         await self.guide.mark_stopped(int(_info["ch"]))
                                     except Exception:
                                         pass
+                                await guide.pick(_mid, done=True)
+                                # [크레딧 한도 정지(2026-07-20)] 한도 소진 마감 = 재배달 없이 정직 종결
+                                # (충전/승인 후 사용자가 재개 — 피드는 '중단' 표시).
+                                if _qhalt:
                                     self._log("quota_halt_closed", mid=_mid, ch=_info["ch"])
                                     log.info("■ 크레딧 한도 — 정지 마감: msg_id=%s", _mid)
                                 elif _open:
@@ -2920,7 +2925,6 @@ class Sys:
                                     # 결과인 판을 '완료'로 둔갑시키지도, 조용히 되돌리지도 않는다 —
                                     # 중단 표시 + 무엇이 필요한지 피드에 게시(재개 버튼이 출구).
                                     try:
-                                        await self.guide.mark_stopped(int(_info["ch"]))
                                         await self.guide.post(int(_info["ch"]), 0,
                                             "[사람 조치 필요] 작업이 더 나아가지 못한 채 멈췄어요 — 요청을 "
                                             "구체화하거나 '재개'를 누르면 이어서 다시 시도해요.")
