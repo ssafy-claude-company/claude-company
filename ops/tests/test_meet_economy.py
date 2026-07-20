@@ -246,10 +246,12 @@ def test_iter주기_정본_집을것있으면_작업_충전은_일괄배분(monk
     # 집을 게 생겼으면 — 빈 영역(화면 UI)이 남아 있어도 작업 단계(영역당 회의 캐스케이드 금지)
     assert meeting_stage(f) is None
 
-def test_미완주기_있으면_새Task_거부(monkeypatch, tmp_path):
-    """[U-035 실측] 복원 구멍으로 current 유실 → 봇이 새 Task 개설 → goal 회의 재주행·목표 표류.
-    Task가 안 보여도 열린 주기+살아있는 단위가 있으면 create_task 거부(이어가기 처방)."""
-    from system.rule.milestone import open_milestone, open_subtask
+def test_미완주기_새Task는_목표를_승계한다(monkeypatch, tmp_path):
+    """[U-035 실측 → 사용자 재교정: '한 서버에 Task 여러 개 — 거부는 잘못된 처방'] 미완 주기 장부가
+    있으면 새 Task는 거부가 아니라 승계 — 목표를 정본(GOAL.md)에서 이어받아 goal 회의 재주행·목표
+    표류가 원천 차단된다(멀티 Task 허용)."""
+    import os
+    from system.rule.milestone import open_milestone, open_subtask, meeting_stage
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path)
     t = _tools(f, 11, "leader")
@@ -257,7 +259,11 @@ def test_미완주기_있으면_새Task_거부(monkeypatch, tmp_path):
     f.current.status.goal = "가위바위보 웹게임"
     ms = open_milestone(f, "단판", [{"desc": "한 루프 동작", "verify": "curl로 200 확인"}])
     open_subtask(f, ms, "게임 규칙", [{"desc": "규칙 정의", "verify": "node 스크립트로 확인"}])
+    open(os.path.join(str(tmp_path), "GOAL.md"), "w", encoding="utf-8").write(
+        "# GOAL\n목표: 가위바위보 웹게임 — 단판 한 루프\n")
     f.current = None                                     # 복원 구멍 재현 — Task 유실
     r = asyncio.run(t["create_task"].handler({"members": "12,13"}))
-    assert "미완 주기" in str(r) and "이어가세요" in str(r)
-    assert f.current is None                             # 새 Task가 만들어지지 않았다
+    assert "task=" in str(r) and "[승계]" in str(r)      # 개설은 허용(멀티 Task)
+    assert f.current is not None
+    assert f.current.status.goal.startswith("가위바위보 웹게임")   # 목표 정본 승계
+    assert meeting_stage(f) != "goal"                    # goal 회의 재주행 불가
