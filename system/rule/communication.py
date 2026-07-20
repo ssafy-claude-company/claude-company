@@ -282,7 +282,16 @@ async def meet(flow, me_id, args):
         # 자라는 근본 병목 — 회의도 선거·백로그와 같은 자기선택 원칙으로. 안건에 자기 도메인이 걸리는
         # 봇만 응찰해 심의단(상한 5)이 되고, 표결도 심의단 만장일치. 불참자는 피드로 보고 다음 라운드에
         # 응찰해 언제든 합류 가능(문 열림 — 중앙 배제 아님). 소수 팀(<6)은 종전대로 전원.
-        if _no_r1 and tt and len(members) > 5:
+        # [심의단 = 비율(2026-07-20, 사용자: '고정 수치 박지 말고 비율로 — 합리적 트레이드오프')]
+        # 종전 고정 상한 5는 팀 8이든 30이든 같은 폭 — 심의 폭↔비용은 팀 규모에 비례 배분이 맞다.
+        # 상한 = ceil(팀 × ORGANT_PANEL_RATIO(기본 1/3)), 하한 2(표결 성립 최소). 트레이드오프:
+        # 비율↑ = 도메인 커버리지↑·비용↑ / 비율↓ = 그 반대 — env 한 줄로 조정(수치는 정책이지 코드가 아님).
+        try:
+            _pratio = float(os.environ.get("ORGANT_PANEL_RATIO", "") or (1 / 3))
+        except ValueError:
+            _pratio = 1 / 3
+        _panel_cap = max(2, int(len(members) * _pratio + 0.999))   # ceil
+        if _no_r1 and tt and len(members) > _panel_cap:
             def _sb(c):
                 return (f"[회의 소집 — 심의 응찰] 안건: {(_agenda or topic)[:160]}\n"
                         f"이 결정에 당신({flow._info(c)}) 도메인이 직접 걸립니까? 걸리면 `[응찰: N]`(1~9)과 "
@@ -294,7 +303,7 @@ async def meet(flow, me_id, args):
                 if _s0 > 0:
                     _sc.append((_s0, _m0))
             _sc.sort(reverse=True)
-            _sel = [m0 for _s0, m0 in _sc[:5]]
+            _sel = [m0 for _s0, m0 in _sc[:_panel_cap]]
             if len(_sel) >= 2:
                 members = _sel
                 try:

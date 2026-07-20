@@ -105,7 +105,19 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                         import asyncio as _aio
                         _loop = _aio.get_running_loop()
                         _t = _loop.create_task(_rep(int(_ch), float(_cost), int(rec.get("tokens_out") or 0)))
-                        _USAGE_BG.add(_t); _t.add_done_callback(_USAGE_BG.discard)
+                        _USAGE_BG.add(_t)
+
+                        def _quota_check(t, _flow=flow):
+                            # [판 크레딧 캡(2026-07-20)] 적립 응답이 초과+강제면 흐름에 정지 신호 —
+                            # 진행 중 판이 무제한이던 구멍(ch79 $53)의 턴 단위 마개. 소비는 sys 루프.
+                            _USAGE_BG.discard(t)
+                            try:
+                                r = t.result()
+                                if isinstance(r, dict) and r.get("over") and r.get("enforce"):
+                                    _flow._quota_over = True
+                            except Exception:
+                                pass
+                        _t.add_done_callback(_quota_check)
                 except Exception:   # 실행 루프 없음(테스트)·기타 → 스킵(과금은 best-effort)
                     pass
         # organt의 파일 도구(cwd)는 '현재 흐름의 작업공간'을 따른다 — 프로젝트별 폴더 분리와 정합

@@ -1644,10 +1644,13 @@ class Sys:
                 tcm = getattr(self.guide, "typing", None)
 
                 async def _do():
+                    # [마이크로 무도구(2026-07-20)] 즉답 턴은 organt 쪽에서도 micro — 도구 스키마 미적재.
+                    # micro 아닐 땐 종전 호출 형태 유지(시그니처 스텁 무회귀).
+                    _pt = self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake, micro=micro)
                     if tcm is not None:
                         async with tcm(ch, organt_id):
-                            return await organt.handle(self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake, micro=micro))
-                    return await organt.handle(self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake, micro=micro))
+                            return await (organt.handle(_pt, micro=True) if micro else organt.handle(_pt))
+                    return await (organt.handle(_pt, micro=True) if micro else organt.handle(_pt))
 
                 # 리더 턴은 '흐름 전체'(중첩 워커 포함)를 품으므로 여기선 타임아웃 안 건다 — 상위 무진행
                 # 워치독이 흐름 전체를 본다. 워커(비-리더) 턴은 '도구 활동이 turn_timeout 동안 완전히 멈춘'
@@ -2291,6 +2294,39 @@ class Sys:
                 # [하드블록 종결/자기치유(B-03 G4)] 봇이 못 푸는 인프라 벽(배포 자격증명 등)에 막히면 재시도
                 # 루프를 멈춘다 — 가짜 진행(재검증)으로 며칠씩 빙빙 돌다 무진행 컷나던 것 차단. 단 '연속
                 # 무응답'형은 자기치유: 백오프 뒤 SYS 프로브 wake 1회 성공 시 해제하고 계속(실패면 종결 유지).
+                # [판 크레딧 캡(2026-07-20, ch79 $53 실측)] 보드 주인 크레딧 소진(+강제 ON) — 턴 단위
+                # 우아한 정지: 정직한 안내 게시 후 마감(재배달 없음 — reap이 quota_halt로 종결 처리).
+                # 재개 = 충전/요금제 후 사용자의 '재개' 버튼(기존 resume 동선 그대로).
+                if getattr(flow, "_quota_over", False):
+                    if not hasattr(self, "_flow_quota_halt"):
+                        self._flow_quota_halt = {}
+                    self._flow_quota_halt[int(flow.user_channel or 0)] = True
+                    try:
+                        await flow.guide.post(int(flow.user_channel), 0,
+                                              "크레딧을 다 썼어요 — 작업을 여기서 잠시 멈춥니다. 요금제를 올리거나 "
+                                              "다음 달 충전 뒤 '재개'를 누르면 이어서 계속해요.")
+                    except Exception:
+                        pass
+                    self._log("quota_halt", ch=int(flow.user_channel or 0))
+                    break
+                # [정밀 재개 — GOAL 정본 복원(2026-07-20, ch79 낭비 실측)] 재픽·복원된 판이 Task GOAL만
+                # 잃고 목표 회의부터 재실행하던 것 — 등록 때 쓴 GOAL.md(파일 정본)가 있으면 목표를
+                # 되살려 단계 체인이 '이어가게' 한다(회의 재개설 없이 — 정밀 복구=이어가기).
+                if (_ms_on() and flow.current is not None
+                        and not str(getattr(flow.current.status, "goal", "") or "").strip()):
+                    try:
+                        _gp = os.path.join(str(getattr(flow, "workspace", "") or ""), "GOAL.md")
+                        if getattr(flow, "workspace", None) and os.path.isfile(_gp):
+                            _gt = open(_gp, encoding="utf-8").read()
+                            _gl = next((l.split(":", 1)[1].strip() for l in _gt.splitlines()
+                                        if l.strip().startswith("목표:")), "")
+                            _gl = _gl or next((l.strip() for l in _gt.splitlines()
+                                               if l.strip() and not l.strip().startswith("#")), "")
+                            if _gl:
+                                flow.current.status.goal = _gl[:300]
+                                self._log("goal_restored_from_file", ch=int(flow.user_channel or 0))
+                    except Exception:
+                        pass
                 if getattr(flow, "_hard_blocked", None):
                     if not await self._hard_block_probe(flow, lead):
                         break
@@ -2765,7 +2801,7 @@ class Sys:
         *결정*하고, 매체 실행은 guide가 *구현*한다(추상↔구현). 러너/리스너는 Sys(guide,builder) 만들고
         이 run()만 부르면 됨 — 진입이 얇아진다(폴링·pick 로직은 여기·Guide로 이관)."""
         import traceback
-        inflight, seen, cut_resumes, cont_pickups, last_beat = {}, set(), {}, {}, 0.0
+        inflight, seen, cut_resumes, last_beat = {}, set(), {}, 0.0   # 재픽 카운터는 payload 영속(2026-07-20)
         last_roster = 0.0   # [런타임 합류] 로스터 리프레시 throttle(30s) — 신규 채용 봇 즉시 합류·형성
         log.info("요청 폴링 시작(동시 처리 — 상한 %d)", cap)
         # [수면 — 기억 증류 라이브화] 자기증류(경험→직무·개인 기준 압축)를 브레인 실행 루프에 배선한다.
@@ -2814,15 +2850,26 @@ class Sys:
                             # 일찍 done, 운영자 수동 요청이 없었으면 판이 조용히 죽었음). 미완이면 unpick으로
                             # 같은 요청을 되살려 다음 픽이 잇는다(상한 3회 — 무한 재픽 차단, 초과 시 정직 done).
                             _open = getattr(self, "_flow_open_task", {}).pop(int(_info["ch"]), False)
-                            _cn = cont_pickups.get(_mid, 0)
-                            if _open and _cn < 3:
-                                cont_pickups[_mid] = _cn + 1
+                            # [재픽 상한 영속(2026-07-20)] 판정 원천 = 픽업 때 실어온 payload 카운터
+                            # (unpick마다 웹이 +1 영속). 메모리 dict는 폐지 — 재시작 리셋 루프의 뿌리였다.
+                            _cn = int(_info.get("repick_n") or 0)
+                            _qhalt = getattr(self, "_flow_quota_halt", {}).pop(int(_info["ch"]), False)
+                            if _open and _cn < 3 and not _qhalt:
                                 seen.discard(_mid)
                                 await guide.pick(_mid, unpick=True)
                                 self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
                                 log.info("↻ Task 미완 — 같은 요청 재픽 예약(%d/3): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
                             else:
                                 await guide.pick(_mid, done=True)
+                                # [크레딧 한도 정지(2026-07-20)] 한도 소진 마감 = 재배달 없이 정직 종결
+                                # (충전/승인 후 사용자가 재개 — 피드는 '중단' 표시).
+                                if _qhalt:
+                                    try:
+                                        await self.guide.mark_stopped(int(_info["ch"]))
+                                    except Exception:
+                                        pass
+                                    self._log("quota_halt_closed", mid=_mid, ch=_info["ch"])
+                                    log.info("■ 크레딧 한도 — 정지 마감: msg_id=%s", _mid)
                                 # [완료 참칭 방지] 선거 제작 요청인데 산출물 0(Task 미개설)이면 done_ts는
                                 # 찍히되 **중단**으로 표시 — 피드가 '완료'가 아니라 '중단'으로 렌더(정직).
                                 if getattr(self, "_flow_no_deliverable", {}).pop(int(_info["ch"]), False):
@@ -2927,7 +2974,10 @@ class Sys:
                         seen.discard(mid)
                         continue
                     guide.set_origin(ch)
-                    inflight[mid] = {"task": asyncio.create_task(self.route_channel_request(ch, req, elect=_elect)), "ch": ch, "t0": _now}
+                    inflight[mid] = {"task": asyncio.create_task(self.route_channel_request(ch, req, elect=_elect)), "ch": ch, "t0": _now,
+                                     # [재픽 상한 영속(2026-07-20, ch79)] 횟수의 정본은 요청 payload —
+                                     # 메모리 카운터는 재시작마다 리셋돼 상한 3이 무력화됐었다(밤샘 루프).
+                                     "repick_n": int(m.get("repick_n") or 0)}
                     busy_ch.add(ch)
                     busy_lead.add(to_id)
                     log.info("▶ 요청 처리(동시 %d/%d): ch=%s to=%s kind=%s body=%r", len(inflight), cap, ch, to_id, m["kind"], m["body"][:42])

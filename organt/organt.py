@@ -188,13 +188,21 @@ class Organt:
         (resume)'를 추측 없이 정확히 안다. True=resume(핵심 규칙만·나머지는 대화 기억), False=fresh(전체)."""
         return self._session_in_store()
 
-    def _options_for_call(self) -> ClaudeAgentOptions:
-        """직전 세션이 있으면 resume를 붙인 옵션을 만든다."""
-        if self.session_id:
-            return dataclasses.replace(self.options, resume=self.session_id)
-        return self.options
+    def _options_for_call(self, micro: bool = False) -> ClaudeAgentOptions:
+        """직전 세션이 있으면 resume를 붙인 옵션을 만든다.
 
-    async def _run_once(self, prompt: str):
+        [마이크로 무도구(2026-07-20, e2e ch79 비용 실측)] 응찰·표결 같은 즉답 턴은 도구를 안 쓰는데
+        guide MCP 도구 스키마가 매 호출 입력 토큰으로 실렸다(프로브 1회 평균 $0.042의 큰 몫).
+        micro면 mcp_servers·allowed_tools를 비워 스키마를 원천 제거 — resume(세션 기억)은 그대로라
+        '못 본 것만 주입' 원칙과 정합(제한이 아니라 낭비 제거: 즉답 턴에 즉답만 싣는다)."""
+        o = self.options
+        if micro:
+            o = dataclasses.replace(o, mcp_servers={}, allowed_tools=[])
+        if self.session_id:
+            return dataclasses.replace(o, resume=self.session_id)
+        return o
+
+    async def _run_once(self, prompt: str, micro: bool = False):
         """ClaudeSDKClient 한 번 실행 → (최종 발화, session_id).
 
         SYS의 무진행 취소(CancelledError)가 나도 `async with`의 정상 종료(__aexit__)가 SDK 자원을
@@ -248,7 +256,7 @@ class Organt:
             except asyncio.CancelledError:
                 pass
 
-        opts = dataclasses.replace(self._options_for_call(), stderr=_collect_stderr)
+        opts = dataclasses.replace(self._options_for_call(micro=micro), stderr=_collect_stderr)
         _alive = None
         try:
             # [P0 봇풀 바운딩] 전역 서브프로세스 세마포어 + 메모리 입장 제어 통과 후 CLI 스폰 —
@@ -304,7 +312,7 @@ class Organt:
             final_text = (final_text + "\n(⚠ 턴 한도 도달 — 작업이 미완일 수 있음)").strip()
         return final_text, captured_sid
 
-    async def handle(self, prompt: str) -> str:
+    async def handle(self, prompt: str, micro: bool = False) -> str:
         """요청 한 건을 처리하고 **최종 발화**(=보고/응답)만 돌려준다.
 
         턴마다의 중간 narration은 버리고 마지막 메시지만 반환(Response가 간결). 직전 세션이
@@ -322,7 +330,9 @@ class Organt:
         _err = None
         for attempt in range(_MAX_API_RETRY):
             try:
-                final_text, captured_sid = await self._run_once(prompt)
+                # micro가 아닐 땐 종전 호출 형태 유지 — 시그니처 스텁(테스트·외부 대체)의 무회귀.
+                final_text, captured_sid = (await self._run_once(prompt, micro=True) if micro
+                                            else await self._run_once(prompt))
             except Exception as e:                       # 전송/스트림 예외도 일시오류로 간주해 재시도
                 final_text, captured_sid = f"API Error: {e}", None
                 _err = str(e)[:150]
