@@ -47,6 +47,8 @@ echo "== 2) system unittest =="; run_sysunit
 echo "== 3) 브레인 pytest (ops/tests/ — 실 system/guide/organt + 계약) =="; run_pytest ops/tests/
 if [ -z "$FAST" ]; then
   echo "== 4) 프론트 빌드 =="; ( cd "$R/murmur/frontend" && npm run build 2>&1 | tail -2 ) || fail=1
+  # [UI 정본 계약(2026-07-20)] 무리 표기·아바타 형태·공용 프리미티브 소유권 — 손 재구현이면 착지 실패
+  ( cd "$R/murmur/frontend" && node tools/check_ui_contracts.mjs ) || fail=1
 fi
 echo "== 5) STATE.md 신선도 (heads 대조) =="
 # 2레포: claude-company(루트=병합, STATE가 이 안에 있어 순환→정보표시) + murmur(별도→강제)
