@@ -7,7 +7,7 @@
 #   claim.sh list                    보드 출력
 #   claim.sh check <세션>            내 git 변경이 *남의* 점유와 겹치나 확인(겹치면 경고)
 set -uo pipefail
-R="${MURMUR_ROOT:-/root/ClaudeCompany}"
+R="${MURMUR_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"   # 자기 트리(check가 '내' 변경을 보게)
 BOARD="/root/ClaudeCompany/ops/CLAIMS.md"   # 항상 main = 세션(worktree) 간 공유. R은 git 변경 검사용(자기 트리)
 CMD="${1:-list}"; SES="${2:-}"
 

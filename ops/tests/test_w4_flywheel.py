@@ -7,6 +7,7 @@ B-22 persona 매체중립 저장소(personas.json — murmur 미러→Discord �
 """
 import asyncio
 import json as _json
+import os
 
 from test_sys import FakeGuide
 
@@ -206,8 +207,9 @@ def test_B21_recommend_투영_ledger정합_가산_키없으면_불변():
     """[B-21 용도③] recommend.score_candidates가 capability_ledger를 질의 정합으로 가산 — 같은 직군
     두 후보 중 검증된 실적 보유자가 앞선다. 키 없는 후보군은 기존 점수 그대로(회귀 0)."""
     import importlib.util as _ilu
+    _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     spec = _ilu.spec_from_file_location(
-        "sns_recommend", "/root/ClaudeCompany/murmur/backend/sns/recommend.py")   # 라이브(은퇴 PJT 아님)
+        "sns_recommend", os.path.join(_root, "murmur/backend/sns/recommend.py"))   # 자기 트리의 라이브 murmur(은퇴 PJT 아님)
     rec = _ilu.module_from_spec(spec)
     spec.loader.exec_module(rec)
     base = [{"bot_id": 1, "name": "a", "role": "백엔드", "event_count": 1},

@@ -6,7 +6,9 @@
 #   bash verify.sh --only system|guide|organt|murmur   세션 슬라이스(내부 루프, 빠름)
 # [P1] --only는 그 레포 소유 테스트 + 계약(test_contracts)만 — 세션이 자기 부분만 빠르게 검증.
 set -uo pipefail
-R="${MURMUR_ROOT:-/root/ClaudeCompany}"
+# R = 검증 대상 트리. 기본 = 이 스크립트가 사는 트리(worktree에서 돌면 그 worktree — 세션이
+# 자기 수정분을 검증하게). 정본 강제는 MURMUR_ROOT 명시(land.sh가 그렇게 부름).
+R="${MURMUR_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VENV=$R/.venv/bin
 fail=0
 ONLY=""

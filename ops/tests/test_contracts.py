@@ -38,7 +38,8 @@ CONTRACT = {
     "system.tool_names.LEADER_TOOLS": ["organt"],
 }
 
-_ROOT = "/root/murmur-stack"
+# 자기 트리 루트(<root>/ops/tests → <root>) — 정본/worktree 어디서 돌든 "지금 검증 중인 트리"를 스캔.
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _REPO_DIRS = {"system": "system", "organt": "organt", "guide": "guide", "murmur": "murmur/backend"}
 
 
@@ -85,8 +86,10 @@ def _cross_repo_imports():
 def test_미선언_크로스레포_import_없음():
     """(2) seam 봉쇄 — manifest에 없는 크로스레포 import는 계약 위반.
     새 계약이 필요하면 CONTRACT에 추가하라(그게 유일한 확장 경로 = 하위호환 금지 규약의 강제 지점)."""
+    found = _cross_repo_imports()
+    assert found, f"seam 스캔 실효 0({_ROOT}) — 트리 경로가 틀리면 빈 스캔=가짜 통과"
     undeclared = []
-    for path, cons in _cross_repo_imports():
+    for path, cons in found:
         allowed = CONTRACT.get(path)
         if allowed is None:
             undeclared.append(f"{path} ← {cons} (manifest 미선언)")
