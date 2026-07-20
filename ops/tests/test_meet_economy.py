@@ -202,7 +202,7 @@ def test_단위_2줄_자연표기_흡수_preflight_등록_동일판정(monkeypat
                 "게임 로직 (선택→판정→결과) | 실증: 9가지 조합을 node 스크립트로 전수 판정 확인\n\n"
                 "단위: 정적 배포\n배포 절차 | 실증: 공개 URL에서 curl 상태코드 200 확인\n")
     us = parse_units(two_line.splitlines())
-    assert len(us) == 2 and us[0].startswith("게임 판정 로직 — ") and "| 실증:" in us[0]
+    assert len(us) == 2 and us[0].startswith("게임 판정 로직 | ") and "| 실증:" in us[0]
     assert stage_preflight("subtask", two_line) == []
     # 조건 없는 단위 = 표결 전에 단위명 붙은 사유(등록에서야 전멸하던 은닉 제거)
     errs = stage_preflight("subtask", "## 결정\n단위: 제목만 있는 단위\n")
@@ -213,6 +213,7 @@ def test_단위_2줄_자연표기_흡수_preflight_등록_동일판정(monkeypat
     ms = open_milestone(f, "단판 가위바위보", [{"desc": "한 루프 동작", "verify": "curl로 페이지 200 확인"}])
     landed, note = register_stage(f, "subtask", two_line)
     assert landed and len(ms.subtasks) == 2
+    assert ms.subtasks[0].goal == "게임 판정 로직"   # 제목만 goal — 본문·게이트가 단계 이름을 압사시키지 않게
     # 게이트 불통과 단위는 사유가 메시지에 그대로 나온다('단위: 줄을 확인' 오진 금지)
     landed2, note2 = register_stage(f, "subtask", "## 결정\n단위: 조건 없는 단위\n")
     assert not landed2 and "조건 없는 단위" in note2 and "단위: 줄을 확인" not in note2

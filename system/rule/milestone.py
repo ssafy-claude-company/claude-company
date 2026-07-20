@@ -1114,7 +1114,9 @@ def parse_units(lines):
         if "|" not in u:
             nx = next((str(x).strip() for x in ls[i + 1:] if str(x).strip()), "")
             if "|" in nx and not nx.startswith(("단위:", "단계:", "백로그:", "##")):
-                u = f"{u} — {nx}" if u else nx
+                # '|'로 잇는다 — 제목이 goal(파이프 앞)로 남고 본문은 조건 쪽으로. '—'로 이으면
+                # 본문·[게이트]까지 통째 goal이 돼 단계 이름이 벽문장에 압사(U-035 표면 실측).
+                u = f"{u} | {nx}" if u else nx
         if u:
             out.append(u)
     return out
