@@ -49,6 +49,9 @@ class Criterion:
     # [조건 재협상 — 설계 검토 #1(2026-07-09)] 조건 자체가 환경상 달성 불가일 때의 출구. active →
     # (결정권자 renegotiate) blocked_pending → (사람 승인) waived. waived 조건은 iter 검증에서
     # '충족'처럼 제외된다(포기가 명시적으로 기록되고 사람이 승인 — churn을 무한 반복하지 않는다).
+    # [이월(2026-07-20, 사용자: '개입 최대한 줄여')] 재협상의 1차 해소는 이제 '다음 주기 이월' —
+    # 상태가 아니라 이동이다(조건 객체가 이 목록에서 빠져 Milestone.carried로 옮겨지고, 다음
+    # open_milestone이 기계로 합류시킴). blocked_pending(사람 대기)은 못 옮길 때만의 최후수단.
     status: str = "active"   # active | blocked_pending | waived
     block_reason: str = ""   # 왜 불가능한가(인프라 제약 등) — 사람 승인 판단의 근거
 
@@ -76,6 +79,9 @@ class Milestone:
     iter_n: int = 0
     iter_stuck: int = 0         # [조건 불가능 출구 #1] 진전 없는 연속 미충족 iter 수
     origin: str = ""            # 이 마일스톤을 낳은 것 — 사용자 원문 or e2e 결함(복기)
+    # [이월 원장(2026-07-20)] 이 주기가 '다음 주기로 이월'한 조건({desc, verify, reason}) —
+    # 다음 open_milestone이 소비해 새 주기 잣대로 합류시킨다(잣대를 버리는 게 아니라 옮김).
+    carried: list = field(default_factory=list)
 
 
 # ── 완수조건 등록 게이트 (계약 §2) ──────────────────────────────────────────────
@@ -343,6 +349,23 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
     ms = Milestone(ms_id=f"MS-{int(time.time() * 1000) % 10**9}-{len(flow.milestones) + 1}",
                    goal=str(goal or "").strip(), criteria=_mk_criteria(criteria_entries),
                    origin=str(origin or "").strip())
+    # [이월 조건 기계 합류(2026-07-20, 사용자: '개입 최대한 줄여')] 이전 주기가 이월한 조건을 새
+    # 주기 잣대에 자동 합류 — 이월이 '버리기'가 못 되게 하는 핵심(봇 약속이 아니라 구조가 옮김).
+    # 회의가 같은 desc를 이미 실었으면 중복 주입 없이 소진만.
+    _have = {x.desc.strip() for x in ms.criteria}
+    _joined = 0
+    for _pm in flow.milestones:
+        for _it in list(getattr(_pm, "carried", None) or []):
+            _d = str(_it.get("desc") or "").strip()
+            if _d and _d not in _have:
+                ms.criteria.append(Criterion(desc=_d, verify=str(_it.get("verify") or "")))
+                _have.add(_d)
+                _joined += 1
+        _pm.carried = []
+    if _joined:
+        if flow.log:
+            flow.log("criterion_carried_in", ms=ms.ms_id, n=_joined)
+        _pnote(flow, f"[이월 조건 합류] {_joined}건 — 이전 주기가 다음 주기로 미룬 잣대를 이 주기가 받음")
     # [직렬 강제(2026-07-11, 사용자: '중단되고 새로 열려버렸고')] 미완 주기 공존 금지 — 새 주기가
     # 열리면 이전 미완은 superseded로 닫는다(활성 판정·태깅·스냅샷이 새 주기를 가리키게).
     for _old in flow.milestones:
@@ -547,24 +570,85 @@ def iter_verify(flow, obj, results):
         if flow.log:
             flow.log("ms_iter_stuck", kind=kind, id=oid, iter=obj.iter_n, stuck=obj.iter_stuck)
         note += (f"\n[정체 — {obj.iter_stuck}회 연속 진전 없음] 반복이 결과를 못 바꾸고 있습니다. "
-                 f"조건이 환경상 달성 불가라면 결정권자가 renegotiate_criterion(대상 조건, 사유)로 "
-                 f"재협상하세요 — 사람 승인으로 조건을 포기(waive)하거나 바꿉니다. 무한 반복하지 마세요.")
+                 f"조건이 이번 주기 범위 밖이거나 환경상 불가라면 renegotiate_criterion(대상 조건, 사유)로 "
+                 f"재협상하세요 — 로드맵에 다음 주기가 있으면 사람 없이 그 주기로 즉시 이월되고, "
+                 f"못 옮길 때만 사람 승인을 구합니다. 무한 반복하지 마세요.")
     return False, note
 
 
 _STUCK_LIMIT = int(os.environ.get("ORGANT_ITER_STUCK_LIMIT", "3"))
 
 
+def roadmap_phases(flow):
+    """[로드맵 phase 정규화(2026-07-20, 사용자: '개입 최대한 줄여')] 로드맵 항목을 phase 목록으로 —
+    회의 골격이 '단계: 최소버전 → 확장 → 완성' 한 줄을 유도하므로, **띄운 화살표(' → ')만** 구분자로
+    분해한다(조건 파서의 '띄어쓴 파이프만' 계약과 같은 축 — phase 서술 속 '선택→결과' 같은 붙은
+    화살표는 안 쪼갬). 종전엔 한 줄 로드맵이 phase 1개로 세어져 다음 주기 회의가 영영 안 열렸다."""
+    out = []
+    for r in (getattr(flow, "roadmap", None) or []):
+        out += [p.strip() for p in re.split(r"\s+→\s+", str(r or "")) if p.strip()]
+    return out
+
+
+def defer_criterion(flow, obj, c, reason: str):
+    """[조건 이월 — 사람 개입 없는 1차 해소(2026-07-20, 사용자: '개입 최대한 줄여')] 이번 주기 범위
+    밖 조건을 '다음 주기로 이월'한다 — 잣대를 버리는 게 아니라 옮기는 것: 조건이 obj.carried 원장에
+    실리고 다음 open_milestone이 기계로 새 주기 잣대에 합류시킨다(봇 약속이 아니라 구조가 보증 →
+    완료 참칭 불가). 성립 조건(전부): ①마일스톤 조건일 것 ②미충족일 것 ③로드맵에 받아줄 후속
+    phase가 있을 것 ④이월 후에도 이번 주기에 잣대가 최소 1개 남을 것. 못 옮기면 None(호출측이
+    사람 경로로 — 그때만 최후수단)."""
+    if not isinstance(obj, Milestone) or c.passed or c.status == "waived":
+        return None
+    phases = roadmap_phases(flow)
+    done_n = sum(1 for m in (getattr(flow, "milestones", None) or []) if m.status == "done")
+    if len(phases) < done_n + 2:            # 현 주기=phase[done_n] — 받아줄 다음 phase가 없다
+        return None
+    if sum(1 for x in obj.criteria if x is not c and x.status != "waived") < 1:
+        return None                          # 마지막 잣대 이월 금지 — 잣대 0개 주기(빈 완료) 차단
+    obj.criteria.remove(c)
+    obj.carried.append({"desc": c.desc, "verify": c.verify, "reason": str(reason or "")[:200]})
+    obj.iter_stuck = 0
+    oid = getattr(obj, "ms_id", "")
+    if flow.log:
+        flow.log("criterion_deferred", id=oid, target=c.desc[:60], reason=str(reason or "")[:80])
+    _pnote(flow, f"[조건 이월] '{c.desc[:60]}' → 다음 주기 — 이번 주기 범위 밖(사람 개입 없이 자체 해소)")
+    _ckpt(flow)
+    return (f"조건 '{c.desc[:40]}' 다음 주기로 이월했습니다 — 사람 승인 불요(로드맵 후속 단계가 받아,"
+            f" 다음 주기 잣대로 자동 합류). 이번 주기는 남은 조건으로 진행하세요.")
+
+
+def resolve_blocked_by_defer(flow) -> int:
+    """[파킹 직전 훅(2026-07-20)] 이미 사람 대기(blocked_pending)로 굳은 조건도 이월 가능하면 사람
+    없이 해소 — 이 코드 이전에 막힌 판(복원 포함)의 소급 출구. 전부 풀리면 awaiting_human도 걷는다.
+    반환: 해소 건수(잔여 blocked가 있으면 호출측이 파킹 = 최후수단)."""
+    n = 0
+    for m in (getattr(flow, "milestones", None) or []):
+        if m.status in ("done", "superseded"):
+            continue
+        for c in list(m.criteria):
+            if c.status == "blocked_pending" and defer_criterion(flow, m, c, c.block_reason):
+                n += 1
+    if n and not pending_waivers(flow) and getattr(flow, "awaiting_human", None):
+        flow.awaiting_human = None
+    return n
+
+
 def renegotiate_criterion(flow, obj, target: str, reason: str) -> str:
-    """[조건 재협상 #1 — 결정권자] 달성 불가 조건을 blocked_pending으로 표시하고 사람에게 에스컬레이트한다.
-    사람 승인(approve_waiver)이 오기 전엔 waive되지 않는다 — '포기'는 봇이 혼자 못 하고 사람이 승인한다
-    (조건=마감권이므로 포기도 방향 결정 = 사람 몫). 승인 전까지 그 조건은 여전히 미충족으로 남되,
-    iter_stuck 경보가 반복 안 되게 재협상 진행 중 표식을 둔다."""
+    """[조건 재협상 #1] 달성 불가 조건의 출구 — 해소 사다리(사람 = 최후수단, 2026-07-20 사용자:
+    '개입 최대한 줄여'): ①로드맵 후속 phase가 받을 수 있으면 **이월로 즉시 자체 해소**(defer_criterion
+    — 사람 없이 종결, 잣대는 다음 주기로 이동) ②못 옮길 때만(로드맵 소진·마지막 잣대) blocked_pending
+    으로 사람에게 에스컬레이트. '포기(waive)'는 여전히 사람 승인 전용 — 잣대를 아예 버리는 결정만
+    사람 몫이고, 제자리로 옮기는 건 구조가 보증하므로 봇 선에서 끝난다."""
     c = next((x for x in obj.criteria if x.desc == target or target in x.desc), None)
     if c is None:
         return f"재협상 대상 조건을 못 찾음: {target[:40]} — 현재 조건: {' · '.join(x.desc[:24] for x in obj.criteria)}"
     if c.status == "waived":
         return f"이미 포기(waived)된 조건입니다: {c.desc[:40]}"
+    if c.passed:
+        return f"이미 충족된 조건입니다(재협상 불요): {c.desc[:40]}"
+    deferred = defer_criterion(flow, obj, c, reason)
+    if deferred:
+        return deferred
     c.status = "blocked_pending"
     c.block_reason = str(reason or "").strip()[:300]
     obj.iter_stuck = 0   # 재협상 진행 중 — 경보 반복 정지(사람 응답 대기)
@@ -989,7 +1073,9 @@ def meeting_stage(flow):
     if _open is None:
         # ② 마일스톤 회의 — 열린 주기 없음. 단 로드맵이 소진됐으면 더 열 주기 없음(무한 마일스톤 회의
         # 방지). 첫 마일스톤(아직 아무것도 없음)이거나, 로드맵에 안 지은 단계가 남았을 때만 연다.
-        _road = getattr(flow, "roadmap", None) or []
+        # [phase 정규화(2026-07-20)] 한 줄 화살표 로드맵(구 판 복원분)도 phase 수로 바로 센다 —
+        # 종전 len(raw)=1이면 2단계부터 회의가 영영 안 열렸다(이월 수신처 소멸과 같은 뿌리).
+        _road = roadmap_phases(flow)
         _done = [m for m in _mss if m.status == "done"]
         if not _mss or (_road and len(_done) < len(_road)):
             return "milestone"
@@ -1331,6 +1417,10 @@ def register_stage(flow, stage, prop, origin=""):
             return False, _gerr
         cyc = _val("이번 주기") or _val("목표") or (str(getattr(_cur.status, "goal", "") or "") if _cur else "")
         stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계:")]
+        # [phase 정규화(2026-07-20)] 골격이 유도하는 '한 줄 화살표' 표기(최소버전 → 확장)를 등록
+        # 시점에 phase 목록으로 분해 — 안 하면 로드맵이 1개로 세어져 다음 주기 회의·이월 수신처가
+        # 없다(띄운 화살표만 구분자 — roadmap_phases와 같은 계약).
+        stages = [p.strip() for s in stages for p in re.split(r"\s+→\s+", s) if p.strip()]
         if stages:
             flow.roadmap = stages
             _pnote(flow, "[로드맵] " + " → ".join(s[:40] for s in stages[:8]) + " (순차 1주기)")
@@ -1645,6 +1735,7 @@ def _crit_dict(c):
 def ms_to_dict(ms: Milestone) -> dict:
     return {"ms_id": ms.ms_id, "goal": ms.goal, "status": ms.status, "iter_n": ms.iter_n,
             "iter_stuck": ms.iter_stuck, "origin": ms.origin,
+            "carried": [dict(x) for x in (ms.carried or [])],   # [이월 원장 동승] 재시작 너머 보존
             "criteria": [_crit_dict(c) for c in ms.criteria],
             "subtasks": [{"st_id": s.st_id, "goal": s.goal, "status": s.status,
                           "iter_n": s.iter_n, "iter_stuck": s.iter_stuck,
@@ -1663,7 +1754,8 @@ def ms_from_dict(d: dict) -> Milestone:
     ms = Milestone(ms_id=str(d.get("ms_id") or ""), goal=str(d.get("goal") or ""),
                    criteria=_crit(d.get("criteria")), status=str(d.get("status") or "open"),
                    iter_n=int(d.get("iter_n") or 0), iter_stuck=int(d.get("iter_stuck") or 0),
-                   origin=str(d.get("origin") or ""))
+                   origin=str(d.get("origin") or ""),
+                   carried=[dict(x) for x in (d.get("carried") or []) if isinstance(x, dict)])
     for s in (d.get("subtasks") or []):
         ms.subtasks.append(SubTask(
             st_id=str(s.get("st_id") or ""), goal=str(s.get("goal") or ""),
