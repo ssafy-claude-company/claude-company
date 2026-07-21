@@ -1803,6 +1803,16 @@ def rule_report_iter(flow, me_id, args) -> str:
     if str(args.get("target") or "").strip() and tgt is None:
         return (f"대상 SubTask를 못 찾았습니다: {str(args.get('target'))[:40]} — "
                 f"현재 주기의 SubTask: {', '.join(s.st_id for s in ms.subtasks) or '(없음)'}")
+    # [완료 단위 재검증 차단(2026-07-21, U-039 재개 실측: 앵커가 이미 done인 ST-1에 계속 report_iter →
+    # iter_n++·ms_iter_pass 반복 루프로 크레딧 공회전, 릴레이는 ST-2로 안 넘어감)] 이미 done인
+    # SubTask는 재검증하지 않는다 — 다음 미완 단위 백로그로 가라고 코칭(재개 시 앵커의 스테일
+    # 컨텍스트가 완료 단위를 계속 닫으려는 것 근절). 미완 단위가 있으면 그리로 유도.
+    if tgt is not None and getattr(tgt, "status", "") == "done":
+        _nxt = next((s for s in ms.subtasks if s.status != "done"), None)
+        return (f"이 단위({tgt.st_id})는 이미 완료됐습니다 — 재검증하지 않습니다. "
+                + (f"다음 미완 단위 **{_nxt.st_id}**({_nxt.goal[:40]})의 백로그를 pick_backlog로 "
+                   f"집어 진행하세요." if _nxt else "이 주기의 단위가 모두 완료됐습니다 — report_iter"
+                   f"(wrapup='done')로 주기를 닫으세요."))
     # [자기 백로그 기본 귀속(2026-07-21, U-036 실측: 디자이너가 target 없이 report_iter → 보고가
     # 마일스톤 조건(V0/V1 게임플레이 게이트)에 0/5 미착지, 자기 백로그는 영원히 in_progress →
     # 릴레이 정지·[다음 선정] 불발 → 이후 54분이 메타 표결 공회전)] target 미지정이고 보고자가

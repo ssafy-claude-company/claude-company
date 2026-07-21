@@ -406,6 +406,27 @@ def test_무지정_보고는_자기백로그_SubTask로_귀속_릴레이_이음(
     assert "미착지" in out and "당신이 집은 백로그" in out
 
 
+def test_완료된_서브태스크는_재검증_차단_다음단위로(monkeypatch):
+    """[U-039 재개 실측(2026-07-21, 사용자: '완료로 뜨는데 재검증 루프')] 재개 시 앵커의 스테일
+    컨텍스트가 이미 done인 ST-1에 계속 report_iter를 날려 iter_n++·ms_iter_pass가 반복(크레딧
+    공회전)되고 릴레이는 다음 단위로 안 넘어갔다. 완료된 SubTask 재검증은 차단하고 다음 미완 단위로
+    코칭한다."""
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import rule_report_iter, rule_set_milestone, rule_set_subtask
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    rule_set_milestone(f, 11, {"goal": "게임", "criteria": "브라우저 30턴 | run 재현"})
+    rule_set_subtask(f, 12, {"goal": "메커닉", "criteria": "규격 리뷰 | grep -c 승인 review.md ≥ 1"})
+    rule_set_subtask(f, 12, {"goal": "로직", "criteria": "로직 검증 | pytest 통과"})
+    ms = f.milestones[0]
+    st1, st2 = ms.subtasks[0], ms.subtasks[1]
+    st1.status = "done"                                    # ST-1 완료 상태(재개 후)
+    _n0 = st1.iter_n
+    out = rule_report_iter(f, 11, {"target": st1.st_id, "results": "규격 리뷰 | pass | ok"})
+    assert "이미 완료" in out and st2.st_id in out          # 재검증 거부 + 다음 미완 단위 코칭
+    assert st1.iter_n == _n0                                # iter_n 안 늘어남(재검증 루프 차단)
+
+
 def test_등록_허용목록_전수_대조_회귀가드(monkeypatch):
     """[ch79 실측 회귀(2026-07-19) — 손 고른 부분집합 가드의 구멍] pick_backlog가 등록만 되고
     허용목록에 빠져 봇 선점이 전원 '권한 밖 도구' 거부 → 작업 전이 교착의 숨은 뿌리.
