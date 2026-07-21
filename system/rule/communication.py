@@ -410,9 +410,10 @@ async def meet(flow, me_id, args):
             from .._util import dossier_read as _dread, dossier_write as _dwrite
             _tmpl = _ms_dtmpl(_stage, (_agenda or topic)[:120])
             if _tmpl:
+                from .milestone import draft_should_reset as _dsr
                 _ex = _dread(flow, "DRAFT.md")
-                if _ex is None or f"[stage:{_stage}]" not in str(_ex):
-                    _dwrite(flow, "DRAFT.md", _tmpl)        # 새 단계 → 새 골격(같은 단계 재회의면 진행분 보존)
+                if _dsr(_stage, _ex):                       # [재시작-안전 불변식] 같은 단계 재회의면 진행분 보존
+                    _dwrite(flow, "DRAFT.md", _tmpl)        # 새 단계·초안 부재만 새 골격
                 if _dread(flow, "DRAFT.md") is not None:    # 쓰기 실패(워크스페이스 없음)면 폴백 유지
                     _draft_path = f"{dossier_rel(flow.current.task_id)}/DRAFT.md"
                     _stlbl = {"goal": "① GOAL", "milestone": "② 마일스톤", "subtask": "③ 서브태스크",
