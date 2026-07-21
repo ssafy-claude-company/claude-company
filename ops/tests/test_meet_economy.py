@@ -279,7 +279,11 @@ def test_봇개설_회의는_개설자_배제유지_지명증발_안내(monkeypa
     asyncio.run(t["create_task"].handler({"members": "12"}))
     asyncio.run(t["meet"].handler({"topic": "목표", "my_opinion": "여는 의견"}))
     assert 11 not in spoke                             # 봇 개설 = 개설자 배제 유지(세션 안전)
-    assert any("지명은 무효 처리" in b or "참여자가 아닙니다" in b for b in bodies)   # 증발 가시화
+    # [지명 구조 강제(2026-07-21, 사용자: '평문 이름 말고 구조화 — 안 맞으면 다시 보내라')] 해석
+    # 불가 지명 → SYS가 정본 문법([지명: <봇id>]) 재전송을 먼저 요구(마이크로 1회 — 대본은 [패스]로
+    # 접음), 그래도 무효면 [안내]가 다음 발언들에 서빙된다.
+    assert any("[지명 형식 재전송]" in b and "봇 id" in b for b in bodies)
+    assert any("해석하지 못해 무효" in b for b in bodies)
 
 
 def test_전역회의는_SubTask태깅_생략_공통흐름_소속(monkeypatch, tmp_path):

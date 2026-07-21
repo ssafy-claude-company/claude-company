@@ -369,6 +369,25 @@ async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO, micro=Fal
         flow.fork_active -= 1
 
 
+def _resolve_nominee(tok, flow, allowed):
+    """[지명 정본 해석(2026-07-21, 사용자: '동명이인이 되니 id로 최대한 — 평문 이름 말고 구조화')]
+    발언권 지명 전용의 엄격 해석: ①숫자 id 정확 일치 우선 ②이름은 **유일 일치**만(동명이인·부분
+    중복이면 None — 재전송 요구 대상). 쉼표 다중은 첫 유효만(발언권은 한 번에 1인)."""
+    for t in str(tok or "").split(","):
+        t = t.strip().strip("()").strip()
+        if not t:
+            continue
+        if t.lstrip("-").isdigit():
+            v = int(t)
+            if v in allowed:
+                return v
+            continue
+        ms = [i for i in allowed if t.lower() in (flow._info(i) or "").lower()]
+        if len(ms) == 1:
+            return ms[0]
+    return None
+
+
 def _is_system_role_label(label) -> bool:
     """[시스템 직군 판별(2026-07-21, U-038 실측·사용자 결정: '채용' 직군이 실행 팀에 합류 → 제외)]
     채용/인사(리크루터)는 온보딩·전수 전담 시스템 직군 — 판 참여 응찰의 후보가 아니다

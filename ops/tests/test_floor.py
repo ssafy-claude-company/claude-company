@@ -270,9 +270,17 @@ def test_turn_signals_지명과_패스():
     addr3, _ = _turn_signals(f, "[질문 @QA] 검증 계획이 있습니까?", [12, 13])
     assert addr3 == 13
     addr4, _ = _turn_signals(f, "[질문 @미지의봇(12)] 스키마는요?", [12, 13])
-    assert addr4 == 12                                            # 이름 실패 → id 폴백
+    assert addr4 == 12                                            # 괄호 id 우선
     addr5, _ = _turn_signals(f, "본문입니다\n[질문 @QA] 인용", [12, 13])
     assert addr5 is None                                          # 첫 실질 줄만 자기 선언
+    # [지명 정본(2026-07-21, 사용자: '동명이인 — id로 최대한')] 이름은 유일 일치만 — 같은 직군 둘이면
+    # 무효(재전송 요구 대상), id는 정확.
+    f2 = Flow(g, channel_id=501, guild_id=1, leader_id=11,
+              bot_info={11: "L", 12: "백엔드", 13: "백엔드"})
+    a_dup, _ = _turn_signals(f2, "정리했습니다.\n[지명: 백엔드]", [12, 13])
+    assert a_dup is None                                          # 동명이인 → 무효
+    a_id, _ = _turn_signals(f2, "정리했습니다.\n[지명: 13]", [12, 13])
+    assert a_id == 13                                             # id는 정확 해석
 
 
 # ══ 실표면 통합 ① — meet(회의)가 seam 위에서 돈다 ═══════════════════════════════
