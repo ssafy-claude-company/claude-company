@@ -629,11 +629,6 @@ async def meet(flow, me_id, args):
             # [응찰 쿨다운(2026-07-18, wake 축소)] OPEN 수집에서 직전 패스 봇을 _cool_n회 제외 —
             # 스킵 = 강도 0과 동형(비용 0). 종결 표결은 전원(회의 닫힘 판정이라 표본 축소 금지).
             probe = list(cands) if purpose == CLOSE_VOTE else _cooldown_probe(cands, _cool, _cool_n)
-            if purpose != CLOSE_VOTE:
-                try:
-                    st.offered.update(int(x) for x in probe)   # [첫 오퍼 장부] 프로브가 닿은 참여자
-                except Exception:
-                    pass
             def body_of(c):
                 if purpose == CLOSE_VOTE:
                     # [결정권자 폐지 — 종결 표결이 곧 확정(2026-07-09, 사용자)] 파이프라인 회의에서
