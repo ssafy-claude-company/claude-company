@@ -51,6 +51,17 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         if role == "leader":
             allowed = allowed + LEADER_TOOLS
             turns = int(os.environ.get("ORGANT_LEADER_TURNS", "500"))
+        # [턴 예산 캡(2026-07-21, U-036 재작업 #4 — 사용자: '하이쿠가 아니라 파이프라인 설계의 토큰
+        # 낭비를 최적화')] 실측: 봇 턴 평균 output 5~8K에 디자이너 한 턴이 도구 ~35왕복·~37K 생성 —
+        # 위 max_turns(300/500)는 무한루프 브레이크일 뿐이라 한 턴의 output·비용은 사실상 무상한이었다.
+        # SDK max_budget_usd(초과 시 그 자리 종료 — 세션은 보존돼 다음 wake가 resume로 잇고, organt가
+        # 정직 마커를 달아 미완 참칭 없음)를 턴 봉투로 씌운다. ORGANT_TURN_BUDGET_USD 기본 1.0 =
+        # U-036 실측 평균 턴(~$0.06)의 ~15배 — 정상 작업·대형 파일 턴은 안 닿고 왕복 폭주 꼬리만
+        # 자른다(값은 정책 — env 조정, 0=off). 효과 수치는 다음 실판 실측으로 확정.
+        try:
+            _tbud = float(os.environ.get("ORGANT_TURN_BUDGET_USD", "1.0"))
+        except ValueError:
+            _tbud = 1.0
         # state_tag: 증류(수면) 등 '작업 외 대화'는 별도 세션 파일을 써 작업 기억을 오염시키지 않는다.
         # 흐름이 있으면 세션을 '흐름 스코프'별로 분리 — 프로젝트 간 기억 오염·병렬 흐름 충돌이
         # 구조적으로 불가능(같은 봇이 두 프로젝트에서 동시에 일해도 기억이 섞이지 않음).
@@ -135,6 +146,8 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                 "PostToolUse": [HookMatcher(hooks=[make_post_tool_use_hook(audit, actor=organt_id, role=label, flow=flow)])],
             },
         )
+        if _tbud > 0:
+            _bopts["max_budget_usd"] = _tbud
         _m = model_map.get(organt_id) or (global_model or "")   # [모델] 개별 지정 우선, 없으면 전역 기본(채용 봇 포함)
         if _m:
             _bopts["model"] = _m

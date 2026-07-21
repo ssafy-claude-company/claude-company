@@ -112,6 +112,40 @@ def test_메시지수신마다_하트비트_on_activity(monkeypatch):
     assert beats["n"] == 3
 
 
+def test_턴예산_초과는_정직마커로_반환(monkeypatch):
+    """[U-036 재작업 #4(2026-07-21)] SDK가 max_budget_usd 초과로 턴을 끊으면(error_max_budget_usd)
+    '턴 한도 도달(예산 상한)' 정직 마커를 달아 반환 — ①미완 참칭 없음 ②'턴 한도 도달' 문구 족이라
+    이어가기 신호와 정합(흐름은 다음 wake의 세션 resume로 잇는다) ③빈 발화여도 마커로 비-공백이 돼
+    handle의 빈응답 재시도(예산 재소진 루프)에 안 빠진다."""
+    import asyncio
+    o = Organt(_cfg())
+
+    class _RM:
+        subtype = "error_max_budget_usd"
+        stop_reason = ""
+
+    class _FakeClient:
+        def __init__(self, options):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def query(self, prompt):
+            pass
+
+        async def receive_response(self):
+            yield _RM()   # 발화 없이 예산 컷 결산만 — 최악(빈 발화) 경로
+
+    monkeypatch.setattr("organt.organt.ClaudeSDKClient", _FakeClient)
+    monkeypatch.setattr("organt.organt.ResultMessage", _RM)
+    out, _sid = asyncio.run(o._run_once("p"))
+    assert "턴 한도 도달(예산 상한)" in out                    # 정직 마커 + 비-공백(재시도 차단)
+
+
 def test_세션_cwd고정_pinned_cwd(tmp_path):
     """[세션-cwd 고정] CLI 세션 저장소는 cwd 기준 — 상태 파일에 '세션이 시작된 cwd'를 영속하고,
     다음 빌드는 그 cwd로 resume한다(흐름 도중 작업공간 카빙에도 세션 불멸). 디렉터리가 사라졌으면

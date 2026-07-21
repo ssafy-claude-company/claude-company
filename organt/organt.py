@@ -211,6 +211,7 @@ class Organt:
         final_text = ""
         captured_sid: Optional[str] = None
         truncated = False
+        budget_cut = False
         # stderr 수집: CLI의 실패 사유(예: 'No conversation found')는 stderr로만 나와 SDK 예외
         # 텍스트에 안 실린다(라이브 관측 — 마커 감지 불발의 원인). 꼬리를 모아 예외에 붙여
         # '왜 죽었는지'가 항상 에러 텍스트에 남게 한다(스테일 마커·일시오류 판별 모두 강화).
@@ -289,6 +290,10 @@ class Organt:
                         st = (getattr(msg, "subtype", "") or "") + (getattr(msg, "stop_reason", "") or "")
                         if "max_turns" in st.lower():
                             truncated = True
+                        # [턴 예산 캡(2026-07-21, U-036 재작업 #4)] max_budget_usd 초과 종료도 같은
+                        # '끊긴 턴' 족 — 정직 마커(아래)로 미완 참칭을 막고, 세션은 보존돼 resume가 잇는다.
+                        if "max_budget" in st.lower():
+                            budget_cut = True
                         # SDK 결산(모델·SDK 버전마다 필드명 상이 — 방어적으로). 종전엔 전량 폐기.
                         _u = getattr(msg, "usage", None) or {}
                         if not isinstance(_u, dict):
@@ -310,6 +315,10 @@ class Organt:
                 _alive.cancel()                          # 턴 종료(서브프로세스 죽음·완료) → 생존 신호 중단
         if truncated and not _is_transient_api_error(final_text):
             final_text = (final_text + "\n(⚠ 턴 한도 도달 — 작업이 미완일 수 있음)").strip()
+        # [턴 예산 캡] '턴 한도 도달' 문구 족을 공유해 이어가기 신호(sys_core continue 조건)와 정합 —
+        # 빈 발화여도 마커로 비-공백이 되므로 handle의 빈응답 재시도(예산 재소진)에도 안 빠진다.
+        if budget_cut and not _is_transient_api_error(final_text):
+            final_text = (final_text + "\n(⚠ 턴 한도 도달(예산 상한) — 여기서 끊고 반환, 작업이 미완일 수 있음)").strip()
         return final_text, captured_sid
 
     async def handle(self, prompt: str, micro: bool = False) -> str:

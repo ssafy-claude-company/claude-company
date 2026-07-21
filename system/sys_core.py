@@ -856,11 +856,34 @@ class Sys:
                     gr["keys"].append((jk, jn)); gr["mem"].append((s0, mid)); break
             else:
                 _grps.append({"keys": [(jk, jn)], "mem": [(s0, mid)]})
-        joined, standby = [], []
+        _rep_score, standby = {}, []
         for gr in _grps:
             gr["mem"].sort(key=lambda sm: (-_taskfit(sm[1]), -sm[0], str(sm[1])))   # 적합↑·응찰↑·id안정
-            joined.append(gr["mem"][0][1])
+            _rs, _rm = gr["mem"][0]
+            _rep_score[_rm] = _rs
             standby.extend(m for _, m in gr["mem"][1:])
+        # [합류 누진 임계(2026-07-21, U-036 재작업 #2 — 사용자: '상위 6명이 아니라 1명 추가될 때마다
+        # 필요한 응찰 점수를 높여라')] 직군 대표들이 전원 자동 합류하던 것(U-036 실측: 11개 상이 직군
+        # 전원 팀 → 회의·협의가 예산 52%)을 응찰 강도 순 누진 입장으로 — n번째 합류엔
+        # bid_threshold(n)(free 3까지 1, 이후 ORGANT_JOIN_BID_STEP(기본 2)씩 상승: 4번째 3·5번째 5·
+        # 6번째 7·7번째 9·8번째 11=1~9 스케일 밖) 이상의 응찰이 필요하다. 평평한 하드캡(414e850의
+        # ORGANT_TEAM_CAP=6, 사용자 반려) 대체 — 문턱은 스스로 낸 확신(응찰)이 넘는 것이라 자기선택
+        # 원칙 그대로고, 적합 낮은 주변 직군은 임계 미달로 자연 탈락한다(배제 아님 — 후보 대기 명단
+        # 합류·판 중간 recruit 문은 종전대로 열려 있다). step 0 = 곡선 off(전원 합류 = 종전).
+        from .rule.floor import bid_threshold as _bth
+        try:
+            _jstep = max(0, int(os.environ.get("ORGANT_JOIN_BID_STEP", "2") or 2))
+        except ValueError:
+            _jstep = 2
+        joined = []
+        for _m in sorted(_rep_score, key=lambda m: (-_rep_score[m], -_taskfit(m), str(m))):
+            _need = _bth(len(joined) + 1, _jstep)
+            if _rep_score[_m] >= _need:
+                joined.append(_m)
+            else:
+                standby.append(_m)
+                self._log("join_below_threshold", channel=channel_id, who=int(_m),
+                          score=int(_rep_score[_m]), need=int(_need))
         # 앵커(첫 주자) = 합류자 중 최고 응찰 — 대표가 적합으로 바뀌어도 앵커는 합류자에서만.
         winner = next(((s, m, x) for s, m, x in bids if m in joined), bids[0])
         self._log("propose_elected", channel=channel_id, who=winner[1], score=winner[0],
@@ -1414,11 +1437,21 @@ class Sys:
         rot = flow.leader_segment % len(team)
         cap = max(1, int(os.environ.get("ORGANT_FLOOR_OFFERS", "3") or "3"))
         cands = (team[rot:] + team[:rot])[:cap]      # 회전 = 응찰 기회 공정성(장부 없는 결정론)
+        # [발언 누진 임계(2026-07-21, U-036 재작업 #2)] 회의(floor.resolve_open)와 같은 곡선을 작업 중
+        # 끼어들기에도 — 판 인원(팀+앵커)이 클수록 더 높은 확신만 세그먼트를 끊는다. env·기본값 공유.
+        from .rule.floor import bid_threshold as _bth
+        try:
+            _sstep = max(0, int(os.environ.get("ORGANT_SPEAK_BID_STEP", "1") or 1))
+        except ValueError:
+            _sstep = 1
+        _req = _bth(len(team) + 1, _sstep)
 
         def _probe_body(c):
+            _bar = (f" (참여 {len(team) + 1}명 — `[응찰: {_req}]` 이상만 발언권을 받습니다)"
+                    if _req > 1 else "")
             return ("[발언권 응찰 — 자기선택] 진행 중인 작업 상황에 **지금** 보태야 할 관찰·우려·"
                     "제안이 있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 "
-                    "요지만, 없으면 `[패스]`만 답하세요.")
+                    f"요지만, 없으면 `[패스]`만 답하세요.{_bar}")
         # [응찰≠작업생각] 프로브·발언 동안 activity log(💭)를 억제한다 — 응찰 추론("배포 논의에 …응찰합니다")은
         # 봇의 실작업 생각이 아니라 턴테이킹 메커니즘이라 진행표시에 남기면 안 된다(사용자: "왜 응찰이 중간에
         # 저렇게 남아"). 대신 낙찰 '발언'은 채널에만 남긴다(가시화). finally로 반드시 해제.
@@ -1429,7 +1462,7 @@ class Sys:
                 s = 0 if res is None else _bid_score(res)
                 bids.append((int(m), s))
                 self._log("floor_bid", surface="segment", who=int(m), score=s)
-            pos = sorted((b for b in bids if b[1] > 0), key=lambda b: -b[1])   # 동률=회전 순(stable)
+            pos = sorted((b for b in bids if b[1] >= _req), key=lambda b: -b[1])   # 동률=회전 순(stable) · 임계 미달=패스 동형
             if not pos:
                 self._log("floor_alloc", surface="segment", policy="turn-taking", kind="continue", nxt=int(lead))
                 return ""                                # ③ 무응찰 → 리더 계속(종전과 동형)
@@ -1565,12 +1598,16 @@ class Sys:
             self._log("claim_kick_error", err=str(e)[:80])
 
     async def run_turn(self, flow: Flow, organt_id, body, kind, role, micro=False) -> str:
-        # [크레딧 한도 — 봇 wake 단일 관문 게이트(2026-07-21, U-036 실측: 1500 캡에서 1852까지 누수)]
-        # 종전 quota_halt는 리더 continue 세그먼트 경계에만 있어, 회의(전원 발언 라운드)·심의단 병렬
-        # 처럼 세그먼트 '안'에서 도는 봇 턴들을 하나도 못 막았다 — 실측: 1500 돌파 후 14분간 23턴이
-        # 더 돌며 352cr 초과, 전부 회의 발언이었다. run_turn은 리더·멤버·마이크로·회의발언·심의단·
-        # 위임 등 **모든 봇 wake의 단일 관문**이라, 여기서 LLM 호출 전에 차단하면 초과가 '이미
-        # 시작된 턴'으로 한정된다(안내·마감은 continue 루프/reap이 담당 — 여기선 조용히 비용 0 반환).
+        # [크레딧 한도 — 봇 wake 단일 관문 게이트(2026-07-21, U-036 실측: 1500 캡에서 1852까지 누수.
+        # 재작업 #1로 '리더' 서술 교정 — 위임 보스로서의 리더는 07-13 폐지, 코드의 leader는 앵커
+        # (턴 앵커 = 이어가기 루프 재시작 지점, 참여 공고 최고 응찰)의 하위호환 별칭이다: flow.py)]
+        # 종전 quota_halt는 **앵커 continue 세그먼트 경계**(아래 이어가기 루프의 반복 조건)에만 있어,
+        # 회의(전원 발언 라운드)·심의단 병렬처럼 세그먼트 '안'에서 도는 봇 턴들을 하나도 못 막았다 —
+        # 실측: 1500 돌파 후 14분간 23턴이 더 돌며 352cr 초과, 전부 회의 발언이었다. run_turn은
+        # 앵커 이어가기·회의 발언·심의단·마이크로(응찰·표결)·위임 등 **모든 봇 wake의 단일 관문**
+        # (flow.wake/wake_micro가 전부 여기로 온다 — 예외는 판 개시 전의 참여 공고뿐)이라, 여기서
+        # LLM 호출 전에 차단하면 초과가 '이미 시작된 턴 1개'로 한정된다(플래그는 그 턴의 적립 응답이
+        # 세우므로. 안내·마감은 continue 루프/reap이 담당 — 여기선 조용히 비용 0 반환).
         if getattr(flow, "_quota_over", False):
             _ch = int(getattr(flow, "user_channel", 0) or 0)
             if not hasattr(self, "_quota_gate_hits"):

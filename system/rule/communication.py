@@ -253,8 +253,8 @@ async def meet(flow, me_id, args):
         #   turn-taking = Sacks ①지명(발언 끝 [지명: 이름]) ②자기선택 = **LLM 응찰**(후보 봇들이
         #   병렬로 '지금 내가 발언해야 하나'를 스스로 판정, [응찰: N] — 최고 응찰이 발언권 획득,
         #   동률=침묵 오래된 순) ③계속 — 무응찰 소진 시 조기 자연 종결(고정 라운드에선 불가능).
-        from .floor import (CLOSE_VOTE, SELF, FloorState, Turn, floor_mode, make_floor,
-                            round_robin, run_conversation)
+        from .floor import (CLOSE_VOTE, SELF, FloorState, Turn, bid_threshold, floor_mode,
+                            make_floor, round_robin, run_conversation)
         mode = floor_mode(getattr(flow, "floor_mode", None), default="orchestrated")
         tt = (mode == "turn-taking")
         # ══ [2층 stance seam(2026-07-18) — 발화 타입·인접쌍 기대(CA-Lab RFC-003 2층)] 기본 OFF:
@@ -347,6 +347,12 @@ async def meet(flow, me_id, args):
             _cool_n = max(0, int(os.environ.get("ORGANT_BID_COOLDOWN", "0") or 0))
         except ValueError:
             _cool_n = 0
+        # [발언 누진 임계 기울기] floor 정책(TurnTakingFloor._speak_step)과 같은 env·기본값 — 프롬프트
+        # 고지용(판정은 정책이 함). 값이 갈리면 고지와 판정이 어긋나므로 한 env를 양쪽이 읽는다.
+        try:
+            _sstep = max(0, int(os.environ.get("ORGANT_SPEAK_BID_STEP", "1") or 1))
+        except ValueError:
+            _sstep = 1
         _cool = {}                            # 봇 → 남은 스킵 수집 수(_cooldown_probe가 감쇠)
         # 총 wake 상한(발언+응찰) — TT 비용·폭주 백스톱. 응찰은 open마다 후보 전원(≤인원-1)이라
         # 상한을 인원 배수로 잡는다(회의는 소수 인원 표면 — 응찰이 곧 '전원이 눈치보는' 비용).
@@ -625,10 +631,15 @@ async def meet(flow, me_id, args):
                             f"발언이 소진됐습니다. 이 회의를 마쳐도 됩니까? 당신({flow._info(c)})이 "
                             f"판단하세요. 더 다뤄야 할 것이 있으면 `[계속: N]`(N=1~9)과 무엇인지 한 줄만 "
                             f"— 발언권을 받아 직접 발언하게 됩니다.{_l2_pend}{_conv}{_gate}")
+                # [발언 누진 임계 고지(2026-07-21, U-036 재작업 #2)] 문턱은 floor 정책(resolve_open)이
+                # 기계로 거르지만, 응찰자가 바를 모르면 미달 응찰만 반복한다 — 현재 임계를 그대로 서빙.
+                _req = bid_threshold(len(members), _sstep)
+                _bar = (f" 지금 참여 {len(members)}명 — 이번 판은 `[응찰: {_req}]` 이상만 발언권을 "
+                        f"받습니다(그 미만은 패스와 동일 — 꼭 보태야 할 것만)." if _req > 1 else "")
                 return (f"[회의 — 발언권 응찰] 주제: {topic}\n못 본 발언:\n{_ctx_for(c)}\n\n"
                         f"지금 발언권이 비어 있습니다. 당신({flow._info(c)})이 **지금** 발언할 필요가 "
                         f"있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 이유만 "
-                        f"답하세요 — 발언 내용은 발언권을 받은 뒤에 말합니다. 없으면 `[패스]`만.")
+                        f"답하세요 — 발언 내용은 발언권을 받은 뒤에 말합니다. 없으면 `[패스]`만.{_bar}")
             out = []
             for m, res, note in await _fork_collect(flow, me_id, list(probe), body_of, micro=True):
                 wakes["n"] += 1

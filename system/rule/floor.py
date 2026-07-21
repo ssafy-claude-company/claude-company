@@ -44,6 +44,17 @@ def floor_mode(explicit: Optional[str] = None, default: str = "request-response"
     return v if v in _MODES else default
 
 
+def bid_threshold(n: int, step: int, free: int = 3) -> int:
+    """[누진 응찰 임계(2026-07-21, U-036 재작업 #2 — 사용자: '인원 1명 추가될 때마다 응찰 점수값·
+    발언 임계를 높여 기하급수 증가를 막아라')] n번째 참여(합류)·n명 판의 발언에 요구되는 최소 응찰
+    강도. free명까지는 임계 1(양수 응찰이면 통과 — 소수 핵심은 자유), 이후 1명마다 step씩:
+    **임계 = 1 + step × max(0, n − free)**. 응찰 스케일이 1~9 유한이라 곡선 자체가 자연 천장을
+    만든다(합류 step 2: 4번째 3·5번째 5·6번째 7·7번째 9·8번째 11=불가 — 평평한 하드캡 없이
+    sub-linear 수렴, 적합 낮은 주변 직군은 임계 미달로 자연 탈락). step 0 = 곡선 off(임계 1 고정 =
+    종전 '양수면 통과'). free 3 = 표결 성립 최소 2 + 앵커(실행 핵심 소수는 문턱 없이)."""
+    return 1 + max(0, int(step)) * max(0, int(n) - int(free))
+
+
 @dataclass
 class Turn:
     """끝난 턴 하나의 사실(TRP 입력). 정책은 body 내용을 해석하지 않는다 — 지명/패스 같은 신호의
@@ -136,6 +147,14 @@ class TurnTakingFloor(FloorPolicy):
         except ValueError:
             self._qdepth = 1
         self._queue: List[int] = []
+        # [발언 누진 임계(2026-07-21, U-036 재작업 #2)] 참여자가 많을수록 발언권에 더 높은 응찰
+        # 강도를 요구 — 큰 판의 '전원이 매 라운드 한마디씩'(U-036 실측: 회의 전원발언이 초과분을
+        # 태움)을 확신 있는 발언만 남게 눌러 라운드를 빠르게 종결 표결로 수렴시킨다. 기울기 =
+        # ORGANT_SPEAK_BID_STEP(기본 1: 3명 이하 1 · 4명 2 · 6명 4 · 11명 9), 0 = off(종전).
+        try:
+            self._speak_step = max(0, int(os.environ.get("ORGANT_SPEAK_BID_STEP", "1") or 1))
+        except ValueError:
+            self._speak_step = 1
 
     def next_after(self, st: FloorState, turn: Turn) -> Allocation:
         a = turn.addressee
@@ -152,7 +171,11 @@ class TurnTakingFloor(FloorPolicy):
 
     def resolve_open(self, st: FloorState, turn: Turn, bids) -> Allocation:
         order = {c: i for i, c in enumerate(st.silence_order(exclude=(turn.speaker,)))}
-        positive = [(c, int(s)) for c, s in (bids or []) if int(s) > 0 and c in order]
+        # [발언 누진 임계] 판 인원(participants)에 비례해 문턱 상승 — 임계 미달 응찰은 패스와 동형.
+        # 종결 반대([계속], resolve_close_vote)엔 **미적용**: 반대는 종결 보장 스택(07-17)의 보호
+        # 채널이라 큰 판에서도 강도 1의 이의로 회의를 되살릴 수 있어야 한다(억제 대상은 발언 비용).
+        _req = bid_threshold(len(st.participants), self._speak_step)
+        positive = [(c, int(s)) for c, s in (bids or []) if int(s) >= _req and c in order]
         if positive:
             # 최고 응찰 승 — 동률이면 침묵 오래된 순(order 앞) 우대. 차순위(2..K위)는 큐에 적재해
             # 다음 배분들이 재수집 없이 소비(깊이 1이면 종전대로 승자만).

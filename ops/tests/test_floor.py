@@ -55,6 +55,35 @@ def test_TT_규칙2_응찰판정_최고가_승리_동률은_침묵순():
     assert a2.kind == SELF and a2.next == B            # 최고 응찰 승
 
 
+def test_TT_발언누진임계_큰판은_저강도_전체가_패스동형(monkeypatch):
+    """[U-036 재작업 #2(2026-07-21, 사용자: '발언의 응찰 임계도 높여라')] 판 인원에 비례해 발언
+    문턱 상승 — 임계 = 1 + step×max(0, 인원−3), 기본 step 1. 6명 판은 임계 4: 3짜리 응찰 전원은
+    패스와 동형(종결 확인으로 직행), 4 이상만 발언권. 3명 이하 판은 임계 1(종전). step 0 = off."""
+    from system.rule.floor import bid_threshold
+    assert [bid_threshold(n, 1) for n in (3, 4, 6, 11)] == [1, 2, 4, 9]
+    assert [bid_threshold(n, 2) for n in (3, 4, 5, 6, 7, 8)] == [1, 3, 5, 7, 9, 11]
+    assert bid_threshold(11, 0) == 1                       # step 0 = 곡선 off
+    six = [1, 2, 3, 4, 5, 6]
+    pol = TurnTakingFloor()
+    a = pol.resolve_open(FloorState(six), Turn(speaker=1), [(c, 3) for c in six[1:]])
+    assert a.kind == CLOSE_VOTE                            # 6명 판 임계 4 — 3짜리 전원 미달
+    a2 = pol.resolve_open(FloorState(six), Turn(speaker=1), [(2, 3), (3, 4)])
+    assert a2.kind == SELF and a2.next == 3                # 4만 문턱 통과
+    a3 = TurnTakingFloor().resolve_open(FloorState([A, B, C]), Turn(speaker=A), [(B, 1)])
+    assert a3.kind == SELF and a3.next == B                # 3명 판 임계 1 = 종전(무회귀)
+    monkeypatch.setenv("ORGANT_SPEAK_BID_STEP", "0")
+    a4 = TurnTakingFloor().resolve_open(FloorState(six), Turn(speaker=1), [(2, 1)])
+    assert a4.kind == SELF and a4.next == 2                # off = 양수면 통과(종전)
+
+
+def test_TT_종결반대_계속은_누진임계_미적용():
+    """[반대 보호] 종결 확인의 [계속: N]은 발언 의무를 진 이의 채널(07-17 종결 보장 스택) — 큰 판이라도
+    강도 1의 반대가 회의를 되살릴 수 있어야 한다. 누진 임계는 발언(OPEN) 비용 억제에만."""
+    eight = list(range(1, 9))
+    a = TurnTakingFloor().resolve_close_vote(FloorState(eight), Turn(speaker=1), [(5, 1)])
+    assert a.kind == SELF and a.next == 5                  # 8명 판에서도 [계속: 1]이 소생
+
+
 def test_TT_규칙3_무응찰이면_즉시_종결확인_표결():
     """[EXP-002 절제] 무응찰 → (종전 ③현재 화자 계속·lapse 카운터 없이) 곧장 종결 확인 표결.
     이어가기 채널은 표결의 [계속: N](발언 의무)이 담당한다."""
@@ -531,7 +560,8 @@ def test_응찰큐_깊이3_재수집없이_순차배분(monkeypatch):
     st = _tt_state([1, 2, 3, 4, 5])
     t = Turn(speaker=1, body="발제")
     st.record(t)
-    a = p.resolve_open(st, t, [(2, 5), (3, 3), (4, 1), (5, 0)])
+    # 5명 판 발언 임계 3(누진 임계, 2026-07-21) — 큐 역학이 주제라 전원 문턱 위 점수로 응찰
+    a = p.resolve_open(st, t, [(2, 5), (3, 4), (4, 3), (5, 0)])
     assert a.kind == SELF and a.next == 2                    # 1위 즉시
     t = Turn(speaker=2, body="발언")
     st.record(t)

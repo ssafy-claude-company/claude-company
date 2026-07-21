@@ -970,6 +970,34 @@ def test_크레딧한도_run_turn_게이트_봇wake_차단():
     assert sum(1 for e in s.flow_log if e["event"] == "quota_gate_turn_skipped") == 1   # 로그 1회만
 
 
+def test_크레딧한도_초과는_이미시작된_턴1개로_한정():
+    """[U-036 재작업 #1 수용기준: '1500에서 멈췄어야 하는데 1852' 경로의 구조적 소멸 실증] 초과
+    신호(_quota_over)는 돌던 턴의 사용량 적립 응답이 세운다(organt/builder.py 턴 결산 콜백) — 즉
+    한도를 넘긴 턴 하나는 이미 시작돼 있다. run_turn 게이트는 그 직후의 모든 wake(앵커 이어가기·
+    회의 발언·심의단·마이크로)를 LLM 세션 생성 전에 끊으므로 초과 = '이미 시작된 턴 1개'(단일
+    활성 베턴). 종전처럼 앵커 세그먼트가 끝날 때까지 23턴이 더 도는 경로가 없다."""
+    from system.guide_tools import Flow
+    g = FakeGuide()
+    builds = []
+    f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "M"})
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            builds.append(1)
+            f._quota_over = True     # 이 턴의 적립 응답(over+enforce)이 플래그를 세우는 그 순간
+            return "작업 결과"
+    s = Sys(g, guild_id=1, organt_builder=lambda oid, srv, role, flow=None: _Bot(),
+            bot_info={11: "L", 12: "M"}, workspace="/ws")
+    s.onboarded.update({11, 12})
+    s.bot_profiles.update({11: "기준", 12: "기준"})      # 온보딩·전수 첫-사용 훅 스킵(주제 밖)
+    out1 = asyncio.run(s.run_turn(f, 11, "작업 이어가기", Kind.WORK, "leader"))
+    assert builds == [1] and "작업 결과" in out1          # 한도를 넘긴 턴 = 이미 시작된 1개(정상 완주)
+    out2 = asyncio.run(s.run_turn(f, 12, "[회의] 발언", Kind.INFO, "member"))
+    out3 = asyncio.run(s.run_turn(f, 12, "[응찰]", Kind.INFO, "member", micro=True))
+    assert builds == [1]                                  # 이후 wake 전부 세션 미생성 = 추가 소모 0
+    assert "크레딧 한도" in out2 and "크레딧 한도" in out3
+
+
 def test_continue전_고아베턴_복구():
     """위임 도중 리더 턴이 끝나 베턴이 동료에 굳으면(고아), continue가 리더를 다시 띄우기 전에 베턴을
     리더로 강제 복구한다 — '활성=동료'로 모든 요청이 거부되는 '두 흐름' 버그 방지."""
@@ -5656,6 +5684,28 @@ def test_per_agent_모델이_organt_옵션까지_도달():
     assert base(111, {}, "백엔드").options.model == "sonnet"       # 동작 불변
 
 
+def test_턴예산캡_env가_organt_옵션까지_도달(monkeypatch):
+    """[U-036 재작업 #4(2026-07-21, 사용자: '파이프라인 설계의 토큰 낭비 최적화')] 실측: 디자이너 한
+    턴이 도구 ~35왕복·output ~37K — max_turns(300/500)는 무한루프 브레이크일 뿐 턴 비용은 무상한.
+    빌더가 SDK max_budget_usd를 턴 봉투로 배선: ORGANT_TURN_BUDGET_USD 기본 1.0(평균 턴 ~$0.06의
+    ~15배 — 정상 작업 안 닿음), env 조정, 0=off(미배선)."""
+    import tempfile
+    from pathlib import Path
+    from system.config import Config
+    from system.audit import AuditLog
+    from organt_discord.main import _make_builder
+    tmp = Path(tempfile.mkdtemp()); (tmp / "logs").mkdir(exist_ok=True)
+    cfg = Config(system_bot_token="x", channel_id=1, model=None,
+                 workspace_dir=tmp, audit_log_path=tmp / "logs" / "audit.jsonl")
+    audit = AuditLog(cfg.audit_log_path)
+    builder = _make_builder(cfg, audit, {111: "백엔드"})
+    assert builder(111, {}, "백엔드").options.max_budget_usd == 1.0    # 기본 봉투
+    monkeypatch.setenv("ORGANT_TURN_BUDGET_USD", "0.3")
+    assert builder(111, {}, "백엔드").options.max_budget_usd == 0.3    # 정책은 env
+    monkeypatch.setenv("ORGANT_TURN_BUDGET_USD", "0")
+    assert builder(111, {}, "백엔드").options.max_budget_usd is None   # 0 = off(미배선)
+
+
 def test_Info_캐주얼은_프로젝트기계_없는_대화프롬프트():
     """[근본] Info(질문·추천·잡담)는 담당자=프로젝트 프롬프트가 아니라 가벼운 대화 프롬프트를 받는다 —
     팀 구성/set_goal 같은 기계 지시가 없고 '대화로 답하라'가 있다(라이브: '배고파'에 '뭘 만들까요' 방지).
@@ -6002,6 +6052,51 @@ def test_유사직군_병합_대표는_과제적합_우선_게임엔_게임기�
     # 게임 없는 과제면 도메인 적합 동률(0) → 응찰 점수로 폴백(무회귀): 일반 기획이 남는다
     winner2, joined2 = asyncio.run(s._elect_proposer(500, "포트폴리오 웹사이트 만들어줘"))
     assert 11 in joined2 and 12 not in joined2
+
+
+def test_참여공고_합류누진임계_저응찰은_소수만_합류():
+    """[U-036 재작업 #2(2026-07-21, 사용자: '상위 6명이 아니라 1명 추가될 때마다 응찰 점수값을 높여라')]
+    직군 대표 전원 자동 합류(실측: 11개 상이 직군 전원 팀 → 회의·협의 예산 52%) 대신 응찰 강도 순
+    누진 입장 — 3명까지 임계 1, 4번째부터 3·5·7·9(ORGANT_JOIN_BID_STEP 기본 2). 확신(고응찰) 소수만
+    남고 낮은 응찰의 주변 직군은 임계 미달로 후보 대기(배제 아님)."""
+    import asyncio
+    g = FakeGuide()
+    bots = {11: "기획", 12: "프론트", 13: "백엔드", 14: "데이터", 15: "QA", 16: "그래픽",
+            17: "VFX", 18: "모션", 19: "브랜드", 20: "사운드", 21: "인프라"}
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info=dict(bots), workspace="/ws")
+    scores = {11: 9, 12: 8, 13: 7}                       # 나머지 8명은 전부 2(주변 직군의 관성 응찰)
+    class _B:
+        def __init__(self, mid): self.mid = mid
+        async def handle(self, prompt):
+            return f"[응찰: {scores.get(self.mid, 2)}] 참여합니다."
+    s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
+    s._distill_workspace = lambda: None
+    winner, joined = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
+    assert set(joined) == {11, 12, 13}                   # 9·8·7만(임계 1·1·1) — 4번째 임계 3 > 2 전원 미달
+    assert winner == 11                                  # 앵커 = 합류자 중 최고 응찰
+    assert any(e["event"] == "join_below_threshold" and e.get("need") == 3
+               for e in s.flow_log)                      # 미달 사유가 관측에 남는다
+
+
+def test_참여공고_합류누진임계_전원9여도_자연천장(monkeypatch):
+    """전원이 최강(9)으로 응찰해도 임계 1·1·1·3·5·7·9 다음 8번째는 11 — 1~9 스케일 밖이라 팀은 7에서
+    수렴한다. 평평한 하드캡 없이 곡선 산수가 천장(기하급수 억제의 수용기준). step 0이면 곡선 off =
+    전원 합류(종전)."""
+    import asyncio
+    g = FakeGuide()
+    bots = {11: "기획", 12: "프론트", 13: "백엔드", 14: "데이터", 15: "QA", 16: "그래픽",
+            17: "VFX", 18: "모션", 19: "브랜드", 20: "사운드", 21: "인프라"}
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info=dict(bots), workspace="/ws")
+    class _B:
+        def __init__(self, mid): self.mid = mid
+        async def handle(self, prompt): return "[응찰: 9] 전력으로."
+    s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
+    s._distill_workspace = lambda: None
+    _, joined = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
+    assert len(joined) == 7                              # 자연 천장(8번째 필요 응찰 11 > 9)
+    monkeypatch.setenv("ORGANT_JOIN_BID_STEP", "0")      # 곡선 off = 종전(전원 합류)
+    _, joined0 = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
+    assert len(joined0) == 11
 
 
 def test_선거복구_갭2_미등록채널은_route_to있어도_재선거():

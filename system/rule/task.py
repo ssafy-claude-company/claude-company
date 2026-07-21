@@ -237,16 +237,16 @@ async def create_task(flow, args):
             _slim.append(m)
         base = _slim
     team = _uniq([flow.leader] + base)
-    # [자동 팀 상한(2026-07-21, U-036 실측: 게임 한 판에 11개 상이 직군이 dedup을 못 뚫고 전원 팀 →
-    # 회의·협의가 예산 52%($9.6/판) 점유, 사운드·브랜드·VFX까지 MVP 회의에 참석)] 응찰 전원을 시작
-    # 팀에 넣지 않는다 — 원 요청 적합도(role_fit) 상위 N만. 나머지는 정말 필요할 때 recruit로 후속
-    # 합류(문 열림 — 배제 아님). 상한 = ORGANT_TEAM_CAP(기본 6 = 실행 핵심; 수치는 정책이라 env로
-    # 조정 — Brooks '소통비용~인원²', MVP는 소수 정예). 명시 members=(picked)는 리더 자율이라 미적용.
+    # [팀 백스톱 상한(2026-07-21, U-036 재작업 #2)] 팀 크기 통제의 정본은 참여 공고의 **합류 누진
+    # 임계**(sys_core._elect_proposer — 1명 추가마다 요구 응찰 상승, 1~9 스케일이 자연 천장)다.
+    # 414e850의 평평한 하드캡 기본 6('role_fit 상위 6명')은 사용자 반려("대충 상위 6명이 아니라
+    # 인원마다 임계를 높여라") — ORGANT_TEAM_CAP은 **기본 0(비활성)**의 비상 백스톱으로만 남긴다
+    # (설정 시 종전대로 원 요청 적합 상위 유지). 명시 members=(picked)는 앵커 자율이라 미적용.
     if not picked:
         try:
-            _tcap = int(os.environ.get("ORGANT_TEAM_CAP", "6"))
+            _tcap = int(os.environ.get("ORGANT_TEAM_CAP", "0"))
         except ValueError:
-            _tcap = 6
+            _tcap = 0
         if _tcap > 0 and len(team) > _tcap:
             from ..role_fit import role_fit as _trf
             _tq = str(getattr(flow, "origin_request", "") or args.get("goal", "") or "")[:200]
