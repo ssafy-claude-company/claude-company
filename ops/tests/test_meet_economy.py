@@ -523,6 +523,14 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     ok2, _n2 = register_stage(f, "goal", "목표: 2인 턴제 카드 대전 웹게임\n"
                                          "- 30턴 완주 | 실증: run으로 30턴 재현", "게임")
     assert ok2, _n2                                            # 실결정은 종전대로 등록(무회귀)
+    # [목표=절차 금지(2026-07-21, U-040 실측: '①정의→②검증→③정량 정의'가 목표로 확정 — 봇들이
+    # 2:2로 두 번 막았는데 소진 확정이 밀었다)] ①②③ 나열·'→' 연쇄는 형태 신호로 반려.
+    ok3, note3 = register_stage(f, "goal", "목표: ① 컨셉 정의 → ② 페이퍼 검증 → ③ 호흡 정량 정의\n"
+                                           "- 검증 로그 | 실증: run 재현", "게임")
+    assert not ok3 and "절차 나열" in note3
+    ok4, _n4 = register_stage(f, "goal", "목표: 카드 대전 → 온라인 확장 가능한 웹게임\n"
+                                         "- 30턴 완주 | 실증: run 재현", "게임")
+    assert ok4                                                 # 단일 화살표(표현)는 허용 — 연쇄만 반려
     assert draft_missing_key("goal", "## 결정\n목표: (후속: 나중에)\n\n## 참고") == "목표"
     assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n\n## 참고") is None
 
