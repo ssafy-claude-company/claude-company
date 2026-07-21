@@ -355,6 +355,40 @@ def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단
     # (합류 채널 게시는 픽스처 thread_id가 문자열이라 int 캐스트 스킵 — 가시화는 로그 이벤트로 검증)
 
 
+def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
+    """[U-039 실측(2026-07-21, 사용자: '왜 회의는 3명만 — 의견은 못 했어도 찬반은 전체가 참여해야')]
+    심의단 축소(발언 비용 처방) 후 확정 표결까지 심의단만 돌아 '찬성 2 → 확정'으로 모호한 결론이
+    쉽게 가결됐다. 발언 = 심의단, 찬반(마이크로 즉답) = 팀 전원 — 비참여 도메인이 결론의 구멍
+    (장르 미정 등)을 막을 표면을 갖는다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
+                                      15: "PM", 16: "데이터"})
+    f.floor_mode = "turn-taking"
+    voters = set()
+
+    async def wake(to, b, k):
+        if "심의 응찰" in b:
+            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")
+        if "결론 확정 표결" in b:
+            voters.add(to)
+            return "[찬성]"
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            _resolve_objections(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    assert {12, 13, 14, 15, 16} <= voters              # 심의단 밖(14·15·16)도 찬반 참여
+
+
 def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypatch, tmp_path):
     """[전수 감사(2026-07-21, 사용자: '안정성·실효성·협업 실익이 보장된 상태에서 e2e를 돌려야지')]
     e2e 전수가 권고 문구뿐이라 검증 없이 마감·표류 가능하던 실효성 구멍 — 마일스톤 판의

@@ -752,13 +752,18 @@ async def meet(flow, me_id, args):
                         f"당신({flow._info(c)})의 판단: 이 안건의 결론으로 충분하면 `[찬성]`, 이 안건 범위에서 "
                         f"빠진 게 있으면 `[반대: 무엇이 빠졌는지 한 줄]`. **도구 호출·파일 확인 금지 — 지금 "
                         f"이 텍스트만 보고 한 줄로 즉답하세요.** 전원 찬성이어야 확정, 반대는 병합 후 재표결.")
+            # [확정 표결 = 전원(2026-07-21, U-039 실측 — 사용자: '의견은 못 했어도 찬반은 전체가
+            # 참여해야지')] 종전엔 심의단(축소 후 members — 2~3명)만 표결해 '찬성 2 → 확정'으로 모호한
+            # 결론이 쉽게 가결됐다. 발언(비용 큰 턴)은 심의단이 맡되, 찬반(마이크로 즉답)은 팀 전원 —
+            # 비참여 도메인이 결론의 구멍(장르 미정 등)을 막을 표면을 갖는다. 반대=병합 원료(종전 동일).
+            _voters = list(dict.fromkeys(list(_team_full) + list(members)))
             _yes, _dissents = 0, []
             try:
-                flow._meet_stage_note = f"표결 진행 중 — 심의단 {len(members)}명"
-                flow.note_activity(0, f"🗳 결론 확정 표결 진행 — {len(members)}명 응답 수집", force=True)
+                flow._meet_stage_note = f"표결 진행 중 — 전원 {len(_voters)}명"
+                flow.note_activity(0, f"🗳 결론 확정 표결 진행 — 전원 {len(_voters)}명 응답 수집", force=True)
             except Exception:
                 pass
-            for m, res, note in await _fork_collect(flow, me_id, list(members), _rbody, micro=True):
+            for m, res, note in await _fork_collect(flow, me_id, _voters, _rbody, micro=True):
                 wakes["n"] += 1
                 t = str(res or "")
                 # [표결 파서 엄격화(2026-07-18, 감사)] 종전 `"반대" in t`는 '반대 없습니다'·'반대할 이유
