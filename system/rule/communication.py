@@ -122,10 +122,21 @@ async def meet(flow, me_id, args):
     g = flow.guide
     if flow.current is None:
         return ("오류: 진행 중인 Task가 없습니다. create_task 먼저 여세요.")
+    _sys_open = bool(args.get("_sys_open"))
     members = _resolve_members(args.get("members", ""), flow, flow.current.team) or \
               [m for m in flow.current.team if m != me_id]
     members = [m for m in members if m != me_id and not _is_spare(flow, m)]
-    if not members:
+    # [평등 회의 — 소집자 잔재 청산(2026-07-21, U-037 실측·사용자: '소집자 개념조차 없는 평등한
+    # 상태여야 하는데, 지명해도 걔가 말 안 하던데')] 어휘 중립화(07-14)가 구조엔 못 미쳤다 — 회의를
+    # 연 봇이 참여자 목록에서 빠져 여는 의견 1회 뒤 응찰·지명 수신·DRAFT 편집이 전부 불가했고,
+    # 안건의 주인(앵커=게임 기획자)을 지명한 8건이 조용히 증발해 '기획자 제시 대기'가 목표로 박제된
+    # 채 가결됐다. SYS가 여는 단계 회의(현행 파이프라인 전 경로)는 흐름 태스크에서 돌아 개설자
+    # 세션이 유휴이므로 개설자도 평참여자다(발언권 루프·심의 응찰·지명 대상·편집 전부). 봇이 툴로
+    # 직접 연 회의만 종전 배제 유지 — 그 세션은 툴 결과를 기다리는 중이라 동시 wake가 세션 경합.
+    if _sys_open and me_id in (flow.current.team or []) and not _is_spare(flow, me_id) \
+            and me_id not in members:
+        members = [me_id] + members
+    if not [m for m in members if m != me_id]:
         return ("오류: 회의할 멤버가 없습니다.")
     _hold = _clarify_hold(flow, me_id)   # [G2 — clarify 행동 잠금(B-02)]
     if _hold:
@@ -153,7 +164,6 @@ async def meet(flow, me_id, args):
         return ("[대기] 다른 의견 수집이 진행 중입니다 — 그 결과를 받은 뒤 여세요(중첩 수집 금지).")
     # [SYS 자동 개시(2026-07-14, 사용자: '기계적 단계는 SYS가 돌려')] SYS가 첫 회의를 자동으로 열 때는
     # (봇이 도구를 부른 게 아니라) comm alive 가드를 우회한다 — 개시자를 alive로 세워 정상 진행.
-    _sys_open = bool(args.get("_sys_open"))
     if _sys_open:
         try:
             flow.comm.alive = me_id; flow.comm.done = False
@@ -492,27 +502,36 @@ async def meet(flow, me_id, args):
             nonlocal last_full
             if flow.comm.done or flow.comm.alive != me_id or wakes["n"] >= wake_cap:
                 return None
-            try:
-                flow.comm.request(me_id, m, "meet", Kind.INFO)
-            except BusyInOtherFlow as e:
-                # 멤버 단위 사유(라운드 사이에 타 흐름이 데려감) — 회의를 끊지 않고 그
-                # 멤버만 건너뛴다(부분 진행). 베턴 경합(아래)과 달리 시스템 문제가 아니다.
-                minutes.append(f"[{label}] {flow._info(m) or m}: (타 흐름({e.holder_scope}) "
-                               f"참여 중 — 이 라운드 불참)")
-                return _l2_note(Turn(speaker=m, passed=True, body="(타 흐름 참여 중 — 불참)"))
-            except CommError as e:
-                minutes.append(f"(회의 중단 — 베턴 경합: {str(e)[:60]})")
-                return None
+            _self_turn = (m == me_id)   # [평등 회의] 개설자 발언 — 베턴이 이미 그의 것이라 프레임 불요
+            if not _self_turn:
+                try:
+                    flow.comm.request(me_id, m, "meet", Kind.INFO)
+                except BusyInOtherFlow as e:
+                    # 멤버 단위 사유(라운드 사이에 타 흐름이 데려감) — 회의를 끊지 않고 그
+                    # 멤버만 건너뛴다(부분 진행). 베턴 경합(아래)과 달리 시스템 문제가 아니다.
+                    minutes.append(f"[{label}] {flow._info(m) or m}: (타 흐름({e.holder_scope}) "
+                                   f"참여 중 — 이 라운드 불참)")
+                    return _l2_note(Turn(speaker=m, passed=True, body="(타 흐름 참여 중 — 불참)"))
+                except CommError as e:
+                    minutes.append(f"(회의 중단 — 베턴 경합: {str(e)[:60]})")
+                    return None
             wakes["n"] += 1
             try:
                 res = await flow.wake(m, body, Kind.INFO)
             except Exception as e:
                 res = f"(발언 실패: {e})"
-            try:
-                flow.comm.respond(m, "accept", res)
-            except CommError:
-                pass
+            if not _self_turn:
+                try:
+                    flow.comm.respond(m, "accept", res)
+                except CommError:
+                    pass
             addressee, passed = _turn_signals(flow, res, members) if tt else (None, False)
+            # [지명 증발 가시화(2026-07-21, 사용자: '지명해서 걔가 말 안 하던데')] 참여자 밖·해석 불가
+            # 지명은 종전엔 무신호 무해화 — 지명이 증발한 사실을 다음 발언들의 '못 본 발언'으로 서빙해
+            # 봇이 헛기다리지 않게 한다(팀 밖 직군이 필요하면 recruit가 경로).
+            if tt and addressee is None and re.search(r"\[\s*지명\s*[:：]", res or ""):
+                minutes.append("[안내] 방금 발언의 지명 대상은 이 회의 참여자가 아닙니다 — 지명은 "
+                               "무효 처리됐습니다. 팀 밖 직군이 필요하면 recruit로 충원하세요.")
             _who = flow._info(m) or m
             if passed:
                 minutes.append(f"[{label}] {_who}: (패스)")

@@ -225,6 +225,63 @@ def test_백로그회의는_심의단축소_예외_전원참여(monkeypatch, tmp
     assert {12, 13, 14, 15, 16} <= probed                # 발언권 응찰이 전원에게
 
 
+def test_SYS개설_회의는_개설자도_평참여자_지명이_작동(monkeypatch, tmp_path):
+    """[U-037 실측(2026-07-21, 사용자: '소집자 개념조차 없는 평등한 상태여야 — 지명해도 걔가 말 안
+    하던데')] 어휘 중립화(07-14)가 구조엔 못 미쳐, 회의 개설자가 참여자 목록 밖이라 지명 8건이 조용히
+    증발했다(안건의 주인이 침묵한 채 '제시 대기'가 목표로 가결). SYS가 여는 단계 회의는 개설자 세션이
+    유휴(흐름 태스크에서 돎) — 개설자도 평참여자: 동료의 [지명]이 실제로 그에게 발언권을 넘긴다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "게임 기획자", 12: "PM"})
+    f.floor_mode = "turn-taking"
+    spoke = []
+
+    async def wake(to, b, k):
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 보태겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            spoke.append(to)
+            if to == 12:
+                return "컨셉은 안건 주인 몫입니다. [지명: 게임 기획자]"
+            return "[패스]"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    from system.rule.communication import meet as _meet
+    asyncio.run(_meet(f, 11, {"topic": "목표", "my_opinion": "여는 의견", "_sys_open": True}))
+    assert 11 in spoke and 12 in spoke                 # 개설자가 발언권 루프의 실참여자
+    assert spoke.index(12) < spoke.index(11)           # 12의 [지명]이 11에게 발언권을 넘겼다
+
+
+def test_봇개설_회의는_개설자_배제유지_지명증발_안내(monkeypatch, tmp_path):
+    """봇이 툴로 직접 연 회의는 개설자 세션이 툴 결과를 기다리는 중 — 개설자 wake는 세션 경합이라
+    종전 배제 유지(무회귀). 대신 참여자 밖 지명은 이제 무신호 증발이 아니라 [안내]로 다음 발언들의
+    '못 본 발언'에 서빙된다(봇이 답 없는 지명을 헛기다리지 않게)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "게임 기획자", 12: "PM"})
+    f.floor_mode = "turn-taking"
+    spoke, bodies = [], []
+
+    async def wake(to, b, k):
+        bodies.append(b)
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 보태겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            spoke.append(to)
+            return "기획자님 몫입니다. [지명: 게임 기획자]" if to == 12 else "[패스]"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    asyncio.run(t["meet"].handler({"topic": "목표", "my_opinion": "여는 의견"}))
+    assert 11 not in spoke                             # 봇 개설 = 개설자 배제 유지(세션 안전)
+    assert any("지명은 무효 처리" in b or "참여자가 아닙니다" in b for b in bodies)   # 증발 가시화
+
+
 def test_전역회의는_SubTask태깅_생략_공통흐름_소속(monkeypatch, tmp_path):
     """[U-037 실측(2026-07-21, 사용자: '전 서브태스크를 한번에 만드는 회의라면 공통 흐름 하위에')]
     단계 회의는 주기 전체의 결정 — 턴 소속 태깅이 '첫 미완 SubTask'를 무조건 찍어 백로그 회의가
