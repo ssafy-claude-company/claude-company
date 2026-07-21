@@ -527,6 +527,44 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n\n## 참고") is None
 
 
+def test_서브태스크_영역중복은_표결전_반려(monkeypatch):
+    """[U-039 실측·사용자(2026-07-21): '구조가 이상하면 반려되어야지 — 근본을 해결']] 서브태스크
+    분해가 near-중복 영역(백엔드 스키마 '1차'/'2차'처럼 목표 토큰이 거의 같은 둘)을 내면 백로그
+    배정이 한쪽으로 쏠려 다른 쪽이 굶는다(ST-3/6/7 백로그 0의 근본). preflight가 표결 전에
+    형식 이의로 되돌려 회의가 합치거나 영역을 가르게 한다."""
+    from system.rule.milestone import stage_preflight
+    dup = ("단위: 백엔드 게임 상태 스키마 정의 1차 기본 필드 | 실증: pytest 통과\n"
+           "단위: 백엔드 게임 상태 스키마 정의 2차 계산식 | 실증: pytest 통과")
+    errs = stage_preflight("subtask", dup)
+    assert any("영역 중복" in e for e in errs)
+    ok = ("단위: 게임 상태 저장 계층 | 실증: pytest 통과\n"
+          "단위: 화면 입력·렌더링 | 실증: run으로 확인")
+    assert not any("영역 중복" in e for e in stage_preflight("subtask", ok))   # 뚜렷이 다른 영역은 통과
+
+
+def test_마일스톤_과정서술은_반려_실물로(monkeypatch, tmp_path):
+    """[U-039 실측·사용자: '마일스톤 주제 모호 — 구체적으로'] '이번 주기'가 '…확정되는 단계'식 과정
+    서술이면 완성 실물이 아니라 활동을 결론에 앉힌 것 — 실물로 다시 쓰게 반려."""
+    from system.rule.milestone import register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+
+    async def _w(to, b, k):
+        return "[패스]"
+    f.wake = _w
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "게임"
+    ok0, note0 = register_stage(f, "milestone",
+                                "단계: 프로토타입 → 완성\n이번 주기: 페이퍼 검증으로 장르가 확정되는 단계\n"
+                                "- 규격 명시 | 실증: 문서 확인", "게임")
+    assert not ok0 and "과정 서술" in note0
+    ok1, _n1 = register_stage(f, "milestone",
+                              "단계: 프로토타입 → 완성\n이번 주기: 브라우저에서 도는 타이밍 게임 1판\n"
+                              "- 30턴 완주 | 실증: run 재현", "게임")
+    assert ok1                                                     # 실물은 통과
+
+
 def test_목표골격_구성점검_자리와_달력사실_고지(monkeypatch):
     """[U-038 실측] ①구성 점검 경로 평등: set_goal 도구에만 있던 점검(2026-07-13 설계)을 회의 골격의
     자리표시로 — 안 채우면 초안이 완성되지 않고, 부족 직군의 정경로(recruit)가 그 자리에서 상기
