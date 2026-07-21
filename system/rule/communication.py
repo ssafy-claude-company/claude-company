@@ -781,7 +781,9 @@ async def meet(flow, me_id, args):
                 elif _vote == "for":
                     _yes += 1
                 # abstain = 집계 안 함(찬성 오집계 방지) — 만장일치 게이트는 yes>=1이라 전원 기권이면 미통과
-                _ballots.append((str(flow._info(m) or m), _vote, _reason))
+                # [투표자 id 동봉(2026-07-21, 사용자: '아바타 hover 프로필 안 뜬다')] 이름@봇id — 표시가
+                # 공용 아바타(프로필·색)를 쓰게. feed_assembly가 who@id를 who+whoId로 분해.
+                _ballots.append((f"{flow._info(m) or m}@{int(m)}", _vote, _reason))
                 if flow.log:
                     flow.log("consensus_ratify_vote", who=m, vote=_vote)
             # [표결 가시화(2026-07-16, 사용자: '회의 중 표결이 안 보여서 문제')] 결과를 채널 회의

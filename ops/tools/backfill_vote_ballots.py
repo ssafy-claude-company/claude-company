@@ -52,9 +52,12 @@ def run():
     posts = list(GuideMessage.objects.filter(sender_id=0, body__startswith="[표]").order_by("msg_id"))
     done = skip = 0
     for gm in posts:
-        if "투표:" in (gm.body or ""):
+        # 이미 투표 줄이 있고 @id까지 실렸으면 완성 — 스킵. @없는 구 백필분은 재처리(id 보강).
+        if "투표:" in (gm.body or "") and "@" in (gm.body or ""):
             skip += 1
             continue
+        if "투표:" in (gm.body or ""):
+            gm.body = re.sub(r"\n투표:.*$", "", gm.body or "", flags=re.S)   # 구 백필 투표줄 제거 후 재생성
         pid = gm.channel_id
         rounds = clusters.get(pid) or []
         # 이 게시 직전(ts ≤ post, 120s 내)에 끝난 라운드 = 이 표결
@@ -79,12 +82,15 @@ def run():
         lines = []
         for e in rd:
             who = names.get(e.get("who"), str(e.get("who")))
+            _wid = e.get("who")
             vt = _VLABEL.get(e.get("vote"), e.get("vote"))
             rs = ""
             if e.get("vote") == "against" and di < len(dreasons):
                 rs = dreasons[di]
                 di += 1
-            lines.append(f"투표: {who} | {vt}" + (f" | {rs}" if rs else ""))
+            # 이름@봇id(공용 아바타 프로필용) — 백필도 flow 로그의 who(봇id) 동봉
+            _wtag = f"{who}@{int(_wid)}" if isinstance(_wid, int) else who
+            lines.append(f"투표: {_wtag} | {vt}" + (f" | {rs}" if rs else ""))
         # 요약 줄(반대 요지 이하 제거 — 카드가 사유를 담음)
         head = re.sub(r"\s*/\s*반대 요지:.*$", "", gm.body or "").rstrip()
         new_body = head + "\n" + "\n".join(lines)
