@@ -451,11 +451,15 @@ def test_목표골격_구성점검_자리와_달력사실_고지(monkeypatch):
     자리표시로 — 안 채우면 초안이 완성되지 않고, 부족 직군의 정경로(recruit)가 그 자리에서 상기
     (팀 밖 게임 기획자에게 후속 담당을 걸던 우회 차단). ②달력 스케줄러 부재 고지: 기한은 날짜가
     아니라 파이프라인 사건으로(실행 불가한 '7-23 정오' 류 계획 언어 차단)."""
-    from system.rule.milestone import stage_draft_template
+    from system.rule.milestone import stage_agenda, stage_draft_template
     d = stage_draft_template("goal", "안건")
     assert "구성 점검:" in d and "recruit" in d
     assert "달력" in d and "다음 회의 전" in d
     assert "미루면 빈칸과 같아 등록되지 않습니다" in d
+    # [일감 굵기 경제(2026-07-21, 사용자: '1500 안으로 최적화')] 잘게 쪼갠 30건의 건당 오버헤드가
+    # 실작업비를 압도 — 백로그 골격이 '실증 한 번으로 닫히는 묶음' 단위를 코칭(상한 강제 아님).
+    _, btpl = stage_agenda("backlog")
+    assert "굵게" in btpl and "오버헤드" in btpl
 
 
 def test_로드맵은_회의결론으로_독립계획블록_폐지(monkeypatch):
