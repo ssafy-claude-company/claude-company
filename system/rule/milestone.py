@@ -1466,16 +1466,24 @@ def register_stage(flow, stage, prop, origin=""):
         # 시점에 phase 목록으로 분해 — 안 하면 로드맵이 1개로 세어져 다음 주기 회의·이월 수신처가
         # 없다(띄운 화살표만 구분자 — roadmap_phases와 같은 계약).
         stages = [p.strip() for s in stages for p in re.split(r"\s+→\s+", s) if p.strip()]
+        _road = ""
         if stages:
             flow.roadmap = stages
-            _pnote(flow, "[로드맵] " + " → ".join(s[:40] for s in stages[:8]) + " (순차 1주기)")
+            # [로드맵 = 회의 결론(2026-07-21, 사용자: '제목 아래 그 칸이 결론 칸 — 저건 회의의 결론에
+            # 들어가야')] 종전 독립 '[로드맵]' 게시가 회의와 마일스톤 사이 고아 '계획' 블록으로 떠
+            # 있었다 — 이 등록 노트가 [회의 마무리]로 회의 블록 결론 칸에 실리므로, 계획(전체 단계열과
+            # 이번 주기의 좌표)은 그 결론의 한 줄로 산다(별도 게시 폐지).
+            _k = sum(1 for m in (getattr(flow, "milestones", None) or [])
+                     if getattr(m, "status", "") == "done") + 1
+            _road = ("\n계획: " + " → ".join(s[:40] for s in stages[:8])
+                     + f" (이번 주기 = {_k}단계)")
         ms = open_milestone(flow, cyc or "이번 주기", parse_criteria_lines(_crit_txt),
                             origin=f"마일스톤 회의: {origin[:50]}")
         if isinstance(ms, str):
             return False, ms
         if flow.log:
             flow.log("ms_by_meeting", ms=ms.ms_id)
-        return True, (f"[표결 확정] 마일스톤 {ms.ms_id} 등록(조건 {len(ms.criteria)}개). "
+        return True, (f"[표결 확정] 마일스톤 {ms.ms_id} 등록(조건 {len(ms.criteria)}개).{_road}\n"
                       "다음: 서브태스크 회의(단위 분해)를 시스템이 엽니다.")
 
     if stage == "subtask":

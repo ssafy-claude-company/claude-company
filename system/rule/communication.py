@@ -291,6 +291,8 @@ async def meet(flow, me_id, args):
         except ValueError:
             _pratio = 1 / 3
         _panel_cap = max(2, int(len(members) * _pratio + 0.999))   # ceil
+        _team_full = list(members)      # 심의단 선발 전 전체 로스터 — 무진전 시 확대 응찰의 후보 풀
+        _refilled = {"on": False}       # [무진전 1차 대응 = 심의단 확대] 회의당 1회
         if _no_r1 and tt and len(members) > _panel_cap:
             def _sb(c):
                 # [도메인 가시화(2026-07-20, U-035)] 단계 안건은 일반문 — 응찰 판단엔 주제(원문 도메인)가
@@ -927,6 +929,45 @@ async def meet(flow, me_id, args):
                 # 바꿨을 땐 전원 재토론 폴백이 먼저다 — 브레이크는 '토론까지 돈 패스'의 무변화에만.
                 # (종전엔 위임 실패 43초 만에 조기 중단+사람 호출 — 폴백 없이 브레이크가 선점했다.)
                 if _hh is not None and _hh == _last_pass_hash and _ran_discuss:
+                    # [무진전 1차 대응 = 심의단 확대(2026-07-21, 사용자: '대화가 더 필요한 상황에 결론
+                    # 강제·회의 파괴가 답이냐 — 대화할 사람이 적어서 선 것')] ch82 실측: 2명 심의단이
+                    # 발언만 돌다 섰고, 재개설(컷+킥오프)이 풀린 실이유는 '새 참여자'였다. 회의를 부수는
+                    # 대신 같은 회의에서 아직 밖에 있는 팀원에게 재응찰을 돌려 합류시킨다 — 패널 안내문이
+                    # 약속하던 '이어지면 재응찰로 합류'의 기계 이행(결론을 강제하지 않고 대화 상대를
+                    # 늘린다). 회의당 1회 — 확대 후에도 무진전이면 종전대로 정직 중단(사람 상신).
+                    _rest = [m for m in _team_full if m not in members]
+                    if not _refilled["on"] and _rest:
+                        _refilled["on"] = True
+
+                        def _rfb(c):
+                            return (f"[회의 소집 — 심의 응찰] 주제: {str(topic)[:80]}\n"
+                                    f"이 회의가 진전 없이 서 있습니다 — 막힌 곳:{_draft_lint() or ' 결정 구획 미완'}\n"
+                                    f"당신({flow._info(c)}) 도메인이 보탬이 되면 `[응찰: N]`(1~9)과 한 줄 "
+                                    f"이유, 아니면 `[패스]`.")
+                        _newly = []
+                        for _m2, _r2, _n2 in await _fork_collect(flow, me_id, _rest, _rfb, micro=True):
+                            wakes["n"] += 1
+                            if _r2 is not None and _bid_score(_r2) > 0:
+                                _newly.append(_m2)
+                        if _newly:
+                            members.extend(_newly)
+                            st.participants.extend(int(x) for x in _newly)   # 침묵 장부 신입 = 첫 발언권 우선
+                            if flow.log:
+                                flow.log("meet_panel_refilled", n=len(_newly), stage=str(_stage))
+                            try:
+                                _chp2 = (flow.current.thread_id if flow.current else None) or flow.user_channel
+                                await flow.guide.post(int(_chp2), 0,
+                                    "[심의단] 합류 " + " · ".join(str(flow._info(x) or x) for x in _newly)
+                                    + " — 회의가 막혀 재응찰로 확대")
+                            except Exception:
+                                pass
+                            _last_pass_hash = _hh
+                            _t0 = Turn(speaker=me_id, body="(심의단 확대 — 회의 계속)")
+                            if wakes["n"] >= wake_cap:
+                                if flow.log:
+                                    flow.log("meet_gate_exhausted", passes=_pass)
+                                break
+                            continue
                     try:
                         await flow.guide.post(int(flow.user_channel), 0,
                                               "[사람 조치 필요] 회의가 진전 없이 맴돌아 여기서 멈춥니다 — "

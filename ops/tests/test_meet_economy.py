@@ -193,6 +193,58 @@ def test_무진전_패스는_즉시중단_사람호출(monkeypatch, tmp_path):
     assert "meet_gate_exhausted" not in names           # wake_cap까지 태우지 않았다
     assert any("사람 조치 필요" in str(c) for c in g.calls)   # 사람 호출 게시
 
+def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단(monkeypatch, tmp_path):
+    """[U-037/ch82 실측(2026-07-21, 사용자: '대화가 더 필요한 상황에 결론 강제·회의 파괴가 답이냐')]
+    2명 심의단이 발언만 돌다 서고, 재개설이 풀린 실이유가 '새 참여자'였다 — 무진전 1차 대응은 컷이
+    아니라 같은 회의의 심의단 확대(밖에 있던 팀원 재응찰 합류, 회의당 1회). 확대 후에도 무진전이면
+    그때 종전대로 정직 중단(사람 상신). 결론을 강제하지 않고 대화 상대를 늘린다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
+                                      15: "PM", 16: "데이터"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+
+    async def wake(to, b, k):
+        if "심의 응찰" in b:
+            if "진전 없이" in b:                            # 확대 응찰 — 밖에 있던 14가 합류
+                return "[응찰: 6] 제 도메인이 걸립니다" if to == 14 else "[패스]"
+            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")   # 최초 심의단 2명
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"                                     # 아무도 초안을 못 바꿈(무진전 대본)
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "meet_panel_refilled" in names                    # 1차 대응 = 확대(컷 아님)
+    assert "meet_no_progress_break" in names                 # 확대 후에도 무진전 → 그때 컷
+    assert names.index("meet_panel_refilled") < names.index("meet_no_progress_break")
+    ref = next(kw for e, kw in events if e == "meet_panel_refilled")
+    assert ref.get("n") == 1                                 # 응찰한 14만 합류(패스 존중)
+    # (합류 채널 게시는 픽스처 thread_id가 문자열이라 int 캐스트 스킵 — 가시화는 로그 이벤트로 검증)
+
+
+def test_로드맵은_회의결론으로_독립계획블록_폐지(monkeypatch):
+    """[2026-07-21, 사용자: '제목 아래 그 칸이 결론 칸 — 저건 회의의 결론에 들어가야'] 주기 회의
+    등록 노트(= [회의 마무리]로 결론 칸에 실리는 텍스트)에 계획(전체 단계열+이번 주기 좌표)이
+    들어가고, 독립 '[로드맵]' 게시(고아 '계획' 블록)는 사라진다."""
+    from system.rule.milestone import register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.guide_tools import Flow
+    from test_sys import FakeGuide
+    f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L", 12: "M"})
+    f._pipeline_notes = []
+    ok, note = register_stage(f, "milestone",
+                              "단계: 프로토타입 → 완성도\n이번 주기: 프로토타입\n"
+                              "- 브라우저 30턴 완주 | 실증: run으로 30턴 재현", "게임")
+    assert ok, note
+    assert "계획: 프로토타입 → 완성도" in note and "이번 주기 = 1단계" in note   # 결론 칸으로
+    assert not any("[로드맵]" in str(n) for n in f._pipeline_notes)            # 독립 블록 소멸
+
+
 def test_단위_2줄_자연표기_흡수_preflight_등록_동일판정(monkeypatch, tmp_path):
     """[U-035 실측] 봇 전원이 '단위:'를 제목 줄로, 조건(| 실증:)을 다음 줄로 썼다 — 파서가 제목만
     집어 6단위 전부 '조건 없음' 전멸(가결→등록 0건 무한 사이클×회의 3회). ①자연 표기 흡수
