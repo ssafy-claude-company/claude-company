@@ -89,25 +89,24 @@ def _turn_signals(flow, res, allowed):
     t = (res or "").strip()
     passed = bool(t.startswith("[패스]") or re.match(r"^\[?\s*패스\s*\]?\s*$", t))
     addressee = None
+    from .comm_helpers import _resolve_nominee
     m = _NOMINATE_RE.search(t)
     if m:
-        ids = _resolve_members(m.group(1), flow, allowed)
-        addressee = ids[0] if ids else None
+        # [지명 정본 해석(2026-07-21, 사용자: '동명이인 — id로 최대한')] id 우선·이름은 유일 일치만.
+        addressee = _resolve_nominee(m.group(1), flow, allowed)
     if addressee is None:
         # [스탠스 @대상 흡수(2026-07-21, U-039 실측: '[질문 @게임 기획자(id)]' 자연 표기)] 타입 괄호
-        # 안의 @대상을 지명으로 수용(이중 수용 관례 — 첫 실질 줄의 자기 선언 위치만). 이름 해석
-        # 실패 시 괄호 속 id로 폴백.
+        # 안의 @대상 — **괄호 속 id 우선**, 이름은 유일 일치만(첫 실질 줄의 자기 선언 위치만).
         for _ln in t.splitlines():
             _ls = _ln.strip()
             if not _ls:
                 continue
             m2 = re.match(r"^\[\s*(?:주장|질문|반박|지지)\b[^@\]]*@\s*([^\](]{1,40}?)\s*(?:\(([^)]*)\))?\s*\]", _ls)
             if m2:
-                for _cand in (m2.group(1), m2.group(2)):
+                for _cand in (m2.group(2), m2.group(1)):   # id(괄호) 먼저, 이름은 폴백
                     if _cand:
-                        _ids2 = _resolve_members(_cand.strip(), flow, allowed)
-                        if _ids2:
-                            addressee = _ids2[0]
+                        addressee = _resolve_nominee(_cand.strip(), flow, allowed)
+                        if addressee is not None:
                             break
             break
     return addressee, passed
@@ -509,11 +508,14 @@ async def meet(flow, me_id, args):
             _l2_rule = (" 발언 성격은 첫 줄 `[주장]`/`[질문]`/`[반박]`/`[지지]`로 밝힐 수 있습니다 — "
                         "`[질문]`/`[반박]`을 `[지명]`과 함께 쓰면 그 동료의 답 전엔 회의가 닫히지 않습니다."
                         if _l2 else "")
+            # [지명 정본 문법 서빙(2026-07-21)] 이름 지명은 동명이인 모호 — 봇 id 로스터를 프레임에
+            # 실어 `[지명: <봇id>]`가 기본이 되게 한다(해석 불가 시 재전송 요구가 백스톱).
+            _ros0 = " · ".join(f"{flow._info(x) or x}(id {x})" for x in members if x != m)
             return (f"{head} 주제: {topic}{_frm}\n못 본 발언:\n{log_txt}\n\n"
                     f"당신({flow._info(m)})의 차례입니다 — 위 안건에 당신 도메인 관점으로 답하세요"
                     f"(근거 필수, 맹목적 동의·이미 나온 것 반복 금지). 3~5줄(최대 1000자). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.{_sub}\n"
-                    f"[발언권 규약] 특정 동료의 답이 꼭 필요하면 발언 마지막 줄에 `[지명: 이름]` — "
-                    f"더 보탤 것이 없으면 `[패스]`만.{_l2_rule}")
+                    f"[발언권 규약] 특정 동료의 답이 꼭 필요하면 발언 마지막 줄에 `[지명: <봇id>]` "
+                    f"(참여자: {_ros0}) — 더 보탤 것이 없으면 `[패스]`만.{_l2_rule}")
 
         async def _speech(m, body, label):
             """발언 1회 — 정책 불문 단일 실행 경로. 반환 Turn(지명·패스 신호) / None=회의 중단."""
@@ -544,12 +546,28 @@ async def meet(flow, me_id, args):
                 except CommError:
                     pass
             addressee, passed = _turn_signals(flow, res, members) if tt else (None, False)
-            # [지명 증발 가시화(2026-07-21, 사용자: '지명해서 걔가 말 안 하던데')] 참여자 밖·해석 불가
-            # 지명은 종전엔 무신호 무해화 — 지명이 증발한 사실을 다음 발언들의 '못 본 발언'으로 서빙해
-            # 봇이 헛기다리지 않게 한다(팀 밖 직군이 필요하면 recruit가 경로).
-            if tt and addressee is None and re.search(r"\[\s*지명\s*[:：]", res or ""):
-                minutes.append("[안내] 방금 발언의 지명 대상은 이 회의 참여자가 아닙니다 — 지명은 "
-                               "무효 처리됐습니다. 팀 밖 직군이 필요하면 recruit로 충원하세요.")
+            # [지명 구조 강제 — 재전송(2026-07-21, 사용자: '평문에 이름 쓰지 말고 구조화, 안 맞으면
+            # 다시 보내라고 SYS가 강하게 제한')] 지명 의도가 보이는데 해석 불가(형식·동명이인·참여자
+            # 밖)면 무효로 삼키지 않고, 그 봇에게 정본 문법([지명: <봇id>]) 한 줄 재전송을 요구한다
+            # (마이크로·발언당 1회 — 취소는 [패스]).
+            if (tt and addressee is None and not passed
+                    and re.search(r"\[\s*지명|\[\s*(?:주장|질문|반박|지지)\b[^\]]*@", res or "")):
+                _ros = " · ".join(f"{flow._info(x) or x}(id {x})" for x in members if x != m)
+                try:
+                    _wk2 = getattr(flow, "wake_micro", None) or flow.wake
+                    _fix = await _wk2(m, "[지명 형식 재전송] 방금 발언의 지명을 해석하지 못했습니다 — "
+                                         "이름은 동명이인이 있을 수 있어 **봇 id로** 지명합니다. 딱 한 줄만 "
+                                         f"다시 보내세요: `[지명: <봇id>]` (참여자: {_ros}). "
+                                         "지명을 접으면 `[패스]`.", Kind.INFO)
+                    if _fix and not str(_fix).strip().startswith("[패스]"):
+                        addressee, _ = _turn_signals(flow, _fix, members)
+                except Exception:
+                    pass
+                if flow.log:
+                    flow.log("nominee_resent", who=int(m), resolved=bool(addressee))
+                if addressee is None:
+                    minutes.append("[안내] 방금 발언의 지명을 해석하지 못해 무효 처리됐습니다 — 지명은 "
+                                   "`[지명: <봇id>]` 형식입니다. 팀 밖 직군이 필요하면 recruit로 충원하세요.")
             _who = flow._info(m) or m
             if passed:
                 minutes.append(f"[{label}] {_who}: (패스)")
