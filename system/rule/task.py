@@ -237,6 +237,24 @@ async def create_task(flow, args):
             _slim.append(m)
         base = _slim
     team = _uniq([flow.leader] + base)
+    # [자동 팀 상한(2026-07-21, U-036 실측: 게임 한 판에 11개 상이 직군이 dedup을 못 뚫고 전원 팀 →
+    # 회의·협의가 예산 52%($9.6/판) 점유, 사운드·브랜드·VFX까지 MVP 회의에 참석)] 응찰 전원을 시작
+    # 팀에 넣지 않는다 — 원 요청 적합도(role_fit) 상위 N만. 나머지는 정말 필요할 때 recruit로 후속
+    # 합류(문 열림 — 배제 아님). 상한 = ORGANT_TEAM_CAP(기본 6 = 실행 핵심; 수치는 정책이라 env로
+    # 조정 — Brooks '소통비용~인원²', MVP는 소수 정예). 명시 members=(picked)는 리더 자율이라 미적용.
+    if not picked:
+        try:
+            _tcap = int(os.environ.get("ORGANT_TEAM_CAP", "6"))
+        except ValueError:
+            _tcap = 6
+        if _tcap > 0 and len(team) > _tcap:
+            from ..role_fit import role_fit as _trf
+            _tq = str(getattr(flow, "origin_request", "") or args.get("goal", "") or "")[:200]
+            _others = sorted((m for m in team if m != flow.leader),
+                             key=lambda m: _trf(_tq, str(flow._info(m) or "")), reverse=True)[:_tcap - 1]
+            team = _uniq([flow.leader] + _others)
+            if flow.log:
+                flow.log("team_capped", cap=_tcap, kept=len(team))
     # 'PM 혼자 Task' 차단(구조): 프로젝트에 직군 동료가 있는데 리더 혼자만 멤버로 여는 건 팀을 버리고
     # 단독작업·독식하는 패턴(사용자가 본 'PM 혼자 있는 Task'). 동료가 무응답이라고 새 솔로 Task로 도망가지
     # 말 것 — 그건 '환경 불안정'이니 사용자에게 보고하고 멈춰야 한다. 진짜 1인 프로젝트(동료 없음)·개입은 허용.

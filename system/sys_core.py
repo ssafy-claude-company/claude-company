@@ -1565,6 +1565,20 @@ class Sys:
             self._log("claim_kick_error", err=str(e)[:80])
 
     async def run_turn(self, flow: Flow, organt_id, body, kind, role, micro=False) -> str:
+        # [크레딧 한도 — 봇 wake 단일 관문 게이트(2026-07-21, U-036 실측: 1500 캡에서 1852까지 누수)]
+        # 종전 quota_halt는 리더 continue 세그먼트 경계에만 있어, 회의(전원 발언 라운드)·심의단 병렬
+        # 처럼 세그먼트 '안'에서 도는 봇 턴들을 하나도 못 막았다 — 실측: 1500 돌파 후 14분간 23턴이
+        # 더 돌며 352cr 초과, 전부 회의 발언이었다. run_turn은 리더·멤버·마이크로·회의발언·심의단·
+        # 위임 등 **모든 봇 wake의 단일 관문**이라, 여기서 LLM 호출 전에 차단하면 초과가 '이미
+        # 시작된 턴'으로 한정된다(안내·마감은 continue 루프/reap이 담당 — 여기선 조용히 비용 0 반환).
+        if getattr(flow, "_quota_over", False):
+            _ch = int(getattr(flow, "user_channel", 0) or 0)
+            if not hasattr(self, "_quota_gate_hits"):
+                self._quota_gate_hits = {}
+            self._quota_gate_hits[_ch] = self._quota_gate_hits.get(_ch, 0) + 1
+            if self._quota_gate_hits[_ch] == 1:      # 채널당 1회만 로그(도배 방지·관측 유지)
+                self._log("quota_gate_turn_skipped", ch=_ch, role=str(role))
+            return "[크레딧 한도] 이 판의 크레딧을 다 써 이번 턴은 실행하지 않았습니다(재개 시 이어집니다)."
         # [소속 태깅 수리(2026-07-10)] PIPELINE_CTX를 변이 시점(도구 핸들러=자식 태스크)에 set하면
         # 그 태스크 종료와 함께 증발 — 턴을 스폰하는 이 지점(흐름 태스크)에서 매 턴 갱신해야
         # 자식(SDK·guide.post)이 상속한다. ch53 라이브: 전 메시지 pipe=None이 그 증거.

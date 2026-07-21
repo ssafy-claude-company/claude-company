@@ -952,6 +952,24 @@ def test_연속실패는_충원루프_차단():
     assert f.consec_fail == 0
 
 
+def test_크레딧한도_run_turn_게이트_봇wake_차단():
+    """[U-036 실측: 1500 캡에서 1852까지 누수] quota_over면 run_turn(모든 봇 wake 단일 관문)이
+    organt_builder(LLM 세션) 생성 전에 차단 — 회의 전원발언·심의단 병렬이 세그먼트 경계 게이트를
+    안 지나 초과를 태우던 것 봉합. 채널당 1회만 로그(도배 방지)."""
+    from system.guide_tools import Flow
+    g = FakeGuide()
+    builds = []
+    s = Sys(g, guild_id=1, organt_builder=lambda oid, srv, role, flow=None: builds.append(oid),
+            bot_info={11: "L"}, workspace="/ws")
+    f = Flow(g, channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L"})
+    f._quota_over = True
+    out = asyncio.run(s.run_turn(f, 11, "x", Kind.INFO, "leader"))
+    assert "크레딧 한도" in out and builds == []          # LLM 세션 미생성 = 비용 0
+    asyncio.run(s.run_turn(f, 11, "y", Kind.INFO, "member"))
+    assert builds == [] and s._quota_gate_hits[500] == 2   # 계속 차단·hit 누적
+    assert sum(1 for e in s.flow_log if e["event"] == "quota_gate_turn_skipped") == 1   # 로그 1회만
+
+
 def test_continue전_고아베턴_복구():
     """위임 도중 리더 턴이 끝나 베턴이 동료에 굳으면(고아), continue가 리더를 다시 띄우기 전에 베턴을
     리더로 강제 복구한다 — '활성=동료'로 모든 요청이 거부되는 '두 흐름' 버그 방지."""
