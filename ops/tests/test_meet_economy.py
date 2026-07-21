@@ -225,6 +225,41 @@ def test_백로그회의는_심의단축소_예외_전원참여(monkeypatch, tmp
     assert {12, 13, 14, 15, 16} <= probed                # 발언권 응찰이 전원에게
 
 
+def test_전역회의는_SubTask태깅_생략_공통흐름_소속(monkeypatch, tmp_path):
+    """[U-037 실측(2026-07-21, 사용자: '전 서브태스크를 한번에 만드는 회의라면 공통 흐름 하위에')]
+    단계 회의는 주기 전체의 결정 — 턴 소속 태깅이 '첫 미완 SubTask'를 무조건 찍어 백로그 회의가
+    화면에서 ST-1 폴더로 접혔다. 회의 동안 st·bl 태깅 생략(ms까지만), 종료 시 복원."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.protocol import PIPELINE_CTX
+    from system.rule.milestone import Criterion, Milestone, SubTask, _set_pipeline_ctx
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "게임 기획자", 13: "PM"})
+    f.floor_mode = "turn-taking"
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "게임"
+    st = SubTask(st_id="ST-1", goal="규칙", criteria=[Criterion("규칙 검증", "pytest 통과")])
+    f.milestones = [Milestone(ms_id="MS-1", goal="최소버전",
+                              criteria=[Criterion("30턴 완주", "run 재현")], subtasks=[st])]
+    _set_pipeline_ctx(f, 12)
+    assert (PIPELINE_CTX.get() or {}).get("st") == "ST-1"        # 작업 국면 = 단계 태깅(종전)
+    seen = {}
+
+    async def wake(to, b, k):
+        seen["flag"] = getattr(f, "_stage_meeting", None)
+        _set_pipeline_ctx(f, to)
+        seen["st"] = (PIPELINE_CTX.get() or {}).get("st")
+        seen["ms"] = (PIPELINE_CTX.get() or {}).get("ms")
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    asyncio.run(t["meet"].handler({"topic": "다음 일감 전부", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    assert seen.get("flag") == "backlog"                          # 회의 동안 플래그
+    assert seen.get("st") is None and seen.get("ms") == "MS-1"    # 태깅 = 주기까지만
+    assert getattr(f, "_stage_meeting", None) is None             # 종료 시 복원
+
+
 def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단(monkeypatch, tmp_path):
     """[U-037/ch82 실측(2026-07-21, 사용자: '대화가 더 필요한 상황에 결론 강제·회의 파괴가 답이냐')]
     2명 심의단이 발언만 돌다 서고, 재개설이 풀린 실이유가 '새 참여자'였다 — 무진전 1차 대응은 컷이

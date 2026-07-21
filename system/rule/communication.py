@@ -200,6 +200,10 @@ async def meet(flow, me_id, args):
         # [회의 하나당 결론 하나(2026-07-14, 사용자)] 이 회의가 정할 단 하나를 상태에서 유도 —
         # GOAL/마일스톤/서브태스크/백로그. 안건·수렴안 템플릿이 그 단계로 좁혀지고, 채택 시 그 단계만 등록.
         _stage = _ms_stage(flow) if _no_r1 else None
+        if _stage:
+            # [전역 회의 소속 태깅] 이 회의가 도는 동안 run_turn의 파이프라인 태깅이 SubTask를 생략
+            # (주기까지만) — 전역 회의가 특정 단계 폴더로 접히는 오배치 차단. 해제는 meet() 완료 콜백.
+            flow._stage_meeting = _stage
         _agenda, _stage_tmpl = _ms_agenda(_stage)
         if _agenda:
             from .milestone import stage_context as _ms_sctx
@@ -1063,6 +1067,8 @@ async def meet(flow, me_id, args):
     inner = asyncio.ensure_future(_run_meet())
     flow.inflight_tasks.add(inner)
     inner.add_done_callback(flow.inflight_tasks.discard)
+    # [전역 회의 소속 태깅 해제] 완료·취소·detach 어느 경로든 회의가 끝나면 SubTask 태깅 복원.
+    inner.add_done_callback(lambda _t: setattr(flow, "_stage_meeting", None))
     try:
         return await asyncio.shield(inner)
     except asyncio.CancelledError:

@@ -199,6 +199,12 @@ def _set_pipeline_ctx(flow, me_id=None):
                 if b.status == "in_progress" and int(b.assignee or 0) == int(me_id):
                     bl = b.backlog_id
                     break
+        # [전역 회의는 주기 소속(2026-07-21, 사용자: '전 서브태스크를 한번에 만드는 회의라면 공통
+        # 흐름 하위에 둬야지')] 단계 회의(목표·주기·단위·백로그)는 특정 SubTask의 일이 아니라 주기
+        # 전체의 결정인데, 종전엔 '첫 미완 SubTask'를 무조건 태깅해 화면이 전역 회의를 그 단계 폴더
+        # 밑으로 접었다(U-037 실측: 백로그 회의가 ST-1 아래). 단계 회의 동안은 ms까지만 태깅한다.
+        if getattr(flow, "_stage_meeting", None):
+            st, bl = None, None
         PIPELINE_CTX.set({"ms": ms.ms_id, "st": (st.st_id if st else None), "bl": bl} if ms else None)
     except Exception:
         pass
