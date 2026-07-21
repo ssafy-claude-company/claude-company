@@ -125,7 +125,9 @@ async def _join_posting(flow):
         eng, scope = flow.comm.engagement, flow.comm.scope
         def _free(m):
             return not (eng is not None and scope is not None and eng.busy_elsewhere(m, scope))
-        cands = [m for m in flow.pool if m != me and not _is_spare(flow, m) and _free(m)]
+        from .comm_helpers import _is_system_role_label as _sysrole
+        cands = [m for m in flow.pool if m != me and not _is_spare(flow, m) and _free(m)
+                 and not _sysrole(flow._info(m))]   # [채용 제외(2026-07-21)] 시스템 직군은 실행 팀 후보 아님
         if not cands:
             return None
         origin = (getattr(flow, "origin_request", "") or "").strip()[:200]

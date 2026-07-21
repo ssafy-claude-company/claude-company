@@ -749,8 +749,10 @@ class Sys:
         한가한 봇 전원(점유 제외)에게 요청을 보여주고 '이끌 의향'을 [응찰: N](+이유) 또는 [패스]로
         받는다. 최고 응찰이 발제자. 아무도 응찰 안 하면 None(호출부가 종전 폴백=leader). 후보 사전
         필터·인원 상한 없음(누가 맞는지는 시스템이 아니라 봇 자신이 판단 — 매직넘버 금지)."""
+        from .rule.comm_helpers import _is_system_role_label
         cands = [int(m) for m in self.bot_info
                  if not _is_spare_label(self.bot_info.get(int(m)))
+                 and not _is_system_role_label(self.bot_info.get(int(m)))   # [채용 제외(2026-07-21 사용자 결정)]
                  and self.engaged.holder(int(m)) is None]
         if not cands:
             return None

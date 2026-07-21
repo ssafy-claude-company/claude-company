@@ -369,6 +369,13 @@ async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO, micro=Fal
         flow.fork_active -= 1
 
 
+def _is_system_role_label(label) -> bool:
+    """[시스템 직군 판별(2026-07-21, U-038 실측·사용자 결정: '채용' 직군이 실행 팀에 합류 → 제외)]
+    채용/인사(리크루터)는 온보딩·전수 전담 시스템 직군 — 판 참여 응찰의 후보가 아니다
+    (sys_core._pick_recruiter와 같은 판정식)."""
+    return any("채용" in j or j.strip() == "인사" for j in str(label or "").split("·"))
+
+
 def _group_of(flow, team):
     return [(f"<@{i}>", flow._info(i)) for i in team]
 

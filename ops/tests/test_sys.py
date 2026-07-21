@@ -6060,6 +6060,30 @@ def test_유사직군_병합_대표는_과제적합_우선_게임엔_게임기�
     assert 11 in joined2 and 12 not in joined2
 
 
+def test_참여공고_시스템직군_채용은_후보에서_제외():
+    """[U-038 실측·사용자 결정(2026-07-21: '채용 제외')] '채용'(리크루터) 시스템 직군이 참여 응찰로
+    실행 팀에 합류하던 것 — 후보 필터에서 제외(프로브 자체가 안 가 비용 0). 채용의 몫은 온보딩·
+    전수·genesis이지 판 실행이 아니다. 판정식은 _pick_recruiter와 동일(_is_system_role_label)."""
+    import asyncio
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None,
+            bot_info={11: "기획", 12: "프론트", 13: "채용", 14: "인사"}, workspace="/ws")
+    probed = []
+
+    class _B:
+        def __init__(self, mid):
+            self.mid = mid
+
+        async def handle(self, prompt):
+            probed.append(self.mid)
+            return "[응찰: 9] 참여합니다"
+    s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
+    s._distill_workspace = lambda: None
+    _, joined = asyncio.run(s._elect_proposer(500, "게임 만들어줘"))
+    assert 13 not in probed and 14 not in probed           # 프로브 자체 제외(비용 0)
+    assert set(joined) <= {11, 12}
+
+
 def test_참여공고_합류누진임계_저응찰은_소수만_합류():
     """[U-036 재작업 #2(2026-07-21, 사용자: '상위 6명이 아니라 1명 추가될 때마다 응찰 점수값을 높여라')]
     직군 대표 전원 자동 합류(실측: 11개 상이 직군 전원 팀 → 회의·협의 예산 52%) 대신 응찰 강도 순
