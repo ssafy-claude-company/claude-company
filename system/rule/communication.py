@@ -763,6 +763,7 @@ async def meet(flow, me_id, args):
                 flow.note_activity(0, f"🗳 결론 확정 표결 진행 — 전원 {len(_voters)}명 응답 수집", force=True)
             except Exception:
                 pass
+            _ballots = []   # [표결 서사(2026-07-21, 사용자: '찬성·반대 이유 서사가 잘 보이게')] 전 투표자 (이름·표·사유)
             for m, res, note in await _fork_collect(flow, me_id, _voters, _rbody, micro=True):
                 wakes["n"] += 1
                 t = str(res or "")
@@ -771,12 +772,15 @@ async def meet(flow, me_id, args):
                 # 찬성으로 셌다(거짓 통과→품질 신호 희석). 이제 명시 마커([찬성]/[반대] 또는 선두 토큰)만
                 # 인정하고, '반대 없/않' 부정은 찬성, 그 외 비확답은 '기권'(찬성도 반대도 아님)으로 분리.
                 _vote = _classify_vote(t)
+                # 사유 = 표 마커 뒤 첫 실질 줄(찬성·반대·기권 공통 — 서사 보존)
+                _reason = re.sub(r"^\s*\[?\s*(찬성|반대|기권)\s*[:：\]]*\s*", "", t).strip().splitlines()
+                _reason = next((x.strip() for x in _reason if x.strip()), "")[:150]
                 if _vote == "against":
-                    _r = t.split("반대", 1)[1].lstrip(":： ]").strip().splitlines()[0][:150] if "반대" in t else ""
-                    _dissents.append(_r or "(사유 미기재)")
+                    _dissents.append(_reason or "(사유 미기재)")
                 elif _vote == "for":
                     _yes += 1
                 # abstain = 집계 안 함(찬성 오집계 방지) — 만장일치 게이트는 yes>=1이라 전원 기권이면 미통과
+                _ballots.append((str(flow._info(m) or m), _vote, _reason))
                 if flow.log:
                     flow.log("consensus_ratify_vote", who=m, vote=_vote)
             # [표결 가시화(2026-07-16, 사용자: '회의 중 표결이 안 보여서 문제')] 결과를 채널 회의
@@ -787,6 +791,12 @@ async def meet(flow, me_id, args):
                 _vsum = (f"결론 확정 표결 — 찬성 {_yes} · 반대 {len(_dissents)}"
                          + (" → 확정" if _passed0 else
                             " / 반대 요지: " + " · ".join(d[:60] for d in _dissents[:3])))
+                # [표결 서사 동봉(2026-07-21)] 집계 줄 아래 전 투표자의 표·사유를 구조 표기로 붙인다 —
+                # feed_assembly가 '투표: 이름 | 표 | 사유' 줄을 파싱해 펼침 렌더의 원료로 승격(본문
+                # 스크래핑 아님 — 정본 표기). 사유 없는 표는 표만.
+                _vlabel = {"for": "찬성", "against": "반대", "abstain": "기권"}
+                _vsum += "".join(f"\n투표: {nm} | {_vlabel.get(vt, vt)}"
+                                 + (f" | {rs}" if rs else "") for nm, vt, rs in _ballots)
                 _ch = (flow.current.thread_id if flow.current else None) or flow.user_channel
                 await flow.guide.post(int(_ch), 0, f"[표] {_vsum}")   # SYS 명의(앵커 발언 착시 방지)
             except Exception:
