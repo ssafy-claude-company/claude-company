@@ -351,6 +351,52 @@ def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단
     # (합류 채널 게시는 픽스처 thread_id가 문자열이라 int 캐스트 스킵 — 가시화는 로그 이벤트로 검증)
 
 
+def test_결론직전_지명은_답슬롯_1턴_존중후_표결(monkeypatch, tmp_path):
+    """[U-038 재작업(2026-07-21, 사용자: "'의견 부탁합니다' 했는데 그냥 결론 짓고 종료해버리는 상황
+    해결해야")] 초안 완성 컷이 최종 표결로 직행하며 마지막 발언의 유효 지명을 증발시키던 것 —
+    게이트가 표결 전에 그 지명자에게 답 슬롯 1턴을 준다(회의당 1회 상한 — 지명 릴레이 부활 아님).
+    지명자의 편집이 초안을 되열면 회의는 자연히 계속된다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+    prompts = []
+
+    async def wake(to, b, k):
+        prompts.append((to, b))
+        if "결론 확정 표결" in b:
+            return "[찬성]"
+        if "답 슬롯" in b:
+            return "제 관점은 이미 반영돼 있습니다 — 확정에 동의합니다."
+        if "발언권 응찰" in b:
+            if not any("차례" in x or "발언하세요" in x for _, x in prompts):
+                return "[응찰: 5] 초안 채우겠습니다" if to == 12 else "[패스]"
+            return "[응찰: 4] 마무리 확인" if to == 13 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            if to == 12:
+                _fill_draft(tmp_path)
+                _resolve_objections(tmp_path)
+                return "결정 구획을 채웠습니다."
+            return "확인했습니다 — 백엔드 의견 부탁합니다. [지명: 백엔드]"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "draft_ready" in names and "meet_final_nominee_slot" in names
+    slot = next(kw for e, kw in events if e == "meet_final_nominee_slot")
+    assert slot.get("who") == 12                              # 지명자(백엔드=12)에게 답 슬롯
+    i_ready = names.index("draft_ready")
+    assert "stage_confirmed" in names                         # 슬롯 후 표결·확정 정상 완주
+    _slot_prompt = next((b for to, b in prompts if to == 12 and "답 슬롯" in b), None)
+    assert _slot_prompt is not None                           # 실제 그 봇에게 슬롯 프롬프트 도달
+
+
 def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypatch):
     """[U-038 실측(2026-07-21, 사용자: '무슨 Task 목표 하나 못 잡고 있어 회의가')] 목표='(후속: 기획
     단계에서 확정 — 담당·달력 날짜)'가 부결 2회(찬성 0)에도 종결 보장(부결 3회 소진→이월·확정)에

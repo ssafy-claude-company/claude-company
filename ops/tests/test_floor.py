@@ -65,7 +65,8 @@ def test_TT_발언누진임계_큰판은_저강도_전체가_패스동형(monkey
     assert bid_threshold(11, 0) == 1                       # step 0 = 곡선 off
     six = [1, 2, 3, 4, 5, 6]
     pol = TurnTakingFloor()
-    a = pol.resolve_open(FloorState(six), Turn(speaker=1), [(c, 3) for c in six[1:]])
+    _st6 = FloorState(six); _st6.offered.update(six)       # 오퍼 스윕 변수 제거(주제=임계)
+    a = pol.resolve_open(_st6, Turn(speaker=1), [(c, 3) for c in six[1:]])
     assert a.kind == CLOSE_VOTE                            # 6명 판 임계 4 — 3짜리 전원 미달
     a2 = pol.resolve_open(FloorState(six), Turn(speaker=1), [(2, 3), (3, 4)])
     assert a2.kind == SELF and a2.next == 3                # 4만 문턱 통과
@@ -84,15 +85,24 @@ def test_TT_종결반대_계속은_누진임계_미적용():
     assert a.kind == SELF and a.next == 5                  # 8명 판에서도 [계속: 1]이 소생
 
 
-def test_TT_규칙3_무응찰이면_즉시_종결확인_표결():
-    """[EXP-002 절제] 무응찰 → (종전 ③현재 화자 계속·lapse 카운터 없이) 곧장 종결 확인 표결.
-    이어가기 채널은 표결의 [계속: N](발언 의무)이 담당한다."""
-    st = FloorState([A, B])
+def test_TT_규칙3_무응찰이면_오퍼스윕_한번후_종결확인_표결():
+    """[EXP-002 절제 + 첫 오퍼 스윕(2026-07-21, 사용자: '갑자기 종결 투표 열리고 다른 애 의견 없이
+    종료')] 무응찰이어도 '한 번도 오퍼를 못 받은' 참여자가 있으면 먼저 그들에게 발언권 오퍼 1회
+    (회의당 1스윕), 그 뒤에야 종결 확인 표결 — 전원이 오퍼를 받았으면 종전처럼 즉시 표결.
+    이어가기 채널은 표결의 [계속: N](발언 의무)이 그대로 담당한다."""
+    st = FloorState([A, B, C])
     pol = TurnTakingFloor()
     t = Turn(speaker=A, passed=True)
-    a = pol.resolve_open(st, t, [(B, 0)])              # 0점 응찰 = 무응찰
-    assert a.kind == CLOSE_VOTE and set(a.candidates) == {A, B}   # 현재 화자도 표결 참여
+    st.record(t)                                        # A만 기회가 닿음 — B·C는 미제안
+    a = pol.resolve_open(st, t, [(B, 0)])               # 0점 응찰 = 무응찰
+    assert a.kind == OPEN and set(a.candidates) == {B, C}   # 스윕 — 미제안자에게 오퍼
+    st.offered.update({B, C})                           # (소비자가 프로브를 기록)
+    a2 = pol.resolve_open(st, t, [])                    # 스윕도 무응찰
+    assert a2.kind == CLOSE_VOTE and set(a2.candidates) == {A, B, C}   # 그제야 종결 확인(전원)
     assert pol.resolve_close_vote(st, t, []).kind == CLOSE   # 전원 [종료]/무응답 → 합의 종결
+    # 전원이 이미 오퍼를 받은 판은 종전과 동일 — 무응찰 즉시 종결 확인(스윕 없음)
+    st3 = FloorState([A, B]); st3.offered.update({A, B})
+    assert TurnTakingFloor().resolve_open(st3, t, [(B, 0)]).kind == CLOSE_VOTE
 
 
 def test_TT_종결확인_반대는_발언의무_표결은_무응찰마다():
@@ -100,6 +110,7 @@ def test_TT_종결확인_반대는_발언의무_표결은_무응찰마다():
     직접 말한다(말 없는 연장 불가). 표결은 무응찰마다 열린다 — 늦은 대화 유실 없음. 진짜 끝나면
     전원 [종료]가 닫는다(상한은 엔진 max_turns·소비자 wake_cap)."""
     st = FloorState([A, B])
+    st.offered.update({A, B})                          # 전원 오퍼 완료 상태(스윕 변수 제거 — 주제=표결 반복)
     pol = TurnTakingFloor()
     t = Turn(speaker=A, passed=True)
     a = pol.resolve_open(st, t, [])                    # 무응찰 → 표결 #1

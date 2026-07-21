@@ -85,11 +85,16 @@ class FloorState:
         self.turn_no = 0                  # 확정 턴 수(패스 오퍼는 세지 않음)
         self.last_spoken: Dict[int, int] = {}   # id → 마지막 실발언 턴번호(공정성 장부)
         self.history: List[Turn] = []
+        # [첫 오퍼 장부(2026-07-21, U-038 재작업 — 사용자: '다른 애 의견 없이 갑자기 회의 종료')]
+        # 발언권 오퍼(OPEN 프로브)나 실발언이 닿은 참여자 — 종결 확인 전 '한 번도 제안 못 받은'
+        # 참여자 판별의 원장. 기입은 소비자(프로브 실행자)와 record가 한다.
+        self.offered: set = set()
 
     def record(self, turn: Turn) -> None:
         self.turn_no += 1
         self.history.append(turn)
         self.current = turn.speaker
+        self.offered.add(turn.speaker)    # 발언(패스 포함) = 기회가 닿은 것
         if not turn.passed:
             self.last_spoken[turn.speaker] = self.turn_no
 
@@ -155,6 +160,7 @@ class TurnTakingFloor(FloorPolicy):
             self._speak_step = max(0, int(os.environ.get("ORGANT_SPEAK_BID_STEP", "1") or 1))
         except ValueError:
             self._speak_step = 1
+        self._offer_swept = False   # [첫 오퍼 스윕] 회의(정책 인스턴스)당 1회
 
     def next_after(self, st: FloorState, turn: Turn) -> Allocation:
         a = turn.addressee
@@ -184,6 +190,16 @@ class TurnTakingFloor(FloorPolicy):
             self._queue = [cc for cc, _ in ranked[1:self._qdepth]]
             return Allocation(SELF, next=c, reason=f"②자기선택 — 응찰 {s}")
         self._queue = []
+        # [첫 오퍼 스윕(2026-07-21, U-038 재작업 — 사용자: '갑자기 종결 투표 열리고 다른 애 의견 없이
+        # 종료')] 종결 확인의 "마쳐도 됩니까" 프레임은 닫기 압력이라, 한 번도 발언 오퍼를 못 받은
+        # 참여자(쿨다운·큐 깊이·회전에 밀려 프로브 자체가 안 닿은)는 그냥 [종료]로 쓸려간다 — 첫
+        # 종결 확인 전에 그들에게 정식 발언권 오퍼를 1회 돌린다(회의당 1스윕 — 무응찰이면 다음
+        # 반복에서 종전대로 종결 확인, 종결 보장·max_turns 상한 불변).
+        _never = tuple(c for c in st.silence_order(exclude=(turn.speaker,))
+                       if c not in st.offered)
+        if _never and not self._offer_swept:
+            self._offer_swept = True
+            return Allocation(OPEN, candidates=_never, reason="첫 오퍼 스윕 — 미제안 참여자")
         return Allocation(CLOSE_VOTE, candidates=st.silence_order(),
                           reason="무응찰 — 종결 확인 표결")
 
@@ -295,6 +311,13 @@ async def run_conversation(policy: FloorPolicy, state: FloorState, opening: Turn
             alloc = policy.resolve_open(state, turn, list(bids or []))   # ② 승자 선정 / ③ / 종결
             if on_alloc:
                 on_alloc(alloc)
+            if alloc.kind == OPEN:
+                # [첫 오퍼 스윕(2026-07-21)] 무응찰 판정이 '미제안 참여자 재수집'을 되돌린 경우 —
+                # 그들에게 1회 오퍼 후 재판정(정책이 스윕을 회의당 1회로 상한해 중첩 불가).
+                bids = (await bid(alloc.candidates, OPEN)) if bid is not None else []
+                alloc = policy.resolve_open(state, turn, list(bids or []))
+                if on_alloc:
+                    on_alloc(alloc)
         if alloc.kind == CLOSE_VOTE:
             votes = (await bid(alloc.candidates, CLOSE_VOTE)) if bid is not None else []
             alloc = policy.resolve_close_vote(state, turn, list(votes or []))  # 합의 종결/소생

@@ -387,6 +387,7 @@ async def meet(flow, me_id, args):
         # 워크스페이스 없는 판(테스트·솔로)은 _draft_path=None → 종전 [수렴안] 채팅블록 경로 폴백.
         _draft_path = None
         _dstate = {"h": None, "stable": 0}
+        _honor = {"nom": None, "used": False}   # [결론 직전 지명 존중(2026-07-21)] 회의당 1회
         if _no_r1 and tt and _stage and flow.current is not None:
             from .milestone import stage_draft_template as _ms_dtmpl, draft_status as _ms_dstat
             from .milestone import draft_to_proposal as _ms_dprop
@@ -588,6 +589,11 @@ async def meet(flow, me_id, args):
                 if _dtxt.strip() and _ph == 0 and _obj == 0 and _dstate["stable"] >= 1:
                     if flow.log:
                         flow.log("draft_ready", stage=str(_stage), stable=_dstate["stable"])
+                    # [결론 직전 지명 존중(2026-07-21, U-038 재작업 — 사용자: '의견 부탁합니다 했는데
+                    # 그냥 결론 짓고 종료')] 완성 컷이 표결로 직행하며 이 발언의 유효 지명이 증발하던
+                    # 것 — 게이트 루프가 표결 전에 그 지명자에게 딱 1턴을 준다(회의당 1회 상한).
+                    if tt and addressee and addressee != m and not _honor["used"]:
+                        _honor["nom"] = addressee
                     return None                     # 조기 종료 → 게이트 루프가 최종 표결·등록
             elif _no_r1 and res:
                 _cprop = _stage_extract(_stage, res)
@@ -623,6 +629,11 @@ async def meet(flow, me_id, args):
             # [응찰 쿨다운(2026-07-18, wake 축소)] OPEN 수집에서 직전 패스 봇을 _cool_n회 제외 —
             # 스킵 = 강도 0과 동형(비용 0). 종결 표결은 전원(회의 닫힘 판정이라 표본 축소 금지).
             probe = list(cands) if purpose == CLOSE_VOTE else _cooldown_probe(cands, _cool, _cool_n)
+            if purpose != CLOSE_VOTE:
+                try:
+                    st.offered.update(int(x) for x in probe)   # [첫 오퍼 장부] 프로브가 닿은 참여자
+                except Exception:
+                    pass
             def body_of(c):
                 if purpose == CLOSE_VOTE:
                     # [결정권자 폐지 — 종결 표결이 곧 확정(2026-07-09, 사용자)] 파이프라인 회의에서
@@ -813,6 +824,15 @@ async def meet(flow, me_id, args):
                                        max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
             _skip_discuss = False
             _flush_minutes()
+            # [결론 직전 지명 존중(2026-07-21)] 완성 컷에 실려온 지명자에게 답 슬롯 1턴 — 그 편집이
+            # 초안을 되열면 아래 평가가 자연히 회의를 계속한다(상한 1 = 지명 릴레이 부활 아님).
+            if _pipe and _honor["nom"] and not _honor["used"]:
+                _honor["used"] = True
+                _nm, _honor["nom"] = _honor["nom"], None
+                if flow.log:
+                    flow.log("meet_final_nominee_slot", who=int(_nm))
+                await _speech(_nm, _mk_body(_nm, None, won=False, answer=True), "토론")
+                _flush_minutes()
             if flow.current is None or not _pipe:
                 break                                       # 솔로/orchestrated = 단일 패스(종전 동작)
             if _draft_path is not None:
