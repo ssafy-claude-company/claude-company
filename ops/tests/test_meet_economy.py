@@ -351,6 +351,40 @@ def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단
     # (합류 채널 게시는 픽스처 thread_id가 문자열이라 int 캐스트 스킵 — 가시화는 로그 이벤트로 검증)
 
 
+def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypatch):
+    """[U-038 실측(2026-07-21, 사용자: '무슨 Task 목표 하나 못 잡고 있어 회의가')] 목표='(후속: 기획
+    단계에서 확정 — 담당·달력 날짜)'가 부결 2회(찬성 0)에도 종결 보장(부결 3회 소진→이월·확정)에
+    실려 그대로 등록 — GOAL이 빈 채 판이 굴렀다. 봇들의 반대는 옳았고 기계가 밀었다. 수리: 미룸 전용
+    값 = 빈칸과 동형(형식 검사 — 내용 무판단) — 등록이 최종 방어선이라 종결 보장이 소진돼도 '결정이
+    실린 결론'만 확정 가능. 초안 단계(draft_missing_key)에서도 같은 판정으로 가결 전 기계 이의 코칭."""
+    from system.guide_tools import Flow
+    from system.rule.milestone import deferred_only, draft_missing_key, register_stage
+    from test_sys import FakeGuide
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    assert deferred_only("(후속: 기획·설계 단계에서 게임 정체성 확정 — 담당: 게임 기획자, 기획 마감: 2026-07-23 정오)")
+    assert not deferred_only("2인 턴제 카드 대전 웹게임 (후속: 세부 밸런스)")   # 결정+세부 미룸은 정상
+    f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L"})
+    ok, note = register_stage(f, "goal", "목표: (후속: 기획 단계에서 확정 — 담당: 게임 기획자)", "게임")
+    assert not ok and "후속 미룸" in note and "recruit" in note
+    ok2, _n2 = register_stage(f, "goal", "목표: 2인 턴제 카드 대전 웹게임\n"
+                                         "- 30턴 완주 | 실증: run으로 30턴 재현", "게임")
+    assert ok2, _n2                                            # 실결정은 종전대로 등록(무회귀)
+    assert draft_missing_key("goal", "## 결정\n목표: (후속: 나중에)\n\n## 참고") == "목표"
+    assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n\n## 참고") is None
+
+
+def test_목표골격_구성점검_자리와_달력사실_고지(monkeypatch):
+    """[U-038 실측] ①구성 점검 경로 평등: set_goal 도구에만 있던 점검(2026-07-13 설계)을 회의 골격의
+    자리표시로 — 안 채우면 초안이 완성되지 않고, 부족 직군의 정경로(recruit)가 그 자리에서 상기
+    (팀 밖 게임 기획자에게 후속 담당을 걸던 우회 차단). ②달력 스케줄러 부재 고지: 기한은 날짜가
+    아니라 파이프라인 사건으로(실행 불가한 '7-23 정오' 류 계획 언어 차단)."""
+    from system.rule.milestone import stage_draft_template
+    d = stage_draft_template("goal", "안건")
+    assert "구성 점검:" in d and "recruit" in d
+    assert "달력" in d and "다음 회의 전" in d
+    assert "미루면 빈칸과 같아 등록되지 않습니다" in d
+
+
 def test_로드맵은_회의결론으로_독립계획블록_폐지(monkeypatch):
     """[2026-07-21, 사용자: '제목 아래 그 칸이 결론 칸 — 저건 회의의 결론에 들어가야'] 주기 회의
     등록 노트(= [회의 마무리]로 결론 칸에 실리는 텍스트)에 계획(전체 단계열+이번 주기 좌표)이

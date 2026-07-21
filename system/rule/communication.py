@@ -576,7 +576,8 @@ async def meet(flow, me_id, args):
                 if _mkey and _ph == 0 and _obj == 0 and "@형식" not in _dtxt:
                     # 등록 필수 키 부재 — SYS가 형식 이의를 기계 기록(가결-등록거부 루프 선차단)
                     _ref0 = _dtxt.find("\n## 참고")
-                    _line0 = f"> [이의 @형식] 결정 구획에 '{_mkey}' 로 시작하는 줄이 필요합니다(등록 형식 — 예: {_mkey} <한 줄>)."
+                    _line0 = (f"> [이의 @형식] 결정 구획에 '{_mkey}' 줄이 **실제 결정으로** 필요합니다 — "
+                              f"없거나 '(후속: …)' 미룸뿐이면 등록되지 않습니다(예: {_mkey} <한 줄 결정>).")
                     _nd = (_dtxt[:_ref0].rstrip("\n") + "\n" + _line0 + "\n" + _dtxt[_ref0:]) if _ref0 > 0 else (_dtxt.rstrip("\n") + "\n" + _line0 + "\n")
                     _dwrite(flow, "DRAFT.md", _nd)
                     _dtxt = _nd; _ph, _obj = _ms_dstat(_dtxt)
