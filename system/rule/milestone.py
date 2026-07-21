@@ -1586,7 +1586,7 @@ def register_stage(flow, stage, prop, origin=""):
         if flow.log:
             flow.log("ms_by_meeting", ms=ms.ms_id)
         return True, (f"[표결 확정] 마일스톤 {ms.ms_id} 등록(조건 {len(ms.criteria)}개).{_road}\n"
-                      "다음: 서브태스크 회의(단위 분해)를 시스템이 엽니다.")
+                      "다음: 작업 나누기 회의(영역 분해 + 일감 열거 — 한 회의)를 시스템이 엽니다.")
 
     if stage == "subtask":
         _open = next((m for m in (getattr(flow, "milestones", None) or [])
@@ -1624,7 +1624,7 @@ def register_stage(flow, stage, prop, origin=""):
         return True, (f"[표결 확정] 작업 영역 {n}개 등록."
                       + (f" (미등록 {len(_errs)}건 — 사유: {_etxt})" if _errs else "")
                       + (_bl_note if _bl_note
-                         else " 다음: 각 단위의 백로그 회의를 시스템이 엽니다."))
+                         else " (일감 줄이 없어 백로그 충전 회의를 시스템이 엽니다.)"))
 
     if stage == "backlog":
         _open = next((m for m in (getattr(flow, "milestones", None) or [])
