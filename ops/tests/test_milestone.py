@@ -378,6 +378,34 @@ def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monke
     assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
 
 
+def test_무지정_보고는_자기백로그_SubTask로_귀속_릴레이_이음(monkeypatch):
+    """[U-036 실측(2026-07-21): 디자이너가 target 없이 report_iter → 마일스톤 조건(V0/V1 게이트)에
+    0/5 미착지, 자기 백로그는 영원히 in_progress → 릴레이 정지·[다음 선정] 불발 → 54분 메타 표결
+    공회전] ①target 미지정 + 보고자가 in_progress 백로그를 쥔 SubTask가 있으면 그 SubTask로 자동
+    귀속 ②자기선점 백로그의 완료 보고도 위임 완료와 같은 핸드오프 공고([다음 선정])를 띄운다."""
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import rule_report_iter, rule_set_milestone, rule_set_subtask
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    evs = []
+    f.log = lambda ev, **kw: evs.append((ev, kw))
+    rule_set_milestone(f, 11, {"goal": "게임 최소버전", "criteria": "브라우저 30턴 완주 | run 재현"})
+    rule_set_subtask(f, 12, {"goal": "메커닉 규격", "criteria": "전 규격 리뷰 통과 | grep -c 승인 review.md ≥ 1"})
+    st = f.milestones[0].subtasks[0]
+    r = relay_for(f, st)
+    b = r.submit(12, "메커닉 규격 정의")
+    r.pick(12, b.backlog_id, 12)                       # 12가 자기선점(in_progress)
+    r.submit(13, "선택지 데이터 구조")                   # 남은 백로그(다음 선정 후보)
+    f._pipeline_notes = []
+    rule_report_iter(f, 12, {"results": "메커닉 규격 정의 | pass | mechanic_spec.md 완성"})
+    assert b.status == "done"                          # 자기 백로그가 장부에 착지
+    assert any(ev == "iter_target_inferred" and kw.get("st") == st.st_id for ev, kw in evs)
+    assert any("[다음 선정]" in n for n in f._pipeline_notes)   # 릴레이가 이어진다(정지 없음)
+    # 백로그를 안 쥔 보고는 종전대로 마일스톤 검증(무회귀) — 미착지 안내에 오귀속 코칭 동봉
+    out = rule_report_iter(f, 13, {"results": "엉뚱한 산출물 | pass | 파일"})
+    assert "미착지" in out and "당신이 집은 백로그" in out
+
+
 def test_등록_허용목록_전수_대조_회귀가드(monkeypatch):
     """[ch79 실측 회귀(2026-07-19) — 손 고른 부분집합 가드의 구멍] pick_backlog가 등록만 되고
     허용목록에 빠져 봇 선점이 전원 '권한 밖 도구' 거부 → 작업 전이 교착의 숨은 뿌리.

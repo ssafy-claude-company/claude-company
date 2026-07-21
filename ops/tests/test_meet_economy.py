@@ -534,6 +534,64 @@ def test_팀상한_env설정시_비상백스톱_작동(monkeypatch, tmp_path):
     assert any(ev == "team_capped" and kw.get("cap") == 6 for ev, kw in evs)
 
 
+# ── 표결 경제(2026-07-21, U-036 실측: 표 하나에 전원이 셸·파일 조사 7~17왕복 — 판 비용 ~1/3) ──
+
+def test_표결_수집은_즉답_무도구(monkeypatch, tmp_path):
+    """vote·vote_stop 수집을 회의 확정 표결과 같은 즉답 규칙으로 통일 — micro(무도구) wake +
+    '도구 호출·파일 확인 금지' 지시 + cast_vote 유도문 제거. U-036 실측: 도구 장착 표결이 전원의
+    조사 턴(셸 실행·파일 읽기 7~17왕복)을 정당화해 재기동 후 54분을 태웠다."""
+    g, f = _meet_flow(tmp_path)
+    caps = []
+
+    async def fake_fork(flow, me, members, body_of, kind=None, micro=False):
+        caps.append((micro, body_of(list(members)[0])))
+        return [(m, "[표] 반대\n지금 구성으로 계속", "") for m in members]
+    from system.rule import comm_ceremonies as cc
+    monkeypatch.setattr(cc, "_fork_collect", fake_fork)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    asyncio.run(t["vote"].handler({"question": "렌더 방식?", "options": "Canvas;SVG", "members": ""}))
+    asyncio.run(t["vote_stop"].handler({"target": "milestone", "reason": "해결 불가 검토"}))
+    assert len(caps) == 2
+    for micro, body in caps:
+        assert micro is True                       # 무도구 즉답 wake
+        assert "즉답" in body and "도구" in body    # 지시가 문면에
+        assert "cast_vote" not in body             # 도구 유도문 제거
+
+
+def test_작업단계_참고표결은_릴레이로_돌려보낸다(monkeypatch, tmp_path):
+    """[U-036 실측: 백로그 40건 등록 후 앵커가 '백로그 계획 재확정' 표결 4회 — 전진 0] 집을 백로그가
+    남은 작업 단계의 참고 표결은 회의 가드(meet_deferred_workstage)와 동형으로 거절하고 릴레이를
+    코칭한다. 중지 출구(vote_stop)는 가드 밖 — 언제나 열린다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "육성 게임"
+    # 팀 판은 개인 set_milestone이 (설계대로) 막히므로 — 회의 등록 결과와 동형의 장부를 직접 구성
+    from system.rule.milestone import Criterion, Milestone, SubTask
+    st = SubTask(st_id="ST-1", goal="규칙 엔진",
+                 criteria=[Criterion("규칙 검증", "pytest rules_test.py 통과")])
+    f.milestones = [Milestone(ms_id="MS-1", goal="최소버전",
+                              criteria=[Criterion("브라우저 30턴 완주", "run 재현")], subtasks=[st])]
+    from system.rule.backlog import relay_for
+    r = relay_for(f, st)
+    r.submit(12, "규칙 엔진 구현")                 # open 백로그 = 작업 단계
+    evs = []
+    f.log = lambda ev, **kw: evs.append(ev)
+    out = asyncio.run(t["vote"].handler({"question": "계획 재확정?", "options": "확정;수정", "members": ""}))
+    txt = out["content"][0]["text"]
+    assert "pick_backlog" in txt and "vote_stop" in txt        # 릴레이 코칭 + 출구 안내
+    assert "vote_deferred_workstage" in evs
+
+    async def fake_fork(flow, me, members, body_of, kind=None, micro=False):
+        return [(m, "[표] 반대\n계속", "") for m in members]
+    from system.rule import comm_ceremonies as cc
+    monkeypatch.setattr(cc, "_fork_collect", fake_fork)
+    out2 = asyncio.run(t["vote_stop"].handler({"target": "milestone", "reason": "불가 검토"}))
+    assert "표결" in out2["content"][0]["text"]                # vote_stop은 작업 단계에도 열림
+
+
 # ── e2e 복기 진전 게이트(2026-07-20, 사용자: '무한반복 다 잡고 e2e — 비용 트레이드오프') ──
 
 def test_복기_결함이_안줄면_2회연속에서_컷(monkeypatch, tmp_path):

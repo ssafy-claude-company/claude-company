@@ -566,6 +566,13 @@ def iter_verify(flow, obj, results):
         note += ("\n[결과 " + str(len(_unmatched)) + "건 미착지 — desc 불일치] report_iter의 results[].desc는 "
                  "아래 조건 desc를 **토씨 그대로** 복사해 쓰세요: "
                  + " / ".join("'" + c.desc[:50] + "'" for c in obj.criteria if not c.passed and c.status != "waived"))
+        if kind == "ms":
+            # [오귀속 코칭(2026-07-21, U-036 실측: 백로그 산출물을 마일스톤 조건인 양 재표기하도록
+            # 유도하던 안내)] 끝낸 것이 조건이 아니라 자기 백로그면 — 조건 desc로 바꿔 쓰는 게 아니라
+            # 그 작업 단위(SubTask)에 보고하는 게 맞다(백로그를 쥔 채면 target은 자동 귀속된다).
+            note += ("\n(방금 끝낸 것이 위 조건이 아니라 **당신이 집은 백로그**라면, 조건 desc로 바꿔 "
+                     "쓰지 말고 report_iter(target=<SubTask id>)로 그 단위에 보고하세요 — in_progress "
+                     "백로그를 쥔 상태의 무지정 보고는 자동으로 그 단위에 귀속됩니다.)")
     if obj.iter_stuck >= _STUCK_LIMIT:
         if flow.log:
             flow.log("ms_iter_stuck", kind=kind, id=oid, iter=obj.iter_n, stuck=obj.iter_stuck)
@@ -1706,6 +1713,26 @@ def rule_report_iter(flow, me_id, args) -> str:
     if str(args.get("target") or "").strip() and tgt is None:
         return (f"대상 SubTask를 못 찾았습니다: {str(args.get('target'))[:40]} — "
                 f"현재 주기의 SubTask: {', '.join(s.st_id for s in ms.subtasks) or '(없음)'}")
+    # [자기 백로그 기본 귀속(2026-07-21, U-036 실측: 디자이너가 target 없이 report_iter → 보고가
+    # 마일스톤 조건(V0/V1 게임플레이 게이트)에 0/5 미착지, 자기 백로그는 영원히 in_progress →
+    # 릴레이 정지·[다음 선정] 불발 → 이후 54분이 메타 표결 공회전)] target 미지정이고 보고자가
+    # 지금 in_progress 백로그를 쥔 SubTask가 있으면 그 SubTask가 기본 대상이다 — 자기선점(릴레이)
+    # 작업의 마무리 보고가 위임 경로(sync_completion)와 대칭으로 장부에 착지한다. 백로그를 안 쥔
+    # 보고(주기 마감 국면의 마일스톤 검증)는 종전대로 마일스톤을 탄다(무회귀).
+    if tgt is None:
+        try:
+            _rls = getattr(flow, "backlog_relays", None) or {}
+            for _st0 in ms.subtasks:
+                _r0 = _rls.get(_st0.st_id)
+                if (_st0.status != "done" and _r0 is not None
+                        and any(b.status == "in_progress" and b.assignee == int(me_id)
+                                for b in _r0.backlogs)):
+                    tgt = _st0
+                    if flow.log:
+                        flow.log("iter_target_inferred", st=_st0.st_id, by=int(me_id))
+                    break
+        except Exception:
+            pass
     if str(args.get("wrapup") or "").strip().lower() in ("done", "완료"):
         r = wrapup_done(flow, ms)
         if r != "done":
@@ -1724,6 +1751,7 @@ def rule_report_iter(flow, me_id, args) -> str:
         try:
             from .backlog import relay_for, _match_backlog, pipeline_on as _po
             r = relay_for(flow, tgt)
+            _finished_mine = False
             for it in results:
                 d = str(it.get("desc") or "")[:120]
                 if not d:
@@ -1735,10 +1763,19 @@ def rule_report_iter(flow, me_id, args) -> str:
                     if b.status == "open":
                         r.pick(int(me_id), b.backlog_id, int(me_id))
                     if it.get("passed") and b.status != "done":
+                        _was_mine = (b.status == "in_progress" and b.assignee == int(me_id))
                         r.done(int(me_id), b.backlog_id)
+                        _finished_mine = _finished_mine or _was_mine
                 except Exception:
                     pass
             tgt.backlog_ids = [x.backlog_id for x in r.backlogs]
+            if _finished_mine:
+                # [릴레이 이음(2026-07-21, U-036 실측)] 자기선점 백로그의 완료 보고 = 위임 완료와 같은
+                # 핸드오프 순간 — [다음 선정]/[백로그 소진] 공고를 여기서도 띄운다. 종전엔 위임 경로
+                # (sync_completion) 전용이라 자기선점 완료는 공고 없이 릴레이가 조용히 정지했다.
+                from .backlog import handoff_note as _ho
+                _ho(flow, r, int(me_id), "완료됐습니다")
+                tgt.participants.add(int(me_id))
         except Exception:
             pass
     if flow.log:

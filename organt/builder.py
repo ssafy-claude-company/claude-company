@@ -148,6 +148,13 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         )
         if _tbud > 0:
             _bopts["max_budget_usd"] = _tbud
+        # [도구 스키마 선적재(2026-07-21, U-036 실측: CLI의 도구 지연 로드가 봇 판 하나에서 ToolSearch
+        # 91회 왕복을 만들었다 — run·cast_vote·report_iter를 부르기 전에 매번 스키마 검색 턴 소모)]
+        # 봇 도구셋은 소수 고정(guide MCP+파일 도구)이라 선적재가 맞다 — 스키마는 첫 턴 이후 프롬프트
+        # 캐시를 타서 검색 왕복(매회 전체 문맥 재전송+output)보다 싸다. 러너 env에 운영자가 명시
+        # 설정하면 그 값을 존중(미설정일 때만 끔).
+        if "ENABLE_TOOL_SEARCH" not in os.environ:
+            _bopts["env"] = {"ENABLE_TOOL_SEARCH": "false"}
         _m = model_map.get(organt_id) or (global_model or "")   # [모델] 개별 지정 우선, 없으면 전역 기본(채용 봇 포함)
         if _m:
             _bopts["model"] = _m

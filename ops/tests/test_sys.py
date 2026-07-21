@@ -5704,6 +5704,12 @@ def test_턴예산캡_env가_organt_옵션까지_도달(monkeypatch):
     assert builder(111, {}, "백엔드").options.max_budget_usd == 0.3    # 정책은 env
     monkeypatch.setenv("ORGANT_TURN_BUDGET_USD", "0")
     assert builder(111, {}, "백엔드").options.max_budget_usd is None   # 0 = off(미배선)
+    # [도구 스키마 선적재(U-036 실측: 지연 로드가 봇 판 하나에 ToolSearch 91회 왕복)] 기본 = CLI
+    # 지연 로드 끔(선적재). 운영자가 러너 env로 명시 설정하면 존중(주입 안 함).
+    monkeypatch.delenv("ENABLE_TOOL_SEARCH", raising=False)
+    assert builder(111, {}, "백엔드").options.env.get("ENABLE_TOOL_SEARCH") == "false"
+    monkeypatch.setenv("ENABLE_TOOL_SEARCH", "auto")
+    assert "ENABLE_TOOL_SEARCH" not in builder(111, {}, "백엔드").options.env
 
 
 def test_Info_캐주얼은_프로젝트기계_없는_대화프롬프트():

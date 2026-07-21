@@ -32,6 +32,24 @@ async def vote(flow, me_id, args):
     _hold = _clarify_hold(flow, me_id)   # [G2 — clarify 행동 잠금(B-02)]
     if _hold:
         return _hold
+    # [작업 단계 표결 가드(2026-07-21, U-036 실측: 백로그 등록 완료 후 앵커가 '백로그 계획 재확정'
+    # 표결을 4회 열어 전원 풀턴 조사 = 판 비용의 ~1/3, 파이프라인 전진 0)] 백로그가 서 있는 작업
+    # 단계의 참고 표결은 회의(meet_deferred_workstage)와 같은 이유로 거절 — 확정은 단계 회의 표결이
+    # 이미 했고 지금 최선 수는 릴레이다. 중지 출구(vote_stop)는 이 가드 밖(언제나 열림).
+    try:
+        from .milestone import meeting_stage as _mg1, pipeline_on as _po1
+        if _po1() and _mg1(flow) is None:
+            _rls1 = getattr(flow, "backlog_relays", None) or {}
+            if any(b.status in ("open", "in_progress", "blocked")
+                   for r in _rls1.values() for b in r.backlogs):
+                if flow.log:
+                    flow.log("vote_deferred_workstage", who=int(me_id))
+                return ("[작업 단계] 지금은 표결이 아니라 릴레이가 맞습니다 — 확정은 단계 회의가 이미 "
+                        "했고, 집을 백로그가 남아 있습니다. **pick_backlog로 하나 집어 실작업**을 "
+                        "진행하세요. 동료 의견이 꼭 필요하면 request(Info) 1:1로, 해결 불가해 판을 "
+                        "접어야 하면 vote_stop으로.")
+    except Exception:
+        pass
     if (any(not x.done() for x in getattr(flow, "inflight_tasks", ()))
             and flow.comm.alive != me_id and not flow.comm.done):
         return ("[대기] 직전 위임이 아직 진행 중입니다 — 표결은 그 결과를 받은 뒤 여세요.")
@@ -48,14 +66,17 @@ async def vote(flow, me_id, args):
         # [병렬 fork-join] 표는 서로 '독립'(앵커링 방지)이라 동시 수집이 의미를 바꾸지 않고
         # 시간만 줄인다 — 수집이 싸지면 표결을 아껴 쓰지 않게 된다(협동 빈도↑ = 품질).
         def body_of(v):
+            # [표결 = 즉답(2026-07-21, U-036 실측: 전원이 표 하나 던지려고 셸 실행·파일 조사를 7~17
+            # 왕복씩 — cast_vote 유도문+도구 장착이 조사 턴을 정당화했다)] 회의 확정 표결(_rbody)과
+            # 같은 규칙으로 통일: 도구 없이 지금 이 텍스트만 보고 즉답. 수집은 micro(무도구) wake.
             return (f"[표결 — 독립 의견] 안건: {question}\n선택지: {' / '.join(opts)}\n"
-                    f"동료들의 표는 보이지 않습니다(앵커링 방지). 당신의 전문가 관점에서 "
-                    f"하나를 고르고 근거를 2줄 이내로. cast_vote(option, reason) 도구로 투표하거나, "
-                    f"형식: [표] 선택지명\n근거")
+                    f"동료들의 표는 보이지 않습니다(앵커링 방지). 당신의 전문가 관점에서 하나를 "
+                    f"고르세요. **도구 호출·파일 확인 금지 — 지금 이 텍스트만 보고 즉답하세요.** "
+                    f"형식: 첫 줄 `[표] 선택지명`, 다음 줄 근거 2줄 이내.")
         tally, reasons = {o: 0 for o in opts}, []
         full_lines = []                        # [B-09] MINUTES.md용 발언 전문(무절단 — 표기·유실 없음)
         dom_picks = {o: set() for o in opts}   # 옵션 → 그 옵션을 고른 '도메인'들(같은 직군 중복 제거)
-        for v, res, note in await _fork_collect(flow, me_id, voters, body_of):
+        for v, res, note in await _fork_collect(flow, me_id, voters, body_of, micro=True):
             # [B-15 — cast_vote 스태시 소비(이중 수용: 인자 > regex, [표] 폴백 존치)] 가지가 도구로 투표했으면
             # 그 정확한 option을 쓴다(무효표 소멸). 실패 가지의 stale 스태시도 여기서 pop(다음 표결 오염 방지).
             _stv = (getattr(flow, "vote_stash", None) or {}).pop(v, None)
@@ -154,9 +175,10 @@ async def vote_stop(flow, me_id, args):
         def body_of(v):
             return (f"[중지 표결 — 독립 의견] {_tgt_ko} 중지 제안\n사유: {reason}\n"
                     f"이 {_tgt_ko}가 지금 구성으로 해결 불가라 접어야 할지 당신의 전문가 관점에서 판단하세요. "
+                    f"**도구 호출·파일 확인 금지 — 지금 이 텍스트만 보고 즉답하세요.** "
                     f"찬성(중지)/반대(계속) 중 하나와 근거 2줄 이내. 형식: [표] 찬성  또는  [표] 반대\n근거")
         yes, no, reasons, dom_yes, dom_no = 0, 0, [], set(), set()
-        for v, res, note in await _fork_collect(flow, me_id, voters, body_of):
+        for v, res, note in await _fork_collect(flow, me_id, voters, body_of, micro=True):
             txt = (res or note or "")
             pick = "찬성" if re.search(r"\[표\]\s*찬성|찬성", txt) and not re.search(r"\[표\]\s*반대", txt) else \
                    ("반대" if re.search(r"반대", txt) else "무효")
