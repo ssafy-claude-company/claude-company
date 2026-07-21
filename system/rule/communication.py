@@ -739,9 +739,11 @@ async def meet(flow, me_id, args):
 
         async def _ratify_vote(prop):
             """[수렴안 확정 표결(2026-07-14, 사용자: '찬성을 모두 받아야만')] 전원 찬성이어야 채택.
-            반환 (passed: bool, dissents: [반대 사유]) — 반대 사유는 병합의 원료(자기 것 빠져 부결이면 합침)."""
+            반환 (passed: bool|None, dissents) — None=예산 소진으로 표결 자체가 못 돎(부결 아님 —
+            소진 카운터에 세지 않는다. 2026-07-21, U-040 실측: 실표결 2회인데 유령 부결 1이 끼어
+            '표결 3회 소진'으로 조기 확정, 사용자: '표결 2회인데 왜 3회라며 끊겼지')."""
             if wakes["n"] >= wake_cap:
-                return False, []
+                return None, []
             def _rbody(c):
                 # [단계 기준 심사(2026-07-16, ch75 실측)] 비준에 단계 프레임이 없어 봇들이 '완전한 기획
                 # 문서' 기준으로 심사 — 다음 단계 몫(세부 메커닉·분해)이 없다고 반대를 쏟아 만장일치 불가.
@@ -931,9 +933,14 @@ async def meet(flow, me_id, args):
                     # 새 다듬기 반대 1건씩)] 반대는 무한 허용하되 종결을 못 막게 — 완성 상태 부결 3회 소진 후
                     # 잔여 반대는 참고 구획에 '[차기 이월]'로 기록하고 결론을 확정한다(억압 아님: 기록·가시·
                     # 다음 주기 회의의 입력). 재개설 예산 리셋으로 광택 루프가 무한해지던 것의 구조적 종결 보장.
-                    if not _passed:
+                    if _passed is None:
+                        # [유령 부결 차단(2026-07-21)] 예산 소진 = 표결 불능 — 부결로 세지 않고
+                        # 루프의 소진 경로(wake_cap break)가 정직하게 마감한다.
+                        if flow.log:
+                            flow.log("meet_ratify_skipped_budget", passes=_pass)
+                    elif not _passed:
                         _ready_rejects += 1
-                    _carry = (not _passed) and _ready_rejects >= 3
+                    _carry = (_passed is False) and _ready_rejects >= 3
                     if _passed or _carry:
                         if _carry:
                             if _diss:
