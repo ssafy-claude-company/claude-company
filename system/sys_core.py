@@ -2374,13 +2374,34 @@ class Sys:
             except Exception:
                 flow._ledger_sig0 = None
             _kickoff_cap, _kicks = 3, 0
+            _e2e_kicks = [0]
+
+            def _needs_e2e():
+                # [e2e 관문화(2026-07-21, 전수 감사 — 사용자: '안정성·실효성이 보장된 상태에서 e2e를
+                # 돌려야지')] 종전 e2e는 권고 문구뿐이라 전 주기 완료 후 전수 검증 없이 표류·마감이
+                # 가능했다(실효성 구멍). 전 주기 done + 로드맵 소진 + 판정 없음 = Task 경계인데 전수
+                # 미개시 — 앵커 턴에 개시 지시를 동봉한다(상한 3 — 최종 방어선은 complete_task 게이트).
+                _mss = getattr(flow, "milestones", None) or []
+                if not (flow.current is not None and _mss
+                        and all(m.status == "done" for m in _mss)
+                        and not (getattr(flow, "wrapup_state", None) or {}).get("verdict")
+                        and _e2e_kicks[0] < 3):
+                    return False
+                try:
+                    from .rule.milestone import roadmap_phases as _rp0
+                    _road = _rp0(flow)
+                except Exception:
+                    _road = []
+                return not _road or sum(1 for m in _mss if m.status == "done") >= len(_road)
+
             def _needs_kickoff():
                 # [작업 단계 회의 강요 봉합(2026-07-20, e2e 실측: 미룸 5회·강제 2회)] 킥오프 meet 강제는
                 # **계획 장부가 백지일 때만** — 장부(마일스톤·백로그)가 이미 있으면 회의가 아니라
                 # 이어가기·선점 킥이 옳은 다음 수다(재픽·복원 판에서 meet 강요↔작업단계 미룸의 모순 루프 제거).
                 return (getattr(flow, "was_elect", False) and flow.current is None
                         and not (getattr(flow, "milestones", None) or []) and _kicks < _kickoff_cap)
-            while ((flow.current is not None or "턴 한도 도달" in (result or "") or _ms_pending() or _needs_kickoff())
+            while ((flow.current is not None or "턴 한도 도달" in (result or "") or _ms_pending()
+                    or _needs_kickoff() or _needs_e2e())
                    and cont < self.max_continue and not flow.cancelled):   # [사용자 중지] 이어가기 멈춤
                 # [하드블록 종결/자기치유(B-03 G4)] 봇이 못 푸는 인프라 벽(배포 자격증명 등)에 막히면 재시도
                 # 루프를 멈춘다 — 가짜 진행(재검증)으로 며칠씩 빙빙 돌다 무진행 컷나던 것 차단. 단 '연속
@@ -2598,7 +2619,15 @@ class Sys:
                     self._log("anchor_rotated", to=int(_nr))
                 # [킥오프 강제] 앵커가 Task도 안 열고 평문으로 회의를 흉내냈으면 — 실제 meet 호출을 강제.
                 _kick_note = ""
-                if _needs_kickoff():
+                if _needs_e2e():
+                    _e2e_kicks[0] += 1
+                    self._log("e2e_boundary_kick", ch=int(flow.user_channel or 0), n=_e2e_kicks[0])
+                    _kick_note = ("\n\n[Task 경계 — 전수 검증] 모든 주기가 닫혔습니다. 마감 전에 **e2e_open을 "
+                                  "실제로 호출**해 전수 검증을 개시하세요: ①산출물의 노출 표면·주 사용 경로를 "
+                                  "e2e_scope로 등록 ②각 항목을 실제 실행(run·브라우저)으로 검사해 e2e_result "
+                                  "제출(증거 필수) ③전 항목 제출 후 e2e_finish. **판정 없이는 complete_task가 "
+                                  "거부됩니다** — 결함이 나오면 복기 주기가 열리고, 그게 정상 경로입니다.")
+                elif _needs_kickoff():
                     _kicks += 1
                     self._log("kickoff_forced", ch=int(flow.user_channel or 0), n=_kicks)
                     _kick_note = ("\n\n[SYS — 회의를 '평문으로 흉내내지' 마세요] 방금 당신은 회의를 텍스트로만 "

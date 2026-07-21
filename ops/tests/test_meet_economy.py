@@ -351,6 +351,33 @@ def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단
     # (합류 채널 게시는 픽스처 thread_id가 문자열이라 int 캐스트 스킵 — 가시화는 로그 이벤트로 검증)
 
 
+def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypatch, tmp_path):
+    """[전수 감사(2026-07-21, 사용자: '안정성·실효성·협업 실익이 보장된 상태에서 e2e를 돌려야지')]
+    e2e 전수가 권고 문구뿐이라 검증 없이 마감·표류 가능하던 실효성 구멍 — 마일스톤 판의
+    complete_task는 ①열린 주기 0 ②로드맵 소진 ③Task 경계 e2e 판정 존재를 요구한다.
+    e2e_fail(복기 정체 포함)은 정직 마감 허용(결함은 완료 보고에)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    from system.rule.milestone import Criterion, Milestone
+    ms = Milestone(ms_id="MS-1", goal="최소버전",
+                   criteria=[Criterion("돈다", "run 재현", passed=True)])
+    f.milestones = [ms]
+    out = asyncio.run(t["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
+    assert "미완 주기" in out                              # 열린 주기 → 거부
+    ms.status = "done"
+    f.roadmap = ["프로토타입", "완성도"]
+    out2 = asyncio.run(t["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
+    assert "로드맵에 남은 단계" in out2                     # 다음 주기 남음 → 거부
+    f.roadmap = ["프로토타입"]
+    out3 = asyncio.run(t["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
+    assert "e2e_open" in out3 and "마감 불가" in out3       # 판정 없음 → 전수 검증 코칭 거부
+    f.wrapup_state = {"verdict": "e2e_fail", "defects": []}
+    out4 = asyncio.run(t["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
+    assert "e2e_open" not in out4 and "미완 주기" not in out4   # 판정 있으면 이 관문 통과(뒤 게이트로)
+
+
 def test_결론직전_지명은_답슬롯_1턴_존중후_표결(monkeypatch, tmp_path):
     """[U-038 재작업(2026-07-21, 사용자: "'의견 부탁합니다' 했는데 그냥 결론 짓고 종료해버리는 상황
     해결해야")] 초안 완성 컷이 최종 표결로 직행하며 마지막 발언의 유효 지명을 증발시키던 것 —

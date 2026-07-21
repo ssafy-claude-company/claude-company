@@ -674,6 +674,24 @@ async def complete_task(flow, role, args):
     if flow.current is None:
         return _ok("오류: 진행 중인 Task가 없습니다.")
     args = _merge_gate_args(args)   # [B-16] 마커 인자 → result 합성(기계적 동등)
+    # [파이프라인 마감 관문(2026-07-21, 전수 감사 — e2e가 권고뿐이라 검증 없이 마감 가능하던 실효성
+    # 구멍)] 마일스톤 판은 ①열린 주기 없음 ②로드맵 소진 ③Task 경계 전수 검증(e2e) 판정 존재가
+    # 마감의 전제. e2e_fail이라도 복기 정체로 끝났으면 정직 마감 허용(결함은 완료 보고에 실린다).
+    from .milestone import pipeline_on as _po2, roadmap_phases as _rp2
+    _mss2 = getattr(flow, "milestones", None) or []
+    if _po2() and _mss2:
+        _openm = [m.ms_id for m in _mss2 if m.status != "done"]
+        if _openm:
+            return _ok(f"마감 불가 — 미완 주기 {', '.join(_openm[:4])}. 주기 완수조건을 실증(report_iter)해 "
+                       f"닫은 뒤, Task 경계에서 전수 검증(e2e)을 거쳐 마감하세요.")
+        _road2 = _rp2(flow)
+        if _road2 and sum(1 for m in _mss2 if m.status == "done") < len(_road2):
+            return _ok("마감 불가 — 로드맵에 남은 단계가 있습니다(시스템이 다음 주기 회의를 엽니다). "
+                       "전 단계 완주 후 e2e 전수를 거쳐 마감하세요.")
+        if not (getattr(flow, "wrapup_state", None) or {}).get("verdict"):
+            return _ok("마감 불가 — Task 경계 전수 검증(e2e)이 아직입니다. e2e_open → 표면·경로 등록"
+                       "(e2e_scope) → 전 항목 실증 제출(e2e_result, 증거 필수) → e2e_finish 판정 후 "
+                       "마감하세요. 결함이 나오면 복기 주기가 열립니다(정상 경로).")
     _msg = _gate_verified(flow)
     if _msg:
         return _ok(_msg)
