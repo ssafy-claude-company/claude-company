@@ -286,6 +286,49 @@ def test_봇개설_회의는_개설자_배제유지_지명증발_안내(monkeypa
     assert any("해석하지 못해 무효" in b for b in bodies)
 
 
+def test_흐름중_재시작은_진행분_보존_같은단계_재회의(monkeypatch, tmp_path):
+    """[재시작-안전 불변식(2026-07-21, 사용자: '흐름 중엔 아무리 재시작해도 상관없다 — 재복구가 있어
+    안전하게 재개돼야, 네 말은 모순')] 러너 재시작(토큰·서버·사용자 중지 등)으로 회의가 끊겼다
+    재개돼도, 같은 단계 DRAFT가 디스크에 있으면 골격을 새로 깔지 않고 봇들이 채워온 결론을 보존한다.
+    실측 근거: ch84가 8회 재시작을 거치며 milestone DRAFT가 사라지지 않고 거의 완성까지 누적됐다."""
+    from system.rule.milestone import draft_should_reset
+    # 새 단계·초안 부재 → 새 골격(리셋 O)
+    assert draft_should_reset("milestone", None) is True
+    assert draft_should_reset("milestone", "# DRAFT [stage:goal] — 다른 단계") is True
+    # 같은 단계 진행분 존재 → 절대 리셋 안 함(보존)
+    _inprog = "# DRAFT [stage:milestone] — …\n## 결정\n이번 주기: 리듬 게임\n- 조건 | 실증: run"
+    assert draft_should_reset("milestone", _inprog) is False
+    # 회의 개시 관통: 진행 DRAFT가 있는 채로 같은 단계 회의를 다시 열어도 내용 보존(덮어쓰기 0)
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import Criterion, Milestone
+    from system._util import dossier_write, dossier_read, dossier_rel
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    _t0 = _tools(f, 11, "leader")
+
+    async def _w0(to, b, k):
+        return "[패스]"
+    f.wake = _w0
+    asyncio.run(_t0["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "게임"
+    f.milestones = [Milestone(ms_id="MS-1", goal="주기",
+                              criteria=[Criterion("돈다", "run")], subtasks=[])]
+    _rel = dossier_rel(f.current.task_id)
+    from system.rule.milestone import meeting_stage
+    _stg = meeting_stage(f)                                 # 이 flow가 열 실제 단계
+    _kept = (f"# DRAFT [stage:{_stg}] — 안건\n## 결정\n단위: **리듬 게임 최소버전 코어** | 실증: run\n"
+             "## 참고\n")
+    dossier_write(f, "DRAFT.md", _kept)                    # 재시작 전 진행분(봇들이 채운 결론)
+
+    async def wake(to, b, k):
+        return "[종료]" if "종결 확인" in b else "[패스]"   # 아무 편집 안 함(재개 직후 스냅샷 검사가 주제)
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["meet"].handler({"topic": "안건", "members": "", "rounds": "1",
+                                   "my_opinion": "여는 의견", "_sys_open": True}))
+    assert "리듬 게임 최소버전" in (dossier_read(f, "DRAFT.md") or "")   # 재개설이 진행분을 안 지웠다
+
+
 def test_전역회의는_SubTask태깅_생략_공통흐름_소속(monkeypatch, tmp_path):
     """[U-037 실측(2026-07-21, 사용자: '전 서브태스크를 한번에 만드는 회의라면 공통 흐름 하위에')]
     단계 회의는 주기 전체의 결정 — 턴 소속 태깅이 '첫 미완 SubTask'를 무조건 찍어 백로그 회의가

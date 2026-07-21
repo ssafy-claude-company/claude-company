@@ -1267,6 +1267,15 @@ def deferred_only(v):
     return s.startswith("(후속") or s.startswith("후속:") or s.startswith("후속：")
 
 
+def draft_should_reset(stage, existing) -> bool:
+    """[흐름 재개 안전 불변식(2026-07-21, 사용자: '흐름 중엔 아무리 재시작해도 상관없다 — 재복구가
+    있으니 안전하게 재개돼야')] 회의 개시가 DRAFT 골격을 새로 깔지(True), 진행분을 보존할지(False).
+    같은 단계의 DRAFT가 이미 디스크에 있으면 **절대 리셋하지 않는다** — 러너 재시작(토큰·서버·사용자
+    중지 등 어떤 이유든)으로 회의가 중단됐다가 재개돼도 봇들이 채워온 결론이 살아 있어야 한다.
+    이 판정이 재시작-안전의 정본(회의 개시부·복구 경로가 공유). 새 단계이거나 초안 부재면 새 골격."""
+    return existing is None or f"[stage:{stage}]" not in str(existing)
+
+
 def draft_missing_key(stage, text):
     """[등록 형식 기계검사(2026-07-17, ch77 밤샘 루프)] 가결돼도 등록기가 요구하는 키 줄('목표:' 등)이
     결정 구획에 없으면 거부→소진→재킥오프 무한. ready 전에 키 부재를 잡아 형식 이의로 코칭. 내용 무판단.
