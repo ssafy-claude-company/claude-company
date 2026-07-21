@@ -497,6 +497,40 @@ def test_마일스톤보고_확인링크와_2단계승계_체인(monkeypatch, tm
     assert "https://murmur-ai.duckdns.org/apps/rps/" in "\n".join(f._pipeline_notes)
 
 
+# ── 팀 상한(2026-07-21, U-036 실측: 11 상이직군 전원 팀 → 계획이 예산 52% 점유) ──────────
+
+def test_팀상한_11직군은_6명으로_컷(monkeypatch, tmp_path):
+    """자동 팀(join_bidders 전원)이 dedup을 못 뚫는 11개 상이 직군이면 ORGANT_TEAM_CAP(기본 6)으로
+    상한 — 리더는 항상 유지, 나머지는 원 요청 role_fit 상위. MVP 회의·협의 비용을 팀 크기에서 자른다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    bots = {11: "게임 기획자", 12: "프론트", 13: "백엔드", 14: "데이터 엔지니어", 15: "QA",
+            16: "디자이너", 17: "VFX 전문가", 18: "모션 애니메이터", 19: "브랜드 스토리텔러",
+            20: "사운드 디자이너", 21: "배포 인프라"}
+    g, f = _meet_flow(tmp_path, bots=bots)
+    f.origin_request = "턴 기반 육성 경영 게임 만들어줘"
+    f.join_bidders = list(range(12, 22))            # 10명 응찰(리더 11 제외)
+    evs = []
+    f.log = lambda ev, **kw: evs.append((ev, kw))
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({}))
+    assert f.current is not None
+    assert len(f.current.team) == 6                 # 상한 적용(11 후보 → 6)
+    assert 11 in f.current.team                     # 리더 항상 포함
+    assert any(ev == "team_capped" and kw.get("cap") == 6 for ev, kw in evs)
+
+
+def test_팀상한_env0이면_무제한_명시members는_존중(monkeypatch, tmp_path):
+    """상한은 정책(env) — ORGANT_TEAM_CAP=0이면 미적용(종전 동작). 명시 members=는 리더 자율이라 상한 밖."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.setenv("ORGANT_TEAM_CAP", "0")
+    bots = {11: "L", 12: "a", 13: "b", 14: "c", 15: "d", 16: "e", 17: "f", 18: "g"}
+    g, f = _meet_flow(tmp_path, bots=bots)
+    f.join_bidders = list(range(12, 19))
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({}))
+    assert len(f.current.team) == 8                 # cap 0 = 무제한(리더+7)
+
+
 # ── e2e 복기 진전 게이트(2026-07-20, 사용자: '무한반복 다 잡고 e2e — 비용 트레이드오프') ──
 
 def test_복기_결함이_안줄면_2회연속에서_컷(monkeypatch, tmp_path):
@@ -650,6 +684,16 @@ def test_마일스톤회의_완수조건_이번주기_스코프(monkeypatch):
     assert "완수조건은 '이번 주기' 범위만" in tpl
     draft = stage_draft_template("milestone", "안건")
     assert "'이번 주기' 범위의 조건만" in draft
+
+
+def test_마일스톤회의_첫주기_실행물_페이퍼억제(monkeypatch):
+    """[U-036 실측: 첫 주기='페이퍼 검증'이라 예산 절반을 문서에 쓰고 게임 안 돎] 회의 골격이 첫
+    주기를 '브라우저에서 도는 실행물'로 못박아 기획/디자이너의 문서 점유(프/백 유휴)를 뿌리에서 억제."""
+    from system.rule.milestone import stage_agenda, stage_draft_template
+    _, tpl = stage_agenda("milestone")
+    assert "브라우저에서 실제로 조작" in tpl and "페이퍼 검증 같은 산출물을 첫 주기로 삼지" in tpl
+    draft = stage_draft_template("milestone", "안건")
+    assert "첫 주기는 실행물" in draft
 
 
 def test_기충족조건_재보고는_미매칭아님(monkeypatch, tmp_path):
