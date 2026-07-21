@@ -2415,9 +2415,19 @@ class Sys:
                     if not hasattr(self, "_flow_quota_halt"):
                         self._flow_quota_halt = {}
                     self._flow_quota_halt[int(flow.user_channel or 0)] = True
+                    # [정지=중지(재개 가능), 완료 아님(2026-07-21, 사용자: 'Task 완료로 뜨고 마일스톤
+                    # 중단으로 뜬다 — 중지가 맞다')] 종전엔 stopped 마킹을 reap에 미뤘는데, 재시작이
+                    # 잦으면 in-memory _flow_quota_halt가 유실돼 stopped 미표기→Task '완료' 오표기·재개
+                    # 불가. 여기서 직접 durable하게 박는다(reap은 done_ts만 — 중지 표기는 여기가 정본).
+                    try:
+                        _ms0 = getattr(self.guide, "mark_stopped", None)
+                        if _ms0:
+                            await _ms0(int(flow.user_channel or 0))
+                    except Exception:
+                        pass
                     try:
                         await flow.guide.post(int(flow.user_channel), 0,
-                                              "크레딧을 다 썼어요 — 작업을 여기서 잠시 멈춥니다. 요금제를 올리거나 "
+                                              "크레딧을 다 썼어요 — 작업을 여기서 잠시 멈춥니다(중지). 요금제를 올리거나 "
                                               "다음 달 충전 뒤 '재개'를 누르면 이어서 계속해요.")
                     except Exception:
                         pass
