@@ -527,6 +527,41 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n\n## 참고") is None
 
 
+def test_병합회의_영역과_백로그_한번에_등록_작업직행(monkeypatch, tmp_path):
+    """[회의 병합(2026-07-21, 사용자 결정: '1은 사람 수 적어서 — 2로 가자')] 작업나누기+백로그를
+    한 회의로: 같은 수렴안의 '단위:'와 '백로그:' 줄을 함께 등록(영역 분배·발제 귀속 재사용),
+    등록 후 meeting_stage는 별도 백로그 회의 없이 작업 단계(None) 직행 — 계획 회의 4→3개."""
+    from system.rule.milestone import meeting_stage, register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+
+    async def _w(to, b, k):
+        return "[패스]"
+    f.wake = _w
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "게임"
+    _okm, _nm = register_stage(f, "milestone",
+                               "단계: 최소버전 → 완성\n이번 주기: 리듬 게임 최소버전\n"
+                               "- 30턴 완주 | 실증: run 재현", "게임")
+    assert _okm, _nm
+    ok, note = register_stage(f, "subtask",
+                              "단위: 게임 로직 | 실증: pytest 통과\n"
+                              "단위: 화면 UI | 실증: run 재현\n"
+                              "백로그: [게임 로직] 점수 계산식 구현\n"
+                              "백로그: [화면 UI] 입력 처리·렌더링\n"
+                              "백로그: [화면 UI] 반응형 3지점 검증", "게임")
+    assert ok, note
+    assert "작업 영역 2개" in note and "백로그 3개" in note      # 한 회의가 둘 다 등록
+    ms = f.milestones[0]
+    assert len(ms.subtasks) == 2
+    store = f.backlog_relays
+    _cnt = {st.st_id: len((store.get(st.st_id) or type("x", (), {"backlogs": []})).backlogs)
+            for st in ms.subtasks}
+    assert sorted(_cnt.values()) == [1, 2]                       # [영역명] 분배(로직 1·UI 2)
+    assert meeting_stage(f) is None                              # 별도 백로그 회의 없이 작업 직행
+
+
 def test_서브태스크_영역중복은_표결전_반려(monkeypatch):
     """[U-039 실측·사용자(2026-07-21): '구조가 이상하면 반려되어야지 — 근본을 해결']] 서브태스크
     분해가 near-중복 영역(백엔드 스키마 '1차'/'2차'처럼 목표 토큰이 거의 같은 둘)을 내면 백로그
@@ -612,7 +647,8 @@ def test_단위_2줄_자연표기_흡수_preflight_등록_동일판정(monkeypat
                 "단위: 정적 배포\n배포 절차 | 실증: 공개 URL에서 curl 상태코드 200 확인\n")
     us = parse_units(two_line.splitlines())
     assert len(us) == 2 and us[0].startswith("게임 판정 로직 | ") and "| 실증:" in us[0]
-    assert stage_preflight("subtask", two_line) == []
+    # (회의 병합으로 '백로그 줄 필요' 안내가 추가됨 — 이 테스트의 주제는 단위 파싱·조건 게이트 동일 판정)
+    assert [e for e in stage_preflight("subtask", two_line) if "백로그" not in e] == []
     # 조건 없는 단위 = 표결 전에 단위명 붙은 사유(등록에서야 전멸하던 은닉 제거)
     errs = stage_preflight("subtask", "## 결정\n단위: 제목만 있는 단위\n")
     assert errs and "제목만 있는 단위" in errs[0]
