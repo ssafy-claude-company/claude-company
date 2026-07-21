@@ -93,6 +93,23 @@ def _turn_signals(flow, res, allowed):
     if m:
         ids = _resolve_members(m.group(1), flow, allowed)
         addressee = ids[0] if ids else None
+    if addressee is None:
+        # [스탠스 @대상 흡수(2026-07-21, U-039 실측: '[질문 @게임 기획자(id)]' 자연 표기)] 타입 괄호
+        # 안의 @대상을 지명으로 수용(이중 수용 관례 — 첫 실질 줄의 자기 선언 위치만). 이름 해석
+        # 실패 시 괄호 속 id로 폴백.
+        for _ln in t.splitlines():
+            _ls = _ln.strip()
+            if not _ls:
+                continue
+            m2 = re.match(r"^\[\s*(?:주장|질문|반박|지지)\b[^@\]]*@\s*([^\](]{1,40}?)\s*(?:\(([^)]*)\))?\s*\]", _ls)
+            if m2:
+                for _cand in (m2.group(1), m2.group(2)):
+                    if _cand:
+                        _ids2 = _resolve_members(_cand.strip(), flow, allowed)
+                        if _ids2:
+                            addressee = _ids2[0]
+                            break
+            break
     return addressee, passed
 
 

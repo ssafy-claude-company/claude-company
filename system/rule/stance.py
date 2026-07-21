@@ -35,6 +35,10 @@ CHALLENGE = "challenge"  # [반박] — 응답 기대(인접쌍 개시)
 SUPPORT = "support"      # [지지] — 동조(의무 없음)
 
 _MARKERS = {"[주장]": CLAIM, "[질문]": QUESTION, "[반박]": CHALLENGE, "[지지]": SUPPORT}
+# [변형 흡수(2026-07-21, U-039/ch84 실측: 봇이 '[질문 @게임 기획자(id)]'로 자연 표기 — 닫힌 괄호
+# 매칭만으로는 타입 인식 실패 = 2층 무위)] 이중 수용 관례: 타입 단어로 시작하는 대괄호면 수용.
+_MARKER_RE = __import__("re").compile(r"^\[\s*(주장|질문|반박|지지)\b")
+_MARKER_BY_WORD = {"주장": CLAIM, "질문": QUESTION, "반박": CHALLENGE, "지지": SUPPORT}
 _PAIR_OPENERS = (QUESTION, CHALLENGE)
 
 
@@ -52,9 +56,9 @@ def parse_stance(text: str) -> Optional[str]:
         s = line.strip()
         if not s:
             continue
-        for mk, st in _MARKERS.items():
-            if s.startswith(mk):
-                return st
+        m = _MARKER_RE.match(s)
+        if m:
+            return _MARKER_BY_WORD[m.group(1)]
         return None
     return None
 

@@ -30,6 +30,11 @@ def test_parse_stance_첫_실질줄_자기선언만():
     assert parse_stance("본문 먼저\n[질문] 둘째 줄은 인용일 수 있음") is None
     assert parse_stance("[패스]") is None
     assert parse_stance("") is None
+    # [변형 흡수(2026-07-21, U-039 실측)] '[질문 @이름(id)]' 자연 표기 — 닫힌 괄호만 매칭하면
+    # 타입 인식 실패 = 2층 무위. 타입 단어로 시작하는 대괄호는 수용(이중 수용 관례).
+    assert parse_stance("[질문 @게임 기획자(1510929285370875925)] 장르가 무엇입니까?") == QUESTION
+    assert parse_stance("[반박 @PM] 근거가 다릅니다") == CHALLENGE
+    assert parse_stance("[질문사항] 이건 아님") is None            # 단어 경계 — 합성어 오인 금지
 
 
 def test_floor_l2_mode_기본off_명시_env(monkeypatch):

@@ -265,6 +265,14 @@ def test_turn_signals_지명과_패스():
     assert _turn_signals(f, "패스", [12, 13])[1] is True
     addr2, _ = _turn_signals(f, "[지명: 99]", [12, 13])          # 참여자 밖 → 무해화
     assert addr2 is None
+    # [스탠스 @대상 흡수(2026-07-21, U-039 실측: '[질문 @게임 기획자(id)]' 자연 표기)] 타입 괄호 안
+    # @대상 = 지명(이중 수용) — 이름 해석 실패 시 괄호 속 id 폴백. 본문 중간 인용은 무시(첫 줄만).
+    addr3, _ = _turn_signals(f, "[질문 @QA] 검증 계획이 있습니까?", [12, 13])
+    assert addr3 == 13
+    addr4, _ = _turn_signals(f, "[질문 @미지의봇(12)] 스키마는요?", [12, 13])
+    assert addr4 == 12                                            # 이름 실패 → id 폴백
+    addr5, _ = _turn_signals(f, "본문입니다\n[질문 @QA] 인용", [12, 13])
+    assert addr5 is None                                          # 첫 실질 줄만 자기 선언
 
 
 # ══ 실표면 통합 ① — meet(회의)가 seam 위에서 돈다 ═══════════════════════════════
