@@ -1203,7 +1203,13 @@ def stage_agenda(stage):
 def stage_draft_template(stage, agenda=""):
     """회의 개시 때 SYS가 까는 DRAFT.md 골격. 알 수 없는 단계면 None."""
     body = {
-        "goal": ("목표: <이 Task로 정확히 무엇을 만드는지 — 구체적으로>\n\n완수조건:\n"
+        "goal": ("목표: <이 Task로 정확히 무엇을 만드는지 — 구체적으로>\n"
+                 # [구성 점검 경로 평등(2026-07-21, U-038 실측: 팀 밖 게임 기획자에게 후속 담당을 걸고
+                 # 가결)] set_goal 도구 경로에만 있던 '[구성 점검]'(2026-07-13 설계)을 회의 골격에도 —
+                 # 자리표시라 안 채우면 초안이 완성되지 않고, 부족 직군의 정경로(recruit·후보 대기)가
+                 # 그 자리에서 상기된다.
+                 "구성 점검: <원문에 필요한 직군이 이 팀에 다 있는가 — 부족하면 그 직군과 recruit 계획, "
+                 "충분하면 '충분' 판단 근거 한 줄>\n\n완수조건:\n"
                  "- <조건> | 실증: <run으로 확인하는 절차>\n- <조건> | 실증: <절차>\n"),
         # [완수조건 = 이번 주기 범위(2026-07-20, U-035 rung1)] 최소버전 주기에 모션 타이밍·디자인
         # 토큰 등 완제품 전량이 조건으로 실려 met이 영구 미달(1/4 고정) → 재협상 dead-end로 빠지던
@@ -1223,7 +1229,9 @@ def stage_draft_template(stage, agenda=""):
             "바로 아래 '> [이의 @직군] 한 줄'로 남기세요 ③이의를 해소한 사람이 그 이의 줄을 삭제하세요 "
             "④꺾쇠 자리표시가 남아 있으면 미완입니다 — **`<…>`는 '지금 이 회의가 채울 곳'에만.** 뒤 "
             "단계(서브태스크·백로그·후속 협의)에서 정할 세부는 꺾쇠 없이 '(후속: …)'로 쓰거나 참고 구획으로 "
-            "— 결정 구획의 꺾쇠는 기계 집계돼 회의가 안 닫힙니다.\n"
+            "— 결정 구획의 꺾쇠는 기계 집계돼 회의가 안 닫힙니다. 단 **이 회의가 정할 그 하나(키 줄)를 "
+            "통째로 '(후속: …)'로 미루면 빈칸과 같아 등록되지 않습니다.** 이 판에는 달력·날짜 스케줄러가 "
+            "없습니다 — 기한·마감은 날짜가 아니라 파이프라인 사건('다음 회의 전'·'이 주기 안')으로 쓰세요.\n"
             "⑤ **'## 결정' 구획만 표결·완성 판정의 대상**입니다 — 그 아래 '## 참고'엔 근거·설계 메모를 "
             "자유롭게 쌓되, 결정을 바꾸려면 결정 구획을 직접 고치세요. 등록되는 결론 = 결정 구획.)\n\n"
             "## 결정\n\n" + body + "\n## 참고 (자유 — 판정 대상 아님)\n")
@@ -1246,14 +1254,28 @@ def draft_decision_region(text):
 _STAGE_KEY = {"goal": "목표", "milestone": "이번 주기", "subtask": "단위:", "backlog": "백로그:"}
 
 
+def deferred_only(v):
+    """[결정 없는 결정 칸(2026-07-21, U-038 실측)] 값이 '(후속: …)' 미룸 문구로 시작하면 결정이 아니라
+    미룸 — 빈칸과 동형이다. 골격 규칙('지금 못 정하는 세부면 후속으로')은 세부에 쓰라는 것이지, 그
+    회의가 정할 그 하나를 통째로 미루는 용도가 아니다. 내용 무판단 — 형태(미룸 전용)만 본다."""
+    s = str(v or "").strip().lstrip("*").strip()
+    return s.startswith("(후속") or s.startswith("후속:") or s.startswith("후속：")
+
+
 def draft_missing_key(stage, text):
     """[등록 형식 기계검사(2026-07-17, ch77 밤샘 루프)] 가결돼도 등록기가 요구하는 키 줄('목표:' 등)이
-    결정 구획에 없으면 거부→소진→재킥오프 무한. ready 전에 키 부재를 잡아 형식 이의로 코칭. 내용 무판단."""
+    결정 구획에 없으면 거부→소진→재킥오프 무한. ready 전에 키 부재를 잡아 형식 이의로 코칭. 내용 무판단.
+    [확장(2026-07-21, U-038)] 키 줄이 있어도 값이 '(후속: …)' 미룸뿐이면 부재와 동형으로 잡는다."""
     k = _STAGE_KEY.get(stage)
     if not k:
         return None
     region = draft_decision_region(text)
-    return None if any(l.strip().startswith(k) for l in region.splitlines()) else k
+    for l in region.splitlines():
+        ls = l.strip().lstrip("*")
+        if ls.startswith(k):
+            v = ls.split(":", 1)[1].strip() if ":" in ls else ""
+            return k if deferred_only(v) else None
+    return k
 
 
 def draft_status(text):
@@ -1441,6 +1463,14 @@ def register_stage(flow, stage, prop, origin=""):
         goal = _val("목표")
         if not goal:
             return False, "수렴안에 '목표: <이 Task로 정확히 무엇을 만드는지>' 줄이 필요합니다."
+        # [결정 없는 결정 칸 거부(2026-07-21, U-038 실측: 목표='(후속: 기획 단계에서 확정 — 담당·
+        # 날짜)'가 부결 2회에도 소진-확정으로 등록 → GOAL이 빈 채 판이 굴러감)] 미룸 전용 값은 빈칸과
+        # 동형 — 종결 보장(부결 소진·이월 확정)이 '결정 없는 결론'을 밀 수 없게 등록이 최종 방어선.
+        if deferred_only(goal):
+            return False, ("'목표:'가 후속 미룸 문구뿐입니다 — 이 회의가 정할 그 하나(무엇을 만드는지)는 "
+                           "여기서 결정해야 합니다. 미룸(후속)은 세부에만 쓰세요. 결정에 필요한 직군이 "
+                           "팀에 없으면 recruit로 충원하거나(후보 대기 우선), 정말 결정 불가면 그대로 "
+                           "말하세요 — 사람 확인으로 넘어갑니다.")
         if _cur is not None:
             try:
                 _cur.status.goal = goal
@@ -1467,6 +1497,9 @@ def register_stage(flow, stage, prop, origin=""):
         if _gerr:
             return False, _gerr
         cyc = _val("이번 주기") or _val("목표") or (str(getattr(_cur.status, "goal", "") or "") if _cur else "")
+        if deferred_only(cyc):
+            return False, ("'이번 주기:'가 후속 미룸 문구뿐입니다 — 이번에 완성해 보여줄 딱 하나는 "
+                           "이 회의가 결정해야 합니다(미룸은 세부에만).")
         stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계:")]
         # [phase 정규화(2026-07-20)] 골격이 유도하는 '한 줄 화살표' 표기(최소버전 → 확장)를 등록
         # 시점에 phase 목록으로 분해 — 안 하면 로드맵이 1개로 세어져 다음 주기 회의·이월 수신처가
