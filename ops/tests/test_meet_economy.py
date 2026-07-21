@@ -193,6 +193,38 @@ def test_무진전_패스는_즉시중단_사람호출(monkeypatch, tmp_path):
     assert "meet_gate_exhausted" not in names           # wake_cap까지 태우지 않았다
     assert any("사람 조치 필요" in str(c) for c in g.calls)   # 사람 호출 게시
 
+def test_백로그회의는_심의단축소_예외_전원참여(monkeypatch, tmp_path):
+    """[U-037/ch82 실측(2026-07-21, 사용자: 'PM이 [직업] 남의 것까지 막 발제')] 백로그 회의의 본질은
+    각자 자기 도메인 몫 등재(자기 등재 원칙) — 심의단 3명으로 줄이면 판 밖 도메인 몫을 누군가 대필해
+    발제 귀속·릴레이(제출자=수행자)를 타고 소유 독식(PM이 30건 중 26건 → 전 도메인 작업이 PM에게).
+    백로그 단계는 전원 참여: 심의단 선발이 안 돌고, 발언권 응찰이 팀 전원에게 간다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "게임 기획자", 13: "PM", 14: "프론트",
+                                      15: "백엔드", 16: "VFX"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+
+    async def wake(to, b, k):
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"                                 # 내용 무관 — 참여 구조만 검증
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    f.current.status.goal = "게임"
+    from system.rule.milestone import Criterion, Milestone, SubTask
+    st = SubTask(st_id="ST-1", goal="규칙", criteria=[Criterion("규칙 검증", "pytest 통과")])
+    f.milestones = [Milestone(ms_id="MS-1", goal="최소버전",
+                              criteria=[Criterion("30턴 완주", "run 재현")], subtasks=[st])]
+    asyncio.run(t["meet"].handler({"topic": "다음 일감 전부 열거", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "meet_panel_selected" not in names            # 축소 예외 — 전원이 판에 남는다
+    probed = {kw.get("who") for e, kw in events if e == "floor_bid"}
+    assert {12, 13, 14, 15, 16} <= probed                # 발언권 응찰이 전원에게
+
+
 def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단(monkeypatch, tmp_path):
     """[U-037/ch82 실측(2026-07-21, 사용자: '대화가 더 필요한 상황에 결론 강제·회의 파괴가 답이냐')]
     2명 심의단이 발언만 돌다 서고, 재개설이 풀린 실이유가 '새 참여자'였다 — 무진전 1차 대응은 컷이
