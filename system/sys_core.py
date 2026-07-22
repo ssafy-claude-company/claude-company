@@ -872,13 +872,19 @@ class Sys:
         # ORGANT_TEAM_CAP=6, 사용자 반려) 대체 — 문턱은 스스로 낸 확신(응찰)이 넘는 것이라 자기선택
         # 원칙 그대로고, 적합 낮은 주변 직군은 임계 미달로 자연 탈락한다(배제 아님 — 후보 대기 명단
         # 합류·판 중간 recruit 문은 종전대로 열려 있다). step 0 = 곡선 off(전원 합류 = 종전).
+        # [적합 우선 합류(2026-07-22, U-041 실측 — 사용자: '게임 만들어줘인데 게임 기획자가 예비로
+        # 빠지고 브랜드 스토리텔러가 들어갔다')] 합류 순서를 응찰 점수 순 → **역할 적합 순**으로 바꾼다.
+        # 종전엔 최종 컷이 자기 응찰 점수라, 과제 무관 직군(브랜드 스토리텔러 적합0.0·응찰7)이 과제 핵심
+        # 직군(게임 기획자 적합3.0·응찰6)을 누진 임계에서 밀어냈다 — 적합이 그룹 대표 선정(위 _grps)만
+        # 좌우하고 최종 합류엔 안 쓰이던 구멍. 이제 적합 높은 직군부터 낮은 임계로 먼저 앉히고, 동적합
+        # (대개 0.0인 필수 실무직)은 응찰 강도로 남은 자리를 다툰다 — 과제 핵심 직군이 확신 낮아도 안 잘린다.
         from .rule.floor import bid_threshold as _bth
         try:
             _jstep = max(0, int(os.environ.get("ORGANT_JOIN_BID_STEP", "2") or 2))
         except ValueError:
             _jstep = 2
         joined = []
-        for _m in sorted(_rep_score, key=lambda m: (-_rep_score[m], -_taskfit(m), str(m))):
+        for _m in sorted(_rep_score, key=lambda m: (-_taskfit(m), -_rep_score[m], str(m))):
             _need = _bth(len(joined) + 1, _jstep)
             if _rep_score[_m] >= _need:
                 joined.append(_m)
