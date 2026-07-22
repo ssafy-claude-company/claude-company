@@ -743,7 +743,7 @@ async def meet(flow, me_id, args):
             소진 카운터에 세지 않는다. 2026-07-21, U-040 실측: 실표결 2회인데 유령 부결 1이 끼어
             '표결 3회 소진'으로 조기 확정, 사용자: '표결 2회인데 왜 3회라며 끊겼지')."""
             if wakes["n"] >= wake_cap:
-                return None, []
+                return None, [], 0
             def _rbody(c):
                 # [단계 기준 심사(2026-07-16, ch75 실측)] 비준에 단계 프레임이 없어 봇들이 '완전한 기획
                 # 문서' 기준으로 심사 — 다음 단계 몫(세부 메커닉·분해)이 없다고 반대를 쏟아 만장일치 불가.
@@ -824,7 +824,7 @@ async def meet(flow, me_id, args):
                 await flow.guide.post(int(_ch), 0, f"[표] {_vsum}")   # SYS 명의(앵커 발언 착시 방지)
             except Exception:
                 pass
-            return _passed0, _dissents
+            return _passed0, _dissents, _yes
 
         async def _merge_dissents(prop, dissents):
             """[반대 사유 병합(2026-07-15, 사용자: '자기거 없어서 부결난거면 그걸 합쳐야지')] 부결된
@@ -989,7 +989,7 @@ async def meet(flow, me_id, args):
                             flow.log("meet_preflight_failed", passes=_pass, n=len(_pre_errs))
                 if _dtxt.strip() and _ph == 0 and _obj == 0 and not _pre_errs:
                     from .milestone import draft_decision_region as _dregion2
-                    _passed, _diss = await _ratify_vote(
+                    _passed, _diss, _yes = await _ratify_vote(
                         f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
                         f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
                         f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
@@ -1006,7 +1006,12 @@ async def meet(flow, me_id, args):
                             flow.log("meet_ratify_skipped_budget", passes=_pass)
                     elif not _passed:
                         _ready_rejects += 1
-                    _carry = (_passed is False) and _ready_rejects >= 3
+                    # [소진-확정에 다수결 바닥(2026-07-22, 사용자 U-044 실측: '찬성2·반대3인데 3회
+                    # 소진으로 통과')] 3회 소진 이월-확정은 무한 교착 방지 장치지만, 마지막 라운드가
+                    # 반대 우세(찬성<반대)면 확정하면 안 된다 — 소수 반대는 다수결로 넘기되(교착 방지
+                    # 유지), 다수가 반대하는 안은 확정 못 하게. 반대 우세면 회의 계속(예산 천장이 마감).
+                    _carry = ((_passed is False) and _ready_rejects >= 3
+                              and (_yes or 0) >= len(_diss or []))
                     if _passed or _carry:
                         if _carry:
                             if _diss:
@@ -1162,14 +1167,14 @@ async def meet(flow, me_id, args):
                 # 수렴안이 '내 도메인 게 빠졌다'로 부결되면, 그 반대 사유들을 수렴안에 병합해 갱신하고
                 # 재비준한다 — 모두의 것이 들어갈 때까지 자라 만장일치가 됨(완성된 수렴안). 상한까지
                 # 병합해도 안 되면(무한 반대) 회의 계속(revive).
-                _passed, _dissents = await _ratify_vote(_top)
+                _passed, _dissents, _ = await _ratify_vote(_top)
                 _mrg = 0
                 while (not _passed and _dissents and _mrg < 3 and wakes["n"] < wake_cap):
                     _mrg += 1
                     if flow.log:
                         flow.log("consensus_merge", round=_mrg, dissents=len(_dissents), stage=str(_stage))
                     _top = await _merge_dissents(_top, _dissents)   # 반대 사유 병합
-                    _passed, _dissents = await _ratify_vote(_top)   # 재비준
+                    _passed, _dissents, _ = await _ratify_vote(_top)   # 재비준
                 if _passed:
                     _ok, _note = _ms_regstage(flow, _stage, _top, topic)   # 이 단계 결론 '하나'만 등록
                     if _ok:
