@@ -1154,6 +1154,23 @@ async def meet(flow, me_id, args):
             except Exception as _e:
                 if flow.log:
                     flow.log("meet_conclusion_post_failed", err=str(_e)[:100])
+        # [발언 분포 관측(2026-07-22, 사용자: Woolley 2010 — c 요인은 턴 분포 균등성과 상관)] 회의별
+        # 실발언 분포의 지니계수를 로그로 — 균등성↔결론 품질 상관을 실측으로 본 뒤에 조율한다
+        # (측정 먼저, 행동 변경 없음).
+        try:
+            _cnt = {}
+            for _t in st.history:
+                if not _t.passed and _t.speaker in st.participants:
+                    _cnt[_t.speaker] = _cnt.get(_t.speaker, 0) + 1
+            _xs = sorted((_cnt.get(m, 0) for m in st.participants))
+            _n2, _tot = len(_xs), sum(_xs)
+            if _n2 > 1 and _tot > 0:
+                _gini = sum((2 * (i + 1) - _n2 - 1) * x for i, x in enumerate(_xs)) / (_n2 * _tot)
+                if flow.log:
+                    flow.log("meet_turn_gini", g=round(_gini, 3), n=_n2, turns=_tot,
+                             stage=str(_stage or ""))
+        except Exception:
+            pass
         return (f"[회의록] 주제: {topic} ({rounds}라운드, {len(members)}명)\n"
                    + "\n".join(minutes)
                    + (_confirm_note if _no_r1 else
