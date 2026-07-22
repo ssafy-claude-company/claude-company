@@ -575,6 +575,38 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n\n## 참고") is None
 
 
+def test_백로그_발제귀속_R1_원저자_전사자아님(monkeypatch, tmp_path):
+    """[U-041 실측(2026-07-22, 사용자: '90%가 게임 기획자 — 남의 도메인 대필')] 병합 회의에서 앵커가
+    결정 구획을 독점 편집하면 백로그 발제가 전부 앵커로 쏠린다(UI·튜토리얼까지 대필 귀속). R1 독립
+    기고에 원저자를 남겨, 백로그 본문이 어느 R1 기고와 크게 겹치면 그 기고자를 발제자로(전사자 아님).
+    강제 배분 아님 — 각자 자기 도메인을 R1에 냈으면 그 크레딧이 그에게 간다."""
+    from system.rule.milestone import register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+
+    async def _w(to, b, k):
+        return "[패스]"
+    f.wake = _w
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "게임"
+    _okm, _nm = register_stage(f, "milestone",
+                               "단계: 최소버전 → 완성\n이번 주기: 카드 게임 최소버전\n"
+                               "- 30턴 완주 | 실증: run 재현", "게임")
+    assert _okm, _nm
+    # 프론트(13)가 R1에 UI 백로그를 냈다 — 그 원저자 기록
+    f._r1_attr = [(13, "손 3장 선택 패널 렌더링과 클릭 피드백 구현")]
+    # 앵커(12)가 결정 구획에 전사(백로그 줄을 12가 씀)
+    f._draft_attr = {}
+    ok, note = register_stage(f, "subtask",
+                              "단위: UI 화면 | 실증: run 재현\n"
+                              "백로그: [UI 화면] 손 3장 선택 패널 렌더링과 클릭 피드백 구현", "게임")
+    assert ok, note
+    st = f.milestones[-1].subtasks[0]
+    b = (f.backlog_relays.get(st.st_id)).backlogs[0]
+    assert int(b.submitter) == 13, f"R1 원저자(프론트 13)에 귀속돼야 — 전사자 앵커 아님, got {b.submitter}"
+
+
 def test_병합_참조재진술_백로그_반려_거짓완료차단(monkeypatch, tmp_path):
     """[U-041 실측(2026-07-22, 사용자: '카드 비교 규칙 백로그 아래 서브태스크 회의 내용 중복')] 병합
     회의가 'B4'·'B2 점수 공식…' 같은 의존/참조 줄과 재진술을 백로그로 등록(force=True로 중복 게이트

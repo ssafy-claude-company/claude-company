@@ -1706,6 +1706,24 @@ def register_stage(flow, stage, prop, origin=""):
             _q2 = f"{getattr(_st_o, 'goal', '')} {_body_o}"
             return int(max(_bots_o, key=lambda k: _rf2(_q2, _bots_o[k])))
 
+        # [R1 원저자 귀속(2026-07-22, U-041)] 백로그 본문이 R1 독립 기고의 한 줄과 크게 겹치면 그
+        # 기고자를 발제자로 — 병합 회의에서 앵커가 전사한 것을 실제 낸 사람에게 되돌린다(강제 아님).
+        _r1a = getattr(flow, "_r1_attr", None) or []
+
+        def _r1_author(_body_r):
+            _qt = set(re.findall(r"[A-Za-z가-힣0-9]{2,}", str(_body_r or "")))
+            if not _qt:
+                return None
+            _best, _who_r = 0.0, None
+            for _bid, _txt in _r1a:
+                _tt = set(re.findall(r"[A-Za-z가-힣0-9]{2,}", _txt))
+                if not _tt:
+                    continue
+                _ov = len(_qt & _tt) / max(min(len(_qt), len(_tt)), 1)
+                if _ov > _best:
+                    _best, _who_r = _ov, _bid
+            return _who_r if _best >= 0.5 else None
+
         n = 0
         _per = {}
         _skipped = 0
@@ -1719,7 +1737,8 @@ def register_stage(flow, stage, prop, origin=""):
                 # [참조·재진술 반려(2026-07-22, U-041)] 순수 참조는 submit 관문이 반려(force 무관),
                 # 재진술은 중복 게이트(force=False)가 잡는다 — 병합 회의도 예외 없이(종전 force=True가
                 # 두 게이트를 다 우회해 'B4'·재진술이 백로그로 태어난 것이 근본).
-                _who = _attr_of(draft_norm_line(_s) or _s) or _owner_fb(_st_d, _body)
+                # 귀속 우선순위: R1 원저자(실제 낸 사람) > DRAFT 편집 저자 > 적임 폴백
+                _who = _r1_author(_body) or _attr_of(draft_norm_line(_s) or _s) or _owner_fb(_st_d, _body)
                 relay_for(flow, _st_d).submit(_who, _body, force=False)
                 n += 1
                 _per[_st_d.st_id] = _per.get(_st_d.st_id, 0) + 1
@@ -1905,19 +1924,28 @@ def rule_report_iter(flow, me_id, args) -> str:
                 if not d:
                     continue
                 b = _match_backlog(r, d)
+                _fresh = False
                 if b is None:
                     try:
                         b = r.submit(int(me_id), d, force=True)
+                        _fresh = True
                     except (BacklogError, DuplicateBacklog):
                         # 참조 표기·중복 desc는 새 백로그로 만들지 않는다(검증만 — churn 차단)
                         continue
                 try:
-                    if b.status == "open":
-                        r.pick(int(me_id), b.backlog_id, int(me_id))
-                    if it.get("passed") and b.status != "done":
-                        _was_mine = (b.status == "in_progress" and b.assignee == int(me_id))
+                    # [무작업 일괄완료 차단(2026-07-22, U-041 실측: 게임 기획자가 B1만 작업하고 한 보고로
+                    # B2·B3을 무작업 즉시 완료 — 서브태스크 전체를 한 봇이 거짓 일괄 완수)] 보고는 '지금
+                    # 내가 든 백로그(in_progress·assignee=me)'나 '방금 만든 솔로 작업'만 완료한다.
+                    # 선점도 안 한 등록 백로그(open, 미착수)는 보고 desc로 자동 pick+done하지 않는다 —
+                    # 그건 각자 pick→작업→보고를 거쳐야 한다(릴레이가 [다음 선정]으로 이어줌).
+                    _mine = (b.status == "in_progress" and int(b.assignee or 0) == int(me_id))
+                    if _fresh and b.status == "open":
+                        r.pick(int(me_id), b.backlog_id, int(me_id))   # 솔로: 방금 만든 것만 픽
+                        _mine = True
+                    if it.get("passed") and b.status != "done" and _mine:
                         r.done(int(me_id), b.backlog_id)
-                        _finished_mine = _finished_mine or _was_mine
+                        _finished_mine = True
+                    # else: 등록됐지만 미착수(open, 내 것 아님) → 이 보고로 완료 안 함
                 except Exception:
                     pass
             tgt.backlog_ids = [x.backlog_id for x in r.backlogs]
