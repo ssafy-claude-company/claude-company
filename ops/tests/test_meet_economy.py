@@ -38,13 +38,13 @@ def _fill_draft(tmp_path):
     if not p:
         return
     t = open(p, encoding="utf-8").read()
-    t = t.replace("목표: <", "목표: 방명록 1주기 — <")
+    t = t.replace("목표: ⟦", "목표: 방명록 1주기 — ⟦")
     n = {"i": 0}
 
     def _u(_m):
         n["i"] += 1
         return f"등록 항목 {n['i']} 동작을 curl로 확인"
-    t = re.sub(r"<[^>\n]{2,60}>", _u, t)
+    t = re.sub(r"⟦[^⟧\n]{1,150}⟧", _u, t)
     open(p, "w", encoding="utf-8").write(t)
 
 
@@ -268,6 +268,18 @@ def test_사유_없는_표는_반려하고_재요청해_받아낸다(monkeypatch
     joined = "\n".join(shown)
     assert "검증 기준이 비어 있습니다" in joined       # 재요청이 받아낸 사유가 반대자 발언권으로 흐름
     assert "(사유 미기재)" not in joined              # 빈 사유로 굳지 않음
+
+
+def test_초안_빈칸표식은_이중대괄호만_봇의_꺾쇠는_자유():
+    """[U-041(2026-07-22, 사용자: '< > 이게 왜 필요하냐')] 빈칸 표식을 봇이 참조·값·비교로 안 쓰는
+    ⟦ ⟧로 바꿔, 봇이 정상 문서에 쓴 < >(<500ms·<마일스톤 정의> 등)가 '미완 빈칸'으로 오집계돼 회의가
+    정체하던 것(목표 회의 25분 맴돔의 원인)을 뿌리 차단. ⟦ ⟧만 빈칸으로 집계."""
+    from system.rule.milestone import draft_status
+    filled = ("## 결정\n목표: 2인 턴제 카드게임 (응답 <500ms, 세부는 다음 회의<마일스톤 정의>에서)\n"
+              "완수조건:\n- 규칙 명시 | 실증: run으로 확인\n\n## 참고\n메모\n")
+    assert draft_status(filled)[0] == 0        # 봇의 < >(참조·값·비교)는 빈칸 아님 → 표결 가능
+    empty = "## 결정\n목표: ⟦이 Task로 무엇을 만들지⟧\n## 참고\n"
+    assert draft_status(empty)[0] >= 1         # ⟦ ⟧ 빈칸 표식만 미완으로 집계
 
 
 def test_표결전_비심의단_표결자도_도메인_점검_1턴(monkeypatch, tmp_path):

@@ -458,7 +458,7 @@ async def meet(flow, me_id, args):
                 from .milestone import draft_decision_region as _dr
                 import re as _re
                 _t = _dr(str(_dread(flow, "DRAFT.md") or ""))
-                _phs = _re.findall(r"<[^>\n]{2,60}>", _t)
+                _phs = _re.findall(r"⟦[^⟧\n]{1,150}⟧", _t)
                 _obj_ls = _re.findall(r"^\s*>\s*(.{0,60})", _t, _re.M)
                 if not _phs and not _obj_ls:
                     return ""
@@ -468,9 +468,9 @@ async def meet(flow, me_id, args):
                 _os = " · ".join(f"「{o.strip()}…」" for o in _obj_ls[:4])
                 return (f"\n[기계 집계] 결정 구획의 빈 곳 {len(_phs)}개: {_ls} / 미해소 인용(>) {len(_obj_ls)}건"
                         + (f": {_os}" if _os else "") +
-                        f"\n**지금 못 정하는 세부면 꺾쇠를 지우고 '(후속: …)'로 바꾸거나 참고 구획으로 "
+                        f"\n**지금 못 정하는 세부면 빈칸(⟦…⟧)을 지우고 '(후속: …)'로 바꾸거나 참고 구획으로 "
                         f"옮기세요. 인용(>) 줄은 의견·메모라도 미해소로 집계됩니다 — 반영했으면 그 줄을 "
-                        f"삭제하고, 결정이 아니면 참고 구획으로.** 꺾쇠·인용이 남는 한 회의는 안 닫힙니다.")
+                        f"삭제하고, 결정이 아니면 참고 구획으로.** 빈칸(⟦…⟧)·인용이 남는 한 회의는 안 닫힙니다.")
             except Exception:
                 return ""
 
@@ -497,7 +497,7 @@ async def meet(flow, me_id, args):
                     if won else "[회의 토론]")
             if _draft_path is not None:
                 _sub = (f"\n\n**이 회의의 결론은 공동 파일 `{_draft_path}` 에서 만듭니다.** 지금 그 파일을 "
-                        f"Read하고 셋 중 하나를 하세요: ①꺾쇠 자리표시·모호한 부분 중 **당신 도메인 몫을 Edit로 "
+                        f"Read하고 셋 중 하나를 하세요: ①빈칸(⟦…⟧)·모호한 부분 중 **당신 도메인 몫을 Edit로 "
                         f"직접 채우기** ②이견은 해당 줄 아래 `> [이의 @{flow._info(m) or '직군'}] 한 줄` 추가 "
                         f"③남의 이의 해소(내용 고치고 그 이의 줄 삭제). 당신이 추가한 백로그 줄은 **당신이 발제자(그 일의 주인)**로 등록됩니다. 그 뒤 채널엔 **무엇을 바꿨는지 한 줄만** "
                         f"발언하세요(장문 금지). 바꿀 것이 없으면 `[패스]`만 — 자리표시·이의가 0이 되고 변경이 "
@@ -614,7 +614,7 @@ async def meet(flow, me_id, args):
                     # 등록 필수 키 부재 — SYS가 형식 이의를 기계 기록(가결-등록거부 루프 선차단)
                     _ref0 = _dtxt.find("\n## 참고")
                     _line0 = (f"> [이의 @형식] 결정 구획에 '{_mkey}' 줄이 **실제 결정으로** 필요합니다 — "
-                              f"없거나 '(후속: …)' 미룸뿐이면 등록되지 않습니다(예: {_mkey} <한 줄 결정>).")
+                              f"없거나 '(후속: …)' 미룸뿐이면 등록되지 않습니다(예: '{_mkey} 실제 한 줄 결정').")
                     _nd = (_dtxt[:_ref0].rstrip("\n") + "\n" + _line0 + "\n" + _dtxt[_ref0:]) if _ref0 > 0 else (_dtxt.rstrip("\n") + "\n" + _line0 + "\n")
                     _dwrite(flow, "DRAFT.md", _nd)
                     _dtxt = _nd; _ph, _obj = _ms_dstat(_dtxt)
@@ -633,9 +633,9 @@ async def meet(flow, me_id, args):
                     return None                     # 조기 종료 → 게이트 루프가 최종 표결·등록
             elif _no_r1 and res:
                 _cprop = _stage_extract(_stage, res)
-                # [자리표시 가드(정합 C)] 템플릿 에코('<…>' 잔존)는 제출로 안 침 — 껍데기 조기종료 방지.
+                # [자리표시 가드(정합 C)] 템플릿 에코('⟦…⟧' 잔존)는 제출로 안 침 — 껍데기 조기종료 방지.
                 import re as _re2
-                if _cprop and not _re2.search(r"<[^>\n]{2,60}>", _cprop):
+                if _cprop and not _re2.search(r"⟦[^⟧\n]{1,150}⟧", _cprop):
                     conv_props.append(_cprop)
                     if flow.log:
                         flow.log("consensus_in_discussion", who=int(m), stage=str(_stage))
