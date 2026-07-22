@@ -931,6 +931,7 @@ async def meet(flow, me_id, args):
         #   초안을 못 바꿨으면(해소 위임 무변화 = out-of-scope 이의) 또 열어도 같은 결과 → 3회 안 기다림
         _last_ratify_ndiss = None  # 직전 표결의 반대 수 — 재표결해도 반대가 안 줄면(수렴 정체) 무진전.
         #   봇이 사소한 편집으로 해시를 바꿔도(표결→기권자→표결 반복) 반대 불감소로 잡는다
+        _last_ratify_yes, _last_ratify_diss = 0, []  # 직전 표결 집계 — 초안 무변화면 재표결 안 열고 재사용
         while True:
             _pass += 1
             _before = len(conv_props)
@@ -998,16 +999,29 @@ async def meet(flow, me_id, args):
                     # 위임이 초안을 못 바꾼 것(out-of-scope 이의는 해소 불가) → 재표결해도 같은 결과.
                     import hashlib as _hl3
                     _cur_rhash = _hl3.md5(_dregion2(_dtxt).encode("utf-8")).hexdigest()
-                    _passed, _diss, _yes = await _ratify_vote(
-                        f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
-                        f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
-                        f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
-                        f"무엇이 빠졌는지 한 줄로 구체히 쓰세요. (완성 파일 기준 표결 3회가 소진되면 잔여 "
-                        f"반대는 차기 주기로 이월 기록되고 결론이 확정됩니다.)")
-                    # [무한 반대의 차기 라우팅(2026-07-17, ch78 실측: 완성 파일에 표결 5연속 부결 — 라운드마다
-                    # 새 다듬기 반대 1건씩)] 반대는 무한 허용하되 종결을 못 막게 — 완성 상태 부결 3회 소진 후
-                    # 잔여 반대는 참고 구획에 '[차기 이월]'로 기록하고 결론을 확정한다(억압 아님: 기록·가시·
-                    # 다음 주기 회의의 입력). 재개설 예산 리셋으로 광택 루프가 무한해지던 것의 구조적 종결 보장.
+                    # [무변화면 재표결 안 엶(2026-07-22, 사용자 U-044: '표결 후 기권자에게 권한이 넘어가
+                    # 바로 또 표결을 열어버리는 이상한 상황')] 직전 표결 이후 결정구획이 그대로면(해소 위임이
+                    # 아무것도 안 함) 재표결은 같은 결과 — **열지 않고** 직전 집계로 판정한다(무의미 표결을
+                    # 애초에 안 연다). 내용이 실제로 바뀌었으면 정상 표결하고, 그때 반대가 안 줄면(수렴 정체)
+                    # 두 번째 신호가 잡는다. 어느 쪽이든 무한 재표결(표결→기권자→표결)이 구조적으로 불가능.
+                    if _last_ratify_hash is not None and _cur_rhash == _last_ratify_hash:
+                        _passed, _diss, _yes, _no_prog_ratify = False, _last_ratify_diss, _last_ratify_yes, True
+                        if flow.log:
+                            flow.log("meet_ratify_skipped_nochange", passes=_pass)
+                    else:
+                        _passed, _diss, _yes = await _ratify_vote(
+                            f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
+                            f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
+                            f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
+                            f"무엇이 빠졌는지 한 줄로 구체히 쓰세요. (초안 변화 없이 재표결이 반복되거나 반대 "
+                            f"우세로 정체되면 무의미 재표결 없이 다수결로 정리되거나 사람에게 상신됩니다.)")
+                        # [무진전 두 번째 신호] 내용은 바뀌었어도 반대가 안 줄면(수렴 정체) — 봇이 사소한
+                        # 편집으로 해시만 바꿔도 반대 불감소로 잡는다.
+                        _no_prog_ratify = ((_passed is False) and _last_ratify_ndiss is not None
+                                           and len(_diss or []) >= _last_ratify_ndiss)
+                        if _passed is not None:
+                            _last_ratify_hash, _last_ratify_ndiss = _cur_rhash, len(_diss or [])
+                            _last_ratify_yes, _last_ratify_diss = (_yes or 0), list(_diss or [])
                     if _passed is None:
                         # [유령 부결 차단(2026-07-21)] 예산 소진 = 표결 불능 — 부결로 세지 않고
                         # 루프의 소진 경로(wake_cap break)가 정직하게 마감한다.
@@ -1015,15 +1029,6 @@ async def meet(flow, me_id, args):
                             flow.log("meet_ratify_skipped_budget", passes=_pass)
                     elif not _passed:
                         _ready_rejects += 1
-                    # [무진전 재표결 = 두 신호(2026-07-22, 사용자 U-044: '표결→기권자→표결 반복')]
-                    # 재표결이 ①초안(결정구획)을 못 바꿨거나(해소 위임 무변화 = out-of-scope) ②반대가
-                    # 안 줄었으면(수렴 정체) 또 열어도 같은 결과 — 봇이 사소한 편집으로 해시를 바꿔도
-                    # 반대 불감소로 잡는다. 부결일 때만 판정, 실표결에서만 추적 갱신(예산 스킵 제외).
-                    _no_prog_ratify = (_passed is False) and (
-                        (_last_ratify_hash is not None and _cur_rhash == _last_ratify_hash)
-                        or (_last_ratify_ndiss is not None and len(_diss or []) >= _last_ratify_ndiss))
-                    if _passed is not None:
-                        _last_ratify_hash, _last_ratify_ndiss = _cur_rhash, len(_diss or [])
                     # [소진-확정에 다수결 바닥 + 무지성 반복 차단(2026-07-22, 사용자 U-044: '찬성2·
                     # 반대3인데 3회 소진으로 통과', '기권자가 3연속 반대 표결 무지성으로 계속 여는')]
                     # 이월-확정(무한 교착 방지)의 두 축: ①마지막 라운드가 반대 우세(찬성<반대)면 확정
