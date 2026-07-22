@@ -270,6 +270,48 @@ def test_사유_없는_표는_반려하고_재요청해_받아낸다(monkeypatch
     assert "(사유 미기재)" not in joined              # 빈 사유로 굳지 않음
 
 
+def test_표결전_비심의단_표결자도_도메인_점검_1턴(monkeypatch, tmp_path):
+    """[U-041(2026-07-22, 사용자: '심의단 2명만 발언하고 안 말한 사람이 반대로 판 깨는 게 맞는 구조냐 —
+    표결권 있으면 발언 기회도')] 심의단(members)만 토론하고 전원(_team_full)이 표결하던 것 — 표결 직전,
+    발언 못 한 비심의단 표결자에게 도메인 점검 1턴. 이의를 내면 표가 아니라 초안 [이의]로 들어가 표결이
+    안 열리고 다음 패스가 해소한다(우려가 반대표로 튀어 부결되던 U-041 역효과 차단)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
+                                      15: "PM", 16: "사운드 디자이너"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+    st = {"asked16": 0, "raised": False}
+
+    async def wake(to, b, k):
+        if "심의 응찰" in b:                              # 12·13만 심의단, 나머지 패스 → 비심의단 표결자
+            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")
+        if "표결 전 도메인 점검" in b:                     # 관문 — 비심의단 16이 여기서 처음 발언
+            if to == 16:
+                st["asked16"] += 1
+                if not st["raised"]:
+                    st["raised"] = True
+                    return "사운드 UX 완수기준이 목표에 빠졌습니다"     # 1회 이의
+            return "[패스]"
+        if "결론 확정 표결" in b:
+            return "[찬성: 결론이 충분합니다]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path); _resolve_objections(tmp_path)     # 채우고 이의 해소
+            return "채웠습니다"
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to in (12, 13) else "[패스]"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록 목표", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    assert st["asked16"] >= 1                            # 비심의단 표결자가 표결 전 도메인 점검을 받았다
+    assert any(e == "meet_prevote_concern" for e, _ in events)   # 이의가 표결 전에 초안으로 들어감(표 아님)
+
+
 def test_심의단_도메인커버리지_1석_구제(monkeypatch, tmp_path):
     """[U-035 실측: 게임 판 목표 회의에 게임 기획자 무발언] 안건 최고 적합 직군이 응찰했는데
     점수순에서 밀리면 1석 구제 — 자기선택(패스=존중)은 유지, 배제만 막는다. 응찰은 전수 관측."""
