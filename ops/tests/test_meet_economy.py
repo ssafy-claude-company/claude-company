@@ -552,6 +552,58 @@ def test_다수결_무진전이면_재표결반복없이_즉시확정(monkeypatc
     assert names.count("consensus_ratify_vote") < 15   # 3회 다 안 태우고 무진전에서 확정(무의미 반복 제거)
 
 
+def test_초안편집으로_해시바뀌어도_반대불감소면_무진전종결(monkeypatch, tmp_path):
+    """[U-044 실측(2026-07-22, 사용자: '표결→기권자→표결 반복')] 해소 위임 봇이 매번 결정구획을
+    사소하게 편집해 해시를 바꿔도(해시 신호 무력화), 반대 수가 안 줄면 수렴 정체 신호가 무진전을
+    잡아 무의미 반복을 끊는다 — 봇이 '뭔가 한 척' 편집해도 doomed 표결을 무한히 못 연다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
+                                      15: "PM", 16: "데이터"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+    ed = {"n": 0}
+
+    def _hash_changing_edit(tp):
+        p = _draft_path(tp)
+        if not p:
+            return
+        t = "\n".join(l for l in open(p, encoding="utf-8").read().splitlines()
+                      if not l.strip().startswith(">"))       # 이의 줄 제거(반대는 해소 안 됨)
+        ed["n"] += 1
+        _mk = f"\n보조 메모 {ed['n']}: 참고용 문구(결정 무관)"   # 매번 다른 줄 → 해시 변경
+        _ref = t.find("\n## 참고")
+        t = (t[:_ref] + _mk + t[_ref:]) if _ref > 0 else (t + _mk)
+        open(p, "w", encoding="utf-8").write(t + "\n")
+
+    async def wake(to, b, k):
+        if "심의 응찰" in b:
+            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")
+        if "결론 확정 표결" in b:                      # 반대 우세 지속(4 반대·2 찬성)
+            return "[찬성]" if to in (11, 16) else "[반대: 지표 기준이 빠졌습니다]"
+        if "[이의 해소]" in b:
+            _hash_changing_edit(tmp_path)              # 해시는 바뀌지만 반대 해소 안 됨
+            return "편집했습니다."
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            _resolve_objections(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "stage_confirmed" not in names          # 반대 우세는 확정 안 됨
+    assert "meet_ratify_deadlock" in names         # 해시 바뀌어도 반대 불감소로 무진전 잡아 종결
+    assert names.count("consensus_ratify_vote") <= 18   # 무한 재표결 안 됨(3회 이내 종결)
+
+
 def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypatch, tmp_path):
     """[전수 감사(2026-07-21, 사용자: '안정성·실효성·협업 실익이 보장된 상태에서 e2e를 돌려야지')]
     e2e 전수가 권고 문구뿐이라 검증 없이 마감·표류 가능하던 실효성 구멍 — 마일스톤 판의
