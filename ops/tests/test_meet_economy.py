@@ -473,10 +473,11 @@ def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
 
 
 def test_반대우세_소진은_확정안됨_다수결바닥(monkeypatch, tmp_path):
-    """[U-044 실측(2026-07-22, 사용자: '찬성2·반대3인데 3회 소진으로 그대로 통과')] 완성 파일 표결
-    3회 소진 이월-확정은 무한 교착 방지 장치지만, 마지막 라운드가 반대 우세(찬성<반대)면 확정하면
-    안 된다 — 소수 반대는 다수결로 넘기되(교착 방지 유지) 다수가 반대하는 안은 확정 못 하게. 반대가
-    다수면 그 안이 실제 지지를 못 받은 것이라 확정 대신 회의 계속(예산 천장이 정직 마감)."""
+    """[U-044 실측(2026-07-22, 사용자: '찬성2·반대3인데 3회 소진으로 통과', '기권자가 3연속 반대
+    표결 무지성으로 계속 여는')] 두 결함: ①반대 우세(찬성<반대)면 소진돼도 확정 금지(다수결 바닥) —
+    다수가 반대하는 안은 통과 못 함. ②재표결이 초안을 못 바꾸면(해소 위임 무변화 = out-of-scope 이의)
+    3회 안 기다리고 무진전 감지→정직 종결(무지성 반복 제거). 여기선 초안 안정+반대 우세 → 확정도
+    진전도 불가라 재표결을 반복하지 않고 deadlock으로 멈춰 사람에게 방향을 청한다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
                                       15: "PM", 16: "데이터"})
@@ -509,7 +510,46 @@ def test_반대우세_소진은_확정안됨_다수결바닥(monkeypatch, tmp_pa
     names = [e for e, _ in events]
     assert "stage_confirmed" not in names          # 반대 우세는 소진돼도 확정 안 됨(다수결 바닥)
     assert "meet_dissent_carryover" not in names   # 이월-확정 경로가 반대 우세에선 안 열림
+    assert "meet_ratify_deadlock" in names         # 무지성 재표결 반복 대신 무진전 감지→정직 종결
     assert str(f.current.status.goal or "") == ""  # 목표가 밀려서 잡히지 않았다
+
+
+def test_다수결_무진전이면_재표결반복없이_즉시확정(monkeypatch, tmp_path):
+    """[U-044 짝(2026-07-22)] 무진전 감지의 다른 쪽: 다수 지지(찬성>반대)인데 재표결이 초안을 못
+    바꾸면(해소 위임 무변화) 3회 다 태우지 말고 그 라운드에 다수결로 확정 — 무의미 반복 제거. 소수
+    반대는 억압 아니라 다수결로 넘어가고 잔여 반대는 이월 기록."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
+                                      15: "PM", 16: "데이터"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+
+    async def wake(to, b, k):
+        if "심의 응찰" in b:
+            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")
+        if "결론 확정 표결" in b:                      # 다수 지지: 13만 반대(5:1)
+            return "[반대: 지표가 더 필요]" if to == 13 else "[찬성]"
+        if "[이의 해소]" in b:
+            _resolve_objections(tmp_path)              # 이의만 제거(결정 내용 무변화 = out-of-scope)
+            return "해소했습니다."
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            _resolve_objections(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "stage_confirmed" in names              # 다수 지지 + 무진전 → 다수결로 확정
+    assert names.count("consensus_ratify_vote") < 15   # 3회 다 안 태우고 무진전에서 확정(무의미 반복 제거)
 
 
 def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypatch, tmp_path):
