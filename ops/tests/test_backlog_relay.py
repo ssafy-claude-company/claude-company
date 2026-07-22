@@ -52,6 +52,21 @@ def test_빈_제출_거부():
         _relay().submit(A, "   ")
 
 
+def test_참조표기_백로그_반려_모든경로(monkeypatch):
+    """[U-041 실측(2026-07-22, 사용자: '5개 통과 서브태스크 완수됐는데 갑자기 백로그 수만 늘어남')]
+    병합 회의 등록·작업 중 report_iter 자동생성 양쪽에서 'B4'·'B2 점수 공식…' 같은 의존/참조 줄이
+    백로그로 태어나 즉시 완료 churn → 서브태스크 거짓 완수. 순수 참조는 submit 관문에서 force와
+    무관하게 반려(모든 경로 공통)."""
+    r = _relay()
+    for ref in ("B4", "B2 점수 공식 정의", "#3", "BL-2 저장", "B 12 뭔가"):
+        with pytest.raises(BacklogError):
+            r.submit(A, ref)
+        with pytest.raises(BacklogError):
+            r.submit(A, ref, force=True)        # force도 우회 불가(참조는 '진짜 다른 일'이 아님)
+    # 참조로 오인될 수 없는 실작업은 통과
+    assert r.submit(A, "Board 상태 직렬화 구현").backlog_id == "B1"   # 'Board'는 B\d 아님
+
+
 # ══ 규칙 ① 지명 ════════════════════════════════════════════════════════════
 
 def test_규칙1_첫배분은_자유_이후는_마무리자만():
