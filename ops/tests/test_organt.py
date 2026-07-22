@@ -146,6 +146,25 @@ def test_턴예산_초과는_정직마커로_반환(monkeypatch):
     assert "턴 한도 도달(예산 상한)" in out                    # 정직 마커 + 비-공백(재시도 차단)
 
 
+def test_마이크로는_무기억_신선호출_세션미저장(monkeypatch, tmp_path):
+    """[프로브 무기억화(2026-07-22, U-041 실측: 프로브 회당 ~1cr = 세션 캐시 재읽기 — 판당 430cr/
+    원장 27%)] 즉답 턴(응찰·표결)은 프롬프트가 자족적이고 정체성은 시스템 프롬프트 몫 — micro는
+    ①resume 없이 신선 호출 ②그 호출이 만든 세션 id를 본세션에 저장하지 않는다(기억 포크 방지).
+    일반 턴은 종전대로 resume. ORGANT_MICRO_FRESH=0이면 종전 동작(예비 스위치)."""
+    from organt.organt import Organt
+    monkeypatch.delenv("ORGANT_MICRO_FRESH", raising=False)
+    o = Organt.__new__(Organt)
+    o.options = __import__("claude_agent_sdk").ClaudeAgentOptions()
+    o.session_id = "sess-main"
+    normal = o._options_for_call(micro=False)
+    assert getattr(normal, "resume", None) == "sess-main"       # 일반 턴 = 세션 이어감(무회귀)
+    fresh = o._options_for_call(micro=True)
+    assert getattr(fresh, "resume", None) in (None, "")          # micro = 신선(캐시 재읽기 0)
+    monkeypatch.setenv("ORGANT_MICRO_FRESH", "0")
+    legacy = o._options_for_call(micro=True)
+    assert getattr(legacy, "resume", None) == "sess-main"        # 스위치 오프 = 종전 resume
+
+
 def test_세션_cwd고정_pinned_cwd(tmp_path):
     """[세션-cwd 고정] CLI 세션 저장소는 cwd 기준 — 상태 파일에 '세션이 시작된 cwd'를 영속하고,
     다음 빌드는 그 cwd로 resume한다(흐름 도중 작업공간 카빙에도 세션 불멸). 디렉터리가 사라졌으면

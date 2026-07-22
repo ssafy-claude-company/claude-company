@@ -198,6 +198,13 @@ class Organt:
         o = self.options
         if micro:
             o = dataclasses.replace(o, mcp_servers={}, allowed_tools=[])
+            # [프로브 무기억화(2026-07-22, U-041 실측: 프로브 회당 ~1cr = 세션 캐시 재읽기 과금 —
+            # 판당 430cr/원장의 27%)] 즉답 턴(응찰·표결·프로브)의 프롬프트는 자족적('이 텍스트만
+            # 보고 즉답')이고 정체성(직군·개인 기준)은 시스템 프롬프트가 담는다 — resume을 떼어 신선
+            # 1회 호출로(회당 ~0.1cr). 세션 기억 오염 방지는 handle의 sid 미저장이 담당.
+            # 되돌리기: ORGANT_MICRO_FRESH=0.
+            if os.environ.get("ORGANT_MICRO_FRESH", "1") != "0":
+                return o
         if self.session_id:
             return dataclasses.replace(o, resume=self.session_id)
         return o
@@ -347,7 +354,8 @@ class Organt:
                 _err = str(e)[:150]
             if attempt > 0:
                 _retries = attempt
-            if captured_sid:
+            if captured_sid and not (micro and os.environ.get("ORGANT_MICRO_FRESH", "1") != "0"):
+                # [프로브 무기억화] 신선 micro 호출이 만든 세션 id는 버린다 — 본세션 기억 포크 방지.
                 self._save_session_id(captured_sid)
             # 마커 감지(이중 안전망): 사전 점검이 레이아웃 변화로 못 거른 변종이 stderr 꼬리로 잡히면
             # 같은 처리 — 세션을 버리고 즉시 새 세션으로 전진(재시도해 봐야 영원히 같은 실패라서).
