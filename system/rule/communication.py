@@ -762,7 +762,7 @@ async def meet(flow, me_id, args):
             # 결론이 쉽게 가결됐다. 발언(비용 큰 턴)은 심의단이 맡되, 찬반(마이크로 즉답)은 팀 전원 —
             # 비참여 도메인이 결론의 구멍(장르 미정 등)을 막을 표면을 갖는다. 반대=병합 원료(종전 동일).
             _voters = list(dict.fromkeys(list(_team_full) + list(members)))
-            _yes, _dissents, _premortems = 0, [], []
+            _yes, _dissents, _premortems, _against_ids = 0, [], [], []
             try:
                 flow._meet_stage_note = f"표결 진행 중 — 전원 {len(_voters)}명"
                 flow.note_activity(0, f"🗳 결론 확정 표결 진행 — 전원 {len(_voters)}명 응답 수집", force=True)
@@ -787,6 +787,7 @@ async def meet(flow, me_id, args):
                                 if x.strip() and not x.strip().startswith("[실패한다면")), "")[:150]
                 if _vote == "against":
                     _dissents.append(_reason or "(사유 미기재)")
+                    _against_ids.append((int(m), _reason or "(사유 미기재)"))   # 반대자=발언권 넘길 사람
                 elif _vote == "for":
                     _yes += 1
                 # abstain = 집계 안 함(찬성 오집계 방지) — 만장일치 게이트는 yes>=1이라 전원 기권이면 미통과
@@ -795,6 +796,8 @@ async def meet(flow, me_id, args):
                 _ballots.append((f"{flow._info(m) or m}@{int(m)}", _vote, _reason))
                 if flow.log:
                     flow.log("consensus_ratify_vote", who=m, vote=_vote)
+            flow._ratify_against = list(_against_ids)   # [반대자 발언권(2026-07-22, 사용자)] 부결이면 이 사람들이
+            #   발언권을 얻어 직접 고치거나 적임 직군을 지명 — 시스템이 담당을 추측하지 않는다
             # [표결 가시화(2026-07-16, 사용자: '회의 중 표결이 안 보여서 문제')] 결과를 채널 회의
             # 블록에 [표] 한 줄로 게시 — 종전엔 표결이 침묵이라 사용자 눈엔 판이 멈춘 것처럼 보였다
             # (ch74~75: 15분+ 무행). 개별 찬반이 아니라 집계+반대 요지만(이벤트 결과 1줄, 스팸 아님).
@@ -927,11 +930,6 @@ async def meet(flow, me_id, args):
         _ready_rejects = 0   # [무한 반대의 차기 라우팅] 완성 파일 상태에서의 부결 횟수 — 3회 소진 후 이월 확정
         _skip_discuss = False   # [이의 해소 fastpath(2026-07-20)] 해소 위임 직후엔 재토론 없이 재검·재표결
         _last_pass_hash = None  # [무진전 패스 감지(2026-07-20)] 초안 결정구획 해시 — 무변화 패스=즉시 중단
-        _last_ratify_hash = None  # [무지성 재표결 감지(2026-07-22)] 직전 표결의 결정구획 해시 — 재표결이
-        #   초안을 못 바꿨으면(해소 위임 무변화 = out-of-scope 이의) 또 열어도 같은 결과 → 3회 안 기다림
-        _last_ratify_ndiss = None  # 직전 표결의 반대 수 — 재표결해도 반대가 안 줄면(수렴 정체) 무진전.
-        #   봇이 사소한 편집으로 해시를 바꿔도(표결→기권자→표결 반복) 반대 불감소로 잡는다
-        _last_ratify_yes, _last_ratify_diss = 0, []  # 직전 표결 집계 — 초안 무변화면 재표결 안 열고 재사용
         while True:
             _pass += 1
             _before = len(conv_props)
@@ -994,34 +992,16 @@ async def meet(flow, me_id, args):
                             flow.log("meet_preflight_failed", passes=_pass, n=len(_pre_errs))
                 if _dtxt.strip() and _ph == 0 and _obj == 0 and not _pre_errs:
                     from .milestone import draft_decision_region as _dregion2
-                    # [무지성 재표결 감지(2026-07-22, 사용자 U-044: '기권자가 3연속 반대 표결 무지성으로
-                    # 계속 여는')] 표결 시점(이의 0)의 결정구획 해시 — 직전 표결과 같으면 그 사이 해소
-                    # 위임이 초안을 못 바꾼 것(out-of-scope 이의는 해소 불가) → 재표결해도 같은 결과.
-                    import hashlib as _hl3
-                    _cur_rhash = _hl3.md5(_dregion2(_dtxt).encode("utf-8")).hexdigest()
-                    # [무변화면 재표결 안 엶(2026-07-22, 사용자 U-044: '표결 후 기권자에게 권한이 넘어가
-                    # 바로 또 표결을 열어버리는 이상한 상황')] 직전 표결 이후 결정구획이 그대로면(해소 위임이
-                    # 아무것도 안 함) 재표결은 같은 결과 — **열지 않고** 직전 집계로 판정한다(무의미 표결을
-                    # 애초에 안 연다). 내용이 실제로 바뀌었으면 정상 표결하고, 그때 반대가 안 줄면(수렴 정체)
-                    # 두 번째 신호가 잡는다. 어느 쪽이든 무한 재표결(표결→기권자→표결)이 구조적으로 불가능.
-                    if _last_ratify_hash is not None and _cur_rhash == _last_ratify_hash:
-                        _passed, _diss, _yes, _no_prog_ratify = False, _last_ratify_diss, _last_ratify_yes, True
-                        if flow.log:
-                            flow.log("meet_ratify_skipped_nochange", passes=_pass)
-                    else:
-                        _passed, _diss, _yes = await _ratify_vote(
-                            f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
-                            f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
-                            f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
-                            f"무엇이 빠졌는지 한 줄로 구체히 쓰세요. (초안 변화 없이 재표결이 반복되거나 반대 "
-                            f"우세로 정체되면 무의미 재표결 없이 다수결로 정리되거나 사람에게 상신됩니다.)")
-                        # [무진전 두 번째 신호] 내용은 바뀌었어도 반대가 안 줄면(수렴 정체) — 봇이 사소한
-                        # 편집으로 해시만 바꿔도 반대 불감소로 잡는다.
-                        _no_prog_ratify = ((_passed is False) and _last_ratify_ndiss is not None
-                                           and len(_diss or []) >= _last_ratify_ndiss)
-                        if _passed is not None:
-                            _last_ratify_hash, _last_ratify_ndiss = _cur_rhash, len(_diss or [])
-                            _last_ratify_yes, _last_ratify_diss = (_yes or 0), list(_diss or [])
+                    _passed, _diss, _yes = await _ratify_vote(
+                        f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
+                        f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
+                        f"※ 반대 요지는 시스템이 DRAFT.md에 [이의]로 기록해 다음 라운드가 해소합니다 — "
+                        f"무엇이 빠졌는지 한 줄로 구체히 쓰세요. (완성 파일 기준 표결 3회가 소진되면 잔여 "
+                        f"반대는 차기 주기로 이월 기록되고 결론이 확정됩니다.)")
+                    # [무한 반대의 차기 라우팅(2026-07-17, ch78 실측: 완성 파일에 표결 5연속 부결 — 라운드마다
+                    # 새 다듬기 반대 1건씩)] 반대는 무한 허용하되 종결을 못 막게 — 완성 상태 부결 3회 소진 후
+                    # 잔여 반대는 참고 구획에 '[차기 이월]'로 기록하고 결론을 확정한다(억압 아님: 기록·가시·
+                    # 다음 주기 회의의 입력). 재개설 예산 리셋으로 광택 루프가 무한해지던 것의 구조적 종결 보장.
                     if _passed is None:
                         # [유령 부결 차단(2026-07-21)] 예산 소진 = 표결 불능 — 부결로 세지 않고
                         # 루프의 소진 경로(wake_cap break)가 정직하게 마감한다.
@@ -1029,14 +1009,12 @@ async def meet(flow, me_id, args):
                             flow.log("meet_ratify_skipped_budget", passes=_pass)
                     elif not _passed:
                         _ready_rejects += 1
-                    # [소진-확정에 다수결 바닥 + 무지성 반복 차단(2026-07-22, 사용자 U-044: '찬성2·
-                    # 반대3인데 3회 소진으로 통과', '기권자가 3연속 반대 표결 무지성으로 계속 여는')]
-                    # 이월-확정(무한 교착 방지)의 두 축: ①마지막 라운드가 반대 우세(찬성<반대)면 확정
-                    # 금지(다수결 바닥) — 다수가 반대하는 안은 통과 못 함. ②재표결이 초안을 못 바꿨으면
-                    # (무진전=해소 불가 이의) 3회 안 기다리고 즉시 판정 — 다수면 지금 확정, 반대 우세면
-                    # 아래에서 정직 종결(무의미 재표결 반복 제거). 소수 반대는 여전히 다수결로 넘어간다.
-                    _maj = (_yes or 0) >= len(_diss or [])
-                    _carry = ((_passed is False) and (_ready_rejects >= 3 or _no_prog_ratify) and _maj)
+                    # [소진-확정에 다수결 바닥(2026-07-22, 사용자 U-044 실측: '찬성2·반대3인데 3회
+                    # 소진으로 통과')] 3회 소진 이월-확정은 무한 교착 방지 장치지만, 마지막 라운드가
+                    # 반대 우세(찬성<반대)면 확정하면 안 된다 — 소수 반대는 다수결로 넘기되(교착 방지
+                    # 유지), 다수가 반대하는 안은 확정 못 하게. 반대 우세면 회의 계속(예산 천장이 마감).
+                    _carry = ((_passed is False) and _ready_rejects >= 3
+                              and (_yes or 0) >= len(_diss or []))
                     if _passed or _carry:
                         if _carry:
                             if _diss:
@@ -1072,19 +1050,6 @@ async def meet(flow, me_id, args):
                             flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
                         await _say_speech(flow, me_id, "[회의]",
                                           f"결론 파일이 등록 게이트에 보류됐습니다 — {_note} (DRAFT를 다듬어 재수렴)")
-                    elif (_passed is False) and _no_prog_ratify and not _maj:
-                        # [무지성 재표결 종결(2026-07-22, 사용자 U-044: '무지성으로 계속 여는')] 반대 우세
-                        # + 무진전 = 확정도(다수결 바닥) 진전도(해소 불가 이의) 불가 — 같은 doomed 표결을
-                        # 또 열지 않고 정직히 멈춰 사람에게 방향을 청한다(억지 반복·억지 통과 대신).
-                        try:
-                            await flow.guide.post(int(flow.user_channel), 0,
-                                "[사람 조치 필요] 표결이 반대 우세로 확정되지 못하고 재표결해도 진전이 "
-                                "없어 멈춥니다 — 안건을 조정하거나 방향을 정해 주시면 이어서 진행해요.")
-                        except Exception:
-                            pass
-                        if flow.log:
-                            flow.log("meet_ratify_deadlock", passes=_pass, yes=int(_yes or 0), no=len(_diss or []))
-                        break
                     else:
                         # [부결 이의의 파일 반영 — SYS 서기(2026-07-16, ch76 실측)] 표결은 마이크로 즉답
                         # (도구 금지)이라 반대자가 이의를 파일에 못 남긴다 → 이의 0 유지 → ready→부결 무한.
@@ -1111,18 +1076,38 @@ async def meet(flow, me_id, args):
                         # 해소하면 된다. role_fit으로 이의별 적임을 골라 편집 위임(실작업 wake) 후, 다음
                         # 루프는 재토론 없이(fastpath) 완성 검사→재표결로 직행. 해소가 안 됐으면(해시
                         # 무변화) 아래 무진전 감지가 전원 패스 폴백/중단을 판정 — 제한이 아니라 낭비 제거.
+                        # [반대자 발언권 + 지명(2026-07-22, 사용자: 'a b가 반대했으니 a b가 발언권을 얻는
+                        # 게 맞고, 다른 전문가 몫이면 그 직군에게 직접 발언권을 주도록 — 그 일이 누구 일인지
+                        # 시스템은 모른다, 프론트 앵커 오배정처럼')] 종전엔 role_fit으로 시스템이 담당을 골라
+                        # 위임(누구 일인지 추측)했다 — 폐지. 반대한 사람이 발언권을 얻어 직접 고치거나, 자기
+                        # 몫이 아니면 [지명: <봇id>]로 적임에게 넘긴다(그 사람이 이어받아 고침).
                         try:
-                            from ..role_fit import role_fit as _rfit
-                            for _dv in (_new or [])[:5]:
-                                _cand = max(members, key=lambda m0: _rfit(_dv, str(flow.bot_info.get(int(m0)) or "")))
+                            _nom_re = re.compile(r"\[지명[:：]\s*([0-9]+)\s*\]")
+                            _mset = {int(x) for x in _team_full}   # 패널 밖 팀원도 지명 가능(그 일 적임)
+                            _handled = set()
+                            for _oid, _oreason in (getattr(flow, "_ratify_against", None) or [])[:5]:
+                                if _oid in _handled:
+                                    continue
+                                _handled.add(_oid)
                                 wakes["n"] += 1
-                                await flow.wake(int(_cand),
-                                    f"[이의 해소] 공동 결론 파일 `{_draft_path}` 에 방금 기록된 이의를 당신 "
-                                    f"도메인으로 해소하세요 — 내용을 실제로 채우고(Edit) 그 이의(>) 줄을 "
-                                    f"삭제: «{_dv[:160]}». 해소 후 한 줄만 보고하세요.", Kind.INFO)
+                                _r = await flow.wake(int(_oid),
+                                    f"[이의 해소] 당신이 반대했습니다: «{_oreason[:160]}». 공동 결론 파일 "
+                                    f"`{_draft_path}` 를 **직접 고쳐** 이 이의를 해소하세요(Edit + 그 이의(>) 줄 "
+                                    f"삭제) 후 한 줄 보고. 이게 **다른 직군의 몫**이면 고치지 말고 "
+                                    f"`[지명: <봇id>]`로 그 사람에게 발언권을 넘기세요(그 사람이 이어 고칩니다).",
+                                    Kind.INFO)
+                                _nm = _nom_re.search(str(_r or ""))
+                                if _nm and int(_nm.group(1)) in _mset and int(_nm.group(1)) not in _handled:
+                                    _nid = int(_nm.group(1))
+                                    _handled.add(_nid)
+                                    wakes["n"] += 1
+                                    await flow.wake(_nid,
+                                        f"[이의 해소 — 지명받음] {flow._info(_oid) or _oid} 님이 이 이의를 당신 "
+                                        f"몫으로 지명했습니다: «{_oreason[:160]}». 공동 결론 파일 `{_draft_path}` 를 "
+                                        f"당신 도메인으로 고치고(Edit + 그 이의 줄 삭제) 한 줄 보고하세요.", Kind.INFO)
                             _skip_discuss = True
                             if flow.log:
-                                flow.log("dissent_resolution_delegated", n=len(_new or []))
+                                flow.log("dissent_resolution_by_objector", n=len(_handled))
                         except Exception:
                             pass
                 elif flow.log:
