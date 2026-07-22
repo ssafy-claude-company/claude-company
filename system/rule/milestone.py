@@ -1642,7 +1642,7 @@ def register_stage(flow, stage, prop, origin=""):
                       if m.status not in ("done", "superseded")), None)
         if _open is None:
             return False, "열린 마일스톤이 없습니다."
-        from .backlog import relay_for
+        from .backlog import relay_for, DuplicateBacklog
         store = getattr(flow, "backlog_relays", None) or {}
         _alive_sts = [st for st in _open.subtasks if st.status not in ("done", "superseded")]
         _empty_sts = [st for st in _alive_sts
@@ -1708,6 +1708,7 @@ def register_stage(flow, stage, prop, origin=""):
 
         n = 0
         _per = {}
+        _skipped = 0
         for _ln in lines:
             _s = _ln.strip()
             if not _s.startswith("백로그:"):
@@ -1715,10 +1716,23 @@ def register_stage(flow, stage, prop, origin=""):
             it = _s.split(":", 1)[1].strip()
             try:
                 _st_d, _body = _dest_of(it)
+                # [참조·재진술 줄 반려(2026-07-22, U-041 실측: 병합 회의가 'B4'·'B2 점수 공식…' 같은
+                # 의존/참조 줄을 백로그로 등록 → 즉시 완료 캐스케이드로 거짓 마감)] 실작업이 아닌 줄을
+                # 거른다: ①순수 참조('B4'·'B2 …' — 영역 접두 뗀 뒤 'B\d' 또는 '#\d'로 시작) ②너무 짧음
+                # (실작업 단위가 아님). 나머지는 submit의 중복 게이트(force=False)가 재진술을 잡는다
+                # (종전 force=True가 그 게이트를 우회한 것이 근본).
+                _bt = str(_body or "").strip()
+                # 순수 참조/의존 표기(영역 접두 뗀 본문이 'B4'·'B2 …'·'#3'·'BL-2'로 시작)만 반려 —
+                # 실작업 desc는 짧아도('API 구현') 통과. 재진술은 아래 submit 중복 게이트가 담당.
+                if re.match(r"^(B\s*\d+|#\s*\d+|BL[-\s]?\d+)\b", _bt):
+                    _skipped += 1
+                    continue
                 _who = _attr_of(draft_norm_line(_s) or _s) or _owner_fb(_st_d, _body)
-                relay_for(flow, _st_d).submit(_who, _body, force=True)
+                relay_for(flow, _st_d).submit(_who, _body, force=False)
                 n += 1
                 _per[_st_d.st_id] = _per.get(_st_d.st_id, 0) + 1
+            except DuplicateBacklog:
+                _skipped += 1        # 재진술·중복 — 조용히 스킵(원본이 이미 등록됨)
             except Exception:
                 pass
         for _st4 in _alive_sts:

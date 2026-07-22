@@ -575,6 +575,38 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n\n## 참고") is None
 
 
+def test_병합_참조재진술_백로그_반려_거짓완료차단(monkeypatch, tmp_path):
+    """[U-041 실측(2026-07-22, 사용자: '카드 비교 규칙 백로그 아래 서브태스크 회의 내용 중복')] 병합
+    회의가 'B4'·'B2 점수 공식…' 같은 의존/참조 줄과 재진술을 백로그로 등록(force=True로 중복 게이트
+    우회) → 즉시 완료 캐스케이드로 마일스톤 거짓 마감. 순수 참조('B\\d'로 시작)·너무 짧은 줄은 걸러
+    반려, 재진술은 submit 중복 게이트(force=False)가 잡는다 — 실작업 단위만 등록."""
+    from system.rule.milestone import register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+
+    async def _w(to, b, k):
+        return "[패스]"
+    f.wake = _w
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "게임"
+    _okm, _nm = register_stage(f, "milestone",
+                               "단계: 최소버전 → 완성\n이번 주기: 카드 게임 최소버전\n"
+                               "- 30턴 완주 | 실증: run 재현", "게임")
+    assert _okm, _nm
+    ok, note = register_stage(f, "subtask",
+                              "단위: 게임 로직 | 실증: pytest 통과\n"
+                              "백로그: [게임 로직] 승패 판정 함수 신규 구현\n"
+                              "백로그: [게임 로직] B1\n"                       # 순수 참조 → 반려
+                              "백로그: [게임 로직] 승패 판정 함수 신규 구현\n"  # 재진술 → 중복 게이트
+                              "백로그: [게임 로직] B2 점수 공식", "게임")       # 참조 → 반려
+    assert ok, note
+    st = f.milestones[-1].subtasks[0]
+    bls = (f.backlog_relays.get(st.st_id)).backlogs
+    assert len(bls) == 1, f"실작업 1건만(참조·재진술 반려) — {[b.body[:20] for b in bls]}"
+    assert "승패 판정" in bls[0].body
+
+
 def test_병합회의_영역과_백로그_한번에_등록_작업직행(monkeypatch, tmp_path):
     """[회의 병합(2026-07-21, 사용자 결정: '1은 사람 수 적어서 — 2로 가자')] 작업나누기+백로그를
     한 회의로: 같은 수렴안의 '단위:'와 '백로그:' 줄을 함께 등록(영역 분배·발제 귀속 재사용),
