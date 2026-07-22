@@ -398,6 +398,46 @@ def test_무진전은_심의단확대가_먼저_그래도_무진전이면_중단
     # (합류 채널 게시는 픽스처 thread_id가 문자열이라 int 캐스트 스킵 — 가시화는 로그 이벤트로 검증)
 
 
+def test_R1_브레인라이팅_독립기고_익명병합과_사전부검(monkeypatch, tmp_path):
+    """[집단지능 문헌 반영(2026-07-22, 사용자: '다른 자료도 분석해 구조 개선')] ①NGT/브레인라이팅:
+    토론 전 전원 병렬 독립 기고(무기억 마이크로)를 초안 '## 참고'에 익명 병합 — 첫 발언 앵커링·발언
+    편중·생산 차단 축소(Woolley 기회균등 정합). [패스]는 제외, 재개설(자리표시 0)은 스킵.
+    ②사전부검(브레인라이팅-프리모텀): 확정 표결에서 찬성자도 '[실패한다면: …]' 위험 1줄 — 표 사유와
+    분리 수집해 참고에 기계 병합."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+
+    async def wake(to, b, k):
+        if "독립 기고" in b:
+            return "점수 상한은 999로, 저장은 세션당 1레코드" if to == 12 else "[패스]"
+        if "결론 확정 표결" in b:
+            return "[찬성]\n[실패한다면: 페이퍼 검증이 형식 채우기로 흐를 위험]"
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            _resolve_objections(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    from system._util import dossier_read
+    d = dossier_read(f, "DRAFT.md") or ""
+    assert "[R1 독립 기고" in d and "점수 상한은 999" in d      # 기고 익명 병합(12의 내용)
+    assert d.count("· ") >= 1 and "[패스]" not in d             # 패스 제외
+    r1 = next(kw for e, kw in events if e == "meet_r1_brainwrite")
+    assert r1.get("n") == 1 and r1.get("of") == 2               # 2명 프로브·1명 기고
+    assert "[사전부검 — 실패한다면]" in d and "형식 채우기로 흐를 위험" in d   # 프리모텀 병합
+
+
 def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
     """[U-039 실측(2026-07-21, 사용자: '왜 회의는 3명만 — 의견은 못 했어도 찬반은 전체가 참여해야')]
     심의단 축소(발언 비용 처방) 후 확정 표결까지 심의단만 돌아 '찬성 2 → 확정'으로 모호한 결론이

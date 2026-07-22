@@ -754,13 +754,15 @@ async def meet(flow, me_id, args):
                         f"분해·구현 스펙)이 없다는 이유로 반대하지 마세요(그건 다음 회의들이 정합니다). "
                         f"당신({flow._info(c)})의 판단: 이 안건의 결론으로 충분하면 `[찬성]`, 이 안건 범위에서 "
                         f"빠진 게 있으면 `[반대: 무엇이 빠졌는지 한 줄]`. **도구 호출·파일 확인 금지 — 지금 "
-                        f"이 텍스트만 보고 한 줄로 즉답하세요.** 전원 찬성이어야 확정, 반대는 병합 후 재표결.")
+                        f"이 텍스트만 보고 한 줄로 즉답하세요.** 전원 찬성이어야 확정, 반대는 병합 후 재표결. "
+                        f"찬성이어도 마지막 줄에 `[실패한다면: 한 줄]`을 덧붙이세요(사전부검 — 이 결론이 "
+                        f"실패한다면 가장 그럴듯한 이유. 표에는 영향 없고 위험 기록으로만 남습니다).")
             # [확정 표결 = 전원(2026-07-21, U-039 실측 — 사용자: '의견은 못 했어도 찬반은 전체가
             # 참여해야지')] 종전엔 심의단(축소 후 members — 2~3명)만 표결해 '찬성 2 → 확정'으로 모호한
             # 결론이 쉽게 가결됐다. 발언(비용 큰 턴)은 심의단이 맡되, 찬반(마이크로 즉답)은 팀 전원 —
             # 비참여 도메인이 결론의 구멍(장르 미정 등)을 막을 표면을 갖는다. 반대=병합 원료(종전 동일).
             _voters = list(dict.fromkeys(list(_team_full) + list(members)))
-            _yes, _dissents = 0, []
+            _yes, _dissents, _premortems = 0, [], []
             try:
                 flow._meet_stage_note = f"표결 진행 중 — 전원 {len(_voters)}명"
                 flow.note_activity(0, f"🗳 결론 확정 표결 진행 — 전원 {len(_voters)}명 응답 수집", force=True)
@@ -775,9 +777,14 @@ async def meet(flow, me_id, args):
                 # 찬성으로 셌다(거짓 통과→품질 신호 희석). 이제 명시 마커([찬성]/[반대] 또는 선두 토큰)만
                 # 인정하고, '반대 없/않' 부정은 찬성, 그 외 비확답은 '기권'(찬성도 반대도 아님)으로 분리.
                 _vote = _classify_vote(t)
-                # 사유 = 표 마커 뒤 첫 실질 줄(찬성·반대·기권 공통 — 서사 보존)
+                # [사전부검 수집(2026-07-22, 브레인라이팅-프리모텀 실증)] '[실패한다면: …]' 줄은 표
+                # 사유가 아니라 위험 기록 — 분리 수집해 참고 구획에 기계 병합(찬성자도 위험을 내놓는다).
+                for _pm in re.findall(r"\[\s*실패한다면\s*[::]\s*([^\]\n]{2,150})\]?", t):
+                    _premortems.append(_pm.strip())
+                # 사유 = 표 마커 뒤 첫 실질 줄(찬성·반대·기권 공통 — 서사 보존, 사전부검 줄 제외)
                 _reason = re.sub(r"^\s*\[?\s*(찬성|반대|기권)\s*[:：\]]*\s*", "", t).strip().splitlines()
-                _reason = next((x.strip() for x in _reason if x.strip()), "")[:150]
+                _reason = next((x.strip() for x in _reason
+                                if x.strip() and not x.strip().startswith("[실패한다면")), "")[:150]
                 if _vote == "against":
                     _dissents.append(_reason or "(사유 미기재)")
                 elif _vote == "for":
@@ -791,6 +798,17 @@ async def meet(flow, me_id, args):
             # [표결 가시화(2026-07-16, 사용자: '회의 중 표결이 안 보여서 문제')] 결과를 채널 회의
             # 블록에 [표] 한 줄로 게시 — 종전엔 표결이 침묵이라 사용자 눈엔 판이 멈춘 것처럼 보였다
             # (ch74~75: 15분+ 무행). 개별 찬반이 아니라 집계+반대 요지만(이벤트 결과 1줄, 스팸 아님).
+            # [사전부검 기계 병합] 수집된 위험을 초안 '## 참고'에 append(중복 억제) — 다음 라운드·
+            # 다음 주기 회의가 위험 목록을 입력으로 갖는다(판정 대상 아님).
+            if _premortems and _draft_path is not None:
+                try:
+                    _dpm = str(_dread(flow, "DRAFT.md") or "")
+                    _new_pm = [p for p in dict.fromkeys(_premortems) if p[:40] not in _dpm]
+                    if _dpm and _new_pm:
+                        _dwrite(flow, "DRAFT.md", _dpm.rstrip("\n") + "\n[사전부검 — 실패한다면]\n"
+                                + "\n".join(f"· {p}" for p in _new_pm) + "\n")
+                except Exception:
+                    pass
             _passed0 = (len(_dissents) == 0 and _yes >= 1)
             try:
                 _vsum = (f"결론 확정 표결 — 찬성 {_yes} · 반대 {len(_dissents)}"
@@ -857,6 +875,44 @@ async def meet(flow, me_id, args):
         _confirm_note = ""
         _landed, _conclusion = False, ""        # 이 단계 결론이 착지했나 + 결론 요지(회의 마무리 게시용)
         _pipe = bool(_no_r1 and tt)
+        # [R1 브레인라이팅(2026-07-22, 사용자: 집단지능 문헌 반영 — NGT/브레인라이팅: 침묵 독립 기고가
+        # 앵커링·발언 편중·생산 차단을 줄인다(Diehl&Stroebe·NGT 실증), Woolley 2010: 기회 균등이 c와
+        # 상관, 2025-26 MAD 연구: 독립 생성+적당한 이견이 최적)] 토론 전에 전원이 병렬로 독립 기고
+        # (무기억 마이크로 — 회당 ~0.1cr)하고 초안 '## 참고'에 **익명 병합**(지위 편향 축소, 판정
+        # 대상 아님·발제 귀속은 결정 구획 편집이 정본이라 무간섭). 첫 발언 앵커 완화 + 전원 기회 보장.
+        _r1_fresh = False
+        if _pipe and _draft_path is not None:
+            try:
+                _ph0, _ = _ms_dstat(str(_dread(flow, "DRAFT.md") or ""))
+                _r1_fresh = _ph0 > 0          # 자리표시 남음 = 첫 개회(재개설·속행이면 스킵 — 중복 기고 낭비 방지)
+            except Exception:
+                _r1_fresh = False
+        if _r1_fresh:
+            def _r1b(c):
+                return (f"[독립 기고 — 토론 전 병렬 수집] 안건: {(_agenda or topic)[:160]}\n"
+                        f"당신({flow._info(c)}) 도메인 몫으로 **결정 구획에 들어가야 할 구체 값·조건·"
+                        f"이견 후보를 3~5줄**로 적어주세요(동료 발언은 아직 없습니다 — 독립 판단). "
+                        f"**도구·파일 금지, 이 텍스트만 보고 즉답.** 보탤 것이 없으면 `[패스]`.")
+            try:
+                _r1n = 0
+                _r1_lines = []
+                _r1_targets = [m for m in members if m != me_id]
+                for _m1, _r1, _n1 in await _fork_collect(flow, me_id, _r1_targets,
+                                                         _r1b, micro=True):
+                    _t1 = str(_r1 or "").strip()
+                    if _t1 and not _t1.startswith("[패스]") and "API Error" not in _t1[:20]:
+                        _r1_lines.append(_t1[:700])
+                        _r1n += 1
+                if _r1_lines:
+                    _d1 = str(_dread(flow, "DRAFT.md") or "")
+                    if _d1:
+                        _blk1 = ("\n[R1 독립 기고 — 익명 병합(토론 전 병렬 수집·판정 대상 아님)]\n"
+                                 + "\n".join(f"· {x}" for x in _r1_lines) + "\n")
+                        _dwrite(flow, "DRAFT.md", _d1.rstrip("\n") + "\n" + _blk1)
+                if flow.log:
+                    flow.log("meet_r1_brainwrite", n=_r1n, of=len(_r1_targets))
+            except Exception:
+                pass
         _pass = 0
         _ready_rejects = 0   # [무한 반대의 차기 라우팅] 완성 파일 상태에서의 부결 횟수 — 3회 소진 후 이월 확정
         _skip_discuss = False   # [이의 해소 fastpath(2026-07-20)] 해소 위임 직후엔 재토론 없이 재검·재표결
