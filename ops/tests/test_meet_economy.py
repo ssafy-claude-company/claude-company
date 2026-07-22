@@ -472,6 +472,46 @@ def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
     assert {12, 13, 14, 15, 16} <= voters              # 심의단 밖(14·15·16)도 찬반 참여
 
 
+def test_반대우세_소진은_확정안됨_다수결바닥(monkeypatch, tmp_path):
+    """[U-044 실측(2026-07-22, 사용자: '찬성2·반대3인데 3회 소진으로 그대로 통과')] 완성 파일 표결
+    3회 소진 이월-확정은 무한 교착 방지 장치지만, 마지막 라운드가 반대 우세(찬성<반대)면 확정하면
+    안 된다 — 소수 반대는 다수결로 넘기되(교착 방지 유지) 다수가 반대하는 안은 확정 못 하게. 반대가
+    다수면 그 안이 실제 지지를 못 받은 것이라 확정 대신 회의 계속(예산 천장이 정직 마감)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
+                                      15: "PM", 16: "데이터"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+
+    async def wake(to, b, k):
+        if "심의 응찰" in b:
+            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")
+        if "결론 확정 표결" in b:                      # 반대 우세: 4명 반대·2명(11·16) 찬성
+            return "[찬성]" if to in (11, 16) else "[반대: 지표 기준이 빠졌습니다]"
+        if "[이의 해소]" in b:
+            _resolve_objections(tmp_path)
+            return "이의를 해소했습니다."
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            _resolve_objections(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "stage_confirmed" not in names          # 반대 우세는 소진돼도 확정 안 됨(다수결 바닥)
+    assert "meet_dissent_carryover" not in names   # 이월-확정 경로가 반대 우세에선 안 열림
+    assert str(f.current.status.goal or "") == ""  # 목표가 밀려서 잡히지 않았다
+
+
 def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypatch, tmp_path):
     """[전수 감사(2026-07-21, 사용자: '안정성·실효성·협업 실익이 보장된 상태에서 e2e를 돌려야지')]
     e2e 전수가 권고 문구뿐이라 검증 없이 마감·표류 가능하던 실효성 구멍 — 마일스톤 판의
