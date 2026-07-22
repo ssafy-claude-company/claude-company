@@ -971,6 +971,7 @@ async def meet(flow, me_id, args):
                 pass
         _pass = 0
         _ready_rejects = 0   # [무한 반대의 차기 라우팅] 완성 파일 상태에서의 부결 횟수 — 3회 소진 후 이월 확정
+        _prevote_seen = set()   # [표결 전 기여 관문] 도메인 점검 1턴을 이미 준 미발언 표결자 — 1회 상한(지각 합류는 새로 잡힘)
         _skip_discuss = False   # [이의 해소 fastpath(2026-07-20)] 해소 위임 직후엔 재토론 없이 재검·재표결
         _last_pass_hash = None  # [무진전 패스 감지(2026-07-20)] 초안 결정구획 해시 — 무변화 패스=즉시 중단
         while True:
@@ -1034,6 +1035,47 @@ async def meet(flow, me_id, args):
                         if flow.log:
                             flow.log("meet_preflight_failed", passes=_pass, n=len(_pre_errs))
                 if _dtxt.strip() and _ph == 0 and _obj == 0 and not _pre_errs:
+                    # [표결 전 전원 기여 관문(2026-07-22, 사용자 U-041: '심의단 2명만 발언하고 안 말한
+                    # 사람이 반대로 판 깨는 게 맞는 구조냐 — 표결권 있으면 발언 기회도')] 심의단(members)만
+                    # 토론하고 전원(_team_full)이 표결하던 것 — 초안을 못 만진 표결자의 우려가 토론이 아니라
+                    # 반대/기권표로 튀어 부결·재루프(U-041 실측: 브랜드 스토리텔러가 발언 없이 반대→4:1 부결→
+                    # 사람 조치). 표결 직전, 아직 이 회의에 발언 못 한 표결자(비심의단·지각 합류)에게 초안을
+                    # 보이고 병렬 micro 1턴: 도메인 몫이 빠졌으면 한 줄 이의, 없으면 [패스]. 이의는 결정
+                    # 구획에 [이의]로 기록돼 표결이 안 열리고 다음 패스가 해소한다(우려가 표가 아니라 초안으로).
+                    _absent = [m for m in _team_full
+                               if m not in set(members) and m != me_id and m not in _prevote_seen]
+                    if _absent and wakes["n"] < wake_cap:
+                        _prevote_seen.update(_absent)
+                        from .milestone import draft_decision_region as _dregionc
+
+                        def _cvb(c):
+                            return (f"[표결 전 도메인 점검] 곧 이 결론을 확정 표결합니다. 당신"
+                                    f"({flow._info(c)}) 도메인에서 **빠졌거나 확정 전 꼭 짚을 게 있으면 "
+                                    f"한 줄**로, 없으면 `[패스]`. 도구·파일 금지, 이 텍스트만 보고 즉답.\n"
+                                    f"{_dregionc(_dtxt)[:1200]}")
+                        _concerns = []
+                        for _cm, _cr, _cn in await _fork_collect(flow, me_id, _absent, _cvb, micro=True):
+                            wakes["n"] += 1
+                            _ct = str(_cr or "").strip()
+                            if _ct and not _ct.startswith("[패스]") and "Error" not in _ct[:16]:
+                                _concerns.append((_cm, _ct.splitlines()[0][:150]))
+                        if _concerns:
+                            _dtxt = str(_dread(flow, "DRAFT.md") or "")
+                            _refc = _dtxt.find("\n## 참고")
+                            _blkc = "\n".join(f"> [이의 @{flow._info(cm) or cm}] {ct}"
+                                              for cm, ct in _concerns[:6])
+                            _dtxt = ((_dtxt[:_refc].rstrip("\n") + "\n" + _blkc + "\n" + _dtxt[_refc:])
+                                     if _refc > 0 else (_dtxt.rstrip("\n") + "\n" + _blkc + "\n"))
+                            _dwrite(flow, "DRAFT.md", _dtxt)
+                            _ph, _obj = _ms_dstat(_dtxt)
+                            if flow.log:
+                                flow.log("meet_prevote_concern", raised=len(_concerns), of=len(_absent))
+                            try:
+                                flow.note_activity(0, f"🗳 표결 전 도메인 점검 — 미발언 표결자 이의 "
+                                                   f"{len(_concerns)}건 반영, 해소 후 표결", force=True)
+                            except Exception:
+                                pass
+                            continue    # 표결 안 열고 다음 패스 — 토론이 이의 해소(우려가 표가 아닌 초안으로)
                     from .milestone import draft_decision_region as _dregion2
                     _passed, _diss, _yes = await _ratify_vote(
                         f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
