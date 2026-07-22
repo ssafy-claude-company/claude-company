@@ -927,6 +927,8 @@ async def meet(flow, me_id, args):
         _ready_rejects = 0   # [무한 반대의 차기 라우팅] 완성 파일 상태에서의 부결 횟수 — 3회 소진 후 이월 확정
         _skip_discuss = False   # [이의 해소 fastpath(2026-07-20)] 해소 위임 직후엔 재토론 없이 재검·재표결
         _last_pass_hash = None  # [무진전 패스 감지(2026-07-20)] 초안 결정구획 해시 — 무변화 패스=즉시 중단
+        _last_ratify_hash = None  # [무지성 재표결 감지(2026-07-22)] 직전 표결의 결정구획 해시 — 재표결이
+        #   초안을 못 바꿨으면(해소 위임 무변화 = out-of-scope 이의) 또 열어도 같은 결과 → 3회 안 기다림
         while True:
             _pass += 1
             _before = len(conv_props)
@@ -989,6 +991,13 @@ async def meet(flow, me_id, args):
                             flow.log("meet_preflight_failed", passes=_pass, n=len(_pre_errs))
                 if _dtxt.strip() and _ph == 0 and _obj == 0 and not _pre_errs:
                     from .milestone import draft_decision_region as _dregion2
+                    # [무지성 재표결 감지(2026-07-22, 사용자 U-044: '기권자가 3연속 반대 표결 무지성으로
+                    # 계속 여는')] 표결 시점(이의 0)의 결정구획 해시 — 직전 표결과 같으면 그 사이 해소
+                    # 위임이 초안을 못 바꾼 것(out-of-scope 이의는 해소 불가) → 재표결해도 같은 결과.
+                    import hashlib as _hl3
+                    _cur_rhash = _hl3.md5(_dregion2(_dtxt).encode("utf-8")).hexdigest()
+                    _no_prog_ratify = (_last_ratify_hash is not None and _cur_rhash == _last_ratify_hash)
+                    _last_ratify_hash = _cur_rhash
                     _passed, _diss, _yes = await _ratify_vote(
                         f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
                         f"근거 자료)\n{_dregion2(_dtxt)}\n\n"
@@ -1006,12 +1015,14 @@ async def meet(flow, me_id, args):
                             flow.log("meet_ratify_skipped_budget", passes=_pass)
                     elif not _passed:
                         _ready_rejects += 1
-                    # [소진-확정에 다수결 바닥(2026-07-22, 사용자 U-044 실측: '찬성2·반대3인데 3회
-                    # 소진으로 통과')] 3회 소진 이월-확정은 무한 교착 방지 장치지만, 마지막 라운드가
-                    # 반대 우세(찬성<반대)면 확정하면 안 된다 — 소수 반대는 다수결로 넘기되(교착 방지
-                    # 유지), 다수가 반대하는 안은 확정 못 하게. 반대 우세면 회의 계속(예산 천장이 마감).
-                    _carry = ((_passed is False) and _ready_rejects >= 3
-                              and (_yes or 0) >= len(_diss or []))
+                    # [소진-확정에 다수결 바닥 + 무지성 반복 차단(2026-07-22, 사용자 U-044: '찬성2·
+                    # 반대3인데 3회 소진으로 통과', '기권자가 3연속 반대 표결 무지성으로 계속 여는')]
+                    # 이월-확정(무한 교착 방지)의 두 축: ①마지막 라운드가 반대 우세(찬성<반대)면 확정
+                    # 금지(다수결 바닥) — 다수가 반대하는 안은 통과 못 함. ②재표결이 초안을 못 바꿨으면
+                    # (무진전=해소 불가 이의) 3회 안 기다리고 즉시 판정 — 다수면 지금 확정, 반대 우세면
+                    # 아래에서 정직 종결(무의미 재표결 반복 제거). 소수 반대는 여전히 다수결로 넘어간다.
+                    _maj = (_yes or 0) >= len(_diss or [])
+                    _carry = ((_passed is False) and (_ready_rejects >= 3 or _no_prog_ratify) and _maj)
                     if _passed or _carry:
                         if _carry:
                             if _diss:
@@ -1047,6 +1058,19 @@ async def meet(flow, me_id, args):
                             flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
                         await _say_speech(flow, me_id, "[회의]",
                                           f"결론 파일이 등록 게이트에 보류됐습니다 — {_note} (DRAFT를 다듬어 재수렴)")
+                    elif (_passed is False) and _no_prog_ratify and not _maj:
+                        # [무지성 재표결 종결(2026-07-22, 사용자 U-044: '무지성으로 계속 여는')] 반대 우세
+                        # + 무진전 = 확정도(다수결 바닥) 진전도(해소 불가 이의) 불가 — 같은 doomed 표결을
+                        # 또 열지 않고 정직히 멈춰 사람에게 방향을 청한다(억지 반복·억지 통과 대신).
+                        try:
+                            await flow.guide.post(int(flow.user_channel), 0,
+                                "[사람 조치 필요] 표결이 반대 우세로 확정되지 못하고 재표결해도 진전이 "
+                                "없어 멈춥니다 — 안건을 조정하거나 방향을 정해 주시면 이어서 진행해요.")
+                        except Exception:
+                            pass
+                        if flow.log:
+                            flow.log("meet_ratify_deadlock", passes=_pass, yes=int(_yes or 0), no=len(_diss or []))
+                        break
                     else:
                         # [부결 이의의 파일 반영 — SYS 서기(2026-07-16, ch76 실측)] 표결은 마이크로 즉답
                         # (도구 금지)이라 반대자가 이의를 파일에 못 남긴다 → 이의 0 유지 → ready→부결 무한.
