@@ -378,6 +378,34 @@ def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monke
     assert "mcp__guide__set_subtask" not in LEADER_TOOLS       # 공통 이동 후 이중 배치 금지
 
 
+def test_보고는_미착수_등록백로그를_일괄완료_못한다(monkeypatch):
+    """[U-041 실측(2026-07-22, 사용자: '서브태스크 하나 다 처리해서 백로그 한번에 다 검증 성공 박아')]
+    게임 기획자가 B1만 작업하고 한 report_iter로 B2·B3(미착수 등록 백로그)까지 desc-매칭 자동
+    pick+done → 무작업 거짓 일괄 완수. 수리: 보고는 '내가 든(in_progress·me)' 백로그나 방금 만든
+    솔로 작업만 완료 — 선점 안 한 open 등록 백로그는 보고로 못 닫는다(각자 릴레이로)."""
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import rule_report_iter, rule_set_milestone, rule_set_subtask
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    rule_set_milestone(f, 11, {"goal": "게임", "criteria": "30턴 완주 | run 재현"})
+    rule_set_subtask(f, 12, {"goal": "게임 로직", "criteria": "로직 검증 | pytest 통과"})
+    ms = f.milestones[0]; st = ms.subtasks[0]
+    r = relay_for(f, st)
+    b1 = r.submit(12, "카드 비교 규칙 구현")
+    b2 = r.submit(12, "점수 공식 구현")
+    b3 = r.submit(12, "라운드 전환 구현")
+    r.pick(12, b1.backlog_id, 12)                              # 12가 B1만 선점(작업 중)
+    # 12가 한 보고로 B1·B2·B3 전부 pass 보고
+    rule_report_iter(f, 12, {"target": st.st_id,
+                             "results": "카드 비교 규칙 구현 | pass | done\n"
+                                        "점수 공식 구현 | pass | done\n"
+                                        "라운드 전환 구현 | pass | done"})
+    byid = {b.backlog_id: b for b in r.backlogs}
+    assert byid[b1.backlog_id].status == "done"               # 내가 든 B1만 완료
+    assert byid[b2.backlog_id].status != "done"               # 미착수 B2는 보고로 완료 불가
+    assert byid[b3.backlog_id].status != "done"               # B3도
+
+
 def test_무지정_보고는_자기백로그_SubTask로_귀속_릴레이_이음(monkeypatch):
     """[U-036 실측(2026-07-21): 디자이너가 target 없이 report_iter → 마일스톤 조건(V0/V1 게이트)에
     0/5 미착지, 자기 백로그는 영원히 in_progress → 릴레이 정지·[다음 선정] 불발 → 54분 메타 표결

@@ -896,12 +896,17 @@ async def meet(flow, me_id, args):
             try:
                 _r1n = 0
                 _r1_lines = []
+                _r1_attr = []      # [(bot_id, 기고 텍스트)] — 발제 귀속의 원저자(전사자 아님)
                 _r1_targets = [m for m in members if m != me_id]
                 for _m1, _r1, _n1 in await _fork_collect(flow, me_id, _r1_targets,
                                                          _r1b, micro=True):
                     _t1 = str(_r1 or "").strip()
                     if _t1 and not _t1.startswith("[패스]") and "API Error" not in _t1[:20]:
                         _r1_lines.append(_t1[:700])
+                        for _cl in _t1.splitlines():           # 줄 단위로 저자 보존(백로그 매칭용)
+                            _cl = _cl.strip("·-* \t")
+                            if len(_cl) >= 6:
+                                _r1_attr.append((int(_m1), _cl[:200]))
                         _r1n += 1
                 if _r1_lines:
                     _d1 = str(_dread(flow, "DRAFT.md") or "")
@@ -909,6 +914,11 @@ async def meet(flow, me_id, args):
                         _blk1 = ("\n[R1 독립 기고 — 익명 병합(토론 전 병렬 수집·판정 대상 아님)]\n"
                                  + "\n".join(f"· {x}" for x in _r1_lines) + "\n")
                         _dwrite(flow, "DRAFT.md", _d1.rstrip("\n") + "\n" + _blk1)
+                # [발제 귀속 = 원저자(2026-07-22, U-041 실측: 병합 회의에서 앵커가 결정 구획을 독점
+                # 편집해 백로그 발제가 90% 앵커로 쏠림 — 남의 도메인까지 대필 귀속)] R1 기고를 낸 봇을
+                # 백로그 등록기가 참조해, 전사자(앵커)가 아니라 실제 기고자에게 귀속시킨다(강제 배분
+                # 아님 — 각자 자기 도메인을 R1에 냈으면 그 크레딧이 그에게 간다).
+                flow._r1_attr = _r1_attr
                 if flow.log:
                     flow.log("meet_r1_brainwrite", n=_r1n, of=len(_r1_targets))
             except Exception:
