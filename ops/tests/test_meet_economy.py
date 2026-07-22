@@ -190,6 +190,44 @@ def test_반대자가_발언권_얻어_직접고침_또는_적임지명(monkeypa
     assert "stage_confirmed" in names
 
 
+def test_반대사유_잡소리서두_뒤_진짜사유_추출(monkeypatch, tmp_path):
+    """[U-044 실측(2026-07-22, 사용자: 송지안 '읽겠습니다, 지금 이 텍스트 기반으로'가 반대 사유로 떴다 —
+    이거 뭐야)] 봇이 잡소리 서두(프롬프트 흉내) 뒤에 [반대: 진짜사유]를 달면, 첫 줄(잡소리)이 아니라
+    전체에서 [반대:] 뒤의 진짜 사유를 뽑아 [표]에 남긴다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA"})
+    f.floor_mode = "turn-taking"
+    votes = {"r": 0}
+    resolve_prompts = []                           # 반대자 발언권 프롬프트(정제된 사유 담김)
+
+    async def wake(to, b, k):
+        if "결론 확정 표결" in b:
+            votes["r"] += 1
+            if votes["r"] <= 3 and to == 13:       # 1라운드: QA가 잡소리 서두 + 뒤에 진짜 [반대: 사유]
+                return "읽겠습니다, 지금 이 텍스트 기반으로.\n[반대: 저장소 스키마가 아직 추상적]"
+            return "[찬성]"
+        if "[이의 해소" in b:
+            resolve_prompts.append(b)
+            _resolve_objections(tmp_path)
+            return "고쳤습니다."
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    shown = "\n".join(resolve_prompts)
+    assert "저장소 스키마가 아직 추상적" in shown         # [반대:] 뒤 진짜 사유가 추출돼 반대자에게 전달
+    assert "읽겠습니다" not in shown                     # 잡소리 서두는 사유로 안 뜬다
+
+
 def test_심의단_도메인커버리지_1석_구제(monkeypatch, tmp_path):
     """[U-035 실측: 게임 판 목표 회의에 게임 기획자 무발언] 안건 최고 적합 직군이 응찰했는데
     점수순에서 밀리면 1석 구제 — 자기선택(패스=존중)은 유지, 배제만 막는다. 응찰은 전수 관측."""
