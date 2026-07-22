@@ -91,7 +91,7 @@ def test_부결은_해소위임_fastpath로_재토론없이_확정(monkeypatch, 
                                    "my_opinion": "여는 의견"}))
     names = [e for e, _ in events]
     assert names.count("meet_consensus_rejected") == 1            # 부결 1회
-    assert "dissent_resolution_delegated" in names                # 이의별 해소 위임 발동
+    assert "dissent_resolution_by_objector" in names              # 반대자가 발언권 얻어 해소(시스템 추측 아님)
     assert "stage_confirmed" in names                             # 최종 확정(등록)
     # fastpath: 부결 이후 재토론(발언권 응찰)이 다시 돌지 않았다 — 해소 위임→재표결 직행
     i_rej = next(i for i, (to, b) in enumerate(prompts) if "결론 확정 표결" in b)
@@ -136,13 +136,58 @@ def test_해소위임_무변화면_재토론_폴백_조기중단_아님(monkeypa
     asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
                                    "my_opinion": "여는 의견"}))
     names = [e for e, _ in events]
-    assert "dissent_resolution_delegated" in names
+    assert "dissent_resolution_by_objector" in names
     assert "meet_no_progress_break" not in names       # 위임 실패 직후 조기 중단 금지
     # 위임 실패 후 재토론(발언권 응찰)이 실제로 다시 돌았다 — 폴백 경로
     i_rej = next(i for i, n in enumerate(names) if n == "meet_consensus_rejected")
     assert any("발언권 응찰" in b for _, b in prompts[-(len(prompts) // 2):])
     assert "stage_confirmed" in names                  # 폴백 경유 최종 확정
     assert i_rej >= 0
+
+
+def test_반대자가_발언권_얻어_직접고침_또는_적임지명(monkeypatch, tmp_path):
+    """[U-044 실측(2026-07-22, 사용자: 'a b가 반대했으니 a b가 발언권을 얻는 게 맞고, 다른 전문가 몫이면
+    그 직군에게 직접 발언권을 주도록 — 그 일이 누구 일인지 시스템은 모른다, 프론트 앵커 오배정처럼')]
+    부결 시 시스템이 role_fit으로 담당을 추측하지 않고, 반대한 사람이 발언권을 얻어 직접 고치거나
+    [지명: id]로 적임에게 넘긴다. QA(13)가 반대→자기 몫 아니라 데이터(14) 지명→14가 이어받아 해소."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "데이터"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+    resolve_woke = []
+    votes = {"r": 0}
+
+    async def wake(to, b, k):
+        if "[이의 해소" in b:                         # 반대자 발언권('[이의 해소]') + 지명받음('[이의 해소 — 지명받음]')
+            resolve_woke.append(to)
+            if "지명받음" not in b and to == 13:      # QA(반대자, 첫 해소턴): 자기 몫 아니라 데이터 지명
+                return "이건 데이터 스키마 몫입니다. [지명: 14]"
+            _resolve_objections(tmp_path)             # 지명받은 데이터(14)가 실제 해소
+            return "고쳤습니다."
+        if "결론 확정 표결" in b:
+            votes["r"] += 1
+            if votes["r"] <= 4:                       # 1라운드(4명): QA(13) 반대
+                return "[반대: 데이터 스키마가 빠졌습니다]" if to == 13 else "[찬성]"
+            return "[찬성]"                           # 2라운드: 전원 찬성
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13,14"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    assert "dissent_resolution_by_objector" in names
+    assert 13 in resolve_woke        # 반대자(QA=13)가 발언권을 얻었다 — 시스템 추측 아님
+    assert 14 in resolve_woke        # QA의 [지명: 14]로 데이터(14)가 발언권을 이어받았다
+    assert "stage_confirmed" in names
 
 
 def test_심의단_도메인커버리지_1석_구제(monkeypatch, tmp_path):
@@ -473,11 +518,10 @@ def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
 
 
 def test_반대우세_소진은_확정안됨_다수결바닥(monkeypatch, tmp_path):
-    """[U-044 실측(2026-07-22, 사용자: '찬성2·반대3인데 3회 소진으로 통과', '기권자가 3연속 반대
-    표결 무지성으로 계속 여는')] 두 결함: ①반대 우세(찬성<반대)면 소진돼도 확정 금지(다수결 바닥) —
-    다수가 반대하는 안은 통과 못 함. ②재표결이 초안을 못 바꾸면(해소 위임 무변화 = out-of-scope 이의)
-    3회 안 기다리고 무진전 감지→정직 종결(무지성 반복 제거). 여기선 초안 안정+반대 우세 → 확정도
-    진전도 불가라 재표결을 반복하지 않고 deadlock으로 멈춰 사람에게 방향을 청한다."""
+    """[U-044 실측(2026-07-22, 사용자: '찬성2·반대3인데 3회 소진으로 그대로 통과')] 완성 파일 표결
+    3회 소진 이월-확정은 무한 교착 방지 장치지만, 마지막 라운드가 반대 우세(찬성<반대)면 확정하면
+    안 된다 — 소수 반대는 다수결로 넘기되(교착 방지 유지) 다수가 반대하는 안은 확정 못 하게. 반대가
+    다수면 그 안이 실제 지지를 못 받은 것이라 확정 대신 회의 계속(예산 천장이 정직 마감)."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
                                       15: "PM", 16: "데이터"})
@@ -510,98 +554,7 @@ def test_반대우세_소진은_확정안됨_다수결바닥(monkeypatch, tmp_pa
     names = [e for e, _ in events]
     assert "stage_confirmed" not in names          # 반대 우세는 소진돼도 확정 안 됨(다수결 바닥)
     assert "meet_dissent_carryover" not in names   # 이월-확정 경로가 반대 우세에선 안 열림
-    assert "meet_ratify_deadlock" in names         # 무지성 재표결 반복 대신 무진전 감지→정직 종결
     assert str(f.current.status.goal or "") == ""  # 목표가 밀려서 잡히지 않았다
-
-
-def test_다수결_무진전이면_재표결반복없이_즉시확정(monkeypatch, tmp_path):
-    """[U-044 짝(2026-07-22)] 무진전 감지의 다른 쪽: 다수 지지(찬성>반대)인데 재표결이 초안을 못
-    바꾸면(해소 위임 무변화) 3회 다 태우지 말고 그 라운드에 다수결로 확정 — 무의미 반복 제거. 소수
-    반대는 억압 아니라 다수결로 넘어가고 잔여 반대는 이월 기록."""
-    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
-    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
-                                      15: "PM", 16: "데이터"})
-    f.floor_mode = "turn-taking"
-    events = []
-    f.log = lambda ev, **kw: events.append((ev, kw))
-
-    async def wake(to, b, k):
-        if "심의 응찰" in b:
-            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")
-        if "결론 확정 표결" in b:                      # 다수 지지: 13만 반대(5:1)
-            return "[반대: 지표가 더 필요]" if to == 13 else "[찬성]"
-        if "[이의 해소]" in b:
-            _resolve_objections(tmp_path)              # 이의만 제거(결정 내용 무변화 = out-of-scope)
-            return "해소했습니다."
-        if "발언권 응찰" in b:
-            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
-        if "차례입니다" in b or "발언하세요" in b:
-            _fill_draft(tmp_path)
-            _resolve_objections(tmp_path)
-            return "채웠습니다"
-        if "종결 확인" in b:
-            return "[종료]"
-        return "[패스]"
-    f.wake = wake
-    t = _tools(f, 11, "leader")
-    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
-    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
-                                   "my_opinion": "여는 의견"}))
-    names = [e for e, _ in events]
-    assert "stage_confirmed" in names              # 다수 지지 + 무진전 → 다수결로 확정
-    assert names.count("consensus_ratify_vote") < 15   # 3회 다 안 태우고 무진전에서 확정(무의미 반복 제거)
-
-
-def test_초안편집으로_해시바뀌어도_반대불감소면_무진전종결(monkeypatch, tmp_path):
-    """[U-044 실측(2026-07-22, 사용자: '표결→기권자→표결 반복')] 해소 위임 봇이 매번 결정구획을
-    사소하게 편집해 해시를 바꿔도(해시 신호 무력화), 반대 수가 안 줄면 수렴 정체 신호가 무진전을
-    잡아 무의미 반복을 끊는다 — 봇이 '뭔가 한 척' 편집해도 doomed 표결을 무한히 못 연다."""
-    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
-    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
-                                      15: "PM", 16: "데이터"})
-    f.floor_mode = "turn-taking"
-    events = []
-    f.log = lambda ev, **kw: events.append((ev, kw))
-    ed = {"n": 0}
-
-    def _hash_changing_edit(tp):
-        p = _draft_path(tp)
-        if not p:
-            return
-        t = "\n".join(l for l in open(p, encoding="utf-8").read().splitlines()
-                      if not l.strip().startswith(">"))       # 이의 줄 제거(반대는 해소 안 됨)
-        ed["n"] += 1
-        _mk = f"\n보조 메모 {ed['n']}: 참고용 문구(결정 무관)"   # 매번 다른 줄 → 해시 변경
-        _ref = t.find("\n## 참고")
-        t = (t[:_ref] + _mk + t[_ref:]) if _ref > 0 else (t + _mk)
-        open(p, "w", encoding="utf-8").write(t + "\n")
-
-    async def wake(to, b, k):
-        if "심의 응찰" in b:
-            return {12: "[응찰: 8]", 13: "[응찰: 7]"}.get(to, "[패스]")
-        if "결론 확정 표결" in b:                      # 반대 우세 지속(4 반대·2 찬성)
-            return "[찬성]" if to in (11, 16) else "[반대: 지표 기준이 빠졌습니다]"
-        if "[이의 해소]" in b:
-            _hash_changing_edit(tmp_path)              # 해시는 바뀌지만 반대 해소 안 됨
-            return "편집했습니다."
-        if "발언권 응찰" in b:
-            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
-        if "차례입니다" in b or "발언하세요" in b:
-            _fill_draft(tmp_path)
-            _resolve_objections(tmp_path)
-            return "채웠습니다"
-        if "종결 확인" in b:
-            return "[종료]"
-        return "[패스]"
-    f.wake = wake
-    t = _tools(f, 11, "leader")
-    asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
-    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
-                                   "my_opinion": "여는 의견"}))
-    names = [e for e, _ in events]
-    assert "stage_confirmed" not in names          # 반대 우세는 확정 안 됨
-    assert "meet_ratify_deadlock" in names         # 해시 바뀌어도 반대 불감소로 무진전 잡아 종결
-    assert names.count("consensus_ratify_vote") <= 18   # 무한 재표결 안 됨(3회 이내 종결)
 
 
 def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypatch, tmp_path):
