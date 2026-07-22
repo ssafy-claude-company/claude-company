@@ -403,12 +403,18 @@ def _pnote(flow, text):
 
 
 def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
-    """SubTask 개설 — 주기 중에도 추가 허용(계약 §2 확정)."""
-    err = gate_criteria(criteria_entries)
-    if err:
-        return err
+    """SubTask 개설 — 주기 중에도 추가 허용(계약 §2 확정).
+    [서브태스크 게이트 제거(2026-07-22)] 조건은 선택 — 있으면 형태만 검사(있어도 완수 판정엔 안 씀,
+    서브태스크 완수 = 백로그 소진), 없으면 순수 작업 영역으로 개설. 검증 게이트는 마일스톤만."""
+    _ce = list(criteria_entries or [])
+    if _ce:
+        err = gate_criteria(_ce)
+        if err:
+            return err
+    if not str(goal or "").strip():
+        return "등록 거부: 작업 영역 이름(goal)이 비었습니다."
     st = SubTask(st_id=f"{ms.ms_id}/ST-{len(ms.subtasks) + 1}",
-                 goal=str(goal or "").strip(), criteria=_mk_criteria(criteria_entries))
+                 goal=str(goal or "").strip(), criteria=_mk_criteria(_ce))
     ms.subtasks.append(st)
     _ckpt(flow)
     if flow.log:
@@ -1179,14 +1185,15 @@ _STAGE_META = {
     # 각 영역의 일감 열거를 같은 수렴안이 정한다(별도 백로그 회의 1개 제거, 계획 비용 -120~180cr).
     # 중간 소진 시 일괄 충전 회의(backlog 단계)는 존치.
     "subtask": ("이번에 만들 것을 **어떤 작업 영역들로 나눌지, 그리고 각 영역의 다음 일감 전부**를 정한다",
-             "[수렴안]\n단위: <작업 영역/구성요소 — 무슨 부분인지> | <실증절차>\n"
-             "단위: <작업 영역/구성요소> | <실증절차>\n"
+             "[수렴안]\n단위: <작업 영역/구성요소 — 무슨 부분인지>\n"
+             "단위: <작업 영역/구성요소>\n"
              "백로그: [영역명] <구체 작업 1>\n백로그: [영역명] <구체 작업 …(각 영역 필요한 만큼)>\n[/수렴안]\n"
              "★이 회의가 답할 질문 둘: **'어떤 작업 영역(덩어리)들로 쪼개고, 각 영역의 일감은 무엇인가?'** "
-             "— 영역은 **누가 맡느냐가 아니라 순수한 작업 분리**(예: 저장 계층 · 게임 로직 · 화면 UI), "
-             "일감(백로그:)은 항목마다 [영역명]을 달아 어느 영역 몫인지 명시하세요(별도 백로그 회의는 "
-             "없습니다 — 처리는 각자 pick_backlog로 하나씩 선점). **일감은 '실증 한 번으로 닫히는 묶음' "
-             "단위로 굵게**(영역당 대략 3~7건), **협의·조율은 별도 항목이 아니라 그 백로그의 완료 조건**"
+             "— 영역은 **누가 맡느냐가 아니라 순수한 작업 분리**(예: 저장 계층 · 게임 로직 · 화면 UI, "
+             "완수조건·실증은 붙이지 마세요 — 검증은 마일스톤에서), 일감(백로그:)은 항목마다 [영역명]을 "
+             "달아 어느 영역 몫인지 명시하세요(별도 백로그 회의는 없습니다 — 처리는 각자 pick_backlog로 "
+             "하나씩 선점). **일감은 '한 번에 끝나는 묶음' 단위로 굵게**(영역당 대략 3~7건), "
+             "**협의·조율은 별도 항목이 아니라 그 백로그의 완료 조건**"
              "('○○와 합의 기록')으로 동봉하세요."),
     "backlog": ("미충원 작업 영역들의 **다음 일감 전부**를 한 번에 열거한다(처리는 하나씩 선점)",
              "[수렴안]\n백로그: [영역명] <구체 작업 1>\n백로그: [영역명] <구체 작업 2>\n백로그: [영역명] <구체 작업 …(각 영역 완수에 필요한 만큼 — 줄 수 제한 없음)>\n[/수렴안]\n"
@@ -1239,7 +1246,7 @@ def stage_draft_template(stage, agenda=""):
                       "(주의: **'이번 주기' 범위의 조건만** — 뒤 단계 몫(모션 세부·디자인 토큰 등 완제품 "
                       "사양)을 넣으면 이번 주기가 영영 안 끝납니다. 그건 그 단계 주기에서.)\n"
                       "- <조건> | 실증: <절차>\n"),
-        "subtask": ("단위: <작업 영역/구성요소> | 실증: <절차>\n단위: <작업 영역/구성요소> | 실증: <절차>\n\n"
+        "subtask": ("단위: <작업 영역/구성요소>\n단위: <작업 영역/구성요소>\n\n"
                     "백로그: [영역명] <구체 작업 1>\n백로그: [영역명] <구체 작업 2>\n"
                     "백로그: [영역명] <구체 작업 …(각 영역 필요한 만큼)>\n"),
         "backlog": ("백로그: [영역명] <구체 작업 1>\n백로그: [영역명] <구체 작업 2>\n백로그: [영역명] <구체 작업 …(필요한 만큼)>\n"),
@@ -1392,14 +1399,10 @@ def stage_preflight(stage, text):
     if stage == "subtask":
         _units = parse_units(lines)
         if not _units:
-            errs.append("'단위: <작업 영역> | 실증: <절차>' 줄이 1개 이상 필요합니다.")
-        # [등록과 같은 깊이(2026-07-20, U-035 실측)] 존재만 보고 통과시키면 표결 가결 후 등록
-        # (open_subtask=gate_criteria)에서 전멸 — 단위별 조건 게이트를 표결 전에 그대로 돌린다.
-        for u in _units:
-            _e = gate_criteria(parse_criteria_lines(u))
-            if _e:
-                errs.extend(f"단위 '{u.partition('|')[0].strip()[:36]}': {ln.strip()}"
-                            for ln in _e.splitlines() if ln.strip())
+            errs.append("'단위: <작업 영역>' 줄이 1개 이상 필요합니다.")
+        # [서브태스크 게이트 제거(2026-07-22, 사용자: '서브태스크·백로그 검증은 비용만 크다')] 단위는
+        # 순수 작업 영역 grouping — 완수조건(실증) 게이트를 요구하지 않는다(서브태스크 완수 = 백로그
+        # 소진). 종전 단위별 gate_criteria 검사 폐지. 검증은 마일스톤 조건만.
         # [회의 병합(2026-07-21, 사용자 결정: '2로 가자')] 이 회의가 일감 열거까지 정한다 — 백로그 줄 필수.
         if not any(l.strip().startswith("백로그:") for l in lines):
             errs.append("'백로그: [영역명] <구체 작업>' 줄이 1개 이상 필요합니다 — 영역 분해와 각 영역의 "
@@ -1962,22 +1965,30 @@ def rule_report_iter(flow, me_id, args) -> str:
         # [감사 P3 — 자기검증 가시화] 누가 결과를 제출했나(교차 검증 부재의 관측 지표)
         flow.log("iter_report_by", by=int(me_id), n=len(results),
                  id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""))
-    ok, note = iter_verify(flow, obj, results)
-    if ok and tgt is not None:
-        # [S2 접점(§12-1)] SubTask 조건 충족 → 잔여 백로그 정리 훅(wrapup_done **앞**) → 자동 종료.
-        # 지역 import — 모듈 의존은 backlog→milestone 단방향 유지(여기는 호출 시점 결합만).
-        try:
-            from .backlog import on_subtask_wrapup
-            _sweep = on_subtask_wrapup(flow, tgt)
-        except Exception as e:
-            _sweep = f"(잔여 정리 훅 실패 — 수동 정리 필요: {str(e)[:60]})"
-        wrapup_done(flow, tgt)
-        return f"SubTask {tgt.st_id} iter {tgt.iter_n} 통과 — 종료. {_sweep}"
+    # [서브태스크 = 게이트 없음(2026-07-22, 사용자: '백로그·서브태스크 검증은 비용만 크고 효과 적다 —
+    # 검증은 마일스톤에서 처리')] 서브태스크는 조건 검증(iter_verify)으로 닫지 않는다 — 백로그가 다
+    # 소진되면 완수(작업 단위 grouping일 뿐). 위 루프가 든 백로그를 완료했고, 여기선 소진 여부만 본다.
+    # 마일스톤만 실증 게이트(진짜 완수 판정)를 유지한다.
+    if tgt is not None:
+        _r2 = relay_for(flow, tgt)
+        _left = [b for b in _r2.backlogs if b.status not in ("done", "dropped")]
+        if not _left:
+            try:
+                from .backlog import on_subtask_wrapup
+                _sweep = on_subtask_wrapup(flow, tgt)
+            except Exception as e:
+                _sweep = f"(정리 훅 실패: {str(e)[:50]})"
+            tgt.status = "wrapup"          # 게이트 없음 — 소진이 곧 정리 완료 전제(wrapup_done 진입 조건)
+            wrapup_done(flow, tgt)
+            return f"SubTask {tgt.st_id} — 백로그 전부 소진, 완수. {_sweep}"
+        return (f"백로그 완료 기록 — SubTask {tgt.st_id} 잔여 {len(_left)}건. 다음 수행자를 "
+                f"pick_backlog(id)로 선정하세요(검증 게이트는 마일스톤에서).")
+    # 대상 없음 = 마일스톤 완수조건 검증(유일한 실증 게이트)
+    ok, note = iter_verify(flow, ms, results)
     if ok:
         return (f"iter {ms.iter_n} 통과 — 주기 {ms.ms_id}가 wrapup(잔여 정리)로 전이. "
                 f"남은 SubTask·백로그를 정리한 뒤 report_iter(wrapup='done')로 닫으세요.")
-    kind = f"SubTask {tgt.st_id}" if tgt is not None else f"주기 {ms.ms_id}"
-    return f"{kind} iter {obj.iter_n} — {note}. 증거 없는 pass는 인정되지 않습니다."
+    return f"주기 {ms.ms_id} iter {ms.iter_n} — {note}. 증거 없는 pass는 인정되지 않습니다."
 
 
 # ── 직렬화 (계약 §9 — 최대 저장: 체크포인트 동승·재시작 후 중간 재개) ─────────────
