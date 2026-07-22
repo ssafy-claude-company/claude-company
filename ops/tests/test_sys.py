@@ -6060,6 +6060,30 @@ def test_유사직군_병합_대표는_과제적합_우선_게임엔_게임기�
     assert 11 in joined2 and 12 not in joined2
 
 
+def test_참여공고_합류컷은_적합우선_게임핵심직군이_주변고응찰에_안밀린다():
+    """[U-041 실측(2026-07-22, 사용자: '게임 만들어줘인데 게임 기획자가 예비로 빠지고 브랜드
+    스토리텔러가 들어갔다')] 최종 합류 컷이 응찰 점수 순이라, 과제 무관 직군(브랜드 스토리텔러 적합0·
+    응찰8)이 고응찰로 과제 핵심 직군(게임 기획자 적합3·응찰6)을 누진 임계에서 밀어냈다(게임 판인데
+    거꾸로). 이제 합류를 적합 순으로 앉혀, 핵심 직군은 확신(응찰)이 낮아도 안 잘린다. 유사직군_병합
+    테스트는 '같은 그룹 대표'를 보고, 이 테스트는 '별 직군 최종 컷'을 본다(구멍이 거기였다)."""
+    import asyncio
+    g = FakeGuide()
+    bots = {11: "게임 기획자", 12: "브랜드 스토리텔러", 13: "백엔드", 14: "프론트",
+            15: "QA", 16: "사운드", 17: "인프라"}       # 전부 별 직군(병합 없음)
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info=dict(bots), workspace="/ws")
+    scores = {11: 6}                                     # 게임 기획자만 6, 나머지 8(주변 직군 고응찰)
+
+    class _B:
+        def __init__(self, mid): self.mid = mid
+        async def handle(self, prompt): return f"[응찰: {scores.get(self.mid, 8)}] 참여합니다."
+    s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
+    s._distill_workspace = lambda: None
+    _, joined = asyncio.run(s._elect_proposer(500, "게임 만들어줘"))
+    assert 11 in joined                                  # 게임 기획자(적합3·최저응찰6)가 합류 — 적합 우선
+    assert len(joined) == 6                              # 누진 천장(7번째 임계 9 > 8): 주변 하나가 대신 밀림
+    # 종전(응찰 순)이면 11이 7번째로 밀려 잘리고 브랜드 스토리텔러가 남았다 — 그 역전을 막는다
+
+
 def test_참여공고_시스템직군_채용은_후보에서_제외():
     """[U-038 실측·사용자 결정(2026-07-21: '채용 제외')] '채용'(리크루터) 시스템 직군이 참여 응찰로
     실행 팀에 합류하던 것 — 후보 필터에서 제외(프로브 자체가 안 가 비용 0). 채용의 몫은 온보딩·
