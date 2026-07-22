@@ -146,6 +146,14 @@ class BacklogRelay:
         text = str(body or "").strip()
         if not text:
             raise BacklogError("빈 백로그는 제출할 수 없습니다 — 처리 단위를 본문으로 쓰세요.")
+        # [참조 표기 반려 — 모든 경로 공통(2026-07-22, U-041 실측: 병합 회의 등록·작업 중 report_iter
+        # 자동생성 양쪽에서 'B4'·'B2 점수 공식…' 같은 의존/참조 줄이 백로그로 태어나 즉시 완료로 churn
+        # → 서브태스크 거짓 완수)] 순수 참조('B\d'·'#\d'·'BL-\d'로 시작)는 실작업 단위가 아니다 —
+        # force와 무관하게(참조는 진짜 다른 일이 아니므로) 여기서 막는다. 모든 submit 경로의 관문.
+        import re as _reb
+        if _reb.match(r"^(B\s*\d+|#\s*\d+|BL[-\s]?\d+)\b", text):
+            raise BacklogError("참조/의존 표기(예: 'B4'·'B2 …')는 백로그가 아닙니다 — 실제 작업 단위를 "
+                               "본문으로 쓰거나, 의존은 완료 조건에 적으세요.")
         if not force:
             for ex in self._pool.values():                       # 제출 순서 = 판정 순서(결정성)
                 if _body_overlap(text, ex.body):
