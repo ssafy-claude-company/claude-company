@@ -759,11 +759,11 @@ def test_단위_2줄_자연표기_흡수_preflight_등록_동일판정(monkeypat
                 "단위: 정적 배포\n배포 절차 | 실증: 공개 URL에서 curl 상태코드 200 확인\n")
     us = parse_units(two_line.splitlines())
     assert len(us) == 2 and us[0].startswith("게임 판정 로직 | ") and "| 실증:" in us[0]
-    # (회의 병합으로 '백로그 줄 필요' 안내가 추가됨 — 이 테스트의 주제는 단위 파싱·조건 게이트 동일 판정)
+    # (병합='백로그 줄 필요' 안내 + 게이트 제거로 조건 검사 없음 — 이 테스트 주제는 단위 파싱)
     assert [e for e in stage_preflight("subtask", two_line) if "백로그" not in e] == []
-    # 조건 없는 단위 = 표결 전에 단위명 붙은 사유(등록에서야 전멸하던 은닉 제거)
-    errs = stage_preflight("subtask", "## 결정\n단위: 제목만 있는 단위\n")
-    assert errs and "제목만 있는 단위" in errs[0]
+    # [서브태스크 게이트 제거(2026-07-22)] 조건 없는 단위도 이제 유효(작업 영역 grouping) — 실증 불요
+    errs = stage_preflight("subtask", "## 결정\n단위: 제목만 있는 단위\n백로그: [제목만] 실작업 항목\n")
+    assert [e for e in errs if "실증" in e or "조건" in e] == []
     # 등록 경로도 같은 파싱 — 2줄 표기가 실제 SubTask 2개로 등록된다
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path)

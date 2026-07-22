@@ -356,18 +356,27 @@ def test_첫턴_프레임_중앙집권_해제_프롬프트(monkeypatch):
     assert "첫 턴" not in p_off and "발제자" not in p_off       # OFF — 종전 담당자 프레임 불변
 
 
-def test_subtask_iter_통과가_백로그_정리훅을_부르고_닫는다(monkeypatch):
-    """[통합주기 3 — §12-1 접점] report_iter(target=SubTask): 조건 실증 → S2 on_subtask_wrapup
-    (잔여 백로그 정리) 호출 → 자동 종료. 허용목록도 공통(FLOW_TOOLS)에 있어 훅이 거부하지 않는다."""
+def test_subtask는_백로그소진으로_닫힌다_게이트없음(monkeypatch):
+    """[서브태스크 게이트 제거(2026-07-22, 사용자: '서브태스크·백로그 검증은 비용만 크다 — 검증은
+    마일스톤')] report_iter(target=SubTask)는 조건 검증(iter_verify)이 아니라 백로그 소진으로 완수 —
+    든 백로그를 완료해 전부 소진되면 종료, 잔여 있으면 '다음 수행자 선정' 코칭. 허용목록 공통 불변."""
+    from system.rule.backlog import relay_for
     from system.rule.milestone import rule_report_iter, rule_set_milestone, rule_set_subtask
     from system.tool_names import FLOW_TOOLS, LEADER_TOOLS
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f = _flow()
     rule_set_milestone(f, 11, {"goal": "M1", "criteria": "전체 빌드 | npm run build"})
-    rule_set_subtask(f, 12, {"goal": "프론트 뼈대", "criteria": "index 로드 | curl -s /"})
+    rule_set_subtask(f, 12, {"goal": "프론트 뼈대"})           # 조건 없이(게이트 제거) 개설
     st = f.milestones[0].subtasks[0]
-    out = rule_report_iter(f, 12, {"target": st.st_id, "results": "index 로드 | pass | HTTP 200"})
-    assert "통과 — 종료" in out and st.status == "done"        # 훅 경유 자동 종료(정리 요지 동봉)
+    assert st.criteria == []                                    # 서브태스크는 조건 없음(작업 영역)
+    r = relay_for(f, st)
+    b1 = r.submit(12, "index 페이지 뼈대 구현"); b2 = r.submit(12, "라우팅 구현")
+    r.pick(12, b1.backlog_id, 12)
+    out = rule_report_iter(f, 12, {"target": st.st_id, "results": "index 페이지 뼈대 구현 | pass | done"})
+    assert "잔여 1건" in out and st.status != "done"           # B2 남음 → 미완, 다음 수행자 코칭
+    r.pick(12, b2.backlog_id, 12)
+    out = rule_report_iter(f, 12, {"target": st.st_id, "results": "라우팅 구현 | pass | done"})
+    assert "소진, 완수" in out and st.status == "done"          # 백로그 전부 소진 → 완수(게이트 없음)
     out = rule_report_iter(f, 12, {"target": "없는것", "results": "x | pass | e"})
     assert "못 찾았습니다" in out
     # [S3 발견 결함의 회귀 가드] 등록(guide_tools)과 허용(tool_names)은 한 세트다.
