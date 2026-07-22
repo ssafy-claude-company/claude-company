@@ -228,6 +228,48 @@ def test_반대사유_잡소리서두_뒤_진짜사유_추출(monkeypatch, tmp_p
     assert "읽겠습니다" not in shown                     # 잡소리 서두는 사유로 안 뜬다
 
 
+def test_사유_없는_표는_반려하고_재요청해_받아낸다(monkeypatch, tmp_path):
+    """[U-044(2026-07-22, 사용자: '이유 없으면 기권이겠지 — 데이터가 빈다는 건 그 봇이 사용법을
+    몰랐던 것. 반려해서 받아내야지')] 사유 없는 빈 표([반대]만)는 그 봇에게 반려-재요청하고, 재요청이
+    담아온 사유가 반대자 발언권으로 흐른다(빈 '(사유 미기재)'로 굳지 않는다)."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA"})
+    f.floor_mode = "turn-taking"
+    st = {"vote": 0, "redo": 0}
+    shown = []                                     # 반대자 발언권 프롬프트(재요청 사유가 담김)
+
+    async def wake(to, b, k):
+        if "표결 반려" in b:                        # 빈 표 반려 → 이번엔 사유 담아 재제출
+            st["redo"] += 1
+            return "[반대: 검증 기준이 비어 있습니다]"
+        if "결론 확정 표결" in b:
+            st["vote"] += 1
+            if st["vote"] <= 3 and to == 13:       # 1라운드 QA: 사유 없는 빈 표
+                return "[반대]"
+            return "[찬성: 이 결론으로 충분합니다]"    # 나머지는 사유 있는 표(반려 대상 아님)
+        if "[이의 해소" in b:
+            shown.append(b)
+            _resolve_objections(tmp_path)
+            return "고쳤습니다."
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 채우겠습니다" if to == 12 else "[패스]"
+        if "차례입니다" in b or "발언하세요" in b:
+            _fill_draft(tmp_path)
+            return "채웠습니다"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
+                                   "my_opinion": "여는 의견"}))
+    assert st["redo"] >= 1                          # 사유 없는 빈 표가 반려-재요청됐다
+    joined = "\n".join(shown)
+    assert "검증 기준이 비어 있습니다" in joined       # 재요청이 받아낸 사유가 반대자 발언권으로 흐름
+    assert "(사유 미기재)" not in joined              # 빈 사유로 굳지 않음
+
+
 def test_심의단_도메인커버리지_1석_구제(monkeypatch, tmp_path):
     """[U-035 실측: 게임 판 목표 회의에 게임 기획자 무발언] 안건 최고 적합 직군이 응찰했는데
     점수순에서 밀리면 1석 구제 — 자기선택(패스=존중)은 유지, 배제만 막는다. 응찰은 전수 관측."""
