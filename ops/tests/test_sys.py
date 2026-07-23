@@ -6126,7 +6126,7 @@ def test_참여공고_합류누진임계_저응찰은_소수만_합류():
     s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
     s._distill_workspace = lambda: None
     winner, joined = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
-    assert len(joined) == 5 and {11, 12, 13} <= set(joined)  # free 5 완화: 상위 3 + 자유핵심 2자리(6번째 임계 3 > 2 컷)
+    assert len(joined) == 6 and {11, 12, 13} <= set(joined)  # free 6 완화: 상위 3 + 자유핵심 3자리(7번째 임계 3 > 2 컷)
     assert winner == 11                                  # 앵커 = 합류자 중 최고 응찰
     assert any(e["event"] == "join_below_threshold" and e.get("need") == 3
                for e in s.flow_log)                      # 미달 사유가 관측에 남는다(6번째 임계 3)
@@ -6147,7 +6147,7 @@ def test_참여공고_합류누진임계_전원9여도_자연천장(monkeypatch)
     s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
     s._distill_workspace = lambda: None
     _, joined = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
-    assert len(joined) == 9                              # 자연 천장(free 5 완화: 10번째 필요 11 > 9) — 천장 유지, 자리 확대
+    assert len(joined) == 10                             # 자연 천장(free 6 완화: 11번째 필요 11 > 9) — 천장 유지, 자리 확대
     monkeypatch.setenv("ORGANT_JOIN_BID_STEP", "0")      # 곡선 off = 종전(전원 합류)
     _, joined0 = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
     assert len(joined0) == 11
