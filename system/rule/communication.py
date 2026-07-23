@@ -803,9 +803,19 @@ async def meet(flow, me_id, args):
             # [빈 사유 반려(2026-07-22, 사용자: '이유 없으면 기권이겠지 — 데이터가 빈다는 건 그 봇이
             # 사용법을 몰랐던 것. 반려해서 받아내야지')] 찬성이든 반대든 사유 없는 표는 무효로 보고, 그 봇에게
             # 한 번 더 사유를 요구한다(반려). 재요청이 사유를 담아오면 그걸로 교체, 그래도 비면 원표 유지.
+            # [앵커 표 직접 수집(2026-07-22, GPT e2e 실측: 앵커가 fork에서 busy로 제외돼 '사유 없는 빈 기권'으로
+            # 통과 — 반려도 안 걸린다)] 앵커(me_id)는 회의를 돌리는 당사자라 fork(busy 스킵)에 안 잡힌다. fork는
+            # 나머지 표결자만 걷고, 앵커는 직접 깨워 사유와 함께 표를 받는다(전원 표결 + 사유 강제 완결).
             _resp = {m: res for m, res, _note in
-                     await _fork_collect(flow, me_id, _voters, _rbody, micro=True)}
+                     await _fork_collect(flow, me_id, [v for v in _voters if v != me_id], _rbody, micro=True)}
             wakes["n"] += len(_resp)
+            if me_id in _voters and me_id not in _resp and wakes["n"] < wake_cap:
+                try:
+                    _wm = getattr(flow, "wake_micro", None) or flow.wake
+                    _resp[me_id] = await _wm(me_id, _rbody(me_id), Kind.INFO)
+                    wakes["n"] += 1
+                except Exception:
+                    pass
             _redo = [m for m, res in _resp.items()
                      if res is not None and not _read_ballot(res)[1]]
             if _redo and wakes["n"] < wake_cap:
