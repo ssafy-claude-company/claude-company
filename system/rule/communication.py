@@ -1347,6 +1347,8 @@ async def meet(flow, me_id, args):
             flow.current.collab_notes = _speech_clip(
                 (getattr(flow.current, 'collab_notes', '') + '\n\n' + record).strip(), 6000)
             _ckpt(flow)   # 합의는 크래시-세이프(재개 위임에도 동봉되도록 스냅샷에 포함)
+        if _landed:
+            flow._consec_stuck = 0            # [착지=진전] 막힘 카운터 리셋
         if _pipe and not _landed and not _confirm_note:
             # 게이트 미충족으로 비용 소진 종료 — 거짓 완료로 넘기지 않고 정직히 상신(사용자 확인 필요)
             if flow.log:
@@ -1354,6 +1356,13 @@ async def meet(flow, me_id, args):
             _confirm_note = ("\n\n[확정 실패 — 수렴 소진] 회의가 이 단계의 수렴안을 채택하지 못한 채 발언 "
                              "예산을 소진했습니다. **거짓 완료로 넘기지 않습니다** — 요구 명확화나 팀 재구성 "
                              "등 사람 확인이 필요합니다.")
+            # [막히면 멈춤(2026-07-23, 사용자: '막히면 중지로 일단 멈춰두는 게 맞아보여')] 같은 단계가
+            # 연속 2회 예산을 소진하면(1회 재시도 버퍼) 봇을 계속 굴려 토큰을 태우지 않고 판을 파킹한다 —
+            # 여기선 신호만 세우고(_stage_stuck), 실제 정지(mark_stopped+안내)는 sys_core 이어가기 루프가
+            # 집행(파킹 권한은 오케스트레이터 소관). 무한 재루프(관측: 소진→재회의→소진 4회+)를 끊는다.
+            flow._consec_stuck = getattr(flow, "_consec_stuck", 0) + 1
+            if flow._consec_stuck >= 2:
+                flow._stage_stuck = str(_agenda or topic or "이 단계")[:80]
         # [회의 마무리 결론 게시(2026-07-14, 사용자: '회의를 접었을 때 발제된 이유와 결론이 보이면 좋겠다')]
         # 단계 결론이 착지하면 그 결론을 [회의 마무리] 발언으로 회의 블록 안에 넣어, 접힌 회의가 '왜
         # 열렸나(안건)+무엇으로 맺었나(결론)'로 읽히게 한다(collab_kind가 [회의 마무리]=meeting이라 같은 블록).

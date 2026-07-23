@@ -2481,6 +2481,30 @@ class Sys:
                         pass
                     self._log("awaiting_human_parked", ch=int(flow.user_channel or 0), n=len(_pw_list))
                     break
+                # [막히면 멈춤(2026-07-23, 사용자: '막히면 중지로 일단 멈춰두는 게 맞아보여')] 한 단계가
+                # 연속 예산소진으로 스스로 못 정하면(communication.py가 _stage_stuck 신호를 세움) 봇을
+                # 계속 굴리지 않는다 — quota_halt와 동형 파킹: mark_stopped(재시작 생존·'완료' 아닌 '중지')
+                # + 안내 1회 후 break. 무한 재루프의 토큰 낭비를 끊고, 재개는 사용자의 방향 제시·재개 버튼.
+                if getattr(flow, "_stage_stuck", None):
+                    try:
+                        flow._stage_stuck = None
+                    except Exception:
+                        pass
+                    try:
+                        _ms1 = getattr(self.guide, "mark_stopped", None)
+                        if _ms1:
+                            await _ms1(int(flow.user_channel or 0))
+                    except Exception:
+                        pass
+                    try:
+                        await flow.guide.post(int(flow.user_channel), 0,
+                                              "[막혀서 멈췄어요] 이 단계를 팀이 스스로 정하지 못해, 계속 헛돌지 "
+                                              "않게 여기서 멈춥니다. 어떻게 하면 좋을지 한 줄 알려주신 뒤 '재개'를 "
+                                              "누르면 이어서 진행해요.")
+                    except Exception:
+                        pass
+                    self._log("stage_stuck_parked", ch=int(flow.user_channel or 0))
+                    break
                 # [정밀 재개 — GOAL 정본 복원(2026-07-20, ch79 낭비 실측)] 재픽·복원된 판이 Task GOAL만
                 # 잃고 목표 회의부터 재실행하던 것 — 등록 때 쓴 GOAL.md(파일 정본)가 있으면 목표를
                 # 되살려 단계 체인이 '이어가게' 한다(회의 재개설 없이 — 정밀 복구=이어가기).
