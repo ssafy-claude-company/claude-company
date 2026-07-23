@@ -882,6 +882,26 @@ async def meet(flow, me_id, args):
                 pass
             return _passed0, _dissents, _yes
 
+        def _file_reg_objection(note):
+            """[등록 거부 사유를 DRAFT 이의로 기록(2026-07-23, 사용자: '봇들이 반려됐을 때 반려된 이유를
+            아는지')] 표결은 통과했는데 등록 게이트가 결론을 보류하면, 종전엔 사유가 채널 발언으로만 게시돼
+            다음 라운드 wake 본문엔 안 실렸다 — 봇은 DRAFT가 '완성'으로 보여 같은 결론을 재표결(무한 루프).
+            반대 부결의 '> [이의 @표결]'과 동형으로 '> [이의 @등록]'을 결정 구획(참고 직전)에 걸어, 완성
+            게이트가 미해소로 잡고 다음 발언들이 형식을 실제로 고치게 한다(같은 사유 중복은 스킵)."""
+            if _draft_path is None or not note:
+                return
+            try:
+                _dt = str(_dread(flow, "DRAFT.md") or "")
+                _ol = f"> [이의 @등록] {str(note)[:150]}"
+                if _ol[:48] in _dt:
+                    return
+                _rf = _dt.find("\n## 참고")
+                _dwrite(flow, "DRAFT.md",
+                        (_dt[:_rf].rstrip("\n") + "\n" + _ol + "\n" + _dt[_rf:]) if _rf > 0
+                        else (_dt.rstrip("\n") + "\n" + _ol + "\n"))
+            except Exception:
+                pass
+
         async def _merge_dissents(prop, dissents):
             """[반대 사유 병합(2026-07-15, 사용자: '자기거 없어서 부결난거면 그걸 합쳐야지')] 부결된
             수렴안에 동료들의 '빠졌다'는 지적을 다 합쳐 갱신 — 모두의 것이 들어갈 때까지 자라 만장일치가
@@ -1145,6 +1165,7 @@ async def meet(flow, me_id, args):
                             flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
                         await _say_speech(flow, me_id, "[회의]",
                                           f"결론 파일이 등록 게이트에 보류됐습니다 — {_note} (DRAFT를 다듬어 재수렴)")
+                        _file_reg_objection(_note)   # 채널 게시만으론 다음 라운드 wake에 안 실려 봇이 모른다 → 이의로 걸어 해소 강제
                     else:
                         # [부결 이의의 파일 반영 — SYS 서기(2026-07-16, ch76 실측)] 표결은 마이크로 즉답
                         # (도구 금지)이라 반대자가 이의를 파일에 못 남긴다 → 이의 0 유지 → ready→부결 무한.
@@ -1310,6 +1331,7 @@ async def meet(flow, me_id, args):
                         flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
                     await _say_speech(flow, me_id, "[회의]",
                                       f"수렴안이 채택됐으나 등록이 보류됐습니다 — {_note} (다듬어 재수렴)")
+                    _file_reg_objection(_note)   # 등록 거부 사유를 DRAFT 이의로 걸어 다음 라운드가 해소하게(채널 게시만으론 봇이 모름)
                 elif flow.log:
                     flow.log("meet_consensus_rejected", passes=_pass, merges=_mrg)
             elif flow.log:
