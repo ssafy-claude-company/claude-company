@@ -100,10 +100,12 @@ _BRIDGE = None
 # 네이티브 도구(bwrap 격리)로 하게 하고, guide 도구는 협업(회의·표결·백로그·위임)만 브리지로 노출.
 _CODEX_TOOL_DENY = {"run"}
 
-# 추론 강도(effort) 매핑 — Claude(low/medium/high/xhigh/max) → codex reasoning effort(minimal/low/medium/high).
-# low는 추론 토큰 0(실측)이라 하이쿠급 최저 비용. codex는 xhigh/max가 없어 high로 수렴.
+# 추론 강도(effort) 매핑 — Claude(low/medium/high/xhigh/max) → codex reasoning effort.
+# low는 추론 토큰 ~0(실측)이라 최저 비용, max는 추론을 실제로 켠다(실측: 같은 과제 max=323 vs low=24 추론토큰).
+# codex 5.6-luna/sol은 xhigh·max를 지원하므로 그대로 통과시킨다(종전엔 high로 깎아 max 지정이 무효였다 —
+# 2026-07-23 교정). gpt-5.4는 xhigh까지만 지원 → max를 걸면 codex가 거부하니 5.4엔 max를 쓰지 않는다.
 _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high",
-               "xhigh": "high", "max": "high", "minimal": "minimal"}
+               "xhigh": "xhigh", "max": "max", "minimal": "minimal"}
 
 
 def get_bridge():
