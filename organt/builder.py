@@ -166,6 +166,13 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
             _bopts["system_prompt"] = (load_persona()
                                        + "\n\n[이 직원만의 개성·지침 — 스튜디오에서 사용자가 지정한 정체성]\n"
                                        + _pp)
-        return Organt(cfg, build_options(cfg, **_bopts),
+        _org = Organt(cfg, build_options(cfg, **_bopts),
                       state_path=str(state_path), on_activity=heartbeat, narrate=narrate, on_turn=on_turn)
+        # [GPT 봇(2026-07-22, 사용자: 'gpt로 봇들 지능 바꿔')] 모델이 gpt-*면 Claude SDK 대신 codex 경로로
+        # 돈다 — 원 guide 도구를 그대로 심어 CodexBackend가 HTTP 브리지로 codex에 물린다(Claude 봇은 불변).
+        if _m and str(_m).startswith("gpt-") and flow is not None:
+            from system.guide_tools import make_guide_tools
+            _org._codex_model = str(_m)
+            _org._codex_tools = make_guide_tools(flow, organt_id, role)
+        return _org
     return organt_builder
