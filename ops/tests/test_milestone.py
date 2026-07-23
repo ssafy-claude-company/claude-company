@@ -68,8 +68,10 @@ def test_서브태스크_주기중_추가와_동일_게이트():
     ms = open_milestone(f, "M1", [{"desc": "빌드 통과", "verify": "npm run build 종료코드 0"}])
     st = open_subtask(f, ms, "프론트 뼈대", [{"desc": "index 로드", "verify": "curl -s localhost:3000/"}])
     assert st.st_id.startswith(ms.ms_id) and ms.subtasks == [st]
-    bad = open_subtask(f, ms, "x", [{"desc": "완벽해야 함", "verify": ""}])
-    assert isinstance(bad, str)                # 같은 등록 게이트가 SubTask에도
+    # [서브태스크 조건 게이트 폐지(2026-07-22, GPT e2e 실측)] 불량 조건은 거부 말고 폐기 — 서브태스크
+    # 조건은 완수 판정에 안 쓰니(완수=백로그 소진), 순수 작업 영역으로 개설한다(등록 루프 봉합).
+    opened = open_subtask(f, ms, "x", [{"desc": "완벽해야 함", "verify": ""}])
+    assert not isinstance(opened, str) and opened.goal == "x"
 
 
 def test_마일스톤_완수는_서브태스크_전부_완료_요구():
