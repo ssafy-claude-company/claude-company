@@ -209,12 +209,30 @@ class Organt:
             return dataclasses.replace(o, resume=self.session_id)
         return o
 
+    async def _run_codex(self, prompt: str, micro: bool = False):
+        """[GPT 봇(2026-07-22)] codex(bwrap 외부 샌드박스) 한 턴 — guide 도구는 HTTP 브리지로 물린다.
+        Claude _run_once와 같은 (최종발화, session_id)를 돌려주고, cwd 앵커 주입·botpool 슬롯도 동일."""
+        from .codex_mcp_bridge import run_codex_turn
+        _cwd = str(getattr(self.options, "cwd", None) or "")
+        if _cwd:
+            prompt = (f"[작업공간 — 절대경로] 당신의 모든 파일은 정확히 여기 있습니다: {_cwd}\n"
+                      f"이 경로가 당신의 cwd입니다. 파일·디렉터리는 항상 이 절대경로 기준으로 확인하세요.\n\n") + prompt
+        async with botpool.slot():
+            return await run_codex_turn(
+                prompt=prompt, cwd=_cwd, session_id=self.session_id,
+                tools=([] if micro else (getattr(self, "_codex_tools", None) or [])),
+                model=getattr(self, "_codex_model", None),
+                on_activity=self.on_activity, on_narrate=self.narrate)
+
     async def _run_once(self, prompt: str, micro: bool = False):
         """ClaudeSDKClient 한 번 실행 → (최종 발화, session_id).
 
         SYS의 무진행 취소(CancelledError)가 나도 `async with`의 정상 종료(__aexit__)가 SDK 자원을
         정리한다. 취소는 '도구 활동이 완전히 멈춘'(진짜 행) 경우에만 일어나므로 — 일하는 워커는 자르지
         않으므로 — 정상 종료가 깔끔히 이뤄진다(바쁜 워커를 끊다 자원이 남던 과거 문제의 근본 회피)."""
+        # [GPT 봇 라우팅(2026-07-22)] 모델이 gpt-*면(빌더가 _codex_model 심음) Claude SDK 대신 codex 경로.
+        if getattr(self, "_codex_model", None):
+            return await self._run_codex(prompt, micro=micro)
         final_text = ""
         captured_sid: Optional[str] = None
         truncated = False
