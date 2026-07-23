@@ -22,6 +22,7 @@ CONTRACT = {
     "system.config.Config": ["murmur", "organt"],
     "system.config.ROOT": ["guide", "organt"],
     "system.config.load_config": ["guide"],
+    "system.guide_tools.make_guide_tools": ["organt"],   # GPT 봇 codex 경로가 원 guide 도구를 HTTP 브리지에 물림(2026-07-22)
     "system.permissions.make_pre_tool_use_hook": ["organt"],
     "system.protocol.Kind": ["guide", "murmur"],
     "system.protocol.Marker": ["organt"],   # 수행문 마커 사전(narrate 필터 — builder가 참조)
