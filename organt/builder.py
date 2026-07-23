@@ -173,6 +173,7 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         if _m and str(_m).startswith("gpt-") and flow is not None:
             from system.guide_tools import make_guide_tools
             _org._codex_model = str(_m)
+            _org._codex_effort = _ef            # 추론 강도도 codex에 반영(low=하이쿠급 저비용)
             _org._codex_tools = make_guide_tools(flow, organt_id, role)
         return _org
     return organt_builder

@@ -222,6 +222,7 @@ class Organt:
                 prompt=prompt, cwd=_cwd, session_id=self.session_id,
                 tools=([] if micro else (getattr(self, "_codex_tools", None) or [])),
                 model=getattr(self, "_codex_model", None),
+                effort=getattr(self, "_codex_effort", None),
                 on_activity=self.on_activity, on_narrate=self.narrate)
 
     async def _run_once(self, prompt: str, micro: bool = False):
