@@ -6080,8 +6080,8 @@ def test_참여공고_합류컷은_적합우선_게임핵심직군이_주변고�
     s._distill_workspace = lambda: None
     _, joined = asyncio.run(s._elect_proposer(500, "게임 만들어줘"))
     assert 11 in joined                                  # 게임 기획자(적합3·최저응찰6)가 합류 — 적합 우선
-    assert len(joined) == 6                              # 누진 천장(7번째 임계 9 > 8): 주변 하나가 대신 밀림
-    # 종전(응찰 순)이면 11이 7번째로 밀려 잘리고 브랜드 스토리텔러가 남았다 — 그 역전을 막는다
+    assert len(joined) == 7                              # free 5 완화(2026-07-23): 7명 다 자리(임계가 9에 안 닿음)
+    # 종전(응찰 순)이면 11이 밀려 잘렸다 — 적합 우선 + 인원 자리 확대로 그 역전·필수직군 컷을 막는다
 
 
 def test_참여공고_시스템직군_채용은_후보에서_제외():
@@ -6126,10 +6126,10 @@ def test_참여공고_합류누진임계_저응찰은_소수만_합류():
     s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
     s._distill_workspace = lambda: None
     winner, joined = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
-    assert set(joined) == {11, 12, 13}                   # 9·8·7만(임계 1·1·1) — 4번째 임계 3 > 2 전원 미달
+    assert len(joined) == 5 and {11, 12, 13} <= set(joined)  # free 5 완화: 상위 3 + 자유핵심 2자리(6번째 임계 3 > 2 컷)
     assert winner == 11                                  # 앵커 = 합류자 중 최고 응찰
     assert any(e["event"] == "join_below_threshold" and e.get("need") == 3
-               for e in s.flow_log)                      # 미달 사유가 관측에 남는다
+               for e in s.flow_log)                      # 미달 사유가 관측에 남는다(6번째 임계 3)
 
 
 def test_참여공고_합류누진임계_전원9여도_자연천장(monkeypatch):
@@ -6147,7 +6147,7 @@ def test_참여공고_합류누진임계_전원9여도_자연천장(monkeypatch)
     s.organt_builder = lambda oid, srv, role, flow=None, state_tag=None: _B(int(oid))
     s._distill_workspace = lambda: None
     _, joined = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
-    assert len(joined) == 7                              # 자연 천장(8번째 필요 응찰 11 > 9)
+    assert len(joined) == 9                              # 자연 천장(free 5 완화: 10번째 필요 11 > 9) — 천장 유지, 자리 확대
     monkeypatch.setenv("ORGANT_JOIN_BID_STEP", "0")      # 곡선 off = 종전(전원 합류)
     _, joined0 = asyncio.run(s._elect_proposer(500, "그림판 웹앱 만들어줘"))
     assert len(joined0) == 11

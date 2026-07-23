@@ -879,13 +879,20 @@ class Sys:
         # 좌우하고 최종 합류엔 안 쓰이던 구멍. 이제 적합 높은 직군부터 낮은 임계로 먼저 앉히고, 동적합
         # (대개 0.0인 필수 실무직)은 응찰 강도로 남은 자리를 다툰다 — 과제 핵심 직군이 확신 낮아도 안 잘린다.
         from .rule.floor import bid_threshold as _bth
+        # [인원 한계점 완화(2026-07-23, 사용자: '필수 직군도 못 들어온다 — 인원 한계점 막힌 것')] free 3은
+        # 누진 임계가 7번째 합류에서 최댓값 9에 닿아, 대부분이 응찰 8로 몰린 판(ch93 실측: 13명 중 11명이
+        # 응찰 8)에서 8점을 전부 컷했다 — 필수 직군(백엔드)도 이 8점 무리에서 잘림. 자유 합류 핵심(free)을
+        # 3→5로 넓혀 임계가 9번째에야 9에 닿게(전원9 자연천장 7→9, ch93 시뮬 합류 6→8) — 미관 직군 유지 +
+        # 필수 직군 자리 확보. 천장은 남고(무제한 아님) 자리만 넓힌다. (응찰 동점 다수일 때 특정 직군 보장은
+        # 목표-후-채용의 몫 — 여기선 자리 확대까지.)
         try:
             _jstep = max(0, int(os.environ.get("ORGANT_JOIN_BID_STEP", "2") or 2))
+            _jfree = max(1, int(os.environ.get("ORGANT_JOIN_FREE", "5") or 5))
         except ValueError:
-            _jstep = 2
+            _jstep, _jfree = 2, 5
         joined = []
         for _m in sorted(_rep_score, key=lambda m: (-_taskfit(m), -_rep_score[m], str(m))):
-            _need = _bth(len(joined) + 1, _jstep)
+            _need = _bth(len(joined) + 1, _jstep, _jfree)
             if _rep_score[_m] >= _need:
                 joined.append(_m)
             else:
