@@ -1714,18 +1714,14 @@ class Sys:
             if passed:
                 wrapup_done(flow, ms)
             return True
-        try:
-            cap = max(1, int(os.environ.get("ORGANT_MILESTONE_VERIFY_CAP", "2") or 2))
-        except ValueError:
-            cap = 2
         # verify는 역사적으로 "curl로 200 확인" 같은 자연어 절차도 허용한다. 순수 셸인 경우만 SYS가
-        # 직접 실행(A), 자연어이거나 직접 실행 1회가 실패한 경우는 작업 봇을 구조적으로 깨워 기존
-        # run+report_iter 경로를 밟게 한다(B). 자연어를 셸로 오해해 거짓 실패시키지 않는다.
+        # 직접 실행(A), 자연어는 작업 봇을 구조적으로 깨워 기존 run+report_iter 경로를 밟게 한다(B).
+        # 실패는 재검증 루프가 아니라 단계기계의 보충 SubTask 회의로 넘긴다.
         direct = [c for c in pending
                   if not re.search(r"[가-힣]", c.verify)
                   and re.match(r"^\s*(?:curl|pytest|npm|node|python\d*|grep|test|\./|manage\.py)\b",
                                c.verify, re.I)
-                  and int(getattr(c, "verify_attempts", 0) or 0) == 0]
+                  ]
         results = []
         for c in direct:
             c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
@@ -1744,11 +1740,12 @@ class Sys:
                 return True
 
         bot_verify = [c for c in ms.criteria
-                      if not c.passed and c.status == "active" and c.verify_attempts < cap
+                      if not c.passed and c.status == "active"
                       and c not in direct]
         if bot_verify:
             for c in bot_verify:
                 c.verify_attempts += 1
+            iter_before = ms.iter_n
             who = (int(getattr(getattr(flow, "current", None), "owner", 0) or 0)
                    or int(getattr(flow, "anchor", 0) or 0))
             rows = "\n".join(
@@ -1757,24 +1754,30 @@ class Sys:
                 flow, who,
                 "[마일스톤 구조 검증] 백로그가 모두 끝났습니다. 아래 완수조건을 작업공간에서 run으로 "
                 "실제로 검증하고, 결과를 report_iter(results='조건 | pass/fail | 실제 출력 증거')로 "
-                "제출하세요. 파일 수정·추가 작업이 아니라 현재 산출물 판정입니다.\n" + rows,
+                "제출하세요. 파일 수정·추가 작업이 아니라 현재 산출물 판정입니다. 실패하면 결과를 "
+                "숨기지 마세요 — SYS가 부족한 작업 영역 보충 회의를 구조적으로 엽니다.\n" + rows,
                 Kind.INFO, "worker")
             if ms.status == "wrapup":
                 wrapup_done(flow, ms)
                 return True
-        for c in pending:
-            if not c.passed and c.status == "active" and c.verify_attempts >= cap:
-                # 자동검증 실패는 후속 주기로 이월해 현재 판을 완료시키지 않고 사람 판정을 기다린다.
-                old_roadmap = getattr(flow, "roadmap", None)
-                flow.roadmap = []
-                try:
-                    renegotiate_criterion(
-                        flow, ms, c.desc,
-                        f"SYS가 작업공간에서 verify를 {c.verify_attempts}회 실행했으나 통과하지 못함: "
-                        f"{c.verify[:120]}")
-                finally:
-                    flow.roadmap = old_roadmap
-        return True
+            # 봇이 report_iter를 생략해도 실패 검증을 장부에 남겨 보충 회의가 같은 사실에서 출발한다.
+            if ms.iter_n == iter_before:
+                iter_verify(flow, ms, [{"desc": c.desc, "passed": False, "evidence": ""}
+                                       for c in bot_verify])
+
+        # 실패는 우선 구조가 해결한다: meeting_stage=subtask → 영역+초기 백로그 병합 회의.
+        # 보충 실행 뒤에도 조건 진전이 기본 3회 연속 없을 때만 기존 재협상 사다리(후속 이월→사람)를 쓴다.
+        try:
+            stuck_limit = max(1, int(os.environ.get("ORGANT_ITER_STUCK_LIMIT", "3") or 3))
+        except ValueError:
+            stuck_limit = 3
+        if ms.iter_stuck >= stuck_limit:
+            for c in [x for x in ms.criteria if not x.passed and x.status == "active"]:
+                renegotiate_criterion(
+                    flow, ms, c.desc,
+                    f"보충 SubTask 실행과 재검증 뒤에도 {ms.iter_stuck}회 연속 조건 진전 없음: "
+                    f"{c.verify[:120]}")
+        return False
 
     async def run_turn(self, flow: Flow, organt_id, body, kind, role, micro=False) -> str:
         # [크레딧 한도 — 봇 wake 단일 관문 게이트(2026-07-21, U-036 실측: 1500 캡에서 1852까지 누수.

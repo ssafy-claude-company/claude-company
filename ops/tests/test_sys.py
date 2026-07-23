@@ -95,31 +95,32 @@ def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_p
     assert any(e["event"] == "milestone_auto_verify" and e["passed"] for e in s.flow_log)
 
 
-def test_SYS_마일스톤_verify_실패는_두번뒤_사람대기로_파킹(tmp_path, monkeypatch):
-    """실패를 통과로 마킹하지 않고, 체크포인트형 시도 상한 뒤 blocked_pending으로 멈춘다."""
+def test_SYS_마일스톤_verify_실패는_보충회의_후_무진전누적시에만_파킹(tmp_path, monkeypatch):
+    """실패 즉시 사람에게 넘기지 않고 SubTask 보충을 먼저 열며, 반복 무진전만 최후 파킹한다."""
     from system.rule.backlog import Backlog, relay_for
-    from system.rule.milestone import open_milestone, open_subtask
+    from system.rule.milestone import meeting_stage, open_milestone, open_subtask
 
-    monkeypatch.setenv("ORGANT_MILESTONE_VERIFY_CAP", "2")
+    monkeypatch.setenv("ORGANT_ITER_STUCK_LIMIT", "3")
     monkeypatch.setenv("ORGANT_RUN_USER", "test-no-such-user")
     g = FakeGuide()
     f = _flow(g)
+    from types import SimpleNamespace
+    f.current = SimpleNamespace(status=SimpleNamespace(goal="구조 검증"))
     f.workspace = str(tmp_path)
     ms = open_milestone(f, "구조 검증", [{"desc": "산출물 존재", "verify": "test -f missing.txt"}])
     st = open_subtask(f, ms, "구현", [])
     r = relay_for(f, st)
     r._pool["B1"] = Backlog("B1", "산출물 작성", 12, status="done", assignee=12)
     s = Sys(g, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
-    async def no_report(*_args, **_kwargs):
-        return "검증 보고 없음"
-    s.run_turn = no_report
-
-    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False
     assert ms.status == "open" and ms.criteria[0].status == "active"
-    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert meeting_stage(f) == "subtask"             # 실패 해결을 구조가 먼저 보충
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False
+    assert ms.criteria[0].status == "active"         # 2회만으로 사람 파킹하지 않음
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False
     assert ms.status == "open" and ms.criteria[0].passed is False
     assert ms.criteria[0].status == "blocked_pending"
-    assert ms.criteria[0].verify_attempts == 2
+    assert ms.criteria[0].verify_attempts == 3
 
 
 def test_검증성공해도_선행필요_blocked_백로그가_남으면_보충회의로(tmp_path, monkeypatch):
@@ -140,7 +141,7 @@ def test_검증성공해도_선행필요_blocked_백로그가_남으면_보충�
     (tmp_path / "result.txt").write_text("ok", encoding="utf-8")
     s = Sys(g, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
 
-    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False
     assert ms.criteria[0].passed is True               # 마일스톤 실증은 실제로 끝남
     assert ms.status == "open" and st.status == "open" # 그러나 최대 구현은 아직 미완
     assert r.get("B1").status == "blocked"             # 원 백로그를 버리거나 완료 처리하지 않음

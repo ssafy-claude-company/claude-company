@@ -1162,7 +1162,8 @@ def meeting_stage(flow):
     # [백로그 소진 = 회의 트리거(2026-07-16, 잔재 감사 ①)] 전 단위의 백로그가 소진(전부 done/dropped)
     # 됐는데 주기가 아직 열려 있으면(조건 미충족) 추가 분해 회의 — 종전엔 handoff 코칭('meet를 열어라')
     # 만 있고 stage가 None이라, 봇이 meet를 불러도 결론 경로가 없었다(수렴 소진 낭비). 체인이 자동 개설.
-    if _alive and _open.status == "open":
+    if (_open.status == "open"
+            and any(not c.passed and c.status != "waived" for c in _open.criteria)):
         return "subtask"
     return None                                          # 전 단계 완료 → 작업/검증 단계
 
