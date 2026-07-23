@@ -100,6 +100,11 @@ _BRIDGE = None
 # 네이티브 도구(bwrap 격리)로 하게 하고, guide 도구는 협업(회의·표결·백로그·위임)만 브리지로 노출.
 _CODEX_TOOL_DENY = {"run"}
 
+# 추론 강도(effort) 매핑 — Claude(low/medium/high/xhigh/max) → codex reasoning effort(minimal/low/medium/high).
+# low는 추론 토큰 0(실측)이라 하이쿠급 최저 비용. codex는 xhigh/max가 없어 high로 수렴.
+_EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high",
+               "xhigh": "high", "max": "high", "minimal": "minimal"}
+
 
 def get_bridge():
     global _BRIDGE
@@ -123,7 +128,7 @@ def _bwrap_args(ws: str) -> list:
             "--setenv", "HOME", "/root", "--setenv", "TERM", "xterm", "--setenv", "ORGANT_BOT", "1"]
 
 
-async def run_codex_turn(*, prompt, cwd, session_id, tools, model,
+async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None):
     """GPT 봇 한 턴 — codex를 bwrap 외부 샌드박스로 띄우고 guide 도구는 브리지로 물려 실행.
     반환 (최종발화, session_id). resume=`codex exec resume <id>`(세션 연속성)."""
@@ -143,6 +148,9 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model,
               "-c", 'mcp_servers.guide.url="%s"' % bridge.url]
     if model:
         codex += ["-m", str(model)]
+    _ce = _EFFORT_MAP.get(str(effort or "").strip().lower())
+    if _ce:   # 추론 강도를 codex에 실제 반영(종전엔 안 넘겨 무시됐음 — 사용자 지적)
+        codex += ["-c", 'model_reasoning_effort="%s"' % _ce]
     args = _bwrap_args(ws) + ["--"] + codex
 
     proc = await asyncio.create_subprocess_exec(
