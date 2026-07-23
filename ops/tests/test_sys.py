@@ -122,6 +122,32 @@ def test_SYS_마일스톤_verify_실패는_두번뒤_사람대기로_파킹(tmp_
     assert ms.criteria[0].verify_attempts == 2
 
 
+def test_검증성공해도_선행필요_blocked_백로그가_남으면_보충회의로(tmp_path, monkeypatch):
+    """검증과 최대 구현은 별도 게이트 — blocked 원본을 보존하고 선행 백로그를 추가할 자리를 연다."""
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import meeting_stage, open_milestone, open_subtask
+
+    monkeypatch.setenv("ORGANT_RUN_USER", "test-no-such-user")
+    g = FakeGuide()
+    f = _flow(g)
+    from types import SimpleNamespace
+    f.current = SimpleNamespace(status=SimpleNamespace(goal="최대 구현 검증"))
+    f.workspace = str(tmp_path)
+    ms = open_milestone(f, "최대 구현", [{"desc": "현재 산출물 정상", "verify": "test -f result.txt"}])
+    st = open_subtask(f, ms, "기능 구현", [])
+    r = relay_for(f, st)
+    r._pool["B1"] = Backlog("B1", "선행 스키마 뒤 기능 구현", 12, status="blocked", assignee=12)
+    (tmp_path / "result.txt").write_text("ok", encoding="utf-8")
+    s = Sys(g, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert ms.criteria[0].passed is True               # 마일스톤 실증은 실제로 끝남
+    assert ms.status == "open" and st.status == "open" # 그러나 최대 구현은 아직 미완
+    assert r.get("B1").status == "blocked"             # 원 백로그를 버리거나 완료 처리하지 않음
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False  # 검증 반복도 없음
+    assert meeting_stage(f) == "backlog"               # 선행 백로그를 보충할 회의로
+
+
 def test_서브프로세스_사망_143은_일시오류로_재시도대상():
     """SDK 서브프로세스가 SIGTERM(143)/파이프끊김으로 죽으면 일시오류로 보고 resume 재시도해야 한다
     — 작업이 끝났는데 마무리 메시지만 깨져 에러가 최종 응답으로 올라오는 일 방지."""

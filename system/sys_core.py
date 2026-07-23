@@ -1690,8 +1690,12 @@ class Sys:
             if st.status in ("done", "superseded"):
                 continue
             relay = relays.get(st.st_id)
-            if relay is None or not getattr(relay, "backlogs", None) or not relay.all_done():
+            if relay is None or not getattr(relay, "backlogs", None):
                 return False
+            # blocked는 "선행 필요"를 보존한 미완 백로그다. 검증은 현재 실행 가능분 소진 시 열지만,
+            # 이 SubTask와 마일스톤은 닫지 않는다 — 검증 뒤 보충 회의가 선행 백로그를 추가한다.
+            if not relay.all_done():
+                continue
             try:
                 from .rule.backlog import on_subtask_wrapup
                 on_subtask_wrapup(flow, st)
@@ -1702,6 +1706,10 @@ class Sys:
 
         pending = [c for c in ms.criteria if not c.passed and c.status != "waived"]
         if not pending:
+            # 조건은 이미 통과했어도 blocked/open/in_progress 백로그가 남으면 최대 구현 미완 —
+            # iter_verify를 반복 호출하지 말고 아래 단계기계가 보충/재개를 열게 한다.
+            if any(st.status not in ("done", "superseded") for st in ms.subtasks):
+                return False
             passed, _ = iter_verify(flow, ms, [])
             if passed:
                 wrapup_done(flow, ms)

@@ -1149,9 +1149,14 @@ def meeting_stage(flow):
     # 회의는 전 영역이 소진(또는 첫 시작으로 전무)됐을 때만 열리고, 그 한 회의가 미충원 영역들 몫을
     # 일괄 충전한다(iter 경계 = 소진→점검(report_iter 코칭+조건 장부)→일괄 충전).
     _alive = [st for st in _sts if st.status != "done"]
-    if any((store.get(st.st_id) is not None and (store.get(st.st_id).backlogs or [])
-            and not store.get(st.st_id).all_done()) for st in _alive):
-        return None                                     # 집을/진행 중 백로그 존재 → 작업 단계 우선
+    _rows = [b for st in _alive if store.get(st.st_id) is not None
+             for b in (store.get(st.st_id).backlogs or [])]
+    if any(b.status in ("open", "in_progress") for b in _rows):
+        return None                                     # 지금 집을/진행 중 백로그 존재 → 작업 단계 우선
+    if any(b.status == "blocked" for b in _rows):
+        # 선행 필요로 멈춘 원 백로그만 남았다. 원본을 버리거나 완료 참칭하지 않고, 전 영역 보충 회의가
+        # 선행 백로그를 추가하도록 연다. 선행 완료 뒤 blocked 원본을 재개해야 마일스톤이 닫힌다.
+        return "backlog"
     if any(store.get(st.st_id) is None or not store.get(st.st_id).backlogs for st in _alive):
         return "backlog"                                # ④ 백로그 회의 — 소진/전무: 다음 iter 일감 일괄 충전
     # [백로그 소진 = 회의 트리거(2026-07-16, 잔재 감사 ①)] 전 단위의 백로그가 소진(전부 done/dropped)
