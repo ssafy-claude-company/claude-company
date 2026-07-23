@@ -407,10 +407,11 @@ def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
     [서브태스크 게이트 제거(2026-07-22)] 조건은 선택 — 있으면 형태만 검사(있어도 완수 판정엔 안 씀,
     서브태스크 완수 = 백로그 소진), 없으면 순수 작업 영역으로 개설. 검증 게이트는 마일스톤만."""
     _ce = list(criteria_entries or [])
-    if _ce:
-        err = gate_criteria(_ce)
-        if err:
-            return err
+    if _ce and gate_criteria(_ce):
+        # [불량 조건은 거부 말고 폐기(2026-07-22, GPT e2e 실측: 봇이 단위에 조건(| 실증)을 달면 형태 불량 시
+        # 등록 거부 → 표결 통과해도 등록에서 막혀 재회의 무한 → 정체 종료·게임 미완). 서브태스크 조건은
+        # 완수 판정에 안 쓰니(완수=백로그 소진), 불량이면 버리고 순수 작업 영역으로 개설한다(게이트 제거 완결).]
+        _ce = []
     if not str(goal or "").strip():
         return "등록 거부: 작업 영역 이름(goal)이 비었습니다."
     st = SubTask(st_id=f"{ms.ms_id}/ST-{len(ms.subtasks) + 1}",
