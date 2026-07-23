@@ -990,9 +990,11 @@ def test_단위_2줄_자연표기_흡수_preflight_등록_동일판정(monkeypat
     landed, note = register_stage(f, "subtask", two_line)
     assert landed and len(ms.subtasks) == 2
     assert ms.subtasks[0].goal == "게임 판정 로직"   # 제목만 goal — 본문·게이트가 단계 이름을 압사시키지 않게
-    # 게이트 불통과 단위는 사유가 메시지에 그대로 나온다('단위: 줄을 확인' 오진 금지)
+    # [서브태스크 게이트 완결(2026-07-22, GPT e2e 실측: 제목만 단위를 '불량 조건'으로 거부 → 표결 통과해도
+    # 등록 막혀 재회의 무한 → 정체 종료·게임 미완)] 제목만/조건 없는 단위도 유효한 작업 영역 — 등록되고,
+    # 없는 일감은 백로그 충전 회의가 받친다(껍데기 거부 폐지 = 게이트 제거 결정의 완결).
     landed2, note2 = register_stage(f, "subtask", "## 결정\n단위: 조건 없는 단위\n")
-    assert not landed2 and "조건 없는 단위" in note2 and "단위: 줄을 확인" not in note2
+    assert landed2 and "백로그 충전" in note2
 
 def test_iter주기_정본_집을것있으면_작업_충전은_일괄배분(monkeypatch, tmp_path):
     """[2026-07-20 사용자 교정: '전부 소진/중지 → 점검 → 다음 회의가 다수 한번에'] 07-17 게으른 스캔이
