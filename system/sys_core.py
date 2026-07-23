@@ -34,7 +34,8 @@ def _is_spare_label(label) -> bool:
     return str(label or "").strip().startswith(_SPARE_LABEL)
 from .rule.milestone import pipeline_on as _ms_pipeline_on
 from .rule.wrapup import tallying_logger as _wrapup_tally
-from .guide_tools import Flow, TaskRef, build_guide_server, make_guide_tools   # noqa: F401 — TaskRef 재수출(사용처는 sys_recovery로 이동)
+from .guide_tools import (Flow, TaskRef, build_guide_server, make_guide_tools,
+                          run_workspace_command)   # noqa: F401 — TaskRef 재수출(사용처는 sys_recovery로 이동)
 from .protocol import Kind, Request, TaskStatus, format_response   # noqa: F401 — TaskStatus 재수출(사용처는 sys_recovery로 이동)
 from . import sys_prompt
 from . import sys_store
@@ -1670,6 +1671,103 @@ class Sys:
         except Exception as e:
             self._log("claim_kick_error", err=str(e)[:80])
 
+    async def _verify_exhausted_milestone(self, flow):
+        """백로그 소진 뒤 Criterion.verify를 실제 실행하고 기존 iter_verify로 마일스톤을 닫는다.
+
+        봇이 report_iter를 자발 호출하지 않아도 검증은 구조가 촉발한다. 성공만 영수증과 함께
+        통과시키며, 재시도 상한 뒤에도 실패하면 거짓 완료 대신 사람 확인 대기로 파킹한다.
+        """
+        from .rule.milestone import (claim_kick_target, iter_verify, next_milestone,
+                                     renegotiate_criterion, wrapup_done)
+        ms = next_milestone(flow)
+        if (ms is None or ms.status != "open"
+                or self._backlog_in_progress(flow) is not None
+                or claim_kick_target(flow) is not None):
+            return False
+        relays = getattr(flow, "backlog_relays", None) or {}
+        # 07-22 계약: SubTask는 검증 게이트가 아니라 작업 묶음 — 장부 소진이 곧 완수다.
+        for st in ms.subtasks:
+            if st.status in ("done", "superseded"):
+                continue
+            relay = relays.get(st.st_id)
+            if relay is None or not getattr(relay, "backlogs", None) or not relay.all_done():
+                return False
+            try:
+                from .rule.backlog import on_subtask_wrapup
+                on_subtask_wrapup(flow, st)
+            except Exception:
+                pass
+            st.status = "wrapup"
+            wrapup_done(flow, st)
+
+        pending = [c for c in ms.criteria if not c.passed and c.status != "waived"]
+        if not pending:
+            passed, _ = iter_verify(flow, ms, [])
+            if passed:
+                wrapup_done(flow, ms)
+            return True
+        try:
+            cap = max(1, int(os.environ.get("ORGANT_MILESTONE_VERIFY_CAP", "2") or 2))
+        except ValueError:
+            cap = 2
+        # verify는 역사적으로 "curl로 200 확인" 같은 자연어 절차도 허용한다. 순수 셸인 경우만 SYS가
+        # 직접 실행(A), 자연어이거나 직접 실행 1회가 실패한 경우는 작업 봇을 구조적으로 깨워 기존
+        # run+report_iter 경로를 밟게 한다(B). 자연어를 셸로 오해해 거짓 실패시키지 않는다.
+        direct = [c for c in pending
+                  if not re.search(r"[가-힣]", c.verify)
+                  and re.match(r"^\s*(?:curl|pytest|npm|node|python\d*|grep|test|\./|manage\.py)\b",
+                               c.verify, re.I)
+                  and int(getattr(c, "verify_attempts", 0) or 0) == 0]
+        results = []
+        for c in direct:
+            c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
+            ok, rc, out, err, reason = await run_workspace_command(
+                getattr(flow, "workspace", None), c.verify, timeout=60)
+            tail = ((out or "") + (("\n[stderr] " + err) if (err or "").strip() else ""))[-400:].strip()
+            evidence = f"exit={rc} `{c.verify[:80]}`" + (f"\n{tail}" if tail else "")
+            results.append({"desc": c.desc, "passed": bool(ok),
+                            "evidence": evidence if ok else ""})
+            self._log("milestone_auto_verify", ms=ms.ms_id, desc=c.desc[:60],
+                      attempt=c.verify_attempts, passed=bool(ok), rc=rc, reason=reason[:100])
+        if results:
+            passed, _ = iter_verify(flow, ms, results)
+            if passed:
+                wrapup_done(flow, ms)
+                return True
+
+        bot_verify = [c for c in ms.criteria
+                      if not c.passed and c.status == "active" and c.verify_attempts < cap
+                      and c not in direct]
+        if bot_verify:
+            for c in bot_verify:
+                c.verify_attempts += 1
+            who = (int(getattr(getattr(flow, "current", None), "owner", 0) or 0)
+                   or int(getattr(flow, "anchor", 0) or 0))
+            rows = "\n".join(
+                f"- desc(그대로 복사): {c.desc}\n  실증절차: {c.verify}" for c in bot_verify)
+            await self.run_turn(
+                flow, who,
+                "[마일스톤 구조 검증] 백로그가 모두 끝났습니다. 아래 완수조건을 작업공간에서 run으로 "
+                "실제로 검증하고, 결과를 report_iter(results='조건 | pass/fail | 실제 출력 증거')로 "
+                "제출하세요. 파일 수정·추가 작업이 아니라 현재 산출물 판정입니다.\n" + rows,
+                Kind.INFO, "worker")
+            if ms.status == "wrapup":
+                wrapup_done(flow, ms)
+                return True
+        for c in pending:
+            if not c.passed and c.status == "active" and c.verify_attempts >= cap:
+                # 자동검증 실패는 후속 주기로 이월해 현재 판을 완료시키지 않고 사람 판정을 기다린다.
+                old_roadmap = getattr(flow, "roadmap", None)
+                flow.roadmap = []
+                try:
+                    renegotiate_criterion(
+                        flow, ms, c.desc,
+                        f"SYS가 작업공간에서 verify를 {c.verify_attempts}회 실행했으나 통과하지 못함: "
+                        f"{c.verify[:120]}")
+                finally:
+                    flow.roadmap = old_roadmap
+        return True
+
     async def run_turn(self, flow: Flow, organt_id, body, kind, role, micro=False) -> str:
         # [크레딧 한도 — 봇 wake 단일 관문 게이트(2026-07-21, U-036 실측: 1500 캡에서 1852까지 누수.
         # 재작업 #1로 '리더' 서술 교정 — 위임 보스로서의 리더는 07-13 폐지, 코드의 leader는 앵커
@@ -2587,6 +2685,10 @@ class Sys:
                 # [단계 회의 체인] 계획 단계(GOAL→마일스톤→서브태스크→백로그)가 남았으면 작업-이어가기보다
                 # 먼저 다음 단계 회의를 연다 — 이전 결론 위에서만 열리고, 한 회의가 한 단계만 정한다. 전
                 # 계획 단계가 끝나면(_stage_pending False) 아래 작업-이어가기(위임·검증)로 넘어간다.
+                # 작업 소진 뒤에는 추가 분해 회의보다 현재 마일스톤의 실증을 먼저 한다.
+                if _ms_on() and not flow.cancelled:
+                    if await self._verify_exhausted_milestone(flow):
+                        continue
                 if _stage_pending() and not flow.cancelled:
                     # [위임 완주 우선(2026-07-20, U-035 실측)] 리더가 자유 위임(동료 질문)을 걸어둔 채
                     # 단계 회의를 열면 meet 게이트가 '[대기] 위임 진행 중'으로 즉시 거절 — 여는 의견

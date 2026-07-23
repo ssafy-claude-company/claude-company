@@ -54,6 +54,7 @@ class Criterion:
     # open_milestone이 기계로 합류시킴). blocked_pending(사람 대기)은 못 옮길 때만의 최후수단.
     status: str = "active"   # active | blocked_pending | waived
     block_reason: str = ""   # 왜 불가능한가(인프라 제약 등) — 사람 승인 판단의 근거
+    verify_attempts: int = 0  # SYS 구조검증 횟수 — 재시작 뒤에도 실패 상한을 보존
 
 
 @dataclass
@@ -1998,7 +1999,8 @@ def rule_report_iter(flow, me_id, args) -> str:
 
 def _crit_dict(c):
     return {"desc": c.desc, "verify": c.verify, "passed": c.passed, "evidence": c.evidence,
-            "status": c.status, "block_reason": c.block_reason}   # [#1] 재협상 상태 동승
+            "status": c.status, "block_reason": c.block_reason,
+            "verify_attempts": c.verify_attempts}   # [#1] 재협상·구조검증 상태 동승
 
 
 def ms_to_dict(ms: Milestone) -> dict:
@@ -2018,7 +2020,8 @@ def ms_from_dict(d: dict) -> Milestone:
     def _crit(rows):
         return [Criterion(desc=str(r.get("desc") or ""), verify=str(r.get("verify") or ""),
                           passed=bool(r.get("passed")), evidence=str(r.get("evidence") or ""),
-                          status=str(r.get("status") or "active"), block_reason=str(r.get("block_reason") or ""))
+                          status=str(r.get("status") or "active"), block_reason=str(r.get("block_reason") or ""),
+                          verify_attempts=int(r.get("verify_attempts") or 0))
                 for r in (rows or [])]
     ms = Milestone(ms_id=str(d.get("ms_id") or ""), goal=str(d.get("goal") or ""),
                    criteria=_crit(d.get("criteria")), status=str(d.get("status") or "open"),

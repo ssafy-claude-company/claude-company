@@ -72,6 +72,56 @@ def _tools(f, me, role):
     return {t.name: t for t in make_guide_tools(f, me, role)}
 
 
+def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_path, monkeypatch):
+    """[2026-07-23 완료 인식] 봇 report_iter 없이도 구조가 실제 셸 영수증을 iter_verify에 넣어 닫는다."""
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import open_milestone, open_subtask
+
+    g = FakeGuide()
+    monkeypatch.setenv("ORGANT_RUN_USER", "test-no-such-user")  # sandbox는 setuid 불가; 비루트 배포와 같은 경로
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    ms = open_milestone(f, "구조 검증", [{"desc": "산출물 존재", "verify": "test -f result.txt"}])
+    st = open_subtask(f, ms, "구현", [])
+    r = relay_for(f, st)
+    r._pool["B1"] = Backlog("B1", "산출물 작성", 12, status="done", assignee=12)
+    (tmp_path / "result.txt").write_text("ok", encoding="utf-8")
+    s = Sys(g, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert st.status == "done" and ms.status == "done"
+    assert ms.criteria[0].passed is True
+    assert "exit=0" in ms.criteria[0].evidence
+    assert any(e["event"] == "milestone_auto_verify" and e["passed"] for e in s.flow_log)
+
+
+def test_SYS_마일스톤_verify_실패는_두번뒤_사람대기로_파킹(tmp_path, monkeypatch):
+    """실패를 통과로 마킹하지 않고, 체크포인트형 시도 상한 뒤 blocked_pending으로 멈춘다."""
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import open_milestone, open_subtask
+
+    monkeypatch.setenv("ORGANT_MILESTONE_VERIFY_CAP", "2")
+    monkeypatch.setenv("ORGANT_RUN_USER", "test-no-such-user")
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    ms = open_milestone(f, "구조 검증", [{"desc": "산출물 존재", "verify": "test -f missing.txt"}])
+    st = open_subtask(f, ms, "구현", [])
+    r = relay_for(f, st)
+    r._pool["B1"] = Backlog("B1", "산출물 작성", 12, status="done", assignee=12)
+    s = Sys(g, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+    async def no_report(*_args, **_kwargs):
+        return "검증 보고 없음"
+    s.run_turn = no_report
+
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert ms.status == "open" and ms.criteria[0].status == "active"
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert ms.status == "open" and ms.criteria[0].passed is False
+    assert ms.criteria[0].status == "blocked_pending"
+    assert ms.criteria[0].verify_attempts == 2
+
+
 def test_서브프로세스_사망_143은_일시오류로_재시도대상():
     """SDK 서브프로세스가 SIGTERM(143)/파이프끊김으로 죽으면 일시오류로 보고 resume 재시도해야 한다
     — 작업이 끝났는데 마무리 메시지만 깨져 에러가 최종 응답으로 올라오는 일 방지."""

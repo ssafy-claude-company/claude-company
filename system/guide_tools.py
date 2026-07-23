@@ -11,6 +11,7 @@ SYS가 대상 동료를 중첩 베턴으로 깨워(flow.wake) 응답을 돌려�
 - complete_task(result): 현재 Task를 완료로 마감
 대화는 '현재 Task' 스레드에서. 보고는 별도 툴이 아니라 반환값(=Response)이 origin까지 unwind.
 """
+import asyncio
 import os
 import signal
 import subprocess
@@ -116,6 +117,60 @@ def _chown_tree(path, uid, gid):
                     pass
     except OSError:
         pass
+
+
+async def run_workspace_command(workspace, command, timeout=60):
+    """run 도구와 SYS 자동검증이 함께 쓰는 안전한 작업공간 셸 프리미티브.
+
+    ``(ok, rc, stdout, stderr, reason)``을 반환한다. 별도 SYS subprocess 경로가 기존 run보다
+    약해지지 않도록 cwd·비밀 제거·비특권 강등·프로세스그룹 회수를 한곳에서 보장한다.
+    """
+    cmd, ws = str(command or "").strip(), str(workspace or "").strip()
+    if not ws:
+        return False, None, "", "", "작업공간이 설정되지 않았습니다."
+    scan = cmd
+    try:
+        scan = scan.replace(os.path.realpath(ws), " ").replace(ws, " ")
+    except Exception:
+        pass
+    if _COLLAB_RE.search(cmd.lower()):
+        return False, None, "", "", "협의 기록(.collab/) 접근은 허용되지 않습니다."
+    if any(d in scan.lower() for d in _RUN_DENY):
+        return False, None, "", "", f"파괴/저장소/시스템 패턴 포함 — {cmd[:80]}"
+    if any(p in cmd for p in _RUN_AUTHOR):
+        return False, None, "", "", "run은 실행·빌드·검증 전용이며 파일 작성 명령은 허용되지 않습니다."
+
+    of, ef = tempfile.TemporaryFile(), tempfile.TemporaryFile()
+    env, drop, extra = _scrubbed_run_env(), _run_drop_creds(), {}
+    if drop:
+        uid, gid = drop
+        _chown_tree(ws, uid, gid)
+        env["HOME"] = ws
+        env.setdefault("npm_config_cache", os.path.join(ws, ".npm"))
+        extra = {"user": uid, "group": gid, "extra_groups": []}
+    try:
+        p = await asyncio.create_subprocess_shell(
+            cmd, cwd=ws, stdout=of, stderr=ef, start_new_session=True, env=env, **extra)
+        timed_out = False
+        try:
+            rc = await asyncio.wait_for(p.wait(), timeout=max(1, int(timeout)))
+        except asyncio.TimeoutError:
+            timed_out, rc = True, None
+        finally:
+            _reap_pgroup(p.pid)
+            try:
+                await asyncio.wait_for(p.wait(), timeout=2)
+            except Exception:
+                pass
+        of.seek(0); ef.seek(0)
+        out, err = of.read().decode("utf-8", "replace"), ef.read().decode("utf-8", "replace")
+    except Exception as e:
+        return False, None, "", "", f"실행 오류: {e}"
+    finally:
+        of.close(); ef.close()
+    if timed_out:
+        return False, rc, out, err, f"실행 시간초과({int(timeout)}s)"
+    return rc == 0, rc, out, err, ""
 
 
 # [Task Rule → rule/task.py] 완료·인수 검증 게이트는 원래 §7 설계대로 rule/task로 분리(guide_tools 병합 해체)
@@ -538,35 +593,33 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
 
         def _exec():
             # 자체 세션(프로세스그룹)으로 실행 → 직속 셸 종료 후 그룹째 정리한다.
-            # 이게 run 간 포트 충돌(EADDRINUSE)의 구조적 해결: 'node server.js &'로 띄운
-            # 백그라운드 서버가 init으로 reparent돼 누수되는 일이 없다.
-            # 출력은 파이프 대신 임시파일로 — 백그라운드 자식이 파이프를 잡고 있어도 wait가 안 막힌다.
             of, ef = tempfile.TemporaryFile(), tempfile.TemporaryFile()
-            env = _scrubbed_run_env()           # 봇 자기 env에서 비밀 제거
-            drop = _run_drop_creds()            # root면 비특권 강등 (uid,gid) — 비밀 파일/proc 읽기 근본차단
+            env = _scrubbed_run_env()
+            drop = _run_drop_creds()
             popen_extra = {}
             if drop:
                 uid, gid = drop
-                _chown_tree(str(flow.workspace), uid, gid)              # 작업공간을 강등 사용자가 쓰게
-                env["HOME"] = str(flow.workspace)                       # npm·도구 dotfile 루트(쓰기 가능)
+                _chown_tree(str(flow.workspace), uid, gid)
+                env["HOME"] = str(flow.workspace)
                 env.setdefault("npm_config_cache", os.path.join(str(flow.workspace), ".npm"))
-                popen_extra = {"user": uid, "group": gid, "extra_groups": []}   # root 보조그룹까지 제거
+                popen_extra = {"user": uid, "group": gid, "extra_groups": []}
             p = subprocess.Popen(cmd, shell=True, cwd=str(flow.workspace),
                                  stdout=of, stderr=ef, start_new_session=True,
-                                 env=env, **popen_extra)   # 배포 비밀 차단 + 비특권 강등(봇이 비밀 못 읽음)
+                                 env=env, **popen_extra)
             timed_out = False
             try:
-                rc = p.wait(timeout=60)        # 직속 셸 종료까지만 대기
+                rc = p.wait(timeout=60)
             except subprocess.TimeoutExpired:
                 timed_out, rc = True, None
             finally:
-                _reap_pgroup(p.pid)            # 백그라운드 자식까지 그룹째 정리(누수/포트충돌 차단)
+                _reap_pgroup(p.pid)
                 try:
-                    p.wait(timeout=2)          # 셸 좀비 회수
+                    p.wait(timeout=2)
                 except Exception:
                     pass
             of.seek(0); ef.seek(0)
-            out = of.read().decode("utf-8", "replace"); err = ef.read().decode("utf-8", "replace")
+            out = of.read().decode("utf-8", "replace")
+            err = ef.read().decode("utf-8", "replace")
             of.close(); ef.close()
             return timed_out, rc, out, err
 
