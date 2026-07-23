@@ -329,7 +329,9 @@ async def meet(flow, me_id, args):
         # 전담의 실체=백로그)다 — 심의단 3명으로 줄이면 판 밖 도메인 몫을 누군가 대필하게 되고, 발제
         # 귀속(작성자=주인)·릴레이(제출자=수행자)를 타고 소유가 독식된다(실측: PM이 30건 중 26건 발제
         # → 게임기획·백엔드 일까지 PM에게 순차 배정 궤도). 백로그 단계는 전원 참여로 각자 등재한다.
-        if _no_r1 and tt and len(members) > _panel_cap and _stage != "backlog":
+        # [병합 회의 교정(2026-07-23, ch94)] 지금은 subtask 회의가 영역+백로그를 함께 만든다. 예외를
+        # 옛 stage 이름(backlog)에만 두면 병합 뒤 다시 1/3 심의단만 발제 기회를 얻는다.
+        if _no_r1 and tt and len(members) > _panel_cap and _stage not in ("backlog", "subtask"):
             def _sb(c):
                 # [도메인 가시화(2026-07-20, U-035)] 단계 안건은 일반문 — 응찰 판단엔 주제(원문 도메인)가
                 # 먼저 보여야 한다('웹게임'이 안 보이면 게임 기획자가 패스한다).
@@ -968,16 +970,24 @@ async def meet(flow, me_id, args):
                 return (f"[독립 기고 — 토론 전 병렬 수집] 안건: {(_agenda or topic)[:160]}\n"
                         f"당신({flow._info(c)}) 도메인 몫으로 **결정 구획에 들어가야 할 구체 값·조건·"
                         f"이견 후보를 3~5줄**로 적어주세요(동료 발언은 아직 없습니다 — 독립 판단). "
-                        f"**도구·파일 금지, 이 텍스트만 보고 즉답.** 보탤 것이 없으면 `[패스]`.")
+                        f"**도구·파일 금지, 이 텍스트만 보고 즉답.** 자기 직군에 맡을 일이 정말 없으면 "
+                        f"`[패스: 이유]`로 판단 근거를 남기세요(이유 없는 패스는 미응답으로 봅니다).")
             try:
                 _r1n = 0
                 _r1_lines = []
                 _r1_attr = []      # [(bot_id, 기고 텍스트)] — 발제 귀속의 원저자(전사자 아님)
+                _r1_passes = {}    # {bot_id: 이유} — '일 없음'의 개인 판단을 사후 추측하지 않게
                 _r1_targets = [m for m in members if m != me_id]
+                _my_pass = re.match(r"^\[패스\s*:\s*(.+?)\]", my_view, re.S)
+                if me_id in members and _my_pass and _my_pass.group(1).strip():
+                    _r1_passes[int(me_id)] = _my_pass.group(1).strip()[:200]
                 for _m1, _r1, _n1 in await _fork_collect(flow, me_id, _r1_targets,
                                                          _r1b, micro=True):
                     _t1 = str(_r1 or "").strip()
-                    if _t1 and not _t1.startswith("[패스]") and "API Error" not in _t1[:20]:
+                    _pm1 = re.match(r"^\[패스\s*:\s*(.+?)\]", _t1, re.S)
+                    if _pm1 and _pm1.group(1).strip():
+                        _r1_passes[int(_m1)] = _pm1.group(1).strip()[:200]
+                    elif _t1 and not _t1.startswith("[패스") and "API Error" not in _t1[:20]:
                         _r1_lines.append(_t1[:700])
                         for _cl in _t1.splitlines():           # 줄 단위로 저자 보존(백로그 매칭용)
                             _cl = _cl.strip("·-* \t")
@@ -995,8 +1005,13 @@ async def meet(flow, me_id, args):
                 # 백로그 등록기가 참조해, 전사자(앵커)가 아니라 실제 기고자에게 귀속시킨다(강제 배분
                 # 아님 — 각자 자기 도메인을 R1에 냈으면 그 크레딧이 그에게 간다).
                 flow._r1_attr = _r1_attr
+                # SYS 단계 회의의 개설자도 평참여자다. 그는 동시 세션 경합 때문에 R1 wake만 생략하고,
+                # 여는 의견/DRAFT로 자기 일감을 소유하거나 여는 의견에서 이유 있는 패스를 남겨야 한다.
+                flow._r1_targets = {int(x) for x in members}
+                flow._r1_passes = _r1_passes
                 if flow.log:
-                    flow.log("meet_r1_brainwrite", n=_r1n, of=len(_r1_targets))
+                    flow.log("meet_r1_brainwrite", n=_r1n, of=len(_r1_targets),
+                             passes=len(_r1_passes))
             except Exception:
                 pass
         _pass = 0
@@ -2412,4 +2427,3 @@ async def request(flow, me_id, role, args):
             if flow.log:
                 flow.log("delegation_detached", to=to, seg=flow.leader_segment)
         raise
-

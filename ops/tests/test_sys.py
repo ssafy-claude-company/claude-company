@@ -72,6 +72,43 @@ def _tools(f, me, role):
     return {t.name: t for t in make_guide_tools(f, me, role)}
 
 
+def test_SYS_자동완료뒤_보유자응찰을_최근작업자가_선정(monkeypatch):
+    """자동완료도 relay.done을 지나며, 남은 백로그 보유자들이 응찰하고 최근 작업자의 선택이 우선한다."""
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import open_milestone, open_subtask
+
+    monkeypatch.setenv("ORGANT_BACKLOG_DRIVE_CAP", "1")
+    g = FakeGuide()
+    f = _flow(g)
+    f.bot_info.update({13: "VFX"})
+    ms = open_milestone(f, "프로토타입", [{"desc": "동작", "verify": "pytest"}])
+    st = open_subtask(f, ms, "화면", [])
+    r = relay_for(f, st)
+    b1 = r.submit(11, "기본 화면 구현", force=True)
+    b2 = r.submit(12, "입력 로직 구현", force=True)
+    b3 = r.submit(13, "타격 연출 구현", force=True)
+    r.pick(11, b1.backlog_id, 11)
+    b1._drive_n = 1
+    s = Sys(g, 1, None, bot_info={11: "L", 12: "M", 13: "VFX"})
+
+    async def scripted(_flow, who, body, kind, role, micro=False):
+        if "응찰" in body and who == 12:
+            return f"[응찰: 9, {b2.backlog_id}] 기반 작업이라 우선"
+        if "응찰" in body and who == 13:
+            return f"[응찰: 4, {b3.backlog_id}] 화면 흐름상 지금 적절"
+        if "선정" in body:
+            return f"[선정: {b3.backlog_id}]"       # 최고점보다 최근 작업자의 명시 선택이 우선
+        return ""
+    s.run_turn = scripted
+
+    asyncio.run(s._claim_kick(f))
+    assert b1.status == "done" and r.turn_holder == 11
+    assert b2.status == "open"
+    assert b3.status == "in_progress" and b3.assignee == 13
+    assert any(e["event"] == "backlog_handoff_selected"
+               and e["backlog"] == b3.backlog_id and not e["fallback"] for e in s.flow_log)
+
+
 def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_path, monkeypatch):
     """[2026-07-23 완료 인식] 봇 report_iter 없이도 구조가 실제 셸 영수증을 iter_verify에 넣어 닫는다."""
     from system.rule.backlog import Backlog, relay_for

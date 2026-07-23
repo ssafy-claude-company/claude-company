@@ -1623,6 +1623,8 @@ def register_stage(flow, stage, prop, origin=""):
         # [거부 사유 은닉 봉합(2026-07-20, U-035 실측: 가결→등록 0건→'단위: 줄을 확인' 오진 → 봇이
         # 멀쩡한 단위 줄만 재확인·재가결하는 무한 사이클×2회의)] open_subtask(gate_criteria)의 단위별
         # 거부 사유를 버리지 않고 그대로 돌려준다 — 고칠 수 있는 진단만이 사이클을 끝낸다.
+        _before_st_n = len(_open.subtasks)
+        _before_relay_ids = set((getattr(flow, "backlog_relays", None) or {}).keys())
         n = 0
         _errs = []
         for u in units:
@@ -1645,6 +1647,15 @@ def register_stage(flow, stage, prop, origin=""):
             _ok_b, _note_b = register_stage(flow, "backlog", prop, origin)
             if _ok_b:
                 _bl_note = " + " + str(_note_b).replace("[표결 확정] ", "").strip()
+            else:
+                # 병합 회의는 영역+일감이 한 결정이다. 뒤 절반의 직군 커버리지/등록 게이트가 거부하면
+                # 앞 절반만 남기는 부분 커밋을 하지 않는다.
+                del _open.subtasks[_before_st_n:]
+                _store_b = getattr(flow, "backlog_relays", None) or {}
+                for _rid_b in list(_store_b):
+                    if _rid_b not in _before_relay_ids:
+                        _store_b.pop(_rid_b, None)
+                return False, str(_note_b)
         return True, (f"[표결 확정] 작업 영역 {n}개 등록."
                       + (f" (미등록 {len(_errs)}건 — 사유: {_etxt})" if _errs else "")
                       + (_bl_note if _bl_note
@@ -1736,6 +1747,40 @@ def register_stage(flow, stage, prop, origin=""):
                 if _ov > _best:
                     _best, _who_r = _ov, _bid
             return _who_r if _best >= 0.5 else None
+
+        # [직군 기회/판단 게이트(2026-07-23, ch94)] 전원 기고를 요청해 놓고도 어떤 직군의 제안이
+        # 다른 사람이 전사한 백로그로만 흡수되면, 그 직군은 '할 일 없음'을 선택한 적 없이 0건이 된다.
+        # 등록 전에 각 대상이 ① 자기 소유 백로그를 하나 이상 갖거나 ② 이유 있는 패스를 남겼는지 확인한다.
+        _coverage_targets = {int(x) for x in (getattr(flow, "_r1_targets", None) or set())}
+        _coverage_passes = {int(k): str(v) for k, v in
+                            (getattr(flow, "_r1_passes", None) or {}).items() if str(v).strip()}
+        if _coverage_targets:
+            _predicted_owners = set()
+            for _st0 in _alive_sts:
+                _r0 = store.get(_st0.st_id)
+                if _r0:
+                    _predicted_owners.update(int(b.submitter) for b in _r0.backlogs if int(b.submitter or 0))
+            for _ln0 in lines:
+                _s0 = _ln0.strip()
+                if not _s0.startswith("백로그:"):
+                    continue
+                try:
+                    _st0, _body0 = _dest_of(_s0.split(":", 1)[1].strip())
+                    _predicted_owners.add(int(_r1_author(_body0)
+                                              or _attr_of(draft_norm_line(_s0) or _s0)
+                                              or _owner_fb(_st0, _body0)))
+                except Exception:
+                    pass
+            _missing = sorted(_coverage_targets - _predicted_owners - set(_coverage_passes))
+            if _missing:
+                _roles = " · ".join(str(getattr(flow, "_info", lambda x: x)(x) or x)
+                                    for x in _missing)
+                if flow.log:
+                    flow.log("backlog_role_coverage", owners=len(_predicted_owners),
+                             passes=len(_coverage_passes), missing=" ".join(map(str, _missing)))
+                return False, (f"직군별 백로그 선택이 빠졌습니다: {_roles}. 각자는 자기 백로그를 최소 1개 "
+                               f"결정 구획에 올리거나, 정말 할 일이 없으면 독립 기고에서 `[패스: 이유]`로 "
+                               f"명시해야 합니다. 의견을 남의 백로그에 흡수한 것만으로 패스 처리할 수 없습니다.")
 
         n = 0
         _per = {}

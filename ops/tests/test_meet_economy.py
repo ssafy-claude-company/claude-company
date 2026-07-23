@@ -826,6 +826,33 @@ def test_백로그_발제귀속_R1_원저자_전사자아님(monkeypatch, tmp_pa
     assert int(b.submitter) == 13, f"R1 원저자(프론트 13)에 귀속돼야 — 전사자 앵커 아님, got {b.submitter}"
 
 
+def test_백로그0건_직군은_이유있는_패스_없이는_회의종료불가(monkeypatch, tmp_path):
+    """0건을 침묵에서 추측하지 않는다: 자기 소유 일감 또는 이유 있는 패스가 있어야 회의를 닫는다."""
+    from system.rule.milestone import register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    _g, f = _meet_flow(tmp_path, bots={11: "L", 12: "VFX", 13: "모션"})
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "게임"
+    okm, _ = register_stage(f, "milestone",
+                            "이번 주기: 전투 화면\n- 전투 연출 확인 | 실증: run 재현", "게임")
+    assert okm
+    f._r1_targets = {12, 13}
+    f._r1_attr = [(12, "충돌 순간 타격 VFX와 클리어 연출 구현")]
+    f._r1_passes = {}
+    proposal = ("단위: 전투 연출 | 실증: run 재현\n"
+                "백로그: [전투 연출] 충돌 순간 타격 VFX와 클리어 연출 구현")
+    ok, note = register_stage(f, "subtask", proposal, "게임")
+    assert not ok and "모션" in note and "패스: 이유" in note, (ok, note)
+    assert not f.milestones[-1].subtasks
+
+    f._r1_passes = {13: "정적 프로토타입 주기라 별도 모션 자산이 필요하지 않음"}
+    ok2, note2 = register_stage(f, "subtask", proposal, "게임")
+    assert ok2, note2
+    st = f.milestones[-1].subtasks[0]
+    assert f.backlog_relays[st.st_id].backlogs[0].submitter == 12
+
+
 def test_병합_참조재진술_백로그_반려_거짓완료차단(monkeypatch, tmp_path):
     """[U-041 실측(2026-07-22, 사용자: '카드 비교 규칙 백로그 아래 서브태스크 회의 내용 중복')] 병합
     회의가 'B4'·'B2 점수 공식…' 같은 의존/참조 줄과 재진술을 백로그로 등록(force=True로 중복 게이트

@@ -1606,6 +1606,73 @@ class Sys:
                     return (int(getattr(b, "assignee", 0) or getattr(b, "submitter", 0) or 0), b, st.st_id)
         return None
 
+    async def _backlog_handoff(self, flow, r, holder):
+        """완료자가 남은 백로그 보유자의 응찰을 보고 다음 일을 고르는 구조적 릴레이.
+
+        도구 자발 호출에 기대지 않는다. 보유자만 자기 백로그로 응찰하고, 마지막 작업자가 응찰표를
+        본 뒤 선택한다. 응답이 잘리거나 형식이 틀린 경우에만 최고 응찰(동률은 제출순)을 안전망으로 쓴다.
+        """
+        import re
+        rem = [b for b in r.backlogs if getattr(b, "status", "") in ("open", "blocked")]
+        if not rem:
+            return None
+        by_owner = {}
+        for b in rem:
+            owner = int(getattr(b, "submitter", 0) or 0)
+            if owner:
+                by_owner.setdefault(owner, []).append(b)
+        bids = []
+        for owner, owned in by_owner.items():
+            opts = " · ".join(f"{b.backlog_id}:{(b.body or '')[:55]}" for b in owned)
+            try:
+                ans = await self.run_turn(
+                    flow, owner,
+                    f"[다음 백로그 응찰] 당신이 가진 남은 백로그: {opts}\n"
+                    f"지금 다음으로 할 자기 백로그 하나를 골라 `[응찰: N, {owned[0].backlog_id}] 이유` "
+                    f"형식으로 답하세요(N=1~9). 지금 순서가 아니면 `[패스]`. 도구·작업 없이 즉답.",
+                    Kind.INFO, "worker", micro=True)
+            except Exception:
+                ans = ""
+            m = re.search(r"\[응찰\s*:\s*([1-9])\s*,\s*(B\d+)\s*\]", str(ans or ""), re.I)
+            if m:
+                bid_id = m.group(2).upper()
+                if any(b.backlog_id == bid_id for b in owned):
+                    bids.append((int(m.group(1)), bid_id, owner, str(ans)[:180]))
+            self._log("backlog_handoff_bid", by=owner,
+                      score=(int(m.group(1)) if m else 0), backlog=(m.group(2).upper() if m else ""))
+        if not bids:
+            return None
+        sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
+                          for score, bid_id, owner, reason in bids)
+        try:
+            choice = await self.run_turn(
+                flow, int(holder),
+                f"[다음 백로그 선정] 당신이 방금 작업을 마쳐 배분권을 가집니다. 보유자 응찰표:\n{sheet}\n"
+                f"다음 하나를 직접 골라 `[선정: B번호]`로 답하세요. 도구 없이 즉답.",
+                Kind.INFO, "worker", micro=True)
+        except Exception:
+            choice = ""
+        cm = re.search(r"\[선정\s*:\s*(B\d+)\s*\]", str(choice or ""), re.I)
+        selected = cm.group(1).upper() if cm else ""
+        valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
+        fallback = selected not in valid
+        if fallback:
+            # 응답 장애 안전망: 점수 우선, 동률은 원래 백로그 제출 순서.
+            order = {b.backlog_id: i for i, b in enumerate(rem)}
+            _score, selected, _owner, _reason = max(
+                bids, key=lambda x: (x[0], -order.get(x[1], 10**9)))
+        owner = valid[selected]
+        r.pick(int(holder), selected, int(owner))
+        self._log("backlog_handoff_selected", by=int(holder), backlog=selected,
+                  to=int(owner), fallback=bool(fallback))
+        try:
+            await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
+                                  f"[다음 선정] {flow._info(holder) or holder} → "
+                                  f"{flow._info(owner) or owner} · 백로그 {selected}")
+        except Exception:
+            pass
+        return selected
+
     async def _claim_kick(self, flow):
         """[구조적 백로그 릴레이(2026-07-23, 사용자: '계획처럼 실행도 구조로 강제')] 봇의 자발적
         pick_backlog/report_iter 호출에 기대지 않고 **구조가 릴레이를 민다** — 계획 단계 게이트와 대칭.
@@ -1631,12 +1698,18 @@ class Sys:
                     return
                 b._drive_n = getattr(b, "_drive_n", 0) + 1
                 if b._drive_n > _cap:                          # ② 상한 소진 → 구조적 완료 기록
-                    b.status = "done"
+                    from .rule.backlog import handoff_note
+                    r = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
+                    if r is None:
+                        return
+                    r.done(int(who), b.backlog_id)
+                    handoff_note(flow, r, int(who), "완료됐습니다")
                     self._log("backlog_autodone", backlog=str(b.backlog_id), drives=int(b._drive_n))
                     try:
                         await flow.guide.post(_ch, 0, f"[완료] 백로그 {b.backlog_id} — 작업 기록됨(위 발화가 요약).")
                     except Exception:
                         pass
+                    await self._backlog_handoff(flow, r, int(who))
                     return
                 await self.run_turn(
                     flow, who,
