@@ -1579,13 +1579,65 @@ class Sys:
             if not task.done():              # 외부 취소·타임아웃 어느 쪽이든 내부 task 누수 방지
                 task.cancel()
 
+    def _backlog_in_progress(self, flow):
+        """[구조적 릴레이 — 단일 활성] 지금 in_progress인 백로그 하나를 (담당id, Backlog, st_id)로 돌려준다
+        (없으면 None). 계획 단계처럼 실행도 '작업중 하나'만 몰기 위한 근거 — 미완 단위의 첫 in_progress."""
+        mss = getattr(flow, "milestones", None) or []
+        ms = next((m for m in mss if m.status not in ("done", "superseded")), None)
+        if ms is None:
+            return None
+        store = getattr(flow, "backlog_relays", None) or {}
+        for st in ms.subtasks:
+            if st.status in ("done", "superseded"):
+                continue
+            r = store.get(st.st_id)
+            if not r or not getattr(r, "backlogs", None):
+                continue
+            for b in r.backlogs:
+                if getattr(b, "status", "") == "in_progress":
+                    return (int(getattr(b, "assignee", 0) or getattr(b, "submitter", 0) or 0), b, st.st_id)
+        return None
+
     async def _claim_kick(self, flow):
-        """[첫 선점 킥(2026-07-19, ch79/P-032 실측 수리)] 작업 단계에서 대기 백로그의 제출자를 1회
-        깨워 선점·착수를 구조로 강제 — 판단은 rule(claim_kick_target), 여기는 wake 배선만.
-        백로그당 1회(flow._claim_kicked)·in_progress 있으면 no-op — 이어가기 루프에서 매 세그 호출해도
-        조용하다(회의 직후 전이·복원 재개 양쪽을 같은 자리에서 덮는다)."""
+        """[구조적 백로그 릴레이(2026-07-23, 사용자: '계획처럼 실행도 구조로 강제')] 봇의 자발적
+        pick_backlog/report_iter 호출에 기대지 않고 **구조가 릴레이를 민다** — 계획 단계 게이트와 대칭.
+          ① in_progress 백로그가 있으면 그 담당을 이어-깨워 완성시키고(단일 활성), 봇이 report_iter로
+             status=done을 세우면 다음으로 넘어간다. ② 완료 신호 없이 구동 상한
+             (ORGANT_BACKLOG_DRIVE_CAP, 기본 3)에 닿으면 작업이 된 것으로 보고 **구조적으로 완료 기록**
+             (요약이 곧 기록·무한 재구동 차단). ③ in_progress가 없으면 다음 open을 **즉시 in_progress로
+             세워** '작업중 하나'를 화면에 띄우고 착수시킨다(봇의 pick 호출을 안 기다림).
+        효과: 항상 '작업중 하나'가 화면에 보이고(단일 활성·누가·무슨 백로그 명시), 완료가 장부에 남으며,
+        릴레이가 스스로 잇는다. 봇의 자율(무엇을·어떻게 만들지)은 그대로 — 진행의 보장만 구조가 진다."""
         try:
             from .rule.milestone import claim_kick_target
+            _ch = int(getattr(flow, "user_channel", 0) or 0)
+            try:
+                _cap = max(1, int(os.environ.get("ORGANT_BACKLOG_DRIVE_CAP", "3") or 3))
+            except ValueError:
+                _cap = 3
+            # ① 진행 중 백로그를 이어-구동 (단일 활성)
+            active = self._backlog_in_progress(flow)
+            if active is not None:
+                who, b, st_id = active
+                if getattr(b, "status", "") == "done":
+                    return
+                b._drive_n = getattr(b, "_drive_n", 0) + 1
+                if b._drive_n > _cap:                          # ② 상한 소진 → 구조적 완료 기록
+                    b.status = "done"
+                    self._log("backlog_autodone", backlog=str(b.backlog_id), drives=int(b._drive_n))
+                    try:
+                        await flow.guide.post(_ch, 0, f"[완료] 백로그 {b.backlog_id} — 작업 기록됨(위 발화가 요약).")
+                    except Exception:
+                        pass
+                    return
+                await self.run_turn(
+                    flow, who,
+                    f"[작업중 — 이어서] 백로그 {b.backlog_id}(\"{(b.body or '')[:70]}\")가 아직 당신 손에 "
+                    f"있습니다 — **바로 이어서 완성**(파일·코드·실행)하고, 끝나면 마지막 발화로 '한 일 "
+                    f"요약' 3~5줄 + report_iter로 완료 보고하세요. 회의·의견 아니라 작업입니다.",
+                    Kind.INFO, "worker")
+                return
+            # ③ 진행 중 없음 → 다음 open을 구조적으로 착수(즉시 in_progress로 세워 화면에 띄운다)
             t = claim_kick_target(flow)
             if not t:
                 return
@@ -1594,20 +1646,19 @@ class Sys:
             if kicked is None:
                 kicked = flow._claim_kicked = set()
             kicked.add(b.backlog_id)
+            b.status = "in_progress"; b.assignee = int(who); b._drive_n = 0
             self._log("claim_kick", st=str(st_id), backlog=str(b.backlog_id), to=int(who))
+            try:
+                await flow.guide.post(_ch, 0,
+                    f"[작업중] {flow._info(who) or who} · 백로그 {b.backlog_id}: {(b.body or '')[:70]}")
+            except Exception:
+                pass
             await self.run_turn(
                 flow, who,
-                f"[작업 시작] 회의는 끝났고 지금은 **작업 단계**입니다. 당신이 등재한 백로그 "
-                f"{b.backlog_id}(\"{(b.body or '')[:80]}\")가 대기 중입니다 — 지금 "
-                f"pick_backlog(id=\"{b.backlog_id}\")로 선점하고 **바로 실작업**(파일 생성·코드 작성·"
-                f"실행)을 시작하세요. 발언·회의 소집이 아니라 작업입니다. "
-                # [작업 가시화(2026-07-22, 사용자: '백로그가 뭘 한건지 보고가 안되고 채팅도 안남아 —
-                # 게이트 대신 생각 과정이 잘 남게')] 게이트 검증(report_iter 실증)이 아니라 '무엇을 했나'가
-                # 피드에 남는 게 핵심. 끝나면 **마지막 발화로 한 일을 3~5줄 요약**(무엇을 만들었나·핵심
-                # 결정·남긴 파일)해 채널에 남기고 — 이게 이 백로그의 작업 기록이다.
-                f"끝나면 **마지막 발화로 '한 일 요약'(무엇을 만들었는지·핵심 결정·만든 파일 경로)을 "
-                f"3~5줄로 채널에 남기고**, 그 다음 report_iter로 완료 보고 + 다음 수행자를 "
-                f"pick_backlog(id=…)로 선정하세요. 요약이 곧 이 백로그의 작업 기록입니다.",
+                f"[작업 시작] 회의는 끝났고 지금은 **작업 단계**입니다. 백로그 {b.backlog_id}"
+                f"(\"{(b.body or '')[:80]}\")를 당신이 맡았습니다 — **바로 실작업**(파일 생성·코드 작성·"
+                f"실행)을 시작하세요. 발언·회의 소집이 아니라 작업입니다. 끝나면 마지막 발화로 '한 일 "
+                f"요약'(무엇을 만들었는지·핵심 결정·만든 파일 경로) 3~5줄 + report_iter로 완료 보고하세요.",
                 Kind.INFO, "worker")
         except Exception as e:
             self._log("claim_kick_error", err=str(e)[:80])
