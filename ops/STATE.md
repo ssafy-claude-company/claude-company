@@ -1,6 +1,24 @@
 # STATE — 현재 상태 (살아있는 문서)
 
-> 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-06.
+> 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-24.
+
+## ★ 사람용 Codex 공식 Remote SSH 준비 (2026-07-24 GPT)
+- murmur의 임시 GPT/CLI 링크를 대체할 공식 경로를 **ChatGPT 데스크톱 앱 → SSH
+  `murmur-ai.duckdns.org:22` → `/root/ClaudeCompany`**로 정함. 서버 DNS/IP 일치·UFW 22 허용·
+  OpenSSH 공개키 인증을 확인했다.
+- Codex CLI 0.145.0(진단 당시 최신)·ChatGPT 구독 인증·상태 DB·네트워크가 정상이다.
+  SSH 비대화형 기본 PATH에서도 찾도록 `/usr/local/bin/codex → /root/.local/bin/codex`를 두었고,
+  공식 `app-server daemon bootstrap`을 복구·완료해 Unix socket에서 실행 중이다. **Codex용 TCP
+  포트는 열지 않았다.**
+- 전역 기본값은 사용자 요청대로 `gpt-5.6-luna` + reasoning `max`. 사람용 Remote도 같은 root
+  Codex 설정과 `AGENTS.md → ops/STATE.md` 정향을 사용한다.
+- 보안 미완 1건: sshd 실효값이 아직 `PermitRootLogin yes`·`PasswordAuthentication yes`다. 최근
+  실제 root 접속이 비밀번호였으므로 임의 차단하지 않았다. 로컬 공개키 전용 접속 성공 뒤
+  `ops/infra/sshd-codex-remote.conf`를 `00-` drop-in으로 적용해야 한다.
+- 기존 링크/ttyd(현재 loopback `127.0.0.1:7681`)는 Remote 실채팅 관통 뒤 소비자를 확인하고
+  퇴역한다. Organt GPT 봇의 내부 MCP `127.0.0.1:8791`과 Fable/Claude 세션은 유지한다.
+  전체 클라이언트 절차·검증·롤백 정본=`ops/CODEX_REMOTE.md`, 서버 재점검=`bash
+  ops/codex_remote_check.sh`.
 
 ## ★ 마일스톤 완료 인식 갭 구현 (2026-07-23 GPT)
 - ch94/P-045에서 백로그 5건과 실물 산출물은 끝났지만 조건 `met:0/2`로 남아 재픽 순환하던 비대칭을 닫음. **현재 실행 가능한 백로그가 소진되면 SYS가 마일스톤 검증을 구조적으로 촉발**한다.

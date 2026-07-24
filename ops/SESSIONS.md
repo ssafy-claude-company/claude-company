@@ -2,7 +2,16 @@
 
 > 세션이 헷갈리거나 끊기면 여기 보고 복구. **웹 랜덤이름(lazy-honey 등)은 무시**하고 아래 URL/pwd로 식별.
 
-## 현재 세션 (2개, 고정)
+## 사람용 GPT/Codex — 공식 Remote SSH
+
+- 기본 진입은 murmur의 임시 웹 CLI가 아니라 **ChatGPT 데스크톱 앱 → SSH `murmur-vps` →
+  `/root/ClaudeCompany`**다.
+- 서버는 Codex 로그인·비대화형 PATH·영속 app-server Unix socket·GPT-5.6-Luna/max까지 준비됨.
+- 로컬 SSH 키 등록과 앱 연결 절차, 검증 및 기존 링크 퇴역 게이트는
+  [`CODEX_REMOTE.md`](CODEX_REMOTE.md)가 정본이다.
+- 이 연결은 아래 Fable/Claude 세션과 Organt 내부 GPT 브리지(`127.0.0.1:8791`)를 대체하지 않는다.
+
+## Claude/Fable 현재 세션 (2개, 고정)
 | 이름 | worktree | tmux | 웹 접속 |
 |---|---|---|---|
 | **변도진** | `/root/wt/ClaudeCompany-변도진` | `tmux attach -t 변도진` | env URL → 목록에서 **ClaudeCompany-변도진** |
