@@ -978,7 +978,11 @@ async def meet(flow, me_id, args):
                 _r1_attr = []      # [(bot_id, 기고 텍스트)] — 발제 귀속의 원저자(전사자 아님)
                 _r1_passes = {}    # {bot_id: 이유} — '일 없음'의 개인 판단을 사후 추측하지 않게
                 _r1_responded = set()  # 실질 기고자 — 소유 여부와 별개로 자기 판단 기회를 행사함
-                _r1_targets = [m for m in members if m != me_id]
+                # SYS 단계 회의는 개설자 세션도 유휴라 평참여자로 wake 가능하다(위 평등 회의 계약).
+                # ch95에서 종전의 무조건 제외 때문에 개설자 브랜드만 R1의 백로그 제안/이유 패스
+                # 프롬프트를 못 받고, 뒤 발언 응찰도 0이라 실제 DRAFT 편집 기회 없이 게이트만 요구받았다.
+                # 봇이 자기 도구로 연 회의는 호출 세션 경합 때문에 종전처럼 개설자를 제외한다.
+                _r1_targets = list(members) if _sys_open else [m for m in members if m != me_id]
                 _my_pass = re.match(r"^\[패스\s*:\s*(.+?)\]", my_view, re.S)
                 if me_id in members and _my_pass and _my_pass.group(1).strip():
                     _r1_passes[int(me_id)] = _my_pass.group(1).strip()[:200]
