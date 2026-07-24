@@ -52,6 +52,15 @@ def test_빈_제출_거부():
         _relay().submit(A, "   ")
 
 
+def test_백로그_작업생각은_체크포인트에_영속():
+    r = _relay()
+    b = r.submit(A, "프론트 카드 구현")
+    r.pick(A, b.backlog_id, B)
+    b.activity.extend(["[프론트엔드] 💭 구조 확인", "[프론트엔드] 💭 렌더 구현"])
+    restored = BacklogRelay.from_ckpt(r.to_ckpt())
+    assert restored.get("B1").activity == b.activity
+
+
 def test_참조표기_백로그_반려_모든경로(monkeypatch):
     """[U-041 실측(2026-07-22, 사용자: '5개 통과 서브태스크 완수됐는데 갑자기 백로그 수만 늘어남')]
     병합 회의 등록·작업 중 report_iter 자동생성 양쪽에서 'B4'·'B2 점수 공식…' 같은 의존/참조 줄이

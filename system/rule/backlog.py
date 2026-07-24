@@ -66,12 +66,14 @@ class Backlog:
     note: str = ""               # iter 정리 등 상태 밖 메모(상태 4종을 오염시키지 않는다)
     ts_pick: float = 0.0         # [창 귀속(2026-07-10)] 선정 시각 — 이 시각부터의 대화가 이 백로그
     ts_done: float = 0.0         # 완료/차단 시각 — 창의 끝
+    activity: list = field(default_factory=list)  # 이 일감에 정확히 귀속된 작업 생각
 
     def to_dict(self) -> dict:
         return {"backlog_id": self.backlog_id, "body": self.body, "submitter": int(self.submitter),
                 "status": self.status, "assignee": self.assignee, "block_count": self.block_count,
                 "block_reason": self.block_reason, "note": self.note,
-                "ts_pick": self.ts_pick, "ts_done": self.ts_done}
+                "ts_pick": self.ts_pick, "ts_done": self.ts_done,
+                "activity": list(self.activity or [])}
 
     @staticmethod
     def from_dict(d: dict) -> "Backlog":
@@ -79,7 +81,8 @@ class Backlog:
                        submitter=int(d.get("submitter") or 0), status=str(d.get("status") or OPEN),
                        ts_pick=float(d.get("ts_pick") or 0), ts_done=float(d.get("ts_done") or 0),
                        assignee=d.get("assignee"), block_count=int(d.get("block_count") or 0),
-                       block_reason=str(d.get("block_reason") or ""), note=str(d.get("note") or ""))
+                       block_reason=str(d.get("block_reason") or ""), note=str(d.get("note") or ""),
+                       activity=[str(x)[:140] for x in (d.get("activity") or [])])
 
 
 class BacklogRelay:

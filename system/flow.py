@@ -259,6 +259,26 @@ class Flow:
             log.append((t, time.monotonic()))
             if len(log) > self._ACT_GUARD:         # 폭주 최후 방어 — 정상 흐름은 여기 안 닿음
                 del log[0:len(log) - self._ACT_GUARD]
+        # 전역 현재-worker 창을 설명 토큰으로 추측해 백로그에 붙이지 않는다. 현재 수행자가 실제로
+        # 쥔 유일한 in_progress 장부에 기록해야 중복 귀속과 작업자 교체 시 소멸이 함께 사라진다.
+        try:
+            active = []
+            for r in (getattr(self, "backlog_relays", None) or {}).values():
+                active += [b for b in (r.backlogs or [])
+                           if b.status == "in_progress" and int(b.assignee or 0) == int(bot or 0)]
+            if len(active) == 1:
+                b = active[0]
+                if not b.activity or b.activity[-1] != t:
+                    b.activity.append(t)
+                    if len(b.activity) > self._ACT_GUARD:
+                        del b.activity[0:len(b.activity) - self._ACT_GUARD]
+                now = time.monotonic()
+                if now - float(getattr(self, "_last_backlog_activity_mirror", 0.0) or 0.0) >= 1.0:
+                    from .rule.milestone import persist_ms_status
+                    persist_ms_status(self)
+                    self._last_backlog_activity_mirror = now
+        except Exception:
+            pass
         # [💭 실황] 긴 LLM 턴 중엔 log 이벤트가 없어 미러가 안 돈다 — 생각·도구 활동이 곧
         # 실황이므로 여기서도 미러(1s 스로틀, best-effort). 관측용 — 실패가 흐름을 못 막음.
         try:

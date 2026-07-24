@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from system.flow import Flow
 from system import entity_status
 from system.protocol import Kind
+from system.rule.backlog import BacklogRelay
 
 
 def _mk_flow():
@@ -76,3 +77,22 @@ def test_mirror_noop_without_pjt(monkeypatch):
     f.log = lambda event, **kw: None
     f.start_root("r")
     f.log("req_sent")                            # ORGANT_PJT 없음 — 무동작(예외 없이)
+
+
+def test_작업생각은_현재수행자의_유일한_백로그에만_귀속(monkeypatch):
+    monkeypatch.delenv("ORGANT_PJT", raising=False)
+    f = _mk_flow()
+    r1, r2 = BacklogRelay("ST-1"), BacklogRelay("ST-2")
+    b1 = r1.submit(101, "화면 구현")
+    b2 = r2.submit(101, "API 구현")
+    r1.pick(101, b1.backlog_id, 202)
+    f.backlog_relays = {"ST-1": r1, "ST-2": r2}
+
+    f.note_activity(202, "💭 컴포넌트 구조를 확인한다")
+    assert b1.activity == ["[백엔드] 💭 컴포넌트 구조를 확인한다"]
+    assert b2.activity == []
+
+    # 수행자가 실제로 쥔 일감이 없으면 전역 실황에는 남되 임의 백로그에 추측 귀속하지 않는다.
+    f.note_activity(101, "💭 다음 순서를 살핀다")
+    assert len(f.activity_log) == 2
+    assert b1.activity == ["[백엔드] 💭 컴포넌트 구조를 확인한다"]
