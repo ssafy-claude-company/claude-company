@@ -109,6 +109,30 @@ def test_SYS_자동완료뒤_보유자응찰을_최근작업자가_선정(monkey
                and e["backlog"] == b3.backlog_id and not e["fallback"] for e in s.flow_log)
 
 
+def test_SYS_첫백로그착수도_relay변이로_작업중미러갱신(monkeypatch):
+    """ch96: 직접 status 대입은 봇만 돌고 UI의 B1 ▶ 미러를 갱신하지 않았다. 첫 킥도 r.pick을 지난다."""
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import open_milestone, open_subtask
+
+    g = FakeGuide()
+    f = _flow(g)
+    ms = open_milestone(f, "프로토타입", [{"desc": "동작", "verify": "pytest"}])
+    st = open_subtask(f, ms, "화면", [])
+    r = relay_for(f, st)
+    b = r.submit(12, "첫 화면 구현", force=True)
+    changed = []
+    r._on_change = lambda: changed.append(b.status)
+    s = Sys(g, 1, None, bot_info={11: "L", 12: "M"})
+
+    async def scripted(*_args, **_kwargs):
+        return "작업 착수"
+    s.run_turn = scripted
+
+    asyncio.run(s._claim_kick(f))
+    assert b.status == "in_progress" and b.assignee == 12
+    assert changed == ["in_progress"]                 # relay_pick → persist_ms_status/UI ▶
+
+
 def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_path, monkeypatch):
     """[2026-07-23 완료 인식] 봇 report_iter 없이도 구조가 실제 셸 영수증을 iter_verify에 넣어 닫는다."""
     from system.rule.backlog import Backlog, relay_for

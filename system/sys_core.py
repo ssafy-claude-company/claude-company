@@ -1727,7 +1727,14 @@ class Sys:
             if kicked is None:
                 kicked = flow._claim_kicked = set()
             kicked.add(b.backlog_id)
-            b.status = "in_progress"; b.assignee = int(who); b._drive_n = 0
+            # [작업중 마커 복원(2026-07-24, ch96)] 필드 직접 변경은 BacklogRelay._emit을 건너뛰어
+            # 실제 worker 턴은 도는데 ms_status 미러가 open으로 남고 UI의 B1 ▶가 사라졌다.
+            # 첫 착수도 후속 핸드오프와 같은 정식 pick 변이를 써 상태 영속·화면 갱신을 즉시 발생시킨다.
+            r = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
+            if r is None:
+                return
+            r.pick(int(who), b.backlog_id, int(who))
+            b._drive_n = 0
             self._log("claim_kick", st=str(st_id), backlog=str(b.backlog_id), to=int(who))
             try:
                 await flow.guide.post(_ch, 0,
