@@ -880,6 +880,18 @@ def test_백로그0건이어도_실질기고했으면_수렴회의를_막지않�
     assert f.backlog_relays[st.st_id].backlogs[0].submitter == 12
 
 
+def test_옛_직군별소유_등록이의는_재개시_자동폐기(monkeypatch, tmp_path):
+    """ch95 파킹 DRAFT의 폐기된 정책 이의가 새 규칙에서도 표결을 영구 차단하지 않는다."""
+    import re
+    old = ("> [이의 @등록] 직군별 백로그 선택이 빠졌습니다: 브랜드 스토리텔러. "
+           "각자는 자기 백로그를 최소 1개 결정 구획에 올리세요.\n")
+    draft = "## 결정\n단위: 화면\n" + old + "\n## 참고\n"
+    cleaned = re.sub(
+        r"(?m)^>\s*\[이의 @등록\]\s*직군별 백로그 선택이 빠졌습니다:.*(?:\n|$)", "", draft)
+    assert "직군별 백로그 선택" not in cleaned
+    assert "단위: 화면" in cleaned and "## 참고" in cleaned
+
+
 def test_병합_참조재진술_백로그_반려_거짓완료차단(monkeypatch, tmp_path):
     """[U-041 실측(2026-07-22, 사용자: '카드 비교 규칙 백로그 아래 서브태스크 회의 내용 중복')] 병합
     회의가 'B4'·'B2 점수 공식…' 같은 의존/참조 줄과 재진술을 백로그로 등록(force=True로 중복 게이트

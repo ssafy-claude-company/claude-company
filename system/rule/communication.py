@@ -1054,6 +1054,17 @@ async def meet(flow, me_id, args):
                 # 가결 시 그 파일이 그대로 결론으로 등록된다. 부결·미완성이면 회의 계속(revive) — 반대자는
                 # 표결문 요구대로 DRAFT에 이의를 남기므로 다음 패스가 그 이의를 해소하며 수렴한다.
                 _dtxt = str(_dread(flow, "DRAFT.md") or "")
+                # [ch95 정지판 복구] 07-23의 폐기된 '직군마다 자기 소유 백로그' 정책이 남긴 시스템
+                # 이의는 새 기회 게이트로는 더 이상 유효하지 않다. 이 정확한 옛 문구만 제거해, 이미
+                # 수렴·파킹된 판도 사람의 수동 파일 편집 없이 재개할 수 있게 한다.
+                _dtxt_clean = re.sub(
+                    r"(?m)^>\s*\[이의 @등록\]\s*직군별 백로그 선택이 빠졌습니다:.*(?:\n|$)", "",
+                    _dtxt)
+                if _dtxt_clean != _dtxt:
+                    _dtxt = _dtxt_clean
+                    _dwrite(flow, "DRAFT.md", _dtxt)
+                    if flow.log:
+                        flow.log("stale_backlog_ownership_objection_cleared")
                 _ph, _obj = _ms_dstat(_dtxt)
                 # [등록 프리플라이트(2026-07-17, ch78 실측: 가결→등록거부 사이클에 $3~5×N)] 파일이
                 # 완성돼도 등록 파서가 거부할 형식이면 표결이 낭비 — register_stage와 같은 검사를 표결
