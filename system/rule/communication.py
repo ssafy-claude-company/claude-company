@@ -977,10 +977,14 @@ async def meet(flow, me_id, args):
                 _r1_lines = []
                 _r1_attr = []      # [(bot_id, 기고 텍스트)] — 발제 귀속의 원저자(전사자 아님)
                 _r1_passes = {}    # {bot_id: 이유} — '일 없음'의 개인 판단을 사후 추측하지 않게
+                _r1_responded = set()  # 실질 기고자 — 소유 여부와 별개로 자기 판단 기회를 행사함
                 _r1_targets = [m for m in members if m != me_id]
                 _my_pass = re.match(r"^\[패스\s*:\s*(.+?)\]", my_view, re.S)
                 if me_id in members and _my_pass and _my_pass.group(1).strip():
                     _r1_passes[int(me_id)] = _my_pass.group(1).strip()[:200]
+                elif me_id in members and _is_substantive(my_view):
+                    # SYS 개설자는 동시 세션 경합을 피해 R1 wake 대신 여는 의견으로 독립 판단을 낸다.
+                    _r1_responded.add(int(me_id))
                 for _m1, _r1, _n1 in await _fork_collect(flow, me_id, _r1_targets,
                                                          _r1b, micro=True):
                     _t1 = str(_r1 or "").strip()
@@ -988,6 +992,7 @@ async def meet(flow, me_id, args):
                     if _pm1 and _pm1.group(1).strip():
                         _r1_passes[int(_m1)] = _pm1.group(1).strip()[:200]
                     elif _t1 and not _t1.startswith("[패스") and "API Error" not in _t1[:20]:
+                        _r1_responded.add(int(_m1))
                         _r1_lines.append(_t1[:700])
                         for _cl in _t1.splitlines():           # 줄 단위로 저자 보존(백로그 매칭용)
                             _cl = _cl.strip("·-* \t")
@@ -1009,9 +1014,10 @@ async def meet(flow, me_id, args):
                 # 여는 의견/DRAFT로 자기 일감을 소유하거나 여는 의견에서 이유 있는 패스를 남겨야 한다.
                 flow._r1_targets = {int(x) for x in members}
                 flow._r1_passes = _r1_passes
+                flow._r1_responded = _r1_responded
                 if flow.log:
                     flow.log("meet_r1_brainwrite", n=_r1n, of=len(_r1_targets),
-                             passes=len(_r1_passes))
+                             passes=len(_r1_passes), responded=len(_r1_responded))
             except Exception:
                 pass
         _pass = 0

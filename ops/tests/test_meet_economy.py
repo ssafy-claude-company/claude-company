@@ -826,8 +826,8 @@ def test_백로그_발제귀속_R1_원저자_전사자아님(monkeypatch, tmp_pa
     assert int(b.submitter) == 13, f"R1 원저자(프론트 13)에 귀속돼야 — 전사자 앵커 아님, got {b.submitter}"
 
 
-def test_백로그0건_직군은_이유있는_패스_없이는_회의종료불가(monkeypatch, tmp_path):
-    """0건을 침묵에서 추측하지 않는다: 자기 소유 일감 또는 이유 있는 패스가 있어야 회의를 닫는다."""
+def test_백로그0건_직군은_판단기회_없이_회의종료불가(monkeypatch, tmp_path):
+    """소유를 강제하지 않고, 실질 기고 또는 이유 있는 패스로 직군별 판단 기회만 보장한다."""
     from system.rule.milestone import register_stage
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     _g, f = _meet_flow(tmp_path, bots={11: "L", 12: "VFX", 13: "모션"})
@@ -840,6 +840,7 @@ def test_백로그0건_직군은_이유있는_패스_없이는_회의종료불�
     f._r1_targets = {12, 13}
     f._r1_attr = [(12, "충돌 순간 타격 VFX와 클리어 연출 구현")]
     f._r1_passes = {}
+    f._r1_responded = {12}
     proposal = ("단위: 전투 연출 | 실증: run 재현\n"
                 "백로그: [전투 연출] 충돌 순간 타격 VFX와 클리어 연출 구현")
     ok, note = register_stage(f, "subtask", proposal, "게임")
@@ -849,6 +850,32 @@ def test_백로그0건_직군은_이유있는_패스_없이는_회의종료불�
     f._r1_passes = {13: "정적 프로토타입 주기라 별도 모션 자산이 필요하지 않음"}
     ok2, note2 = register_stage(f, "subtask", proposal, "게임")
     assert ok2, note2
+    st = f.milestones[-1].subtasks[0]
+    assert f.backlog_relays[st.st_id].backlogs[0].submitter == 12
+
+
+def test_백로그0건이어도_실질기고했으면_수렴회의를_막지않음(monkeypatch, tmp_path):
+    """ch95: 개설자 브랜드가 의견을 냈고 브랜드 줄도 결론에 있었지만 소유 0건이라 5회 거부됐다.
+    개인별 백로그를 강제하지 않고, 판단 기회를 행사했으면 다른 사람이 전사·수행해도 확정한다."""
+    from system.rule.milestone import register_stage
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    _g, f = _meet_flow(tmp_path, bots={11: "브랜드", 12: "프론트"})
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "게임"
+    okm, _ = register_stage(f, "milestone",
+                            "이번 주기: 모바일 게임\n- 시작 확인 | 실증: run 재현", "게임")
+    assert okm
+    f._r1_targets = {11, 12}
+    f._r1_responded = {11, 12}
+    f._r1_passes = {}
+    # 브랜드 문구를 프론트가 결정 구획에 전사해 submitter는 12가 된다.
+    f._r1_attr = [(12, "첫 화면 한 문장 규칙과 시작 문구를 구현")]
+    ok, note = register_stage(
+        f, "subtask",
+        "단위: 시작 화면 | 실증: run 재현\n"
+        "백로그: [시작 화면] 첫 화면 한 문장 규칙과 시작 문구를 구현", "게임")
+    assert ok, note
     st = f.milestones[-1].subtasks[0]
     assert f.backlog_relays[st.st_id].backlogs[0].submitter == 12
 

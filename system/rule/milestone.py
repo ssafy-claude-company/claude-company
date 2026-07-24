@@ -1748,12 +1748,17 @@ def register_stage(flow, stage, prop, origin=""):
                     _best, _who_r = _ov, _bid
             return _who_r if _best >= 0.5 else None
 
-        # [직군 기회/판단 게이트(2026-07-23, ch94)] 전원 기고를 요청해 놓고도 어떤 직군의 제안이
-        # 다른 사람이 전사한 백로그로만 흡수되면, 그 직군은 '할 일 없음'을 선택한 적 없이 0건이 된다.
-        # 등록 전에 각 대상이 ① 자기 소유 백로그를 하나 이상 갖거나 ② 이유 있는 패스를 남겼는지 확인한다.
+        # [직군 기회/판단 게이트(2026-07-23 ch94 → 07-24 ch95 교정)] 보장해야 하는 것은 직군별
+        # **판단 기회**이지 모든 직군의 백로그 소유가 아니다. 실질 기고를 냈고 전원이 결론에 찬성했는데
+        # 문구가 다른 사람 손으로 전사됐다는 이유로 자기 소유 0건을 거부하면, 수렴한 회의를 영원히 못
+        # 닫는다(ch95: 개설자 브랜드가 R1 동시 wake 제외 → 브랜드 줄이 있어도 5회 동일 거부).
+        # 각 대상이 ① 실질 독립 기고/여는 의견을 냈거나 ② 이유 있는 패스를 남겼는지만 확인한다.
+        # 소유자 분포는 관측으로 남기되 등록 조건으로 강제하지 않는다.
         _coverage_targets = {int(x) for x in (getattr(flow, "_r1_targets", None) or set())}
         _coverage_passes = {int(k): str(v) for k, v in
                             (getattr(flow, "_r1_passes", None) or {}).items() if str(v).strip()}
+        _coverage_responded = {int(x) for x in
+                               (getattr(flow, "_r1_responded", None) or set())}
         if _coverage_targets:
             _predicted_owners = set()
             for _st0 in _alive_sts:
@@ -1771,16 +1776,20 @@ def register_stage(flow, stage, prop, origin=""):
                                               or _owner_fb(_st0, _body0)))
                 except Exception:
                     pass
-            _missing = sorted(_coverage_targets - _predicted_owners - set(_coverage_passes))
+            _missing = sorted(_coverage_targets - _coverage_responded - set(_coverage_passes))
             if _missing:
                 _roles = " · ".join(str(getattr(flow, "_info", lambda x: x)(x) or x)
                                     for x in _missing)
                 if flow.log:
                     flow.log("backlog_role_coverage", owners=len(_predicted_owners),
-                             passes=len(_coverage_passes), missing=" ".join(map(str, _missing)))
-                return False, (f"직군별 백로그 선택이 빠졌습니다: {_roles}. 각자는 자기 백로그를 최소 1개 "
-                               f"결정 구획에 올리거나, 정말 할 일이 없으면 독립 기고에서 `[패스: 이유]`로 "
-                               f"명시해야 합니다. 의견을 남의 백로그에 흡수한 것만으로 패스 처리할 수 없습니다.")
+                             responded=len(_coverage_responded), passes=len(_coverage_passes),
+                             missing=" ".join(map(str, _missing)))
+                return False, (f"직군별 판단 응답이 빠졌습니다: {_roles}. 각자는 독립 기고에서 자기 관점의 "
+                               f"실질 의견을 내거나, 정말 할 일이 없으면 `[패스: 이유]`로 명시해야 합니다. "
+                               f"백로그 소유를 직군마다 강제하지는 않습니다.")
+            if flow.log:
+                flow.log("backlog_role_coverage", owners=len(_predicted_owners),
+                         responded=len(_coverage_responded), passes=len(_coverage_passes), missing="")
 
         n = 0
         _per = {}
