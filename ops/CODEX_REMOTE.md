@@ -21,6 +21,8 @@ ChatGPT 데스크톱 앱(Mac/Windows)
 ## 서버 준비 상태
 
 - SSH: `murmur-ai.duckdns.org:22`, UFW 허용, OpenSSH 공개키 인증 활성.
+- SSH 서버 ED25519 호스트키 지문:
+  `SHA256:1F5gILzUVzLcBCfcpJxUhriU745mgai69ioNegQqR9U`.
 - Codex: `/usr/local/bin/codex`에서 로그인 셸과 비대화형 명령 모두 발견 가능.
 - 인증: root의 Codex가 ChatGPT 구독 계정으로 로그인됨.
 - app-server: `codex app-server daemon bootstrap` 완료. 전용 Unix socket만 사용하고 Codex TCP
@@ -80,6 +82,8 @@ codex login status
 exit
 ```
 
+첫 접속의 호스트 지문 질문에는
+`SHA256:1F5gILzUVzLcBCfcpJxUhriU745mgai69ioNegQqR9U`가 표시되는지 확인한다.
 첫 명령이 공개키만으로 성공하기 전에는 서버의 비밀번호 로그인을 끄지 않는다.
 
 ### 4. ChatGPT 데스크톱 앱에 등록
