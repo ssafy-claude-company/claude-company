@@ -25,16 +25,6 @@ SOCKET_PATH="$(sed -n 's/.*"socketPath":"\([^"]*\)".*/\1/p' <<<"$DAEMON_JSON")"
 [ -S "$SOCKET_PATH" ] || fail "app-server Unix socket 없음: $SOCKET_PATH"
 echo "✓ app-server: Unix socket $SOCKET_PATH"
 
-systemctl is-active --quiet codex-remote-tui.service ||
-  fail "Linux 원격 TUI 서비스 미기동: codex-remote-tui.service"
-curl --noproxy '*' --fail --silent --show-error --max-time 3 \
-  http://127.0.0.1:4500/readyz >/dev/null ||
-  fail "Linux 원격 TUI app-server readiness 실패"
-LISTEN_ADDRS="$(ss -ltnH 'sport = :4500' 2>/dev/null | awk '{print $4}')"
-[ "$LISTEN_ADDRS" = "127.0.0.1:4500" ] ||
-  fail "4500 리스너가 loopback 단일 주소가 아님: ${LISTEN_ADDRS:-없음}"
-echo "✓ Linux 원격 TUI: SSH 전용 loopback ws://127.0.0.1:4500"
-
 git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 || fail "프로젝트 Git 저장소 없음: $PROJECT"
 [ -r "$PROJECT/AGENTS.md" ] || fail "AGENTS.md 없음: $PROJECT"
 [ -r "$PROJECT/ops/STATE.md" ] || fail "ops/STATE.md 없음: $PROJECT"
@@ -51,4 +41,4 @@ else
   echo "△ SSH: 비밀번호 로그인 활성 — 로컬 공개키 검증 뒤 하드닝 필요"
 fi
 
-echo "READY: Linux Codex CLI SSH 터널 또는 Mac/Windows ChatGPT 데스크톱 SSH에서 $PROJECT 연결 가능"
+echo "READY: Windows ChatGPT 데스크톱 앱의 Codex에서 SSH host와 $PROJECT 연결 가능"
