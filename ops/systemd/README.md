@@ -1,4 +1,4 @@
-# ops/systemd — 관측 회전·알림 유닛 (설치는 운영자 — 사용자 승인 후)
+# ops/systemd — 운영 유닛 (설치는 운영자 — 사용자 승인 후)
 
 이 디렉터리는 **파일 제공만** 한다. `/etc` 복사·`systemctl enable`은 반드시 사용자 승인 후 운영자가.
 
@@ -7,6 +7,7 @@
 | `monitor-alerts.service` + `.timer` | 5분마다 `manage.py monitor_alerts` — 러너사망·스톨·수렴경보·denied 급증 → 채널/웹훅/stdout |
 | `log-rotate.service` + `.timer` | 매시 `ops/log_rotate.sh` — flow/audit 5MB 초과 시 `.1`~`.5` 회전 |
 | `organt-runner-onfailure.conf.example` | 러너 유닛 실패 시 즉시 알림 스캔(드롭인 예시) |
+| `codex-remote-tui.service` | Linux 로컬 Codex CLI가 SSH 터널로 붙는 app-server. VPS `127.0.0.1:4500`만 리슨 |
 | (형제) `../organt-logs.logrotate` | logrotate.d 방식 회전(위 timer의 **대안** — 하나만 활성화) |
 
 ## 설치 명령 (전부 승인 후)
@@ -36,6 +37,13 @@ ORGANT_ALERT_WEBHOOK=https://…       # Slack/Discord 호환 JSON POST
 ORGANT_ALERT_CHANNEL=123456789       # murmur 운영 채널 id(GuideMessage 게시)
 EOF
 chmod 600 /etc/organt-monitor.env
+
+# 5) Linux 사람용 Codex 원격 TUI — 공인망 포트 개방 금지
+install -o root -g root -m 644 \
+  /root/ClaudeCompany/ops/systemd/codex-remote-tui.service \
+  /etc/systemd/system/codex-remote-tui.service
+systemctl daemon-reload
+systemctl enable --now codex-remote-tui.service
 ```
 
 ## 확인·튜닝

@@ -4,10 +4,12 @@
 
 ## 사람용 GPT/Codex — 공식 Remote SSH
 
-- 기본 진입은 murmur의 임시 웹 CLI가 아니라 **ChatGPT 데스크톱 앱 → SSH `murmur-vps` →
-  `/root/ClaudeCompany`**다.
-- 서버는 Codex 로그인·비대화형 PATH·영속 app-server Unix socket·GPT-5.6-Luna/max까지 준비됨.
-- 로컬 SSH 키 등록과 앱 연결 절차, 검증 및 기존 링크 퇴역 게이트는
+- 로컬 컴퓨터가 Linux이므로 기본 진입은 murmur의 임시 웹 CLI가 아니라 **Codex CLI 원격 TUI →
+  SSH 터널 `murmur-vps` → `/root/ClaudeCompany`**다. ChatGPT 데스크톱 Remote 호스트는
+  macOS/Windows에서만 쓴다.
+- 서버는 Codex 로그인·비대화형 PATH·영속 app-server Unix socket·Linux용 loopback
+  `127.0.0.1:4500` 서비스·GPT-5.6-Luna/max까지 준비됨. 4500은 공인망에 열지 않는다.
+- 로컬 CLI 설치·SSH 키/터널·데스크톱 대안, 검증 및 기존 링크 퇴역 게이트는
   [`CODEX_REMOTE.md`](CODEX_REMOTE.md)가 정본이다.
 - 이 연결은 아래 Fable/Claude 세션과 Organt 내부 GPT 브리지(`127.0.0.1:8791`)를 대체하지 않는다.
 
