@@ -46,6 +46,73 @@ def backlog_scope_key(subtask_id, backlog_id) -> str:
     return f"{str(subtask_id)}::{str(backlog_id)}"
 
 
+def blocked_ready_for_revisit(backlog, all_backlogs, blocked_scope) -> bool:
+    """선행 보충 작업이 실제로 끝난 뒤에만 blocked 원본을 재개할 수 있다.
+
+    blocked 직후 곧바로 다시 집으면 같은 선행 부족으로 재차 막힌다. 전체 주기의 실행 가능
+    백로그(open/in_progress)를 먼저 소진하고, 차단 뒤 **새로 생성되어** 끝난 보충 백로그가 하나
+    이상 있을 때만 원본을 다시 후보로 올린다. 별도 의존 그래프가 없는 현재 장부에서
+    보충 회의가 새 항목에 새긴 ``supplement_for=(ST::B)`` 링크와
+    ``ts_submit > blocked.ts_done``·후속 ``ts_done``이 보충 세대·실행의 단조로운 증거다.
+    """
+    if getattr(backlog, "status", "") != BLOCKED:
+        return False
+    blocked_at = float(getattr(backlog, "ts_done", 0) or 0)
+    blocked_scope = str(blocked_scope or "")
+    rows = list(all_backlogs or [])
+    if (not blocked_scope or blocked_at <= 0
+            or any(getattr(x, "status", "") in (OPEN, IN_PROGRESS) for x in rows)):
+        return False
+    linked = [
+        x for x in rows
+        if x is not backlog
+        and blocked_scope in (getattr(x, "supplement_for", None) or [])
+        and float(getattr(x, "ts_submit", 0) or 0) > blocked_at
+    ]
+    # 하나의 원본을 풀기 위해 등록된 보충 단위가 여러 개인 경우 일부만 끝난 시점에 원본을
+    # 되살리면 아직 막힌 선행을 건너뛴다. 연결된 세대 전부가 종결되고, 그중 실제 완료가 하나
+    # 이상 있어야 한다. dropped만 있는 세대는 "해결했다"는 증거가 아니다.
+    return bool(linked) and all(
+        getattr(x, "status", "") in (DONE, DROPPED)
+        and float(getattr(x, "ts_done", 0) or 0) > blocked_at
+        for x in linked
+    ) and any(getattr(x, "status", "") == DONE for x in linked)
+
+
+def blocked_supplement_targets(scoped_rows):
+    """이번 보충 회의가 직접 풀어야 할 blocked 잎 노드만 돌려준다.
+
+    원본 O에 연결된 보충 S가 다시 blocked라면 O는 S를 기다리는 중이다. O와 S 모두에 새 일을
+    강제하면 선행 그래프가 매 회의마다 불필요하게 증식한다. 아직 미종결인 연결 보충이 있는 원본은
+    건너뛰고, 더 아래 연결이 없는 blocked(또는 연결분이 전부 중단돼 해결 증거가 없는 원본)만 대상이다.
+    """
+    scoped = list(scoped_rows or [])
+    all_rows = [b for _st, b in scoped]
+    targets = []
+    for st, backlog in scoped:
+        if getattr(backlog, "status", "") != BLOCKED:
+            continue
+        scope = backlog_scope_key(st.st_id, backlog.backlog_id)
+        blocked_at = float(getattr(backlog, "ts_done", 0) or 0)
+        linked = [
+            row for row in all_rows
+            if row is not backlog
+            and scope in (getattr(row, "supplement_for", None) or [])
+            and float(getattr(row, "ts_submit", 0) or 0) > blocked_at
+        ]
+        if any(getattr(row, "status", "") not in (DONE, DROPPED) for row in linked):
+            continue
+        # all-done 세대는 작업 단계에서 곧 재개할 것이므로 회의 대상이 아니다. 전부 dropped거나
+        # 유효한 연결이 없으면 새 선행 작업이 필요하다.
+        if linked and any(
+                getattr(row, "status", "") == DONE
+                and float(getattr(row, "ts_done", 0) or 0) > blocked_at
+                for row in linked):
+            continue
+        targets.append((st, backlog))
+    return targets
+
+
 class BacklogError(Exception):
     """릴레이 규약 위반(턴·상태 전이) — comm_engine.CommError와 같은 지위."""
 
@@ -69,6 +136,8 @@ class Backlog:
     block_count: int = 0         # 차단 누적 — DEADLOCK_BLOCKS번째에 deadlock_signal
     block_reason: str = ""
     note: str = ""               # iter 정리 등 상태 밖 메모(상태 4종을 오염시키지 않는다)
+    supplement_for: list = field(default_factory=list)  # 보충 회의가 해결하려는 scoped blocked 원본들
+    ts_submit: float = 0.0       # 생성 시각 — blocked 뒤 생긴 보충 세대인지 판별하는 구조 증거
     ts_pick: float = 0.0         # [창 귀속(2026-07-10)] 선정 시각 — 이 시각부터의 대화가 이 백로그
     ts_done: float = 0.0         # 완료/차단 시각 — 창의 끝
     activity: list = field(default_factory=list)  # 이 일감에 정확히 귀속된 작업 생각
@@ -77,16 +146,19 @@ class Backlog:
         return {"backlog_id": self.backlog_id, "body": self.body, "submitter": int(self.submitter),
                 "status": self.status, "assignee": self.assignee, "block_count": self.block_count,
                 "block_reason": self.block_reason, "note": self.note,
-                "ts_pick": self.ts_pick, "ts_done": self.ts_done,
+                "supplement_for": list(self.supplement_for or []),
+                "ts_submit": self.ts_submit, "ts_pick": self.ts_pick, "ts_done": self.ts_done,
                 "activity": list(self.activity or [])}
 
     @staticmethod
     def from_dict(d: dict) -> "Backlog":
         return Backlog(backlog_id=str(d.get("backlog_id")), body=str(d.get("body") or ""),
                        submitter=int(d.get("submitter") or 0), status=str(d.get("status") or OPEN),
+                       ts_submit=float(d.get("ts_submit") or 0),
                        ts_pick=float(d.get("ts_pick") or 0), ts_done=float(d.get("ts_done") or 0),
                        assignee=d.get("assignee"), block_count=int(d.get("block_count") or 0),
                        block_reason=str(d.get("block_reason") or ""), note=str(d.get("note") or ""),
+                       supplement_for=[str(x) for x in (d.get("supplement_for") or [])],
                        activity=[str(x)[:140] for x in (d.get("activity") or [])])
 
 
@@ -170,7 +242,8 @@ class BacklogRelay:
                         f"합류하고, 정말 다른 일이면 force로 명시해 다시 제출하세요.\n"
                         f"기존: {ex.body[:120]}", existing_id=ex.backlog_id)
         self._seq += 1
-        b = Backlog(backlog_id=f"B{self._seq}", body=text, submitter=int(submitter))
+        b = Backlog(backlog_id=f"B{self._seq}", body=text, submitter=int(submitter),
+                    ts_submit=time.time())
         self._pool[b.backlog_id] = b
         self._emit("backlog_submit", backlog=b.backlog_id, by=int(submitter),
                    forced=bool(force), body=text[:200])
@@ -201,7 +274,9 @@ class BacklogRelay:
         if b.status not in (OPEN, BLOCKED):
             raise BacklogError(f"{b.backlog_id}는 {b.status} — 지명은 open/blocked만 가능합니다.")
         b.status, b.assignee = IN_PROGRESS, int(assignee)
-        b.ts_pick = b.ts_pick or time.time()
+        # 재방문 창은 과거 작업 창과 분리한다. 종전 ``or``는 첫 선정 시각을 영구 보존해 새 생각이
+        # 예전 창에 섞이고, ts_done도 남아 UI가 작업 중 항목을 이미 끝난 것으로 볼 수 있었다.
+        b.ts_pick, b.ts_done = time.time(), 0.0
         self._emit("relay_pick", backlog=b.backlog_id, by=int(picker), to=int(assignee),
                    revisit=b.block_count > 0)
         return b
@@ -239,6 +314,7 @@ class BacklogRelay:
             return None, winners
         w = winners[0]
         b.status, b.assignee = IN_PROGRESS, w
+        b.ts_pick, b.ts_done = time.time(), 0.0
         self._emit("relay_bid", backlog=b.backlog_id, bids=clean, winner=w, outcome="won")
         return b, None
 
@@ -248,7 +324,7 @@ class BacklogRelay:
         if b.status not in (OPEN, BLOCKED):
             raise BacklogError(f"{b.backlog_id}는 {b.status} — 동률 해소 대상이 아닙니다.")
         b.status, b.assignee = IN_PROGRESS, int(assignee)
-        b.ts_pick = b.ts_pick or time.time()
+        b.ts_pick, b.ts_done = time.time(), 0.0
         self._emit("relay_pick", backlog=b.backlog_id, by=int(decider), to=int(assignee),
                    revisit=b.block_count > 0, tie_break=True)
         return b
@@ -266,7 +342,7 @@ class BacklogRelay:
         if b.status not in (OPEN, BLOCKED):
             raise BacklogError(f"{b.backlog_id}는 {b.status} — 지정 대상이 아닙니다.")
         b.status, b.assignee = IN_PROGRESS, int(assignee)
-        b.ts_pick = b.ts_pick or time.time()
+        b.ts_pick, b.ts_done = time.time(), 0.0
         self._emit("relay_pass_to", backlog=b.backlog_id, by=int(last_worker), to=int(assignee),
                    reason="no_bids")
         return b
@@ -374,18 +450,101 @@ class BacklogRelay:
 # 원리: 릴레이는 위임을 '대체'하지 않는다 — 위임(request)은 그대로 전송이고, 릴레이는 그 위임축의
 # **장부와 턴 규칙**이다(누가 배분권을 쥐고 있고, 어느 백로그가 누구 손에 있나). 물리는 얇게.
 
-_BACKLOG_MARK = re.compile(r"\[\s*백로그\s+(B\d+)\s*\]")
+_BACKLOG_MARK = re.compile(
+    r"\[\s*백로그\s+(?:(?P<st>[^\]\s]+?)::)?(?P<bl>B\d+)\s*\]",
+    re.IGNORECASE,
+)
+
+
+def backlog_rows(flow):
+    """열린 마일스톤의 기존 릴레이 장부를 ``(SubTask, Relay, Backlog)``로 전수 조회한다.
+
+    조회만 하는 공용 경계다. 릴레이를 새로 만들지 않으므로 단순 위임·완료 확인이 장부 상태를
+    바꾸지 않는다. B번호는 SubTask마다 다시 시작하므로 전역 규칙은 항상 이 쌍을 보존한다.
+    """
+    if not getattr(flow, "milestones", None):
+        return []
+    ms = next_milestone(flow)
+    if ms is None:
+        return []
+    store = getattr(flow, "backlog_relays", None) or {}
+    out = []
+    for st in (getattr(ms, "subtasks", None) or []):
+        if getattr(st, "status", "") in ("done", "superseded"):
+            continue
+        relay = store.get(st.st_id)
+        if relay is None:
+            continue
+        out.extend((st, relay, b) for b in relay.backlogs)
+    return out
+
+
+def active_backlog_rows(flow):
+    """열린 마일스톤 전체의 실제 작업 중 백로그. 정상 장부라면 길이는 최대 1이다."""
+    return [row for row in backlog_rows(flow) if row[2].status == IN_PROGRESS]
+
+
+def normalize_active_backlogs(flow):
+    """구버전 체크포인트의 다중 active를 최초 획득 우선으로 단일화한다.
+
+    전역 잠금 도입 전에는 서로 다른 SubTask가 각각 local pick되어 둘 이상 작업 중일 수 있었다.
+    가장 먼저 획득한 창을 보존하고 뒤늦게 겹친 창은 대기로 되돌린다. 차단 이력이 있는 항목은
+    선행을 우회하지 않도록 blocked로 보수 복구한다. 반환은 ``(kept, reopened_rows)``다.
+    """
+    active = active_backlog_rows(flow)
+    if len(active) <= 1:
+        return (active[0] if active else None), []
+
+    indexed = list(enumerate(active))
+    _idx, kept = min(
+        indexed,
+        key=lambda item: (
+            float(getattr(item[1][2], "ts_pick", 0) or float("inf")),
+            item[0],
+        ),
+    )
+    reopened = []
+    for _st, _relay, backlog in active:
+        if backlog is kept[2]:
+            continue
+        if int(getattr(backlog, "block_count", 0) or 0) > 0:
+            backlog.status = BLOCKED
+            backlog.ts_done = time.time()
+        else:
+            backlog.status = OPEN
+            backlog.assignee = None
+            backlog.ts_pick = 0.0
+        backlog.note = (
+            (str(getattr(backlog, "note", "") or "") + " | ")
+            if getattr(backlog, "note", "") else ""
+        ) + "전역 1활성 복구로 대기 전환"
+        reopened.append((_st, _relay, backlog))
+    if reopened and getattr(flow, "log", None):
+        try:
+            flow.log(
+                "backlog_active_normalized",
+                kept=backlog_scope_key(kept[0].st_id, kept[2].backlog_id),
+                reopened=" ".join(
+                    backlog_scope_key(st.st_id, b.backlog_id)
+                    for st, _relay, b in reopened)[:240],
+            )
+        except Exception:
+            pass
+    return kept, reopened
 
 
 def active_subtask(flow):
-    """진행 중 마일스톤의 첫 미완 SubTask — 지금 릴레이가 붙는 판. 없으면 None."""
+    """실제 작업 중 SubTask 우선, 없으면 첫 미완 SubTask. 없으면 None."""
     if not getattr(flow, "milestones", None):
         return None
     ms = next_milestone(flow)
     if ms is None:
         return None
+    active = active_backlog_rows(flow)
+    if len(active) == 1:
+        return active[0][0]
     for st in ms.subtasks:
-        if st.status != "done":
+        if st.status not in ("done", "superseded"):
             return st
     return None
 
@@ -415,12 +574,74 @@ def _match_backlog(relay: BacklogRelay, body: str) -> Optional[Backlog]:
     겹침(_body_overlap). done은 매칭 제외 — 완료물 재위임은 기존 Redo 기제의 몫이다."""
     m = _BACKLOG_MARK.search(str(body or ""))
     if m:
-        b = relay._pool.get(m.group(1))
-        return b if b is not None and b.status != DONE else None
+        st_hint = str(m.group("st") or "")
+        if st_hint and not (
+                relay.subtask_id == st_hint
+                or relay.subtask_id.endswith(f"/{st_hint}")):
+            return None
+        b = relay._pool.get(m.group("bl").upper())
+        return b if b is not None and b.status not in (DONE, DROPPED) else None
     for b in relay.backlogs:
-        if b.status != DONE and _body_overlap(body, b.body):
+        if b.status not in (DONE, DROPPED) and _body_overlap(body, b.body):
             return b
     return None
+
+
+def _resolve_flow_backlog(flow, body: str, to: int):
+    """위임 본문을 전역 ``(ST, B)``에 해석한다.
+
+    반환은 ``(hit, error)``. 명시 ``[백로그 ST::B1]``가 최우선이며, 지역 ID만 썼을 때는
+    현재 수행자·고유 제출자·본문 겹침으로 단 하나가 증명될 때만 고른다. 끝까지 둘 이상이면
+    첫 SubTask를 추측하지 않고 거부한다.
+    """
+    text = str(body or "")
+    rows = [row for row in backlog_rows(flow)
+            if row[2].status not in (DONE, DROPPED)]
+    mark = _BACKLOG_MARK.search(text)
+    candidates = []
+    if mark:
+        backlog_id = mark.group("bl").upper()
+        candidates = [row for row in rows if row[2].backlog_id.upper() == backlog_id]
+        st_hint = str(mark.group("st") or "").strip()
+        if st_hint:
+            candidates = [
+                row for row in candidates
+                if row[0].st_id == st_hint or row[0].st_id.endswith(f"/{st_hint}")
+            ]
+            if len(candidates) == 1:
+                return candidates[0], None
+            if not candidates:
+                return None, (
+                    f"[릴레이] 지정한 범위 {st_hint}::{backlog_id}를 열린 장부에서 찾지 못했습니다.")
+            return None, (
+                f"[릴레이] {st_hint}::{backlog_id}가 여러 단위에 걸쳐 모호합니다 — 전체 SubTask ID를 쓰세요.")
+    else:
+        candidates = [row for row in rows if _body_overlap(text, row[2].body)]
+        if not candidates:
+            return None, None
+
+    if len(candidates) == 1:
+        return candidates[0], None
+
+    assigned = [
+        row for row in candidates
+        if row[2].status == IN_PROGRESS and int(row[2].assignee or 0) == int(to)
+    ]
+    if len(assigned) == 1:
+        return assigned[0], None
+    owned = [row for row in candidates if int(row[2].submitter or 0) == int(to)]
+    if len(owned) == 1:
+        return owned[0], None
+    # 마커를 제외한 실제 위임 문장이 한 후보에만 겹치면 그 범위가 증명된다.
+    prose = _BACKLOG_MARK.sub(" ", text)
+    overlap = [row for row in candidates if _body_overlap(prose, row[2].body)]
+    if len(overlap) == 1:
+        return overlap[0], None
+    options = " · ".join(
+        f"{st.st_id}::{b.backlog_id}" for st, _relay, b in candidates[:8])
+    return None, (
+        f"[릴레이] 백로그 범위가 여러 단위에 걸쳐 모호합니다({options}). "
+        f"`[백로그 SubTask-ID::{candidates[0][2].backlog_id}]`처럼 범위를 명시하세요.")
 
 
 def sync_delegation(flow, me_id, to, body) -> Optional[str]:
@@ -434,26 +655,30 @@ def sync_delegation(flow, me_id, to, body) -> Optional[str]:
     """
     if not pipeline_on():
         return None
-    st = active_subtask(flow)
-    if st is None:
+    hit, error = _resolve_flow_backlog(flow, body, int(to))
+    if error:
+        return error
+    if hit is None:
         return None
-    r = relay_for(flow, st)
-    b = _match_backlog(r, body)
+    st, r, b = hit
     # (2026-07-13 '재발송 합류' 분기는 자기 등재 원칙으로 흡수 — 매칭 없는 위임은 아래서 전부 통과라
     #  재전송이 새 항목을 낳을 자동 등재 자체가 없다.)
-    if b is None:
-        # [자기 등재 원칙(2026-07-14, 사용자: '백로그가 백엔드 지능으로 만들어지면 안 되고 각자 자기
-        # 백로그를 만들어 전담해야')] 종전 '자동 제출'(2026-07-10 의무화 1단)은 위임문 원문을 그대로
-        # 수행자의 in_progress 백로그로 날조했다 — U-019 라이브에서 "네 백로그를 등록하라"는 메타 지시가
-        # 프론트의 작업 백로그로 둔갑, 그 한 슬롯으로 전 작업이 장부 밖처럼 흘렀다. 매칭 없는 위임은
-        # '그 직군이 자기 백로그를 등재하라는 요청'으로 그대로 통과 — 수행자가 pick_backlog(desc=자기
-        # 스코프)로 스스로 등재해야 산출물 게이트(Write/run)가 열린다(계층 보장은 게이트가, 등재는 본인이).
-        return None
     if b.status == IN_PROGRESS:
         if b.assignee == int(to):
             return None                          # 같은 배분 재전달(이어가기) — 장부 그대로
         return (f"[릴레이] {b.backlog_id}는 지금 {getattr(flow, '_info', lambda x: x)(b.assignee)} "
                 f"손에 있습니다(in_progress) — 겹침 방지. 그의 완료·차단을 기다리거나 다른 백로그를 맡기세요.")
+    active = active_backlog_rows(flow)
+    if active:
+        ast, _ar, ab = active[0]
+        return (f"[릴레이] {ast.st_id}::{ab.backlog_id}가 작업 중입니다(마일스톤 전체 순차 1활성) — "
+                f"그 완료·차단 뒤 {st.st_id}::{b.backlog_id}를 선정하세요.")
+    if b.status == BLOCKED:
+        rows = backlog_rows(flow)
+        if not blocked_ready_for_revisit(
+                b, [row[2] for row in rows], backlog_scope_key(st.st_id, b.backlog_id)):
+            return (f"[릴레이] {st.st_id}::{b.backlog_id}는 선행 작업으로 차단됐습니다 — "
+                    f"연결된 보충 백로그가 모두 종결되고 실제 완료 증거가 생긴 뒤 재개하세요.")
     if r.turn_holder is not None and int(me_id) != r.turn_holder:
         holder = getattr(flow, "_info", lambda x: x)(r.turn_holder) or r.turn_holder
         return (f"[릴레이] 배분권은 마지막 작업자({holder})에게 있습니다(§3 — 배분은 현장이 끝까지). "
@@ -499,21 +724,21 @@ def sync_completion(flow, worker) -> None:
     done으로 — 그가 새 턴 홀더(다음 배분권자)가 된다(backlog_done 이벤트). 백로그 밖 위임이면 no-op."""
     if not pipeline_on():
         return
-    st = active_subtask(flow)
-    if st is None:
+    hits = [
+        row for row in active_backlog_rows(flow)
+        if int(row[2].assignee or 0) == int(worker)
+    ]
+    if len(hits) != 1:
+        if len(hits) > 1 and getattr(flow, "log", None):
+            flow.log("backlog_completion_ambiguous", by=int(worker), n=len(hits))
         return
-    r = (getattr(flow, "backlog_relays", None) or {}).get(st.st_id)
-    if r is None:
-        return
-    for b in r.backlogs:
-        if b.status == IN_PROGRESS and b.assignee == int(worker):
-            try:
-                r.done(int(worker), b.backlog_id)
-                st.participants.add(int(worker))
-                handoff_note(flow, r, worker, "완료됐습니다")
-            except BacklogError:
-                pass
-            break
+    st, r, b = hits[0]
+    try:
+        r.done(int(worker), b.backlog_id)
+        st.participants.add(int(worker))
+        handoff_note(flow, r, worker, "완료됐습니다")
+    except BacklogError:
+        pass
 
 
 def on_subtask_wrapup(flow, st) -> str:

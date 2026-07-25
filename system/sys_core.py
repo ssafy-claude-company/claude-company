@@ -1622,7 +1622,29 @@ class Sys:
         본 뒤 선택한다. 응답이 잘리거나 형식이 틀린 경우에만 최고 응찰(동률은 제출순)을 안전망으로 쓴다.
         """
         import re
-        rem = [b for b in r.backlogs if getattr(b, "status", "") in ("open", "blocked")]
+        from .rule.backlog import blocked_ready_for_revisit
+
+        # 실행 가능한 보충분이 남아 있는 동안 blocked 원본을 응찰표에 올리면, 선행을 한 건만 끝내고
+        # 원본을 즉시 재개해 다시 막힐 수 있다. 열린 마일스톤 전체의 open을 먼저 소진하고 차단 뒤
+        # 실제 done 증거가 생긴 blocked만 마지막 작업자의 다음 선정 후보로 복귀시킨다.
+        all_scoped_rows = []
+        open_ms = next((m for m in (getattr(flow, "milestones", None) or [])
+                        if m.status not in ("done", "superseded")), None)
+        store = getattr(flow, "backlog_relays", None) or {}
+        for st in (getattr(open_ms, "subtasks", None) or []):
+            relay = store.get(st.st_id)
+            all_scoped_rows.extend((st, row) for row in (getattr(relay, "backlogs", None) or []))
+        all_rows = [row for _st, row in all_scoped_rows]
+        rem = [b for b in r.backlogs if getattr(b, "status", "") == "open"]
+        from .rule.backlog import backlog_scope_key
+        relay_st = next((st for st, row in all_scoped_rows
+                         if any(row is item for item in r.backlogs)), None)
+        rem.extend(
+            b for b in r.backlogs
+            if relay_st is not None
+            and blocked_ready_for_revisit(
+                b, all_rows, backlog_scope_key(relay_st.st_id, b.backlog_id))
+            and b not in rem)
         if not rem:
             return None
         by_owner, candidate_owner = {}, {}
@@ -1687,6 +1709,15 @@ class Sys:
             else:
                 selected = next(b.backlog_id for b in rem if b.backlog_id in valid)
         owner = valid[selected]
+        # 응찰/선정 micro 턴 사이에는 다른 표면이 선점할 수 있다. 최종 변이 직전에 전역 잠금을
+        # 다시 읽어, relay-local pick이 다른 SubTask의 active를 보지 못하는 경합을 막는다.
+        from .rule.backlog import active_backlog_rows
+        active_now = active_backlog_rows(flow)
+        if active_now:
+            ast, _ar, ab = active_now[0]
+            self._log("backlog_handoff_preempted", st=str(ast.st_id),
+                      backlog=str(ab.backlog_id), requested=str(selected))
+            return None
         r.pick(int(holder), selected, int(owner))
         from .rule.milestone import _ckpt
         _ckpt(flow)
@@ -1704,11 +1735,18 @@ class Sys:
 
     @staticmethod
     def _backlog_turn_complete_text(result):
-        """정상 종료한 실작업 턴만 구조적 완료 신호로 인정한다. 오류·한도 컷은 다음 턴에서 잇는다."""
+        """마지막 줄의 구조 표식만 완료 신호로 인정한다.
+
+        자연어에서 '실패/권한/미완'을 추측하면 성공 회고도 오탐하고 실제 미완도 놓친다. 품질 증거는
+        뒤의 마일스톤 검증이 맡고, 여기서는 작업자의 명시적인 상태 전이 선언만 기록한다.
+        """
         text = str(result or "").strip()
         if not text or "턴 한도 도달" in text:
             return False
-        return not text.startswith(("[크레딧 한도]", "API Error:", "(에이전트 "))
+        if text.startswith(("[크레딧 한도]", "API Error:", "(에이전트 ")):
+            return False
+        last = next((line.strip() for line in reversed(text.splitlines()) if line.strip()), "")
+        return last == "[백로그 완료]"
 
     async def _finish_backlog_turn(self, flow, who, b, st_id, result):
         """한 worker 턴의 정상 종료를 scoped 백로그 완료로 원자 기록하고 다음 릴레이를 잇는다."""
@@ -1769,8 +1807,10 @@ class Sys:
                     flow, who,
                     f"[작업중 — 이어서] 백로그 {b.backlog_id}(\"{(b.body or '')[:70]}\")가 아직 당신 손에 "
                     f"있습니다 — **바로 이어서 완성**(파일·코드·실행)하세요. 선행 작업이 꼭 필요하면 "
-                    f"block_backlog로 보존하고, 끝냈으면 마지막 발화에 한 일·핵심 결정·파일 경로를 "
-                    f"3~5줄로 요약하세요. 정상 종료를 SYS가 완료로 기록합니다. 회의·의견이 아니라 작업입니다.",
+                    f"block_backlog로 보존하세요. 끝냈으면 한 일·핵심 결정·파일 경로를 3~5줄로 요약한 "
+                    f"뒤 **마지막 독립 줄에 정확히 `[백로그 완료]`**를 쓰세요. 이 표식은 품질 증거가 "
+                    f"아니라 상태 전이 선언이며 품질은 마일스톤 검증이 맡습니다. 못 끝냈으면 표식을 "
+                    f"쓰지 마세요. 회의·의견이 아니라 작업입니다.",
                     Kind.INFO, "worker")
                 await self._finish_backlog_turn(flow, who, b, st_id, result)
                 return
@@ -1803,9 +1843,10 @@ class Sys:
                 flow, who,
                 f"[작업 시작] 회의는 끝났고 지금은 **작업 단계**입니다. 백로그 {b.backlog_id}"
                 f"(\"{(b.body or '')[:80]}\")를 당신이 맡았습니다 — **바로 실작업**(파일 생성·코드 작성·"
-                f"실행)을 끝내세요. 선행 작업이 꼭 필요하면 block_backlog로 보존하고, 끝냈으면 마지막 "
-                f"발화로 한 일·핵심 결정·만든 파일 경로를 3~5줄로 요약하세요. 정상 종료를 SYS가 완료로 "
-                f"기록합니다. 발언·회의 소집이 아니라 작업입니다.",
+                f"실행)을 끝내세요. 선행 작업이 꼭 필요하면 block_backlog로 보존하세요. 끝냈으면 한 일·"
+                f"핵심 결정·만든 파일 경로를 3~5줄로 요약한 뒤 **마지막 독립 줄에 정확히 "
+                f"`[백로그 완료]`**를 쓰세요. 이 표식은 품질 증거가 아니라 상태 전이 선언이며 품질은 "
+                f"마일스톤 검증이 맡습니다. 못 끝냈으면 표식을 쓰지 마세요. 발언·회의가 아니라 작업입니다.",
                 Kind.INFO, "worker")
             await self._finish_backlog_turn(flow, who, b, st_id, result)
         except Exception as e:
@@ -3145,6 +3186,13 @@ class Sys:
                     os.replace(fp, fp.replace(f"_{session_scope}_", f"_{flow.project_id}_"))
                 except OSError:
                     pass
+        # 상태/생각 미러는 채널별 단일 writer가 최신 장까지 직렬 전송한다. 요청 종결 전에 그 writer를
+        # 비워, 마지막 done/중단/활동 스냅샷이 아직 백그라운드에 남은 채 피드가 닫히지 않게 한다.
+        try:
+            from .rule.milestone import flush_state_db as _flush_state_db
+            await _flush_state_db(flow, kind="ms")
+        except Exception:
+            pass
         self._log("flow_done", project=flow.project_channel is not None,
                   tasks=len(flow.tasks), comm_done=flow.comm.done)
         self.active_flows.pop(scope_key, None)
@@ -3362,6 +3410,26 @@ class Sys:
         # [관측 v1] 프로세스 경계 — 러너 기동. 파일만으론 재시작·크래시 식별 불가하던 것 교정.
         self._log("runner_boot", version=os.environ.get("ORGANT_VERSION", ""),
                   pid=os.getpid(), floor=os.environ.get("ORGANT_FLOOR", "request-response"), cap=cap)
+
+        async def _drain_user_stops():
+            """중지 신호를 reap보다 먼저 처리해 정상 반환과의 같은-poll 경합에서도 재픽을 막는다."""
+            # [at-least-once(2026-07-14, U-015 유령)] 조회는 읽기 전용, 소거(ack)는 mark_stopped가
+            # 처리 완료 후 수행 — 어느 단계가 실패해도 신호가 남아 다음 폴이 재시도한다.
+            try:
+                stop_channels = list(await guide.all_stops())
+            except Exception as exc:
+                log.warning("중지 신호 조회 실패(다음 폴 재시도): %s", exc)
+                return
+            for stop_channel in stop_channels:
+                try:
+                    cancelled = self.request_cancel(stop_channel)
+                    await guide.mark_stopped(stop_channel)
+                    log.info("■ 작업 중지 — ch=%s(흐름취소=%s)", stop_channel, cancelled)
+                except Exception as exc:
+                    log.warning(
+                        "중지 처리 실패 ch=%s(신호 보존 — 다음 폴 재시도): %s",
+                        stop_channel, exc)
+
         while True:
             try:
                 _now = asyncio.get_event_loop().time()
@@ -3386,6 +3454,9 @@ class Sys:
                 if self.refresh_roster is not None and _now - last_roster > 30:
                     last_roster = _now
                     await self._roster_tick()
+                # 사용자 stop과 흐름 정상 반환이 같은 poll에 겹치면 reap의 unpick이 stop을 되살릴 수
+                # 있다. 먼저 취소 원인을 durable하게 기록하고 요청을 stopped로 닫은 뒤 완료를 거둔다.
+                await _drain_user_stops()
                 # ── 완료 reap + 정체컷·재개(무진행 기준 슬롯 회수) ──
                 for _mid, _info in list(inflight.items()):
                     if _info["task"].done():
@@ -3412,10 +3483,14 @@ class Sys:
                             _user_stop = getattr(self, "_flow_user_cancelled", {}).pop(
                                 int(_info["ch"]), False)
                             if _open and _prog and not _qhalt and not _ahum and not _user_stop:
-                                seen.discard(_mid)
-                                await guide.pick(_mid, unpick=True)
-                                self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
-                                log.info("↻ Task 미완·장부 전진 — 같은 요청 재픽(누계 %d): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
+                                _unpicked = await guide.pick(_mid, unpick=True)
+                                if _unpicked is not False:
+                                    seen.discard(_mid)
+                                    self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
+                                    log.info("↻ Task 미완·장부 전진 — 같은 요청 재픽(누계 %d): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
+                                else:
+                                    # 서버가 이미 stopped로 원자 종결한 요청은 되살리지 않는다.
+                                    self._log("request_repick_rejected", mid=_mid, ch=_info["ch"])
                             else:
                                 # [재개 가능한 종결 순서(2026-07-20, U-035 실측)] mark_stopped(요청에
                                 # stopped 표기)는 done 마감 **전에** — 웹 op가 'picked & not done_ts'
@@ -3489,29 +3564,17 @@ class Sys:
                                     self._resume_cut_mids.add(int(_mid))
                                 _info["task"].cancel()
                                 if _n <= 5:
-                                    seen.discard(_mid)
-                                    await guide.pick(_mid, unpick=True)
-                                    log.info("⏱ %s — 체크포인트 후 재개 예약(%d/5): msg=%s ch=%s", _why, _n, _mid, _info["ch"])
+                                    _unpicked = await guide.pick(_mid, unpick=True)
+                                    if _unpicked is not False:
+                                        seen.discard(_mid)
+                                        log.info("⏱ %s — 체크포인트 후 재개 예약(%d/5): msg=%s ch=%s", _why, _n, _mid, _info["ch"])
+                                    else:
+                                        self._resume_cut_mids.discard(int(_mid))
+                                        log.info("■ 재개 요청 거부(이미 중지됨): msg=%s ch=%s", _mid, _info["ch"])
                                 else:
                                     log.info("⏱ %s — 재개 상한 도달(%d회), 중단: msg=%s ch=%s", _why, _n - 1, _mid, _info["ch"])
                             except Exception:
                                 pass
-                # ── 작업 중지(전역 스캔 — 도는 흐름 취소 + 픽 요청 종결) ──
-                # [at-least-once(2026-07-14, U-015 유령)] 조회는 읽기 전용, 소거(ack)는 mark_stopped가
-                # 처리 완료 후 수행 — 어느 단계가 실패해도 신호가 남아 다음 폴이 재시도한다. 종전엔
-                # 조회=소거+통짜 except:pass라 전송 유실 한 번에 중지가 증발(ch60 흐름 1시간 유령).
-                try:
-                    _stop_chs = list(await guide.all_stops())
-                except Exception as _e:
-                    _stop_chs = []
-                    log.warning("중지 신호 조회 실패(다음 폴 재시도): %s", _e)
-                for _sch in _stop_chs:
-                    try:
-                        cancelled = self.request_cancel(_sch)
-                        await guide.mark_stopped(_sch)
-                        log.info("■ 작업 중지 — ch=%s(흐름취소=%s)", _sch, cancelled)
-                    except Exception as _e:
-                        log.warning("중지 처리 실패 ch=%s(신호 보존 — 다음 폴 재시도): %s", _sch, _e)
                 # ── 진행 중 흐름 개입 폴 ──
                 for _mid, _info in list(inflight.items()):
                     _ch = _info["ch"]
@@ -3551,7 +3614,14 @@ class Sys:
                     kind = Kind.WORK if (m["kind"] or "W") == "W" else Kind.INFO
                     req = Request(to_id=to_id, kind=kind, body=m["body"], from_id=0, message_id=str(mid))
                     try:
-                        await guide.check_stop(ch)
+                        # pending 스냅샷 뒤 사용자가 stop하면 단건 신호가 바로 여기 도착한다. 종전엔
+                        # check_stop이 신호를 consume해도 반환값을 버리고 옛 스냅샷을 claim해, 이미
+                        # stopped/done인 요청이 새 흐름으로 부활할 수 있었다. 이번 폴은 집지 않고,
+                        # 옛 신호였다면 다음 폴에 terminal이 아닌 요청이 다시 정상 후보가 된다.
+                        if await guide.check_stop(ch):
+                            seen.discard(mid)
+                            self._log("request_claim_skipped_stop", mid=mid, ch=ch)
+                            continue
                     except Exception:
                         pass
                     if not await guide.pick(mid):

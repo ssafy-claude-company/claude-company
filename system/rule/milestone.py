@@ -26,7 +26,7 @@ __all__ = [
     "parse_criteria_lines", "rule_set_milestone", "rule_set_subtask",
     "parse_iter_results", "rule_report_iter",
     "renegotiate_criterion", "approve_waiver", "rule_renegotiate",
-    "extract_consensus",
+    "extract_consensus", "flush_state_db",
 ]
 
 
@@ -190,16 +190,28 @@ def _set_pipeline_ctx(flow, me_id=None):
     try:
         from system.protocol import PIPELINE_CTX
         ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
-        st = next((s for s in ms.subtasks if s.status != "done"), None) if ms else None
+        _sts = [s for s in ms.subtasks if s.status not in ("done", "superseded")] if ms else []
+        st = _sts[0] if _sts else None
         bl = None
         # [백로그 단위 태깅(2026-07-10, 사용자: '텍스트가 백로그 단위로')] 이 봇이 지금 물고 있는
         # (in_progress·assignee=me) 백로그 id — 발언이 백로그 항목 밑으로 묶이는 근거.
-        if st is not None and me_id is not None:
-            r = (getattr(flow, "backlog_relays", None) or {}).get(st.st_id)
-            for b in (getattr(r, "backlogs", None) or []):
-                if b.status == "in_progress" and int(b.assignee or 0) == int(me_id):
-                    bl = b.backlog_id
-                    break
+        # B1은 SubTask마다 다시 시작한다. 첫 미완 ST를 먼저 고른 뒤 그 안에서만 찾으면 ST-1이
+        # open인 동안 ST-2/B1 작업 발화가 ST-1/null로 태깅된다. 전 열린 ST의 실제 단일 활성
+        # 백로그를 먼저 찾고, 같은 봇이 쥔 항목을 최우선으로 선택한다.
+        _active = []
+        for _st in _sts:
+            _r = (getattr(flow, "backlog_relays", None) or {}).get(_st.st_id)
+            for _b in (getattr(_r, "backlogs", None) or []):
+                if _b.status == "in_progress":
+                    _active.append((_st, _b))
+        _owned = (next((x for x in _active
+                        if me_id is not None and int(x[1].assignee or 0) == int(me_id)), None)
+                  if me_id is not None else None)
+        _hit = _owned or (max(_active, key=lambda x: float(getattr(x[1], "ts_pick", 0) or 0))
+                          if _active else None)
+        if _hit is not None:
+            st, _b = _hit
+            bl = _b.backlog_id
         # [전역 회의는 주기 소속(2026-07-21, 사용자: '전 서브태스크를 한번에 만드는 회의라면 공통
         # 흐름 하위에 둬야지')] 단계 회의(목표·주기·단위·백로그)는 특정 SubTask의 일이 아니라 주기
         # 전체의 결정인데, 종전엔 '첫 미완 SubTask'를 무조건 태깅해 화면이 전역 회의를 그 단계 폴더
@@ -282,12 +294,78 @@ def _ms_one(flow, ms, relays):
 
 
 _MS_BG_TASKS = set()   # [GC 방어] fire-and-forget DB push 태스크 참조 보존
+# 같은 채널/종류의 put_state를 각각 task로 띄우면 먼저 보낸 느린 응답이 나중 상태를 덮는다.
+# writer 하나가 전송 중 변경을 최신 스냅샷으로 합쳐 순서대로 밀어내게 한다. loop를 key에 넣는
+# 이유는 테스트의 asyncio.run 반복과 장기 러너 재기동에서 서로 다른 loop의 task를 섞지 않기 위해서다.
+_MS_STATE_WRITERS = {}
+
+
+async def _drain_state_db(key):
+    """한 ``(loop, channel, kind)``의 최신 상태까지 순차 전송한다.
+
+    전송 중 갱신은 ``rev``만 전진시키며, 현재 응답이 끝난 뒤 가장 최신 스냅샷 한 장을 보낸다.
+    ms 스냅샷의 activity는 누적 목록이라 중간 장을 합쳐도 생각 기록은 최신 장에 보존된다.
+    """
+    while True:
+        slot = _MS_STATE_WRITERS.get(key)
+        if slot is None:
+            return
+        rev, put, ch, kind, data = (
+            slot["rev"], slot["put"], slot["ch"], slot["kind"], slot["data"])
+        try:
+            await put(ch, kind, data)
+        except Exception:
+            # 상태 미러 순단은 본 흐름을 깨지 않는다. 다만 전송 중 더 최신 스냅샷이 들어왔다면
+            # 실패한 옛 장에서 writer를 끝내지 않고 최신 장은 한 번 더 시도한다.
+            pass
+        slot = _MS_STATE_WRITERS.get(key)
+        if slot is None or slot["rev"] == rev:
+            return
+
+
+def _state_writer_done(key, task):
+    _MS_BG_TASKS.discard(task)
+    # task 완료 콜백 전에 새 갱신이 같은 slot에 새 writer를 달 수 있다. 그 새 writer까지 옛
+    # 콜백이 지우지 않도록 task identity가 같은 경우에만 정리한다.
+    slot = _MS_STATE_WRITERS.get(key)
+    if slot is not None and slot.get("task") is task:
+        _MS_STATE_WRITERS.pop(key, None)
+
+
+async def flush_state_db(flow=None, ch=None, kind=None):
+    """현재 loop의 예약된 상태 미러를 최신 장까지 기다린다.
+
+    러너의 종결/종료 경계나 테스트가 명시적으로 await할 수 있는 flush seam이다. 새 갱신이 기존
+    writer 완료 직후 붙는 경합도 놓치지 않도록 해당 범위의 writer가 없어질 때까지 다시 확인한다.
+    """
+    import asyncio as _aio
+    loop = _aio.get_running_loop()
+    if ch is None and flow is not None:
+        ch = getattr(flow, "user_channel", None)
+    ch = int(ch) if ch is not None else None
+    kind = str(kind) if kind is not None else None
+    while True:
+        tasks = []
+        for (writer_loop, writer_ch, writer_kind), slot in list(_MS_STATE_WRITERS.items()):
+            if writer_loop is not loop:
+                continue
+            if ch is not None and writer_ch != ch:
+                continue
+            if kind is not None and writer_kind != kind:
+                continue
+            task = slot.get("task")
+            if task is not None and not task.done():
+                tasks.append(task)
+        if not tasks:
+            return
+        await _aio.gather(*tasks, return_exceptions=True)
 
 
 def _push_state_db(flow, ch, kind, data):
     """[스케일아웃 상태 저장(2026-07-18, HA 설계)] guide.put_state로 채널 상태를 웹 DB에 미러 —
-    sync 문맥(persist_ms_status)에서 부르므로, 실행 중 루프가 있으면 fire-and-forget으로 스케줄한다
-    (루프 없으면=테스트 무동작). ORGANT_STATE_DB=0이면 비활성. 파일 미러는 별개로 유지(폴백)."""
+    sync 문맥(persist_ms_status)에서 부르므로, 실행 중 루프가 있으면 채널/종류별 단일 writer에
+    최신 장을 예약한다(루프 없으면=테스트 무동작). ORGANT_STATE_DB=0이면 비활성. 파일 미러는
+    별개로 유지(폴백). 반환 task는 종결 경계에서 ``flush_state_db``로 기다릴 수 있다."""
     if os.environ.get("ORGANT_STATE_DB", "1") in ("0", "false", "False"):
         return
     put = getattr(getattr(flow, "guide", None), "put_state", None)
@@ -299,9 +377,23 @@ def _push_state_db(flow, ch, kind, data):
     except RuntimeError:
         return
     try:
-        t = loop.create_task(put(int(ch), kind, data))
-        _MS_BG_TASKS.add(t)
-        t.add_done_callback(_MS_BG_TASKS.discard)
+        ch = int(ch)
+        kind = str(kind)
+        key = (loop, ch, kind)
+        slot = _MS_STATE_WRITERS.get(key)
+        if slot is None:
+            slot = {"rev": 0, "put": put, "ch": ch, "kind": kind, "data": data, "task": None}
+            _MS_STATE_WRITERS[key] = slot
+        slot["rev"] += 1
+        slot["put"] = put
+        slot["data"] = data
+        task = slot.get("task")
+        if task is None or task.done():
+            task = loop.create_task(_drain_state_db(key))
+            slot["task"] = task
+            _MS_BG_TASKS.add(task)
+            task.add_done_callback(lambda t, _key=key: _state_writer_done(_key, t))
+        return task
     except Exception:
         pass
 
@@ -1096,30 +1188,53 @@ def claim_kick_target(flow):
         return None
     store = getattr(flow, "backlog_relays", None) or {}
     kicked = getattr(flow, "_claim_kicked", None) or set()
-    from .backlog import backlog_scope_key
+    from .backlog import backlog_scope_key, blocked_ready_for_revisit
+    rows = []
     for st in ms.subtasks:
         if st.status in ("done", "superseded"):
             continue
         r = store.get(st.st_id)
         if r is None or not r.backlogs:
             continue
-        if any(b.status == "in_progress" for b in r.backlogs):
-            return None                          # 순차 1활성 — 진행 중이면 킥 불요
-        for b in r.backlogs:
-            if b.status != "open" or backlog_scope_key(st.st_id, b.backlog_id) in kicked:
-                continue
-            if int(b.submitter or 0):
-                return (int(b.submitter), b, st.st_id)
-            # [무주 백로그 킥(2026-07-20, U-035 실측)] 회의 등록분은 이의 개서로 발제 귀속이 유실될 수
-            # 있다(_draft_attr 키 드리프트 → submitter 0) — 무주면 킥이 침묵해 ch79형 '아무도 선점 안
-            # 함' 공전이 재발한다. 적임(role_fit) 봇을 깨워 '적임자로서 선점 검토' — 배분 강제가 아니라
-            # 첫 착수 신호(자기선택은 pick 시점에 유지).
-            _bots = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
-            if _bots:
-                from ..role_fit import role_fit as _rf
-                _q = f"{getattr(st, 'goal', '')} {b.body}"
-                _bid = max(_bots, key=lambda k: _rf(_q, _bots[k]))
-                return (int(_bid), b, st.st_id)
+        rows.extend((st, r, b) for b in r.backlogs)
+
+    # 단일 활성은 SubTask 내부가 아니라 열린 마일스톤 전체의 규칙이다. 앞 ST에 open이 있고 뒤 ST에
+    # in_progress가 있을 때 앞것을 또 집던 순회 순서 결함을 먼저 차단한다.
+    if any(b.status == "in_progress" for _st, _r, b in rows):
+        return None
+
+    def _worker(st, b, *, revisit=False):
+        owner = int((b.assignee if revisit else b.submitter) or b.submitter or 0)
+        if owner:
+            return owner
+        # [무주 백로그 킥(2026-07-20, U-035 실측)] 회의 등록분은 이의 개서로 발제 귀속이 유실될 수
+        # 있다(_draft_attr 키 드리프트 → submitter 0) — 무주면 킥이 침묵해 ch79형 '아무도 선점 안
+        # 함' 공전이 재발한다. 적임(role_fit) 봇을 깨워 '적임자로서 선점 검토' — 배분 강제가 아니라
+        # 첫 착수 신호(자기선택은 pick 시점에 유지).
+        bots = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
+        if bots:
+            from ..role_fit import role_fit as _rf
+            query = f"{getattr(st, 'goal', '')} {b.body}"
+            return int(max(bots, key=lambda k: _rf(query, bots[k])))
+        return 0
+
+    # 실행 가능한 신규/보충 백로그가 blocked 원본보다 항상 먼저다.
+    for st, _r, b in rows:
+        if b.status != "open" or backlog_scope_key(st.st_id, b.backlog_id) in kicked:
+            continue
+        owner = _worker(st, b)
+        if owner:
+            return (owner, b, st.st_id)
+
+    # blocked는 차단 직후 즉시 재선정하지 않는다. 모든 실행 가능분이 소진되고 차단 뒤 보충 작업의
+    # 실제 완료가 남았을 때만 재방문한다. handoff가 응답 장애로 선택을 못 했을 때의 구조적 안전망이다.
+    all_backlogs = [b for _st, _r, b in rows]
+    for st, _r, b in rows:
+        if blocked_ready_for_revisit(
+                b, all_backlogs, backlog_scope_key(st.st_id, b.backlog_id)):
+            owner = _worker(st, b, revisit=True)
+            if owner:
+                return (owner, b, st.st_id)
     return None
 
 
@@ -1152,11 +1267,17 @@ def meeting_stage(flow):
     # 회의는 전 영역이 소진(또는 첫 시작으로 전무)됐을 때만 열리고, 그 한 회의가 미충원 영역들 몫을
     # 일괄 충전한다(iter 경계 = 소진→점검(report_iter 코칭+조건 장부)→일괄 충전).
     _alive = [st for st in _sts if st.status != "done"]
-    _rows = [b for st in _alive if store.get(st.st_id) is not None
-             for b in (store.get(st.st_id).backlogs or [])]
+    _scoped_rows = [(st, b) for st in _alive if store.get(st.st_id) is not None
+                    for b in (store.get(st.st_id).backlogs or [])]
+    _rows = [b for _st, b in _scoped_rows]
     if any(b.status in ("open", "in_progress") for b in _rows):
         return None                                     # 지금 집을/진행 중 백로그 존재 → 작업 단계 우선
     if any(b.status == "blocked" for b in _rows):
+        from .backlog import blocked_ready_for_revisit, backlog_scope_key
+        if any(blocked_ready_for_revisit(
+                b, _rows, backlog_scope_key(st.st_id, b.backlog_id))
+               for st, b in _scoped_rows):
+            return None                                 # 선행 보충 완료 증거가 생긴 원본 → 작업 단계에서 재개
         # 선행 필요로 멈춘 원 백로그만 남았다. 원본을 버리거나 완료 참칭하지 않고, 전 영역 보충 회의가
         # 선행 백로그를 추가하도록 연다. 선행 완료 뒤 blocked 원본을 재개해야 마일스톤이 닫힌다.
         return "backlog"
@@ -1304,6 +1425,22 @@ def deferred_only(v):
     return s.startswith("(후속") or s.startswith("후속:") or s.startswith("후속：")
 
 
+def _goal_procedure_error(goal):
+    """GOAL의 절차형 나열만 잡고 인라인 코드 안의 상태 전이는 보존한다.
+
+    ``idle→working`` 같은 코드 계약은 무엇을 만들지 설명하는 도메인 값이지 작업 순서가 아니다.
+    Markdown 인라인 코드 구간을 제외한 산문에 화살표 연쇄가 있거나 ①②③ 표식이 있을 때만 거부한다.
+    """
+    import re as _reg
+    raw = str(goal or "")
+    prose = _reg.sub(r"`[^`\n]+`", "", raw)
+    if len(_reg.findall(r"→", prose)) < 2 and not _reg.search(r"[①②③④⑤]", prose):
+        return None
+    return ("'목표:'가 절차 나열(①②③·'→' 연쇄)입니다 — 목표는 순서가 아니라 **이 Task로 "
+            "완성할 실물 한 문장**입니다(예: '2인 턴제 카드 대전 웹게임'). 절차·순서는 "
+            "마일스톤의 '단계:'와 백로그가 담습니다.")
+
+
 def draft_should_reset(stage, existing) -> bool:
     """[흐름 재개 안전 불변식(2026-07-21, 사용자: '흐름 중엔 아무리 재시작해도 상관없다 — 재복구가
     있으니 안전하게 재개돼야')] 회의 개시가 DRAFT 골격을 새로 깔지(True), 진행분을 보존할지(False).
@@ -1399,8 +1536,14 @@ def stage_preflight(stage, text):
     def _val(prefix):
         return next((l.split(":", 1)[1].strip() for l in lines
                      if l.strip().startswith(prefix) and ":" in l), "")
-    if stage == "goal" and not _val("목표"):
-        errs.append("'목표: ⟦이 Task로 정확히 무엇을 만드는지⟧' 줄이 필요합니다(줄 시작, 장식 없이).")
+    if stage == "goal":
+        _goal = _val("목표")
+        if not _goal:
+            errs.append("'목표: ⟦이 Task로 정확히 무엇을 만드는지⟧' 줄이 필요합니다(줄 시작, 장식 없이).")
+        else:
+            _proc_err = _goal_procedure_error(_goal)
+            if _proc_err:
+                errs.append(_proc_err)
     if stage == "milestone" and not (_val("이번 주기") or _val("목표")):
         errs.append("'이번 주기: ⟦이번에 보여줄 딱 하나⟧' 줄이 필요합니다(줄 시작, 장식 없이).")
     if stage in ("goal", "milestone"):
@@ -1460,6 +1603,21 @@ def stage_context(flow, stage):
             return f" [이번 주기: {_open.goal[:80]}]"
         if stage == "backlog" and _open is not None:
             store = getattr(flow, "backlog_relays", None) or {}
+            from .backlog import blocked_supplement_targets
+            _scoped = [
+                (st, b)
+                for st in _open.subtasks if st.status not in ("done", "superseded")
+                for b in (getattr(store.get(st.st_id), "backlogs", None) or [])
+            ]
+            _blocked = [
+                (f"{st.st_id}::{b.backlog_id}", b)
+                for st, b in blocked_supplement_targets(_scoped)
+            ]
+            if _blocked:
+                _waiting = " · ".join(
+                    f"{scope}({(b.block_reason or b.body)[:36]})" for scope, b in _blocked[:7])
+                return (f" [선행 대기 원본: {_waiting} — 새 항목 본문 앞에 각 대상의 "
+                        "`[해결: ST::Bn]`을 붙이세요]")
             _es = [st for st in _open.subtasks if st.status not in ("done", "superseded")
                    and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)]
             if _es:
@@ -1487,7 +1645,9 @@ _STAGE_FRAME = {
             "각자 pick_backlog 선점.",
     "backlog": "지금은 미충원 작업 영역들의 **다음 일감 전부를 한 번에 열거**하는 단계입니다. "
             "**'미충원 영역들 완수에 필요한 작업 항목 전부는?'** 에만 답하세요 — 항목마다 [영역명]을 "
-            "달고, 한두 개로 끝내지 말고 목록을 채우세요(처리는 나중에 하나씩 선점).",
+            "달고, 한두 개로 끝내지 말고 목록을 채우세요(처리는 나중에 하나씩 선점). 안건에 "
+            "`선행 대기 원본`이 있으면 각 새 항목은 `[영역명] [해결: ST::Bn] 실제 작업` 형식으로 "
+            "어느 blocked 원본의 선행인지 명시하고 모든 원본을 빠짐없이 덮어야 합니다.",
 }
 
 
@@ -1547,11 +1707,9 @@ def register_stage(flow, stage, prop, origin=""):
         # 목표로 등록 — 봇들이 2:2로 두 번 막았는데 소진 확정이 밀어붙임, 사용자: '누가봐도 이상')]
         # 절차 표기(①②③ 나열 · '→' 연쇄)가 목표 값에 오면 반려 — 목표는 '무엇을 만드는가' 한 문장,
         # 절차·순서는 로드맵('단계:')과 백로그의 몫. 내용 무판단(절차 표기라는 형태 신호만).
-        import re as _reg
-        if len(_reg.findall(r"→", goal)) >= 2 or _reg.search(r"[①②③④⑤]", goal):
-            return False, ("'목표:'가 절차 나열(①②③·'→' 연쇄)입니다 — 목표는 순서가 아니라 **이 Task로 "
-                           "완성할 실물 한 문장**입니다(예: '2인 턴제 카드 대전 웹게임'). 절차·순서는 "
-                           "마일스톤의 '단계:'와 백로그가 담습니다.")
+        _proc_err = _goal_procedure_error(goal)
+        if _proc_err:
+            return False, _proc_err
         if _cur is not None:
             try:
                 _cur.status.goal = goal
@@ -1669,9 +1827,23 @@ def register_stage(flow, stage, prop, origin=""):
                       if m.status not in ("done", "superseded")), None)
         if _open is None:
             return False, "열린 마일스톤이 없습니다."
-        from .backlog import relay_for, DuplicateBacklog, BacklogError
+        from .backlog import (
+            relay_for, DuplicateBacklog, BacklogError, backlog_scope_key,
+            blocked_supplement_targets,
+        )
         store = getattr(flow, "backlog_relays", None) or {}
         _alive_sts = [st for st in _open.subtasks if st.status not in ("done", "superseded")]
+        # blocked 때문에 열린 보충 회의라면 이번 회의에서 태어나는 항목에 해결 대상 scope를 영속한다.
+        # 생성 시각만으로는 작업 중 임의 등재된 무관 백로그와 구분할 수 없고, B번호만으론 ST가 겹친다.
+        _scoped_existing = [
+            (st, b)
+            for st in _alive_sts
+            for b in (getattr(store.get(st.st_id), "backlogs", None) or [])
+        ]
+        _blocked_scopes = [
+            backlog_scope_key(st.st_id, b.backlog_id)
+            for st, b in blocked_supplement_targets(_scoped_existing)
+        ]
         _empty_sts = [st for st in _alive_sts
                       if store.get(st.st_id) is None or not store.get(st.st_id).backlogs]
         if not _alive_sts:
@@ -1751,6 +1923,45 @@ def register_stage(flow, stage, prop, origin=""):
                     _best, _who_r = _ov, _bid
             return _who_r if _best >= 0.5 else None
 
+        # blocked 보충은 이름/시각 추측이 아니라 원본 scope 링크로 연결한다. 같은 ST에 blocked가
+        # 하나뿐이면 영역 배정만으로 안전하게 자동 연결하고, 여러 개거나 교차 영역 선행이면 회의가
+        # `[해결: ST::Bn]`을 명시해야 한다. 모든 blocked가 이번 회의 항목 하나 이상과 연결돼야 등록.
+        _supplement_plan = []
+        _linked_scopes = set()
+        for _ln_p in lines:
+            _s_p = _ln_p.strip()
+            if not _s_p.startswith("백로그:"):
+                continue
+            _it_p = _s_p.split(":", 1)[1].strip()
+            _st_p, _body_p = _dest_of(_it_p)
+            _links_p = []
+            _rm = _re3.match(r"^\[해결\s*:\s*([^\]]{3,120})\]\s*(.*)$", _body_p)
+            if _rm:
+                _scope_p = _rm.group(1).strip()
+                _body_p = _rm.group(2).strip()
+                if _scope_p not in _blocked_scopes:
+                    return False, (f"보충 대상 '{_scope_p}'가 현재 blocked 원장에 없습니다. "
+                                   f"대상은 다음 중 하나를 그대로 쓰세요: {' · '.join(_blocked_scopes)}")
+                _links_p = [_scope_p]
+            elif _blocked_scopes:
+                _same_p = [scope for scope in _blocked_scopes
+                           if scope.startswith(f"{_st_p.st_id}::")]
+                if len(_same_p) == 1:
+                    _links_p = _same_p
+                else:
+                    return False, (
+                        f"보충 백로그 '{_body_p[:55]}'가 해결할 blocked 원본이 모호합니다 — 본문 앞에 "
+                        f"`[해결: ST::Bn]`을 붙이세요. 대상: {' · '.join(_blocked_scopes)}")
+            if not _body_p:
+                return False, "보충 대상 표식 뒤에 실제 작업 단위 본문이 필요합니다."
+            _linked_scopes.update(_links_p)
+            _supplement_plan.append((_s_p, _st_p, _body_p, _links_p))
+        if _blocked_scopes:
+            _unlinked = [scope for scope in _blocked_scopes if scope not in _linked_scopes]
+            if _unlinked:
+                return False, ("이번 보충 회의에 선행 작업이 없는 blocked 원본이 남았습니다 — 각각 최소 "
+                               f"한 항목을 `[해결: ST::Bn]`으로 연결하세요: {' · '.join(_unlinked)}")
+
         # [직군 기회/판단 게이트(2026-07-23 ch94 → 07-24 ch95 교정)] 보장해야 하는 것은 직군별
         # **판단 기회**이지 모든 직군의 백로그 소유가 아니다. 실질 기고를 냈고 전원이 결론에 찬성했는데
         # 문구가 다른 사람 손으로 전사됐다는 이유로 자기 소유 0건을 거부하면, 수렴한 회의를 영원히 못
@@ -1768,12 +1979,8 @@ def register_stage(flow, stage, prop, origin=""):
                 _r0 = store.get(_st0.st_id)
                 if _r0:
                     _predicted_owners.update(int(b.submitter) for b in _r0.backlogs if int(b.submitter or 0))
-            for _ln0 in lines:
-                _s0 = _ln0.strip()
-                if not _s0.startswith("백로그:"):
-                    continue
+            for _s0, _st0, _body0, _links0 in _supplement_plan:
                 try:
-                    _st0, _body0 = _dest_of(_s0.split(":", 1)[1].strip())
                     _predicted_owners.add(int(_r1_author(_body0)
                                               or _attr_of(draft_norm_line(_s0) or _s0)
                                               or _owner_fb(_st0, _body0)))
@@ -1797,19 +2004,16 @@ def register_stage(flow, stage, prop, origin=""):
         n = 0
         _per = {}
         _skipped = 0
-        for _ln in lines:
-            _s = _ln.strip()
-            if not _s.startswith("백로그:"):
-                continue
-            it = _s.split(":", 1)[1].strip()
+        for _s, _st_d, _body, _supplement_for in _supplement_plan:
             try:
-                _st_d, _body = _dest_of(it)
                 # [참조·재진술 반려(2026-07-22, U-041)] 순수 참조는 submit 관문이 반려(force 무관),
                 # 재진술은 중복 게이트(force=False)가 잡는다 — 병합 회의도 예외 없이(종전 force=True가
                 # 두 게이트를 다 우회해 'B4'·재진술이 백로그로 태어난 것이 근본).
                 # 귀속 우선순위: R1 원저자(실제 낸 사람) > DRAFT 편집 저자 > 적임 폴백
                 _who = _r1_author(_body) or _attr_of(draft_norm_line(_s) or _s) or _owner_fb(_st_d, _body)
-                relay_for(flow, _st_d).submit(_who, _body, force=False)
+                _new_b = relay_for(flow, _st_d).submit(_who, _body, force=False)
+                if _supplement_for:
+                    _new_b.supplement_for = list(_supplement_for)
                 n += 1
                 _per[_st_d.st_id] = _per.get(_st_d.st_id, 0) + 1
             except (BacklogError, DuplicateBacklog):
@@ -2010,8 +2214,12 @@ def rule_report_iter(flow, me_id, args) -> str:
                     # 그건 각자 pick→작업→보고를 거쳐야 한다(릴레이가 [다음 선정]으로 이어줌).
                     _mine = (b.status == "in_progress" and int(b.assignee or 0) == int(me_id))
                     if _fresh and b.status == "open":
-                        r.pick(int(me_id), b.backlog_id, int(me_id))   # 솔로: 방금 만든 것만 픽
-                        _mine = True
+                        # 보고 경로도 열린 마일스톤 전체의 단일 활성 잠금을 지킨다. 다른 ST가 작업
+                        # 중이면 방금 만든 항목은 open 장부로만 남고, 릴레이가 차례에 착수시킨다.
+                        from .backlog import active_backlog_rows
+                        if not active_backlog_rows(flow):
+                            r.pick(int(me_id), b.backlog_id, int(me_id))   # 솔로: 방금 만든 것만 픽
+                            _mine = True
                     if it.get("passed") and b.status != "done" and _mine:
                         r.done(int(me_id), b.backlog_id)
                         _finished_mine = True

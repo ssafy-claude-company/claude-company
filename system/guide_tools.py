@@ -266,6 +266,60 @@ def _holds_completion(flow, me_id, role) -> bool:
     return role == "leader"
 
 
+def _resolve_scoped_backlog(flow, subtasks, backlog_id, me_id, st_hint=""):
+    """지역 ID(B1...)를 실제 ``(SubTask, Backlog)`` 한 쌍으로 해석한다.
+
+    도구 호출은 오래전부터 id만 받았지만 B번호는 SubTask마다 다시 시작한다. 같은 B1이 여러
+    열린 단위에 있으면 완료된 앞 단계가 뒤 단계 조작을 가로채지 않게 비종결 후보만 보고,
+    명시 st → 현재 수행자 → 배분권자 → 제출자 순으로 좁힌다. 그래도 둘 이상이면 추측하지 않는다.
+    """
+    from .rule.backlog import DONE, DROPPED, relay_for
+
+    bid = str(backlog_id or "").strip()
+    hint = str(st_hint or "").strip().lower()
+    candidates = []
+    for st in subtasks:
+        relay = relay_for(flow, st)
+        for backlog in relay.backlogs:
+            if backlog.backlog_id == bid and backlog.status not in (DONE, DROPPED):
+                candidates.append((st, relay, backlog))
+    if hint:
+        hinted = [x for x in candidates
+                  if hint == str(x[0].st_id).lower() or hint in str(x[0].goal).lower()]
+        if not hinted:
+            return None, (f"백로그 {bid}의 단위 '{st_hint}'를 찾지 못했습니다. 열린 후보: "
+                          + " · ".join(str(x[0].st_id) for x in candidates[:8]))
+        candidates = hinted
+    if len(candidates) == 1:
+        return candidates[0], None
+
+    mine_active = [x for x in candidates
+                   if x[2].status == "in_progress" and int(x[2].assignee or 0) == int(me_id)]
+    if len(mine_active) == 1:
+        return mine_active[0], None
+    holder = [x for x in candidates if int(x[1].turn_holder or 0) == int(me_id)]
+    if len(holder) == 1:
+        return holder[0], None
+    mine = [x for x in candidates if int(x[2].submitter or 0) == int(me_id)]
+    if len(mine) == 1:
+        return mine[0], None
+    if not candidates:
+        return None, f"백로그 {bid}가 열린 단위 어디에도 없습니다."
+    return None, (f"백로그 {bid}가 여러 단위에 있어 하나로 정할 수 없습니다 — st에 단위 ID/목표를 "
+                  f"함께 주세요: " + " · ".join(str(x[0].st_id) for x in candidates[:8]))
+
+
+def _active_scoped_backlog(flow, subtasks):
+    """열린 마일스톤 전체의 단일 활성 백로그를 찾는다(B ID는 지역 ID라 scope도 함께 반환)."""
+    from .rule.backlog import relay_for
+    for st in subtasks:
+        relay = relay_for(flow, st)
+        for backlog in relay.backlogs:
+            if backlog.status == "in_progress":
+                return st, relay, backlog
+    return None
+
+
 def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     # [G3 — 캐주얼 도구 미장착(B-06)] mode="casual"이면 협업·제작 도구(request·recruit·리더도구)를 아예
     # 장착하지 않고 run만 준다(일상 대화 턴의 오발 프로젝트를 프롬프트가 아니라 구조로 차단 — 스키마 토큰도
@@ -321,7 +375,10 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "하나를 골라 다음 수행자를 선정한다(수행자=그 제출자, 회의 산물처럼 제출자가 없으면 집는 사람). **작업(run/Write)은 착수된 뒤에만.**",
               {"id": str, "desc": str, "st": str})
         async def pick_backlog(args):
-            from .rule.backlog import relay_for, BacklogError, DuplicateBacklog, IN_PROGRESS
+            from .rule.backlog import (
+                relay_for, BacklogError, DuplicateBacklog, IN_PROGRESS, BLOCKED,
+                backlog_rows, backlog_scope_key, blocked_ready_for_revisit,
+            )
             from .rule.milestone import _set_pipeline_ctx, _ckpt as _ck  # [갭#1 — 릴레이 변이 즉시 영속]
             ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
             _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
@@ -333,17 +390,26 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             try:
                 if bid:
                     # [선정(2026-07-14)] 마무리자가 남은 백로그를 골라 그 제출자를 다음 수행자로 — 순차.
-                    r, b = None, None
-                    for _x in _sts:
-                        _r = relay_for(flow, _x)
-                        if any(x.backlog_id == bid for x in _r.backlogs):
-                            r, b = _r, _r.get(bid)
-                            break
-                    if b is None:
-                        return _ok(f"선점 불가: 백로그 {bid}가 열린 단위 어디에도 없습니다.")
+                    _hit, _err = _resolve_scoped_backlog(flow, _sts, bid, me_id, _stq)
+                    if _err:
+                        return _ok(f"선점 불가: {_err}")
+                    _tgt, r, b = _hit
                     if b.status == IN_PROGRESS and int(b.assignee or 0) == int(me_id):
                         _set_pipeline_ctx(flow, me_id)
                         return _ok(f"백로그 {b.backlog_id}는 이미 당신이 작업 중입니다 — 이어서 하세요.")
+                    _active = _active_scoped_backlog(flow, _sts)
+                    if _active is not None and _active[2] is not b:
+                        return _ok(
+                            f"선점 불가: {_active[0].st_id}/{_active[2].backlog_id}가 작업 중입니다"
+                            "(마일스톤 전체 순차 1활성) — 그 완료/차단 뒤 선정하세요.")
+                    if b.status == BLOCKED:
+                        _rows = backlog_rows(flow)
+                        if not blocked_ready_for_revisit(
+                                b, [row[2] for row in _rows],
+                                backlog_scope_key(_tgt.st_id, b.backlog_id)):
+                            return _ok(
+                                f"선점 불가: {_tgt.st_id}/{b.backlog_id}는 선행 작업으로 차단됐습니다 — "
+                                "연결된 보충 백로그가 모두 종결되고 실제 완료 증거가 생긴 뒤 재개하세요.")
                     # [무주=자기선택(2026-07-16)] 회의 산물(submitter=0)은 '집는 사람이 한다' — 수행자=나.
                     # 제출자 있는 항목은 종전대로 수행자=제출자(전담 불변 — 남이 채갈 수 없음).
                     _assn = int(b.submitter) or int(me_id)
@@ -389,6 +455,13 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                         return _ok(f"백로그 {b.backlog_id} 등재 완료(대기) — 지금 배분권은 마무리자"
                                    f"({flow._info(_th) if hasattr(flow,'_info') else _th})에게 있습니다. "
                                    f"당신 차례는 그의 선정으로 옵니다.")
+                    _active = _active_scoped_backlog(flow, _sts)
+                    if _active is not None and _active[2] is not b:
+                        _ck(flow)
+                        return _ok(
+                            f"백로그 {b.backlog_id} 등재 완료(대기) — "
+                            f"{_active[0].st_id}/{_active[2].backlog_id}가 작업 중입니다"
+                            "(마일스톤 전체 순차 1활성).")
                     try:
                         r.pick(int(me_id), b.backlog_id, int(me_id))
                     except BacklogError as e:
@@ -406,25 +479,23 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         @tool("drop_backlog",
               "**중단**: 내 백로그(내가 제출/수행 중)를 완수 불가로 판단해 장부에서 제외한다 — 백로그는 "
               "개인 역량 안이어야 하며, 불가 판단도 본인 몫. blocked(선행 대기·재방문)와 다르게 중단은 "
-              "종결이다. 중단하면 당신이 다음 선정의 담당자가 된다. id=백로그, reason=왜 불가한가(필수).",
-              {"id": str, "reason": str})
+              "종결이다. 중단하면 당신이 다음 선정의 담당자가 된다. id=백로그, st=단위 ID/목표, "
+              "reason=왜 불가한가(필수).",
+              {"id": str, "st": str, "reason": str})
         async def drop_backlog(args):
-            from .rule.backlog import relay_for, BacklogError, handoff_note
+            from .rule.backlog import BacklogError, handoff_note
             from .rule.milestone import flush_pipeline_notes as _flush, _ckpt as _ck
             ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
             _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
             bid = str(args.get("id") or "").strip()
+            _stq = str(args.get("st") or "").strip()
             reason = str(args.get("reason") or "").strip()
             if not bid or not reason:
                 return _ok("id와 reason(왜 완수 불가인가)이 모두 필요합니다 — 중단은 기록이 남는 종결입니다.")
-            r, b = None, None
-            for _x in _sts:
-                _r = relay_for(flow, _x)
-                if any(x.backlog_id == bid for x in _r.backlogs):
-                    r, b = _r, _r.get(bid)
-                    break
-            if b is None:
-                return _ok(f"중단 불가: 백로그 {bid}가 열린 단위 어디에도 없습니다.")
+            _hit, _err = _resolve_scoped_backlog(flow, _sts, bid, me_id, _stq)
+            if _err:
+                return _ok(f"중단 불가: {_err}")
+            _tgt, r, b = _hit
             try:
                 r.drop(int(me_id), bid, reason)
             except BacklogError as e:
@@ -440,26 +511,23 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         @tool("block_backlog",
               "[차단 — 선행 필요] 내 백로그가 **다른 일(선행)이 먼저 돼야** 진행 가능할 때: 이 백로그를 "
               "잠시 보류(blocked, 버리지 않고 보존·나중 재개)하고 순차 릴레이의 자리를 넘긴다 — 정지한 채 "
-              "릴레이를 막지 않는 출구다. id=백로그, reason=무슨 선행이 필요한가. 중단(drop=완수 불가)과 "
+              "릴레이를 막지 않는 출구다. id=백로그, st=단위 ID/목표, reason=무슨 선행이 필요한가. 중단(drop=완수 불가)과 "
               "다르다: 차단은 선행이 풀리면 재방문한다.",
-              {"id": str, "reason": str})
+              {"id": str, "st": str, "reason": str})
         async def block_backlog(args):
-            from .rule.backlog import relay_for, BacklogError, handoff_note
+            from .rule.backlog import BacklogError, handoff_note
             from .rule.milestone import flush_pipeline_notes as _flush, _ckpt as _ck
             ms = next((m for m in (getattr(flow, "milestones", None) or []) if m.status not in ("done", "superseded")), None)
             _sts = [x for x in ms.subtasks if x.status not in ("done", "superseded")] if ms else []
             bid = str(args.get("id") or "").strip()
+            _stq = str(args.get("st") or "").strip()
             reason = str(args.get("reason") or "").strip()
             if not bid or not reason:
                 return _ok("id와 reason(무슨 선행이 필요한가)이 모두 필요합니다.")
-            r, b = None, None
-            for _x in _sts:
-                _r = relay_for(flow, _x)
-                if any(x.backlog_id == bid for x in _r.backlogs):
-                    r, b = _r, _r.get(bid)
-                    break
-            if b is None:
-                return _ok(f"차단 불가: 백로그 {bid}가 열린 단위 어디에도 없습니다.")
+            _hit, _err = _resolve_scoped_backlog(flow, _sts, bid, me_id, _stq)
+            if _err:
+                return _ok(f"차단 불가: {_err}")
+            _tgt, r, b = _hit
             try:
                 # next_starter=나(차단자) — 배분권을 쥐고 [다음 선정]으로 선행 작업 수행자를 고른다.
                 _bl, _deadlock = r.block(int(me_id), bid, int(me_id), reason)

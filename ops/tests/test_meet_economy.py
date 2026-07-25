@@ -771,7 +771,7 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     값 = 빈칸과 동형(형식 검사 — 내용 무판단) — 등록이 최종 방어선이라 종결 보장이 소진돼도 '결정이
     실린 결론'만 확정 가능. 초안 단계(draft_missing_key)에서도 같은 판정으로 가결 전 기계 이의 코칭."""
     from system.guide_tools import Flow
-    from system.rule.milestone import deferred_only, draft_missing_key, register_stage
+    from system.rule.milestone import deferred_only, draft_missing_key, register_stage, stage_preflight
     from test_sys import FakeGuide
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     assert deferred_only("(후속: 기획·설계 단계에서 게임 정체성 확정 — 담당: 게임 기획자, 기획 마감: 2026-07-23 정오)")
@@ -790,6 +790,22 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     ok4, _n4 = register_stage(f, "goal", "목표: 카드 대전 → 온라인 확장 가능한 웹게임\n"
                                          "- 30턴 완주 | 실증: run 재현", "게임")
     assert ok4                                                 # 단일 화살표(표현)는 허용 — 연쇄만 반려
+    # [U-051 라이브 2026-07-25] 인라인 코드의 상태 전이를 화살표 수로 세어, 9명 전원 찬성한 정상
+    # GOAL을 두 번 거부한 뒤 meet_gate_exhausted로 공전했다. 코드 계약은 절차 나열이 아니다.
+    code_goal = ("목표: JS 상태 전이 검사기 1세트로 `idle→working`, `working→done`, "
+                 "`working→stopped` 계약을 확인한다\n"
+                 "- 전이 테스트 통과 | 실증: node test.js")
+    ok5, note5 = register_stage(f, "goal", code_goal, "상태 전이")
+    assert ok5, note5
+    circled_code_goal = ("목표: JS 상태 전이 검사기 1세트로 `①idle→②working→③done` 계약을 확인한다\n"
+                         "- 전이 테스트 통과 | 실증: node test.js")
+    ok6, note6 = register_stage(f, "goal", circled_code_goal, "상태 전이")
+    assert ok6, note6
+    draft = "## 결정\n" + code_goal + "\n\n## 참고 (자유 — 판정 대상 아님)\n"
+    assert stage_preflight("goal", draft) == []                 # 비싼 찬성 표결 전 검사도 같은 판정
+    prose_draft = ("## 결정\n목표: 컨셉 정의 → 페이퍼 검증 → 호흡 정량 정의\n"
+                   "- 검증 로그 | 실증: run 재현\n\n## 참고\n")
+    assert any("절차 나열" in e for e in stage_preflight("goal", prose_draft))
     assert draft_missing_key("goal", "## 결정\n목표: (후속: 나중에)\n\n## 참고") == "목표"
     assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n\n## 참고") is None
 
@@ -1238,6 +1254,42 @@ class _RunGuide:
 
     async def create_project_channel(self, gid, name):
         return 9001
+
+
+def test_pending뒤_stop신호면_claim과_흐름시작을_건너뜀(monkeypatch, tmp_path):
+    """pending 조회 직후 들어온 stop을 단건 검사에서 consume해도 옛 스냅샷을 claim하지 않는다."""
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+
+    class _StopAtClaimGuide(_RunGuide):
+        def __init__(self):
+            super().__init__()
+            self.stop_checks = []
+
+        async def check_stop(self, ch):
+            self.stop_checks.append(ch)
+            return True
+
+    g = _StopAtClaimGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path), max_continue=1)
+    started = []
+
+    async def must_not_start(*_args, **_kwargs):
+        started.append(True)
+
+    s.route_channel_request = must_not_start
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+
+    assert g.stop_checks == [g.ch]
+    assert g.picks == [] and started == []
+    assert any(e["event"] == "request_claim_skipped_stop" for e in s.flow_log)
 
 
 def test_사람대기_reap은_재픽없이_전용마감(monkeypatch, tmp_path):

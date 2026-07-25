@@ -2,6 +2,42 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-25.
 
+## ★ U-051 라이브 재실증에서 발견한 백로그 원장 경합 수리 (2026-07-25 GPT)
+- 실제 웹 요청→Postgres→HTTP Guide→systemd 러너→GPT 경로로 새 비공개 실증 채널
+  `U-051`(내부 P-048, Task 120715-1)을 돌렸다. 목표의 코드 계약
+  `` `idle→working`, `working→done`, `working→stopped` ``를 GOAL 게이트가 산문 절차의
+  `→` 연쇄로 오인해, 9명 전원 찬성 뒤 등록을 두 번 거부하고
+  `meet_gate_exhausted → ms_consensus_empty → auto_kickoff`로 재개한 upstream 교착을 확인했다.
+  비용만 늘기 전에 정식 stop했고, 라이브에서
+  `cancel_requested → flow_user_stopped → flow_done → user_stopped_closed` 및 DB의
+  `picked+stopped+done_ts` 유지·`request_repick` 0·StopSignal ack를 확인했다.
+- GOAL 절차 검사를 등록 최종선과 표결 전 preflight가 공유하게 하고, Markdown 인라인 코드 안의
+  상태 전이는 제외했다. 산문 `① 조사 → ② 구현 → ③ 배포` 및 비코드 화살표 연쇄 거부는 유지한다.
+- B번호는 SubTask 지역 ID다. 모든 열린 단위에서 실제 in_progress를 찾아 생각/발화를 정확한
+  `(st_id, backlog_id)`에 붙인다. 위임 마커도 `[백로그 MS-X/ST-2::B1]` 범위를 지원하며,
+  지역 `B1`만 썼을 때 현재 수행자·고유 제출자·본문 겹침으로 하나가 증명되지 않으면 첫 ST를
+  추측하지 않고 거부한다. 구조 킥·수동 도구·위임·자가 보고·자동 핸드오프 모두 마일스톤 전체
+  **단일 활성**을 공유하고, 구 체크포인트의 다중 active는 먼저 잡힌 한 건만 보존한다.
+- blocked 원본은 즉시 재선정하지 않는다. 보충 회의 항목에 정확한 원본
+  `supplement_for=ST::Bn`을 영속하고, 차단 뒤 연결된 보충 세대가 **전부 done/dropped**이며
+  최소 한 건이 실제 done일 때만 최근 작업자 응찰/선정(장애 시 구조 킥)으로 재개한다. 보충 자체가
+  다시 blocked면 원본에 새 일을 중복 생성하지 않고 가장 아래 막힌 보충만 다음 회의 대상으로 삼는다.
+  재개 시
+  `ts_pick`을 새로 열고 옛 `ts_done`을 지워 생각 창과 작업중 표시가 과거 창에 섞이지 않는다.
+  worker의 마지막 독립 줄이 정확히 `[백로그 완료]`일 때만 상태를 done으로 전이하고, 품질 판정은
+  백로그 소진 뒤 마일스톤 검증 한 곳이 맡는다.
+- 생각·상태 소멸의 근본은 `_ckpt`마다 fire-and-forget `put_state`를 병렬 전송해, 느린 옛 open이
+  최신 done/activity 뒤 도착해 DB를 되감는 경합이었다. `(event loop, channel, kind)`별 단일 writer로
+  직렬화하고 전송 중 갱신은 누적 활동을 가진 최신 한 장으로 합치며, 흐름 종결 전에 flush한다.
+  프론트도 연속 보고의 `(ST,B)`가 바뀌는 지점에서 turnblock을 분리하고 entry별 scope를 보존한다.
+- stop/reap 같은-poll 경합은 stop 스캔을 reap보다 앞세우고, pending 조회 직후 stop 신호가 오면
+  claim 자체를 건너뛴다. HTTP·로컬 command·SnsGuide 세 구현의 claim CAS도 DB 최신값에서
+  `picked=False/누락 + stopped=False/누락 + done_ts 누락`을 함께 검사해 스테일 payload가 종결을
+  덮지 못하며, stopped unpick도 거부한다. 명시 재개 API만 stopped를 풀 수 있다.
+- 착지 전 전체 검증: Django **429 OK** · 브레인 pytest **775 passed** · system unittest OK ·
+  프론트 build/UI 계약 OK. 라이브 DB의 전역 기본값이 문서와 달리 `gpt-5.4/low`로 떠 있던 설정
+  드리프트도 `gpt-5.6-luna/max`로 바로잡아 재조회했다. 수정본 라이브 재실증은 착지·재시작 뒤 수행한다.
+
 ## ★ ch96 백로그 실행·중지 원장 수리 (2026-07-25 GPT)
 - 최신 e2e 정밀 복기 결과, `B1/B2`는 전역 ID가 아니라 **각 SubTask 안의 지역 ID**인데
   서버 `_claim_kicked`와 UI 대화 매칭 한 곳이 B번호만 비교했다. 첫 단계 B1 킥 기록이 뒤 모든
@@ -389,10 +425,13 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  0a61c05   ← HEAD — ★백로그 지역 ID·작업/중지 표면 교정(2026-07-25):
-                          `(SubTask,Bn)` scoped 현재·대화·중지 판정 · 실제 in_progress 한 건만
-                          중지 · 첫 미완 B1 중지 폴백 폐지 · 기술 ID/독립 선정 박스 제거 · UI 계약
-                          회귀+프로덕션 빌드. (이전 d0c601a) ★백로그 작업 생각 정확 귀속·접힌 단계
+murmur  d38e9ec   ← HEAD — ★scoped 피드·terminal claim 원자화(2026-07-25):
+                          같은 actor·같은 ST라도 B1→B2면 raw 그룹/turnblock/폴더 행 전 구간을
+                          분리하고 entry의 `(ST,B)`를 보존한다. HTTP·로컬 command·SnsGuide claim
+                          CAS가 stopped/done 최신값을 함께 검사해 중지 직후 스테일 claim 부활을
+                          차단. Django 429·UI 계약+프로덕션 빌드. (이전 0a61c05) ★백로그 지역
+                          ID·작업/중지 표면 교정: 실제 in_progress 한 건만 중지 · 첫 미완 B1
+                          중지 폴백 폐지 · 기술 ID/독립 선정 박스 제거. (이전 d0c601a) ★백로그 작업 생각 정확 귀속·접힌 단계
                           활성 일감 표시(2026-07-24):
                           works 진입=살아있는 앱풀 정본으로 302(organt-<pid> 슬롯·죽은 앱은 정적
                           폴백) · /apps/ 게이트웨이에 works와 동일 sandbox CSP+ACAO:*(murmur 원본

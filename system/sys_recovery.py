@@ -208,11 +208,14 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     # 변이가 화면 미러에 안 남는다. 마일스톤 표현과 릴레이가 모두 복원된 바로 여기서 기존 릴레이만
     # relay_for에 통과시켜 log·on_change를 재결합한다(없는 릴레이를 새로 만들지는 않음).
     try:
-        from .rule.backlog import relay_for
+        from .rule.backlog import relay_for, normalize_active_backlogs
         for _ms in flow.milestones:
             for _st in _ms.subtasks:
                 if _st.st_id in flow.backlog_relays:
                     relay_for(flow, _st)
+        # 전역 잠금 도입 전 체크포인트에 둘 이상의 SubTask가 작업 중으로 남아 있을 수 있다.
+        # 복원 직후 한 번 정규화해야 구조 드라이버와 UI가 같은 단일 active를 본다.
+        normalize_active_backlogs(flow)
     except Exception:
         pass
     if flow.milestones:

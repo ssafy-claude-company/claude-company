@@ -91,7 +91,7 @@ def test_SYS_정상작업턴완료뒤_보유자응찰을_최근작업자가_선�
 
     async def scripted(_flow, who, body, kind, role, micro=False):
         if "작업중 — 이어서" in body:
-            return "기본 화면 구현과 실행 검증을 완료했습니다."
+            return "기본 화면 구현과 실행 검증을 완료했습니다.\n[백로그 완료]"
         if "응찰" in body and who == 12:
             return f"[응찰: 9, {b2.backlog_id}] 기반 작업이라 우선"
         if "응찰" in body and who == 13:
@@ -127,7 +127,7 @@ def test_SYS_첫백로그는_작업중미러뒤_정상턴완료가_원장에남�
     s = Sys(g, 1, None, bot_info={11: "L", 12: "M"})
 
     async def scripted(*_args, **_kwargs):
-        return "첫 화면 구현과 빌드 검증 완료"
+        return "첫 화면 구현과 빌드 검증 완료\n[백로그 완료]"
     s.run_turn = scripted
 
     asyncio.run(s._claim_kick(f))
