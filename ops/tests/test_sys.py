@@ -6555,6 +6555,62 @@ def test_무지정_Info는_발제선거와_Task0중지없이_정상답변():
     assert "flow_done" in events and "flow_no_deliverable" not in events
 
 
+def test_명시담당_Work도_선거와무관하게_SYS가_Task회의를_자동개시(
+    monkeypatch, tmp_path,
+):
+    """U-054: 담당자가 지정된 제작 Work도 선거 요청과 같은 구조적 kickoff를 탄다.
+
+    선거는 담당자 선택 방식일 뿐 제작 의도가 아니다. 이 경로를 빼면 PM이 GOAL 회의만 마치고
+    Task 0으로 반환해 백로그가 한 건도 시작되지 않는다.
+    """
+    from system.protocol import TaskStatus
+    from system.rule.task import TaskRef
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    created, meetings, turns = [], [], []
+
+    async def fake_create_task(flow, _args):
+        status = TaskStatus(
+            task_id="T-directed", purpose="상태 머신", status="진행",
+            goal="", owner="", group=[])
+        ref = TaskRef(
+            task_id="T-directed", thread_id="thread", block_id="block",
+            status=status, team=[11], owner=11)
+        flow.current = ref
+        flow.tasks.append(ref)
+        created.append(flow.root_kind)
+        return "Task opened"
+
+    async def fake_meet(flow, me_id, args):
+        meetings.append((me_id, args.get("_sys_open")))
+        flow.current = None
+        return "회의 완료"
+
+    monkeypatch.setattr("system.rule.task.create_task", fake_create_task)
+    monkeypatch.setattr("system.rule.communication.meet", fake_meet)
+
+    g = FakeGuide()
+    s = Sys(
+        g, guild_id=1, organt_builder=None, bot_info={11: "프로젝트 매니저"},
+        workspace=str(tmp_path), max_continue=0)
+
+    async def opening_opinion(_flow, _oid, body, kind, role, **_kw):
+        turns.append((body, kind, role))
+        return "원문 계약을 그대로 보존합니다."
+
+    s.run_turn = opening_opinion
+    out = asyncio.run(s.handle_user_input(
+        778, 11, "상태 머신을 구현해줘", root_id="r-directed-work",
+        elect=False, request_kind=Kind.WORK))
+
+    assert out["mode"] == "flow"
+    assert created == [Kind.WORK]
+    assert meetings == [(11, True)]
+    assert len(turns) == 1 and turns[0][1:] == (Kind.INFO, "leader")
+    assert any(e["event"] == "auto_kickoff" for e in s.flow_log)
+    assert not any(e["event"] == "flow_no_deliverable" for e in s.flow_log)
+
+
 def test_첫턴실패신호는_실질leader결산만쓰고_worker가_덮지않음(tmp_path):
     """같은 Flow의 늦은 worker 성공이 루트 Codex 전송 실패를 정상으로 바꾸지 않는다."""
     g = FakeGuide()

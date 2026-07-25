@@ -37,8 +37,15 @@
   시작하지 않는다. 웹이 즉시 terminal로 쓴 사용자 stop은 러너가 다시 channel-wide로 쓰지 않고,
   읽은 `StopSignal(id, requested_at)` 세대만 ack한다. 따라서 stop→resume→새 stop 사이 늦은 ack가
   재개 요청을 다시 중지하거나 새 중지 신호를 삼키지 않는다.
+- 두 번째 실판 `U-054`(P-051, request 5043)는 64KiB를 넘던 첫 PM 턴을 356초간 정상
+  관통하고 담당자·working·활동 6줄을 끝까지 보존했다. 다만 명시 담당 Work가 선거를 안 거친다는
+  이유로 SYS 자동 Task kickoff에서도 빠져, PM이 GOAL 회의를 전원 찬성으로 끝낸 뒤 Task/백로그 0으로
+  반환했다. 거짓 완료 차단은 이를 `flow_no_deliverable → false_complete_blocked` 중지로 정직하게
+  막았다. 제작 의도와 담당자 선택 방식을 분리해 **모든 비캐주얼 Work**가 같은 자동
+  `create_task → 첫 회의`를 타도록 교정했다. probe도 fail-closed stopped 종결을 `flow_done`
+  없이 인식해 즉시 실패 보고서를 봉인한다.
 - 착지 전 전체 검증: Django **459 OK** · system unittest OK · 브레인 pytest
-  **830 passed** · 프론트 프로덕션 build/UI 정본 계약 OK. 새 라이브 E2E 성공 전까지
+  **833 passed** · 프론트 프로덕션 build/UI 정본 계약 OK. 새 라이브 E2E 성공 전까지
   이 작업은 완료가 아니다.
 
 ## ★ 완료 참칭 차단·백로그 표면 수렴 및 새 라이브 실증 준비 (2026-07-25 GPT)

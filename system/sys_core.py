@@ -2445,6 +2445,10 @@ class Sys:
         _joined_team = list(elected_team or [])
         _request_kind_text = str(
             getattr(request_kind, "value", request_kind) or "").strip().lower()
+        _root_is_work_kind = (
+            request_kind == Kind.WORK or _request_kind_text in ("w", "work"))
+        _root_work_intent = bool(
+            _root_is_work_kind and not _casual_turn(user_text, "leader"))
         if _request_kind_text in ("i", "info"):
             elect = False
             election_done = True
@@ -2905,13 +2909,15 @@ class Sys:
                 except Exception as _e:
                     self._log("precise_resume_failed", err=str(_e)[:150])
             # [기계적 킥오프 구조화(2026-07-14, 사용자: '왜 정석을 봇 지능에 맡겨 — 마일스톤 등록·서브태스크·
-            # 백로그는 정석인데')] 선거로 연 제작 요청의 Task 개설·첫 회의 개시는 **SYS가 자동으로** 돌린다 —
+            # 백로그는 정석인데')] 제작 Work의 Task 개설·첫 회의 개시는 **SYS가 자동으로** 돌린다 —
             # 앵커가 create_task·meet를 '부를지'에 안 맡긴다(누가 시작하든 똑같은 기계적 단계). 앵커는 '여는
             # 의견'(내용=판단)만 내고, 회의 개시·진행·표결·마일스톤/서브태스크 등록은 구조가 굴린다. 이로써
-            # '앵커 평문 독백→완료 참칭'(킥오프 유도)이 통째로 사라진다. 실패 시 종전 봇-구동 경로로 폴백.
+            # '앵커 평문 독백→완료 참칭'(킥오프 유도)이 통째로 사라진다. 선거 여부는 담당자 선택 방식일
+            # 뿐 제작 의도와 무관하므로, 명시 담당 Work도 같은 구조를 탄다. 실패 시 종전 봇-구동 경로로 폴백.
             _auto_kicked = False
             from .rule.milestone import pipeline_on as _ms_on0
-            if _ms_on0() and getattr(flow, "was_elect", False) and flow.current is None and not _pf:
+            if (_ms_on0() and (getattr(flow, "was_elect", False) or _root_work_intent)
+                    and flow.current is None and not _pf):
                 try:
                     from .rule.task import create_task as _auto_ct
                     from .rule.communication import meet as _auto_meet
@@ -2988,7 +2994,8 @@ class Sys:
                 # [작업 단계 회의 강요 봉합(2026-07-20, e2e 실측: 미룸 5회·강제 2회)] 킥오프 meet 강제는
                 # **계획 장부가 백지일 때만** — 장부(마일스톤·백로그)가 이미 있으면 회의가 아니라
                 # 이어가기·선점 킥이 옳은 다음 수다(재픽·복원 판에서 meet 강요↔작업단계 미룸의 모순 루프 제거).
-                return (getattr(flow, "was_elect", False) and flow.current is None
+                return ((getattr(flow, "was_elect", False) or _root_work_intent)
+                        and flow.current is None
                         and not (getattr(flow, "milestones", None) or []) and _kicks < _kickoff_cap)
             while ((flow.current is not None or "턴 한도 도달" in (result or "") or _ms_pending()
                     or _needs_kickoff() or _needs_e2e())
@@ -3332,7 +3339,7 @@ class Sys:
                  or str(result or "").startswith("(리더 처리 중 오류:"))
         )
         _root_kind_text = _request_kind_text
-        _root_is_work = request_kind == Kind.WORK or _root_kind_text in ("w", "work")
+        _root_is_work = _root_is_work_kind
         _no_deliverable_attempt = bool(
             not _start_failed
             and flow.current is None

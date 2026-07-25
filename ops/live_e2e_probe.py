@@ -64,6 +64,14 @@ BAD_TRACE_EVENTS = {
     "request_repick_rejected",
     "user_stopped_closed",
 }
+STOPPED_TRACE_EVENTS = {
+    "awaiting_human_closed",
+    "false_complete_blocked",
+    "quota_halt_closed",
+    "request_start_failed_stopped",
+    "stalled_stopped",
+    "user_stopped_closed",
+}
 PID_RE = re.compile(r"^[A-Za-z]+-[0-9]+$")
 
 
@@ -1645,7 +1653,14 @@ def inject_correction(client: LocalHttp, state: ProbeState) -> dict[str, Any]:
 def is_terminal(state: ProbeState) -> bool:
     req = request_message(state.latest_messages, state.request_id) or {}
     names = {str(x.get("event") or "") for x in state.trace_events}
-    return req.get("request_state") in {"done", "stopped"} and "flow_done" in names
+    request_state = req.get("request_state")
+    if request_state == "done":
+        return "flow_done" in names
+    if request_state == "stopped":
+        # fail-closed 흐름은 의도적으로 flow_done을 쓰지 않는다. 거짓 완료를 막은 정상 실패
+        # 종결도 probe가 3시간 timeout까지 기다리지 않고 즉시 실패 보고서로 봉인해야 한다.
+        return bool(names.intersection(STOPPED_TRACE_EVENTS))
+    return False
 
 
 def artifact_paths(pid: str, request_id: int) -> tuple[Path, Path]:
