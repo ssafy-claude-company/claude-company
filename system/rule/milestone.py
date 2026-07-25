@@ -26,7 +26,7 @@ __all__ = [
     "parse_criteria_lines", "rule_set_milestone", "rule_set_subtask",
     "parse_iter_results", "rule_report_iter",
     "renegotiate_criterion", "approve_waiver", "rule_renegotiate",
-    "extract_consensus", "flush_state_db",
+    "extract_consensus", "flush_state_db", "canonical_parent_contract",
 ]
 
 
@@ -83,6 +83,11 @@ class Milestone:
     # [이월 원장(2026-07-20)] 이 주기가 '다음 주기로 이월'한 조건({desc, verify, reason}) —
     # 다음 open_milestone이 소비해 새 주기 잣대로 합류시킨다(잣대를 버리는 게 아니라 옮김).
     carried: list = field(default_factory=list)
+    # GOAL 회의가 확정한 상위 완수계약의 비가변 참조. 이 목록은 이번 주기의 검증 분모가 아니다 —
+    # 여러 주기로 나뉜 Task에서 첫 주기가 전체 GOAL 조건을 모두 만족해야 하는 불가능을 만들지 않으면서,
+    # 하위 회의가 상위 계약을 축소·대체해도 정본 계보와 Task 최종 게이트가 사라지지 않게 보존한다.
+    # 끝에 추가해 기존 positional 생성자의 네 번째 인자(subtasks) 의미도 보존한다.
+    locked_criteria: List[Criterion] = field(default_factory=list)
 
 
 # ── 완수조건 등록 게이트 (계약 §2) ──────────────────────────────────────────────
@@ -289,8 +294,11 @@ def _ms_one(flow, ms, relays):
     # [완수조건 표면화(2026-07-13, 사용자: '뭐 완수했는지 보이게')] ms레벨 조건도 ✓체크리스트로
     ms_cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
               "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in ms.criteria[:15]]
+    # 상위 GOAL 계약은 관측용 별도 필드 — met/total 분모에는 절대 합치지 않는다.
+    locked_cr = [{"d": c.desc[:80], "v": (c.verify or "")[:160]}
+                 for c in (getattr(ms, "locked_criteria", None) or [])[:15]]
     return {"goal": ms.goal[:140], "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
-            "cr": ms_cr, "sts": sts}
+            "cr": ms_cr, "locked_cr": locked_cr, "sts": sts}
 
 
 _MS_BG_TASKS = set()   # [GC 방어] fire-and-forget DB push 태스크 참조 보존
@@ -448,6 +456,7 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
         return err
     ms = Milestone(ms_id=f"MS-{int(time.time() * 1000) % 10**9}-{len(flow.milestones) + 1}",
                    goal=str(goal or "").strip(), criteria=_mk_criteria(criteria_entries),
+                   locked_criteria=_mk_criteria(_goal_acceptance_entries(flow)),
                    origin=str(origin or "").strip())
     # [이월 조건 기계 합류(2026-07-20, 사용자: '개입 최대한 줄여')] 이전 주기가 이월한 조건을 새
     # 주기 잣대에 자동 합류 — 이월이 '버리기'가 못 되게 하는 핵심(봇 약속이 아니라 구조가 옮김).
@@ -478,7 +487,7 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
     _ckpt(flow)
     if flow.log:
         flow.log("ms_open", ms=ms.ms_id, goal=ms.goal[:80], criteria=len(ms.criteria),
-                 replan=bool(origin.startswith("e2e:")))
+                 locked_criteria=len(ms.locked_criteria), replan=bool(origin.startswith("e2e:")))
     # [조건 상세 동봉(2026-07-10)] 피드가 '조건 N' 칩에서 목록을 보여줄 수 있게 마커에 싣는다.
     crit_lines = "\n".join(f"· {c.desc[:96]}" for c in ms.criteria[:30])
     # [ID 동봉(2026-07-10)] 표면이 제목 절두 매칭(추측) 대신 ID로 정확히 부착·완수 매칭한다.
@@ -975,6 +984,108 @@ def parse_criteria_lines(text: str):
         import re as _re
         v = _re.sub(r"^(?:[\w가-힣]{0,4}\s*)?(?:실증|검증|측정)\s*[:：]\s*", "", v.strip())
         out.append({"desc": d.strip(), "verify": v.strip()})
+    return out
+
+
+def _goal_doc_section(text: str, heading: str) -> str:
+    """GOAL.md의 한 섹션 전문. 알 수 없는 섹션도 읽되 다음 ``##``에서 정확히 멈춘다."""
+    wanted = str(heading or "").strip().casefold()
+    active = False
+    out = []
+    for line in str(text or "").splitlines():
+        m = re.match(r"^##\s+(.+?)\s*$", line)
+        if m:
+            if active:
+                break
+            active = m.group(1).strip().casefold() == wanted
+            continue
+        if active:
+            out.append(line)
+    return "\n".join(out).strip()
+
+
+def _goal_doc(flow) -> str:
+    try:
+        from .._util import dossier_read
+        return str(dossier_read(flow, "GOAL.md") or "")
+    except Exception:
+        return ""
+
+
+def canonical_parent_contract(flow) -> str:
+    """하위 회의에 공급할 상위 GOAL 정본 전문.
+
+    새 문서는 표결에 붙었던 ``Ratified Decision``을 그대로 돌려준다. 구 문서·복구 상태는 고정
+    섹션/TaskRef에서 무절단 합성한다. 호출자가 이 문자열을 자르지 않는 것이 계약이다.
+    """
+    doc = _goal_doc(flow)
+    ratified = _goal_doc_section(doc, "Ratified Decision")
+    if ratified:
+        return ratified
+    cur = getattr(flow, "current", None)
+    status = getattr(cur, "status", None)
+    goal = str(getattr(status, "goal", "") or "").strip()
+    acceptance = str(getattr(cur, "acceptance", "") or "").strip()
+    interfaces = str(getattr(cur, "interfaces", "") or "").strip()
+    goal = goal or _goal_doc_section(doc, "Goal")
+    acceptance = acceptance or _goal_doc_section(doc, "Acceptance")
+    interfaces = interfaces or _goal_doc_section(doc, "Interfaces")
+    parts = []
+    if goal:
+        parts.append(f"목표: {goal}")
+    if interfaces:
+        parts.append(f"인터페이스:\n{interfaces}")
+    if acceptance:
+        parts.append(f"완수조건:\n{acceptance}")
+    return "\n".join(parts).strip()
+
+
+def _goal_acceptance_entries(flow):
+    """GOAL 정본의 실증 조건을 중복 없이 상위 잠금 참조로 복제한다."""
+    doc = _goal_doc(flow)
+    source = _goal_doc_section(doc, "Ratified Decision")
+    cur = getattr(flow, "current", None)
+    if not source:
+        source = (str(getattr(cur, "acceptance", "") or "").strip()
+                  or _goal_doc_section(doc, "Acceptance"))
+    rows = []
+    for line in str(source or "").splitlines():
+        clean = line.strip().lstrip("-•* ").strip()
+        if not clean:
+            continue
+        if _crit_delim().search(clean):
+            rows.extend(parse_criteria_lines(clean))
+            continue
+        # 2026-07-25 이전 GOAL.md가 쓰던 ``- 조건 (실증: 절차)``도 복구한다.
+        old = re.match(r"^(.*?)\s*\((?:실증|검증|측정)\s*[:：]\s*(.*?)\)\s*$", clean)
+        if old:
+            rows.append({"desc": old.group(1).strip(), "verify": old.group(2).strip()})
+    out, seen = [], set()
+    for row in rows:
+        desc = str(row.get("desc") or "").strip()
+        verify = str(row.get("verify") or "").strip()
+        key = (desc, verify)
+        if not desc or not verify or key in seen:
+            continue
+        seen.add(key)
+        out.append({"desc": desc, "verify": verify})
+    return out
+
+
+_PUBLIC_CONTRACT_LINE = re.compile(
+    r"^(?:(?:공개|외부)\s*)?(?:계약|인터페이스(?:\s*계약)?|API\s*계약)\s*[:：]"
+    r"|^(?:public\s+)?(?:contract|interfaces?|api\s+contract)\s*[:：]",
+    re.I,
+)
+
+
+def _public_contract_lines(text: str):
+    """비준안에서 명시적으로 계약/인터페이스라 선언한 줄만 TaskRef에 옮긴다."""
+    out = []
+    for line in str(text or "").splitlines():
+        clean = line.strip().lstrip("-•* ").strip()
+        if clean and _PUBLIC_CONTRACT_LINE.match(clean) and clean not in out:
+            out.append(clean)
     return out
 
 
@@ -1656,11 +1767,14 @@ def stage_frame(stage):
     return _STAGE_FRAME.get(stage, "")
 
 
-def _write_goal_md(flow, cur, goal):
+def _write_goal_md(flow, cur, goal, decision=""):
     try:
         from .._util import dossier_write
         dossier_write(flow, "GOAL.md", (
             f"# GOAL — Task {cur.task_id}\n\n"
+            # 복구 파서는 Purpose부터 읽는다. 이 새 섹션을 앞에 두면 구 파서도 기존 다섯 섹션을
+            # 오염 없이 읽고, 새 파이프라인은 표결 원문을 손실·재서술 없이 정본으로 쓸 수 있다.
+            f"## Ratified Decision\n{(decision or '').strip()}\n\n"
             f"## Purpose\n{(getattr(cur.status, 'purpose', '') or '').strip()}\n\n"
             f"## Goal\n{(goal or '').strip()}\n\n"
             f"## Acceptance\n{(getattr(cur, 'acceptance', '') or '').strip()}\n\n"
@@ -1718,11 +1832,21 @@ def register_stage(flow, stage, prop, origin=""):
             _crits = parse_criteria_lines(_crit_txt)
             if _crits:
                 try:
-                    _cur.acceptance = "\n".join(f"- {c.desc}" + (f" (실증: {c.verify})" if c.verify else "")
-                                                for c in _crits)
+                    # parse_criteria_lines의 반환은 dict다. 종전 속성 접근 예외가 조용히 삼켜져
+                    # acceptance가 빈 채 남던 결함을 닫고, 동일 파서로 다시 읽히는 정본 문법으로 저장한다.
+                    _cur.acceptance = "\n".join(
+                        f"- {c['desc']} | 실증: {c['verify']}" for c in _crits)
                 except Exception:
                     pass
-            _write_goal_md(flow, _cur, goal)   # 수렴안 가공 결과를 영속 파일로(복구 파서 계약 헤더)
+            _ifaces = _public_contract_lines(prop)
+            if _ifaces:
+                _prev = [x for x in str(getattr(_cur, "interfaces", "") or "").splitlines() if x.strip()]
+                for _line in _ifaces:
+                    if _line not in _prev:
+                        _prev.append(_line)
+                _cur.interfaces = "\n".join(_prev)
+            _write_goal_md(flow, _cur, goal, decision=prop)  # 비준안 전문 + 복구 파서 계약 헤더
+            _ckpt(flow)   # GOAL 확정도 다른 파이프라인 전이처럼 즉시 크래시-세이프
         if flow.log:
             flow.log("task_goal_set", goal=goal[:60])
         return True, (f"[표결 확정] GOAL 확정 → {goal[:80]} · GOAL.md 작성. "
@@ -2279,6 +2403,7 @@ def ms_to_dict(ms: Milestone) -> dict:
             "iter_stuck": ms.iter_stuck, "origin": ms.origin,
             "carried": [dict(x) for x in (ms.carried or [])],   # [이월 원장 동승] 재시작 너머 보존
             "criteria": [_crit_dict(c) for c in ms.criteria],
+            "locked_criteria": [_crit_dict(c) for c in (getattr(ms, "locked_criteria", None) or [])],
             "subtasks": [{"st_id": s.st_id, "goal": s.goal, "status": s.status,
                           "iter_n": s.iter_n, "iter_stuck": s.iter_stuck,
                           "participants": sorted(int(p) for p in s.participants),
@@ -2296,6 +2421,7 @@ def ms_from_dict(d: dict) -> Milestone:
                 for r in (rows or [])]
     ms = Milestone(ms_id=str(d.get("ms_id") or ""), goal=str(d.get("goal") or ""),
                    criteria=_crit(d.get("criteria")), status=str(d.get("status") or "open"),
+                   locked_criteria=_crit(d.get("locked_criteria")),
                    iter_n=int(d.get("iter_n") or 0), iter_stuck=int(d.get("iter_stuck") or 0),
                    origin=str(d.get("origin") or ""),
                    carried=[dict(x) for x in (d.get("carried") or []) if isinstance(x, dict)])

@@ -617,6 +617,112 @@ def test_R1_브레인라이팅_독립기고_익명병합과_사전부검(monkeyp
     assert "[사전부검 — 실패한다면]" in d and "형식 채우기로 흐를 위험" in d   # 프리모텀 병합
 
 
+def test_하위회의_R1과_실질편집턴에_GOAL_비준계약전문_무절단주입(monkeypatch, tmp_path):
+    """U-052: 160자 안건 요약이 아니라 GOAL 비준 전문을 모든 하위 실질 판단에 공급한다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    prompts = []
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+
+    from system.rule.milestone import register_stage
+    tail = "상위계약-끝꼬리-U052"
+    contract = (
+        "공개 계약: transition(nextState)는 금지 전이에 Error를 던지고 상태를 보존한다. "
+        + ("세부계약" * 45) + tail
+    )
+    ok, note = register_stage(
+        f, "goal",
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n"
+        + contract + "\n"
+        "- 금지 전이는 Error와 상태 불변 | 실증: node test_state_machine.js",
+        "U-052",
+    )
+    assert ok, note
+
+    async def wake(to, body, kind):
+        prompts.append((to, body))
+        if "독립 기고" in body:
+            return "[패스: 상위 계약이 이미 명확합니다]"
+        if "결론 확정 표결" in body:
+            return "[찬성: 상위 계약을 보존한 이번 범위입니다]"
+        if "발언권 응찰" in body:
+            return "[응찰: 6] 이번 주기 범위를 채우겠습니다" if to == 12 else "[패스]"
+        if "발언권 획득" in body or "차례입니다" in body:
+            _fill_draft(tmp_path)
+            _resolve_objections(tmp_path)
+            return "이번 주기 결정 구획을 채웠습니다."
+        if "종결 확인" in body:
+            return "[종료]"
+        return "[패스]"
+
+    f.wake = wake
+    asyncio.run(t["meet"].handler({
+        "topic": "첫 상태 머신 주기", "members": "", "rounds": "2",
+        "my_opinion": "상위 계약을 보존하는 최소 구현",
+    }))
+    r1_prompts = [body for _, body in prompts if "독립 기고" in body]
+    work_prompts = [body for _, body in prompts
+                    if "발언권 획득" in body or "차례입니다" in body]
+    assert r1_prompts and work_prompts
+    assert all("[상위 확정 계약" in body and tail in body for body in r1_prompts)
+    assert all("[상위 확정 계약" in body and tail in body for body in work_prompts)
+
+
+def test_표결도중_도착한_사람개입은_실질슬롯_DRAFT재평가후_재표결(monkeypatch, tmp_path):
+    """micro 표결 중 pending_info가 생겨도 다음 stage로 넘기지 않고 등록 직전 실질 턴을 연다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    events, order = [], []
+    f.log = lambda event, **kw: events.append((event, kw))
+    injected = {"done": False}
+
+    async def wake(to, body, kind):
+        if "독립 기고" in body:
+            return "[패스: 추가 의견 없음]"
+        if "발언권 응찰" in body:
+            return "[응찰: 6] 초안을 채우겠습니다" if to == 12 else "[패스]"
+        if "사람 개입 반영 슬롯" in body:
+            order.append("human")
+            assert to == 11 and f.pending_info.get(11)      # 봇 개설 회의의 _team_full 밖 개설자도 팀 대상
+            p = _draft_path(tmp_path)
+            text = open(p, encoding="utf-8").read()
+            text = text.replace("방명록 1주기", "사용자 교정 방명록", 1)
+            open(p, "w", encoding="utf-8").write(text)
+            f.pending_info.pop(11, None)      # 실제 런타임에선 run_turn의 ack가 성공 뒤 소비
+            return "[답변] 교정을 반영해 DRAFT 목표를 수정했습니다."
+        if "발언권 획득" in body or "차례입니다" in body:
+            _fill_draft(tmp_path)
+            _resolve_objections(tmp_path)
+            return "결정 구획을 채웠습니다."
+        if "종결 확인" in body:
+            return "[종료]"
+        if "결론 확정 표결" in body:
+            order.append("vote")
+            if not injected["done"]:
+                injected["done"] = True
+                f.pending_info.setdefault(11, []).append("목표 이름을 사용자 교정 방명록으로 바꿔주세요")
+            return "[찬성: 현재 결정 구획이면 충분합니다]"
+        return "[패스]"
+
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    asyncio.run(t["meet"].handler({
+        "topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견",
+    }))
+    assert "human" in order, (
+        order, [x for x in events if "human_info" in x[0]], f.pending_info, f.comm.done, f.comm.alive)
+    hi = order.index("human")
+    assert "vote" in order[:hi] and "vote" in order[hi + 1:]   # 첫 표는 폐기하고 편집 뒤 재표결
+    assert not f.pending_info.get(11)
+    assert str(f.current.status.goal or "").startswith("사용자 교정 방명록")
+    assert "meet_human_info_slot" in [event for event, _ in events]
+    assert "stage_confirmed" in [event for event, _ in events]
+
+
 def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
     """[U-039 실측(2026-07-21, 사용자: '왜 회의는 3명만 — 의견은 못 했어도 찬반은 전체가 참여해야')]
     심의단 축소(발언 비용 처방) 후 확정 표결까지 심의단만 돌아 '찬성 2 → 확정'으로 모호한 결론이

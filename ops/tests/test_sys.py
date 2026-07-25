@@ -5979,6 +5979,101 @@ def test_deliver_human_info_노트주입_프롬프트반영_가드_대상라우�
     assert "사람이 작업 중 전한 정보" not in s._prompt("x", Kind.WORK, "leader", 11, 11, f)
 
 
+def _interject_turn_rig(monkeypatch, tmp_path, bot):
+    monkeypatch.setattr("system.sys_core.build_guide_server", lambda *a, **k: object())
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    s = Sys(g, guild_id=1, organt_builder=lambda oid, srv, role, flow=None: bot,
+            bot_info={11: "L", 12: "M"}, workspace=str(tmp_path))
+    s.onboarded.update({11, 12})
+    s.bot_profiles.update({11: "기준", 12: "기준"})  # 온보딩·사수 전수는 이 테스트 범위 밖
+    s.active_flows[500] = f
+    return s, f
+
+
+def test_개입_A_턴도중도착분은_현재턴이_소비하지않고_다음실질턴에주입(
+    monkeypatch, tmp_path,
+):
+    """U-052 seq170→171→172: prompt 생성 뒤 도착한 개입은 그 턴 output으로 ack할 수 없으므로 보존."""
+    prompts = []
+    prompt_started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                prompt_started.set()
+                await release.wait()
+                return "첫 턴 결과"
+            return "[답변] 늦게 온 교정을 반영했습니다."
+
+    s, f = _interject_turn_rig(monkeypatch, tmp_path, _Bot())
+
+    async def scenario():
+        first = asyncio.create_task(s.run_turn(f, 11, "진행 중 작업", Kind.WORK, "leader"))
+        await prompt_started.wait()
+        assert "늦게 도착한 교정" not in prompts[0]
+        assert s.deliver_human_info(500, None, "늦게 도착한 교정") is True
+        release.set()
+        await first
+        assert any("늦게 도착한 교정" in x for x in f.pending_info.get(11, []))
+        await s.run_turn(f, 11, "다음 실질 작업", Kind.WORK, "leader")
+
+    asyncio.run(scenario())
+    assert "늦게 도착한 교정" in prompts[1]
+    assert 11 not in f.pending_info
+
+
+def test_개입_B_micro턴은_pending_info를_보지도_소비하지도않음(monkeypatch, tmp_path):
+    """U-052 seq175→180→185: micro 응찰/표결이 대상 개입을 삼키지 않고 다음 substantive 턴에 넘긴다."""
+    prompts = []
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            prompts.append((prompt, micro))
+            return "응찰 7" if micro else "[답변] 표결 전 교정을 반영했습니다."
+
+    s, f = _interject_turn_rig(monkeypatch, tmp_path, _Bot())
+    f.pending_info[11] = ["표결 전 필수 교정"]
+
+    asyncio.run(s.run_turn(f, 11, "응찰 점수만", Kind.INFO, "leader", micro=True))
+    assert prompts[0][1] is True and "표결 전 필수 교정" not in prompts[0][0]
+    assert f.pending_info[11] == ["표결 전 필수 교정"]
+
+    asyncio.run(s.run_turn(f, 11, "DRAFT 최종 교정", Kind.WORK, "leader"))
+    assert prompts[1][1] is False and "표결 전 필수 교정" in prompts[1][0]
+    assert 11 not in f.pending_info
+
+
+def test_개입_C_접두없는_pending_info도_미답이면_재전달후_답변에서해제(
+    monkeypatch, tmp_path,
+):
+    """일반 interject API의 raw 본문도 pending_info인 이상 ack/retry 대상이며 조용히 소멸하지 않는다."""
+    prompts = []
+    outputs = iter(("교정을 읽었다는 답변 표식은 없음", "[답변] 일반 개입을 반영했습니다."))
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            prompts.append(prompt)
+            return next(outputs)
+
+    s, f = _interject_turn_rig(monkeypatch, tmp_path, _Bot())
+    assert s.deliver_human_info(500, 11, "접두 없는 일반 개입") is True
+
+    asyncio.run(s.run_turn(f, 11, "첫 실질 작업", Kind.WORK, "leader"))
+    retry = f.pending_info.get(11) or []
+    assert len(retry) == 1 and retry[0].startswith("[재전달")
+    assert "접두 없는 일반 개입" in retry[0]
+
+    asyncio.run(s.run_turn(f, 11, "두 번째 실질 작업", Kind.WORK, "leader"))
+    assert "[재전달" in prompts[1] and "접두 없는 일반 개입" in prompts[1]
+    assert 11 not in f.pending_info
+    assert 11 not in getattr(f, "_ij_retry", {})
+    assert not any(e["event"] == "interject_unacked" for e in s.flow_log)
+
+
 # ───────────────── 사수 전수 — 시작 기준은 채용봇이 아니라 같은 직군 선배가 ─────────────────
 
 

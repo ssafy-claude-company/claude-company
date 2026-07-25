@@ -601,6 +601,64 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
     assert meeting_stage(f) is None                          # 둘째 단위에 집을 일 → 작업 단계
 
 
+def test_GOAL_비준전문_공개계약_완수조건_체크포인트와_하위잠금계보(monkeypatch, tmp_path):
+    """U-052: GOAL 표결 원문이 TaskRef/문서/체크포인트에 남고 하위 주기가 이를 대체하지 못한다.
+
+    상위 조건은 각 마일스톤의 active 분모에 합치지 않는다. 여러 주기로 나눈 첫 주기까지 전체
+    Task 조건을 요구하는 대신, 별도 locked_criteria 참조와 Task 최종 acceptance 게이트로 보존한다.
+    """
+    import types
+    from system._util import dossier_read
+    from system.rule.milestone import (
+        canonical_parent_contract, ms_status_snapshot, register_stage,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.workspace = str(tmp_path)
+    f.current = types.SimpleNamespace(
+        task_id="T-U052", team=[11, 12],
+        status=types.SimpleNamespace(goal="", purpose="상태 머신 구현"),
+        acceptance="", standard="", interfaces="",
+    )
+    checkpoints = []
+    f.checkpoint_task = lambda: checkpoints.append("saved")
+    parent = (
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n"
+        "공개 계약: transition(nextState)는 금지 전이에 Error를 던지고 현재 상태를 보존한다.\n"
+        "- 금지 전이는 Error와 상태 불변을 보장 | 실증: node test_state_machine.js"
+    )
+    ok, note = register_stage(f, "goal", parent, "U-052")
+    assert ok, note
+    assert checkpoints == ["saved"]                         # 마일스톤 전에도 GOAL 자체가 즉시 체크포인트
+    assert f.current.acceptance == (
+        "- 금지 전이는 Error와 상태 불변을 보장 | 실증: node test_state_machine.js")
+    assert "transition(nextState)" in f.current.interfaces
+    goal_doc = dossier_read(f, "GOAL.md") or ""
+    assert "## Ratified Decision" in goal_doc and parent in goal_doc
+    assert canonical_parent_contract(f) == parent            # 80/160자 절단 없는 비준 전문
+
+    child = (
+        "이번 주기: Node18 상태 머신 최소 구현\n"
+        "- 금지 전이는 false를 반환 | 실증: node test_child_contract.js"
+    )
+    ok2, note2 = register_stage(f, "milestone", child, "U-052")
+    assert ok2, note2
+    ms = f.milestones[-1]
+    assert [(c.desc, c.verify) for c in ms.criteria] == [
+        ("금지 전이는 false를 반환", "node test_child_contract.js")
+    ]                                                        # 이번 주기 분모는 회의가 정한 1건 그대로
+    assert [(c.desc, c.verify) for c in ms.locked_criteria] == [
+        ("금지 전이는 Error와 상태 불변을 보장", "node test_state_machine.js")
+    ]                                                        # 상위 계약은 대체되지 않고 별도 실상태에 남음
+    snap = ms_status_snapshot(f)
+    assert snap["total"] == 1 and len(snap["locked_cr"]) == 1
+    restored = ms_from_dict(ms_to_dict(ms))
+    assert [(c.desc, c.verify) for c in restored.locked_criteria] == [
+        ("금지 전이는 Error와 상태 불변을 보장", "node test_state_machine.js")
+    ]
+
+
 def test_회의산물_백로그도_주인을_갖고_태어난다(monkeypatch):
     """[무주 자기선택(2026-07-16, 사용자 추궁: '전문가가 올려둔 걸 채가나?')] 배분은 수행자=제출자
     고정이라 자기 등재분은 못 채간다 — 그런데 백로그 회의 수렴안이 만든 팀 산물(submitter=0)은 그

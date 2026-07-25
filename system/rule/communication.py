@@ -222,6 +222,7 @@ async def meet(flow, me_id, args):
         from .milestone import pipeline_on as _ms_on
         from .milestone import meeting_stage as _ms_stage, stage_agenda as _ms_agenda
         from .milestone import register_stage as _ms_regstage, stage_frame as _ms_frame
+        from .milestone import canonical_parent_contract as _ms_parent
         _no_r1 = _ms_on()
         # [회의 하나당 결론 하나(2026-07-14, 사용자)] 이 회의가 정할 단 하나를 상태에서 유도 —
         # GOAL/마일스톤/서브태스크/백로그. 안건·수렴안 템플릿이 그 단계로 좁혀지고, 채택 시 그 단계만 등록.
@@ -235,6 +236,14 @@ async def meet(flow, me_id, args):
             from .milestone import stage_context as _ms_sctx
             _agenda = _agenda + _ms_sctx(flow, _stage)   # [정합 A] 어느 단위/주기 회의인지 안건에 명시
         _stage_frame = _ms_frame(_stage) if _stage else ""   # 매 발언 턴에 주입할 '이 회의의 정체' 프레임
+        _parent_contract = (_ms_parent(flow) if _stage and _stage != "goal" else "")
+        _parent_frame = (
+            "\n[상위 확정 계약 — GOAL.md 비준 정본, 수정·축소·대체 금지]\n"
+            + _parent_contract
+            + "\n[계보 규칙] 이 하위 회의는 상위 계약을 구현할 이번 범위만 구체화합니다. "
+              "상위 목표·공개 계약·완수조건과 충돌하는 결론으로 바꾸지 마세요.\n"
+            if _parent_contract else ""
+        )
         conv_props = []   # [결정권자 폐지] 종결 표결에 동봉된 수렴안들 — 가결 시 자동 등록 원료
         _gate_unmet = {"on": False}   # [게이트=수렴안 채택] 재응찰 시 종결표결 프롬프트를 게이트로 전면화
         if not _no_r1:
@@ -486,7 +495,7 @@ async def meet(flow, me_id, args):
                          compressed=bool(doc_collab_on() and r1_full))
             _frm = (f"\n[이 회의의 자리] {_stage_frame}\n" if _stage_frame else "")
             if r is not None:
-                return (f"[회의 {r}라운드] 주제: {topic}{_frm}\n못 본 발언:\n{log_txt}\n\n"
+                return (f"[회의 {r}라운드] 주제: {topic}{_frm}{_parent_frame}\n못 본 발언:\n{log_txt}\n\n"
                         f"당신({flow._info(m)})의 차례입니다 — 위 안건에 당신 도메인 관점으로 답하세요"
                         f"(근거 필수, 맹목적 동의 금지). 3~5줄(최대 1000자). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.")
             # [수렴 쪽으로(2026-07-15, 사용자)] '동의/반박/보완'(=덧붙여라) 틀 제거 — 그게 무한 누적의
@@ -514,7 +523,7 @@ async def meet(flow, me_id, args):
             # [지명 정본 문법 서빙(2026-07-21)] 이름 지명은 동명이인 모호 — 봇 id 로스터를 프레임에
             # 실어 `[지명: <봇id>]`가 기본이 되게 한다(해석 불가 시 재전송 요구가 백스톱).
             _ros0 = " · ".join(f"{flow._info(x) or x}(id {x})" for x in members if x != m)
-            return (f"{head} 주제: {topic}{_frm}\n못 본 발언:\n{log_txt}\n\n"
+            return (f"{head} 주제: {topic}{_frm}{_parent_frame}\n못 본 발언:\n{log_txt}\n\n"
                     f"당신({flow._info(m)})의 차례입니다 — 위 안건에 당신 도메인 관점으로 답하세요"
                     f"(근거 필수, 맹목적 동의·이미 나온 것 반복 금지). 3~5줄(최대 1000자). 이미 기록된 실측은 재실행하지 말고 원문(파일:줄·수치) 인용으로 갈음하세요.{_sub}\n"
                     f"[발언권 규약] 특정 동료의 답이 꼭 필요하면 발언 마지막 줄에 `[지명: <봇id>]` "
@@ -646,6 +655,51 @@ async def meet(flow, me_id, args):
             if _sty and flow.log:
                 flow.log("stance_turn", who=int(m), stype=_sty)
             return _l2_note(Turn(speaker=m, addressee=addressee, body=res or "", stype=_sty))
+
+        def _pending_team_info():
+            """표결/등록보다 먼저 실질 턴으로 소화해야 할 팀 대상 사람 개입."""
+            queued = getattr(flow, "pending_info", None) or {}
+            out = []
+            # _team_full은 봇이 직접 연 회의에서 개설자(me_id)를 제외한 토론 로스터다. 사람 개입의
+            # 대상 범위는 토론 패널이 아니라 Task 팀 전체이므로 개설자·비심의단도 반드시 포함한다.
+            task_team = list(getattr(getattr(flow, "current", None), "team", None) or [])
+            for member in dict.fromkeys(task_team + list(_team_full)):
+                mid = int(member)
+                if queued.get(mid) or queued.get(str(mid)):
+                    out.append(mid)
+            return out
+
+        async def _meet_human_info_slot():
+            """사람 개입 한 대상에게 non-micro 응답·편집 슬롯을 준다.
+
+            run_turn의 기존 ack/retry가 성공 뒤 큐를 비우며, 미응답이면 한 번만 재전달한다. 여기서는
+            큐를 직접 pop하지 않아 늦게 도착한 항목이나 미응답 항목을 잃지 않는다.
+            """
+            targets = _pending_team_info()
+            if not targets:
+                return "none"
+            if wakes["n"] >= wake_cap:
+                if flow.log:
+                    flow.log("meet_human_info_deferred_budget", pending=len(targets), stage=str(_stage))
+                return "blocked"
+            target = targets[0]
+            before = wakes["n"]
+            body = (
+                "[회의 — 사람 개입 반영 슬롯] 최종 표결·등록 전에 SYS가 이 프롬프트에 붙인 사용자 "
+                "개입을 먼저 소화하세요. 출력 서두에 `[답변]` 문단으로 사용자에게 짧게 답하고, 결론이 "
+                "바뀌어야 하면 공동 DRAFT를 지금 Read/Edit하세요. 개입을 다음 단계로 미루지 마세요.\n\n"
+                + _mk_body(target, None)
+            )
+            await _speech(target, body, "사람 개입")
+            _flush_minutes()
+            if wakes["n"] == before:
+                if flow.log:
+                    flow.log("meet_human_info_slot_failed", who=target, stage=str(_stage))
+                return "blocked"
+            if flow.log:
+                flow.log("meet_human_info_slot", who=target, remaining=len(_pending_team_info()),
+                         stage=str(_stage))
+            return "served"
 
         async def _speak(speaker, alloc):
             if tt:
@@ -967,7 +1021,8 @@ async def meet(flow, me_id, args):
                 _r1_fresh = False
         if _r1_fresh:
             def _r1b(c):
-                return (f"[독립 기고 — 토론 전 병렬 수집] 안건: {(_agenda or topic)[:160]}\n"
+                return (f"[독립 기고 — 토론 전 병렬 수집] 안건: {(_agenda or topic)[:160]}"
+                        f"{_parent_frame}\n"
                         f"당신({flow._info(c)}) 도메인 몫으로 **결정 구획에 들어가야 할 구체 값·조건·"
                         f"이견 후보를 3~5줄**로 적어주세요(동료 발언은 아직 없습니다 — 독립 판단). "
                         f"**도구·파일 금지, 이 텍스트만 보고 즉답.** 자기 직군에 맡을 일이 정말 없으면 "
@@ -1142,6 +1197,16 @@ async def meet(flow, me_id, args):
                             except Exception:
                                 pass
                             continue    # 표결 안 열고 다음 패스 — 토론이 이의 해소(우려가 표가 아닌 초안으로)
+                    # [사람 개입 = 표결보다 선행] micro 응찰·도메인 점검은 pending_info를 보거나
+                    # 소비하지 않는다. DRAFT가 ready여도 팀 대상 개입이 남았으면 해당 대상에게 실질
+                    # 응답·편집 슬롯을 주고, 다음 패스에서 파일 상태를 다시 계산한 뒤에만 표결한다.
+                    _human_slot = await _meet_human_info_slot()
+                    if _human_slot == "served":
+                        _skip_discuss = True
+                        _t0 = Turn(speaker=me_id, body="(사람 개입 반영 — DRAFT 재평가)")
+                        continue
+                    if _human_slot == "blocked":
+                        break
                     from .milestone import draft_decision_region as _dregion2
                     _passed, _diss, _yes = await _ratify_vote(
                         f"(공동 결론 파일 {_draft_path} — **'## 결정' 구획만이 표결 대상**, 참고 구획은 "
@@ -1167,6 +1232,15 @@ async def meet(flow, me_id, args):
                     _carry = ((_passed is False) and _ready_rejects >= 3
                               and (_yes or 0) >= len(_diss or []))
                     if _passed or _carry:
+                        # 표결 micro가 도는 동안 도착한 개입도 등록 직전 다시 검문한다. 이벤트루프상
+                        # 이 검사와 아래 동기 register_stage 사이에는 await가 없어 새 개입이 끼어들 수 없다.
+                        _human_slot = await _meet_human_info_slot()
+                        if _human_slot == "served":
+                            _skip_discuss = True
+                            _t0 = Turn(speaker=me_id, body="(표결 중 도착한 사람 개입 반영 — 재평가·재표결)")
+                            continue
+                        if _human_slot == "blocked":
+                            break
                         if _carry:
                             if _diss:
                                 _dtxt3 = str(_dread(flow, "DRAFT.md") or "")
@@ -1246,7 +1320,8 @@ async def meet(flow, me_id, args):
                                     f"[이의 해소] 당신이 반대했습니다: «{_oreason[:160]}». 공동 결론 파일 "
                                     f"`{_draft_path}` 를 **직접 고쳐** 이 이의를 해소하세요(Edit + 그 이의(>) 줄 "
                                     f"삭제) 후 한 줄 보고. 이게 **다른 직군의 몫**이면 고치지 말고 "
-                                    f"`[지명: <봇id>]`로 그 사람에게 발언권을 넘기세요(그 사람이 이어 고칩니다).",
+                                    f"`[지명: <봇id>]`로 그 사람에게 발언권을 넘기세요(그 사람이 이어 고칩니다)."
+                                    f"{_parent_frame}",
                                     Kind.INFO)
                                 _nm = _nom_re.search(str(_r or ""))
                                 if _nm and int(_nm.group(1)) in _mset and int(_nm.group(1)) not in _handled:
@@ -1256,7 +1331,8 @@ async def meet(flow, me_id, args):
                                     await flow.wake(_nid,
                                         f"[이의 해소 — 지명받음] {flow._info(_oid) or _oid} 님이 이 이의를 당신 "
                                         f"몫으로 지명했습니다: «{_oreason[:160]}». 공동 결론 파일 `{_draft_path}` 를 "
-                                        f"당신 도메인으로 고치고(Edit + 그 이의 줄 삭제) 한 줄 보고하세요.", Kind.INFO)
+                                        f"당신 도메인으로 고치고(Edit + 그 이의 줄 삭제) 한 줄 보고하세요."
+                                        f"{_parent_frame}", Kind.INFO)
                             _skip_discuss = True
                             if flow.log:
                                 flow.log("dissent_resolution_by_objector", n=len(_handled))

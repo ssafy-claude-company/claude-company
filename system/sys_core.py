@@ -2032,6 +2032,10 @@ class Sys:
         # 구조로 대체. Info 단독은 전체 장착 유지(팀 토론 진행 경로 보존). 기본값 collab = 현행 동일(하위호환).
         _mode = "casual" if _casual_turn(body, role) else "collab"
         for attempt in range(3):
+            # 이 attempt의 실제 non-micro 프롬프트에 실린 사람 개입만 성공 뒤 ack/소비한다.
+            # 턴 도중 새로 append된 개입과 micro 프롬프트(개입 노트를 싣지 않음)는 이 snapshot에
+            # 들어오지 않으므로 다음 실질 턴까지 보존된다. revive 재시도 전에는 소비하지 않는다.
+            _prompt_info = ()
             server = build_guide_server(flow, organt_id, role, mode=_mode)
             organt = self.organt_builder(organt_id, server, role, flow)
             # [적당히 — wake-aware 규칙 주입(막힘↔성능)] resume(직전 대화 기억)이 보존되면 델타(핵심 규칙만),
@@ -2067,8 +2071,12 @@ class Sys:
                 tcm = getattr(self.guide, "typing", None)
 
                 async def _do():
+                    nonlocal _prompt_info
                     # [마이크로 무도구(2026-07-20)] 즉답 턴은 organt 쪽에서도 micro — 도구 스키마 미적재.
                     # micro 아닐 땐 종전 호출 형태 유지(시그니처 스텁 무회귀).
+                    if flow is not None and not micro:
+                        _prompt_info = tuple(
+                            (getattr(flow, "pending_info", None) or {}).get(organt_id) or ())
                     _pt = self._prompt(body, kind, role, organt_id, flow.leader, flow, first_wake=_first_wake, micro=micro)
                     if tcm is not None:
                         async with tcm(ch, organt_id):
@@ -2148,13 +2156,29 @@ class Sys:
                             _syn += f"[직무기준] {_jobs[0]}\n{_cs}\n[/직무기준]\n"
                         if _syn:
                             await self._absorb_role_profiles(_syn, me=organt_id)
-                if flow is not None:   # [사람 개입] 주입된 노트 소비-clear(턴 성공 후 1회 — revive 재시도엔 유지돼 재주입)
+                if flow is not None:   # [사람 개입] 실제 주입 snapshot만 성공 후 소비(revive·late arrival·micro 보존)
                     try:
-                        _pi = (flow.pending_info or {}).pop(organt_id, None)
+                        _pi = []
+                        if _prompt_info:
+                            _cur = list((flow.pending_info or {}).get(organt_id) or [])
+                            _npi = len(_prompt_info)
+                            # 단일 이벤트루프에서 deliver는 append만 한다. prompt 직전 prefix가 그대로일
+                            # 때만 그 prefix를 소비한다. 예상 밖 변이가 있으면 at-least-once 쪽으로
+                            # 기울여 하나도 지우지 않는다.
+                            if tuple(_cur[:_npi]) == _prompt_info:
+                                _pi = _cur[:_npi]
+                                _rest = _cur[_npi:]
+                                if _rest:
+                                    flow.pending_info[organt_id] = _rest
+                                else:
+                                    flow.pending_info.pop(organt_id, None)
+                            else:
+                                self._log("interject_consume_deferred", organt=organt_id)
                         # [개입 소화 확인(2026-07-13, 감사 P4)] 이 턴 프롬프트로 전달된 사람 개입에
                         # 응답 흔적([답변])이 없으면 1회 재주입, 그래도 없으면 관측(interject_unacked)
-                        # — 개입이 조용히 증발하는 갭을 닫는다(주입은 강제였지만 소화 확인이 없었음).
-                        _ij = [x for x in (_pi or []) if str(x).startswith(("[개입", "[사용자", "[운영자", "[재전달"))]
+                        # — pending_info 자체가 사람 개입과 그 전달 파생 노트 전용 큐이므로 본문 접두를
+                        # 추측하지 않고 실제 주입된 항목 전부를 확인한다.
+                        _ij = list(_pi or [])
                         if _ij:
                             _rt = getattr(flow, "_ij_retry", None)
                             if _rt is None:
@@ -2163,9 +2187,11 @@ class Sys:
                                 _n = _rt.get(int(organt_id), 0)
                                 if _n < 1:
                                     _rt[int(organt_id)] = _n + 1
-                                    flow.pending_info.setdefault(organt_id, []).append(
-                                        "[재전달 — 직전 개입에 응답이 안 보였습니다] " + str(_ij[-1])[:400]
-                                        + " (이번 턴 서두에 '[답변]' 문단으로 짧게 응답부터 하세요.)")
+                                    for _ij_one in _ij:
+                                        flow.pending_info.setdefault(organt_id, []).append(
+                                            "[재전달 — 직전 개입에 응답이 안 보였습니다] "
+                                            + str(_ij_one)[:400]
+                                            + " (이번 턴 서두에 '[답변]' 문단으로 짧게 응답부터 하세요.)")
                                 else:
                                     _rt.pop(int(organt_id), None)
                                     self._log("interject_unacked", organt=organt_id)
