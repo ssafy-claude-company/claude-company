@@ -231,23 +231,22 @@ async def _join_posting(flow):
         await g.post(flow.user_channel, 0, posting)   # SYS 명의 — 누구의 권한도 아님(설계 원문)
         if flow.log:
             flow.log("join_posted", candidates=len(cands))
-        joined = []
-        for m in cands:
-            try:
-                flow.comm.request(me, m, "recruit", Kind.INFO)
-            except Exception:
-                continue
+        # 참여 여부는 서로의 답을 볼 필요가 없는 독립 판단이다. 표결과 같은 bounded fork-join의
+        # 무도구 micro 턴으로 동시에 모은다. 종전의 전원 full-turn 직렬 wake는 29명 공고에서
+        # 첫 응찰 하나만 3분 넘게 걸리고, 후보가 실제로 없는 백로그를 만들었다고 도구까지 호출하는
+        # 비용·기록 오염을 낳았다. micro 가지는 중첩 요청/파일 접근이 구조적으로 불가능하다.
+        from .comm_helpers import _fork_collect
+
+        def _body(m):
             body = (f"{posting}\n\n[자기선택] 당신: {(flow._info(m) or '').strip() or '무직'}. 이 판에 "
                     f"당신 전문이 필요한지 스스로 판단하세요. 참여하면 첫 줄에 [참여 응찰]과 한 줄 근거, "
-                    f"아니면 [패스] 한 줄만.")
-            try:
-                res = await flow.wake(m, body, Kind.INFO)
-            except Exception:
-                res = ""
-            try:
-                flow.comm.respond(m, "accept", res)
-            except Exception:
-                pass
+                    f"아니면 [패스] 한 줄만. **도구 호출·파일 확인·작업 착수 금지 — 이 텍스트만 보고 "
+                    f"두 줄 이내로 즉답하세요.**")
+            return body
+
+        joined = []
+        for m, res, _note in await _fork_collect(
+                flow, me, cands, _body, kind=Kind.INFO, micro=True):
             if res and _re.search(r"\[\s*참여\s*응찰\s*\]", res):
                 joined.append(m)
                 _line = next((l.strip() for l in str(res).splitlines() if l.strip()), "")[:160]

@@ -74,6 +74,43 @@ def _tools(f, me, role):
     return {t.name: t for t in make_guide_tools(f, me, role)}
 
 
+def test_Task참여응찰은_병렬_무도구_micro로만_수집():
+    """U-055: 명시 담당 Work의 팀 공고가 전원 full-turn 직렬 실행으로 번지지 않는다."""
+    from system.rule.task import _join_posting
+
+    g = FakeGuide()
+    f = Flow(
+        g, channel_id=500, guild_id=1, leader_id=11,
+        bot_info={11: "프로젝트 매니저", 12: "기획", 13: "QA",
+                  14: "백엔드", 15: "디자이너"})
+    f.start_root("root")
+    running = 0
+    max_running = 0
+    prompts = []
+
+    async def must_not_full_wake(*_args):
+        raise AssertionError("참여 응찰에 도구가 열린 full wake를 쓰면 안 됨")
+
+    async def micro_wake(mid, body, _kind):
+        nonlocal running, max_running
+        prompts.append(body)
+        running += 1
+        max_running = max(max_running, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return "[참여 응찰] 필요합니다" if mid in (12, 14) else "[패스]"
+
+    f.wake = must_not_full_wake
+    f.wake_micro = micro_wake
+    joined = asyncio.run(_join_posting(f))
+
+    assert joined == [12, 14]
+    assert max_running >= 2
+    assert len(prompts) == 4
+    assert all("도구 호출·파일 확인·작업 착수 금지" in p for p in prompts)
+    assert any(c[0] == "post" and "[참여 확정]" in c[3] for c in g.calls)
+
+
 def test_SYS_정상작업턴완료뒤_보유자응찰을_최근작업자가_선정(monkeypatch):
     """정상 종료한 작업 턴은 relay.done을 지나며, 보유자들이 응찰하고 최근 작업자의 선택이 우선한다."""
     from system.rule.backlog import relay_for
