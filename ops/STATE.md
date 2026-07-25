@@ -22,7 +22,8 @@
   새 프로세스 그룹으로 띄워 취소 시 TERM→KILL 회수하므로, 중지 뒤 Chromium/CLI가 계속 도는 좀비도
   남지 않는다.
 - 검증: Django **420 OK** · 브레인 pytest **750 passed** · system unittest OK · 프론트 build/UI
-  계약 OK. 관련 집중 회귀 172건 추가 관통. murmur `0a61c05`; 러너·웹 라이브 반영은 이 세션 배포 단계.
+  계약 OK. 관련 집중 회귀 172건 추가 관통. murmur `0a61c05`. **11:55 KST 라이브 반영**:
+  프론트 `index-D118NNHQ.js` 제공 확인, `organt-runner` 재시작·새 PID boot/active 확인.
 
 ## ★ 사람용 Codex 공식 Remote SSH 준비 (2026-07-24 GPT)
 - 로컬 PC=Windows, 원격 서버=Linux임을 확정. murmur의 임시 GPT/CLI 링크를 대체할 공식 경로는
