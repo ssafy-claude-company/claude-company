@@ -1259,6 +1259,67 @@ def test_사람대기_reap은_재픽없이_전용마감(monkeypatch, tmp_path):
     assert g.stopped == [500]                              # 중지 표기 — 재개 버튼 경로 생존
 
 
+def test_사용자중지_reap은_장부전진해도_재픽하지않음(monkeypatch, tmp_path):
+    """사용자 중지는 미완 Task·장부 전진 조건보다 우선한다 — stop 직후 unpick 재시작 금지."""
+    from system.guide_tools import TaskRef
+    from system.protocol import TaskStatus
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import open_milestone, open_subtask
+    from system.sys_core import Sys
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0.001)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+
+    class _StopGuide(_RunGuide):
+        def __init__(self):
+            super().__init__()
+            self.stop_sent = False
+
+        async def all_stops(self):
+            if self.served and not self.stop_sent:
+                self.stop_sent = True
+                return [self.ch]
+            return []
+
+    g = _StopGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "백엔드"},
+            workspace=str(tmp_path), max_continue=6)
+    started = asyncio.Event()
+
+    async def long_work(flow, _oid, _body, _kind, _role, **_kw):
+        if flow.current is None:
+            status = TaskStatus(task_id="stop-1", purpose="p", status="진행", goal="웹 구현",
+                                owner="", group=[])
+            flow.current = TaskRef(task_id="stop-1", thread_id="thr", block_id="blk",
+                                   status=status, team=[11, 12], owner=0)
+            ms = open_milestone(flow, "구현", [{"desc": "빌드", "verify": "pytest"}])
+            st = open_subtask(flow, ms, "API", [])
+            r = relay_for(flow, st)
+            b = r.submit(12, "API 구현", force=True)
+            r.pick(12, b.backlog_id, 12)              # 장부는 실제 전진(_prog=True)
+            started.set()
+        await asyncio.Future()                         # 사용자 stop이 이 턴을 취소
+
+    s.run_turn = long_work
+
+    async def scenario():
+        task = asyncio.create_task(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+        await started.wait()
+        await asyncio.wait_for(task, timeout=2)
+
+    asyncio.run(scenario())
+    events = [e["event"] for e in s.flow_log]
+    assert "user_stopped_closed" in events
+    assert "request_repick" not in events and "stalled_stopped" not in events
+    assert not any(p["unpick"] for p in g.picks)
+    assert any(p["done"] for p in g.picks)
+
+
 def test_파킹판_사람답이_흐름시작에서_반영(monkeypatch, tmp_path):
     """[핸드오프 B — rung2 출구] 파킹으로 흐름이 닫힌 뒤 온 '조건 승인/반려' 답은 interject가 아니라
     새 요청으로 들어온다 — 복원 직후 파싱해 waiver를 반영한다(종전엔 이 경로가 없어 답이 증발,

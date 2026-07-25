@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 from typing import List, Optional
 
 import mcp.types as _mt
@@ -130,6 +131,37 @@ def _bwrap_args(ws: str) -> list:
             "--setenv", "HOME", "/root", "--setenv", "TERM", "xterm", "--setenv", "ORGANT_BOT", "1"]
 
 
+async def _terminate_process(proc, grace=3.0) -> None:
+    """취소된 Codex 턴의 bwrap 프로세스 그룹을 끝까지 회수한다(자식 브라우저/셸 포함)."""
+    if getattr(proc, "returncode", None) is not None:
+        return
+    try:
+        pid = getattr(proc, "pid", None)
+        if pid:
+            os.killpg(int(pid), signal.SIGTERM)
+        else:
+            proc.terminate()
+    except (ProcessLookupError, AttributeError):
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=float(grace))
+        return
+    except asyncio.TimeoutError:
+        pass
+    try:
+        pid = getattr(proc, "pid", None)
+        if pid:
+            os.killpg(int(pid), signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, AttributeError):
+        pass
+    try:
+        await proc.wait()
+    except Exception:
+        pass
+
+
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None):
     """GPT 봇 한 턴 — codex를 bwrap 외부 샌드박스로 띄우고 guide 도구는 브리지로 물려 실행.
@@ -158,50 +190,62 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
     proc = await asyncio.create_subprocess_exec(
         *args, stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env={"PATH": "/usr/bin:/bin", "HOME": "/root"})
+        env={"PATH": "/usr/bin:/bin", "HOME": "/root"},
+        start_new_session=True)
+    _stderr_task = asyncio.create_task(proc.stderr.read()) if proc.stderr else None
+    final_text, sid, _err = "", session_id, b""
     try:
-        proc.stdin.write((prompt or "").encode("utf-8"))
-        await proc.stdin.drain()
-        proc.stdin.close()
-    except Exception:
-        pass
-
-    final_text, sid = "", session_id
-    assert proc.stdout is not None
-    async for raw in proc.stdout:
-        if on_activity:
-            try:
-                on_activity()
-            except Exception:
-                pass
         try:
-            ev = json.loads(raw.decode("utf-8", "replace"))
-        except Exception:
-            continue
-        typ = ev.get("type")
-        if typ == "thread.started":
-            sid = ev.get("thread_id") or sid
-        elif typ == "item.completed":
-            it = ev.get("item") or {}
-            if it.get("type") == "agent_message":
-                _t = (it.get("text") or "").strip()
-                if _t:
-                    final_text = _t
-                    if on_narrate:
-                        try:
-                            on_narrate(_t)
-                        except Exception:
-                            pass
-    _err = b""
-    if proc.stderr:
-        try:
-            _err = await proc.stderr.read()
+            proc.stdin.write((prompt or "").encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
         except Exception:
             pass
-    await proc.wait()
+        assert proc.stdout is not None
+        async for raw in proc.stdout:
+            if on_activity:
+                try:
+                    on_activity()
+                except Exception:
+                    pass
+            try:
+                ev = json.loads(raw.decode("utf-8", "replace"))
+            except Exception:
+                continue
+            typ = ev.get("type")
+            if typ == "thread.started":
+                sid = ev.get("thread_id") or sid
+            elif typ == "item.completed":
+                it = ev.get("item") or {}
+                if it.get("type") == "agent_message":
+                    _t = (it.get("text") or "").strip()
+                    if _t:
+                        final_text = _t
+                        if on_narrate:
+                            try:
+                                on_narrate(_t)
+                            except Exception:
+                                pass
+        if _stderr_task is not None:
+            _err = await _stderr_task
+        await proc.wait()
+    except asyncio.CancelledError:
+        # Sys.request_cancel이 상위 턴을 취소해도 codex/bwrap/브라우저가 뒤에서 계속 도는 좀비를 남기지
+        # 않는다. 정리 자체는 취소 전파에 끊기지 않게 shield하고 원 CancelledError를 그대로 올린다.
+        await asyncio.shield(_terminate_process(proc))
+        raise
+    finally:
+        if getattr(proc, "returncode", None) is None:
+            await asyncio.shield(_terminate_process(proc))
+        if _stderr_task is not None and not _stderr_task.done():
+            _stderr_task.cancel()
     if stderr and _err:
         try:
             stderr(_err.decode("utf-8", "replace")[-2000:])
         except Exception:
             pass
+    if proc.returncode not in (0, None):
+        raise RuntimeError(
+            f"codex exec 실패(rc={proc.returncode}) "
+            f"{_err.decode('utf-8', 'replace')[-500:]}")
     return final_text, sid

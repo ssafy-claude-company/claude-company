@@ -274,8 +274,10 @@ class Flow:
                         del b.activity[0:len(b.activity) - self._ACT_GUARD]
                 now = time.monotonic()
                 if now - float(getattr(self, "_last_backlog_activity_mirror", 0.0) or 0.0) >= 1.0:
-                    from .rule.milestone import persist_ms_status
-                    persist_ms_status(self)
+                    # 화면 미러만 갱신하면 실행 중엔 보이다가 중지/재시작 뒤 프로젝트 체크포인트에서
+                    # 옛 activity가 복원돼 생각이 사라진다. 같은 1s 스로틀에서 원장+미러를 함께 저장.
+                    from .rule.milestone import _ckpt
+                    _ckpt(self)
                     self._last_backlog_activity_mirror = now
         except Exception:
             pass

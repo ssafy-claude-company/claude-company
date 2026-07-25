@@ -112,6 +112,91 @@ def test_메시지수신마다_하트비트_on_activity(monkeypatch):
     assert beats["n"] == 3
 
 
+def test_Codex턴취소는_프로세스그룹까지_회수(monkeypatch, tmp_path):
+    """Task 중지로 상위 await가 취소되면 codex/bwrap 자식이 뒤에서 계속 작업하지 않는다."""
+    import asyncio
+    import signal
+    import pytest
+    from organt import codex_mcp_bridge as bridge_mod
+
+    entered = asyncio.Event()
+
+    class _Bridge:
+        url = "http://127.0.0.1:1/mcp"
+
+        async def start(self):
+            pass
+
+        def set_tools(self, _tools):
+            pass
+
+    class _Stdin:
+        def write(self, _data):
+            pass
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    class _Stdout:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            entered.set()
+            await asyncio.Future()
+
+    class _Stderr:
+        async def read(self):
+            await proc.exited.wait()
+            return b""
+
+    class _Proc:
+        pid = 424242
+
+        def __init__(self):
+            self.returncode = None
+            self.stdin, self.stdout, self.stderr = _Stdin(), _Stdout(), _Stderr()
+            self.exited = asyncio.Event()
+
+        async def wait(self):
+            await self.exited.wait()
+            return self.returncode
+
+    proc = _Proc()
+    spawn_kw = {}
+    signals = []
+
+    async def fake_spawn(*_args, **kwargs):
+        spawn_kw.update(kwargs)
+        return proc
+
+    def fake_killpg(pid, sig):
+        signals.append((pid, sig))
+        proc.returncode = -int(sig)
+        proc.exited.set()
+
+    monkeypatch.setattr(bridge_mod, "get_bridge", lambda: _Bridge())
+    monkeypatch.setattr(bridge_mod.asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(bridge_mod.os, "killpg", fake_killpg)
+
+    async def scenario():
+        task = asyncio.create_task(bridge_mod.run_codex_turn(
+            prompt="오래 작업", cwd=str(tmp_path), session_id=None, tools=[],
+            model="gpt-test"))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert spawn_kw["start_new_session"] is True
+    assert signals == [(proc.pid, signal.SIGTERM)]
+    assert proc.returncode == -signal.SIGTERM
+
+
 def test_턴예산_초과는_정직마커로_반환(monkeypatch):
     """[U-036 재작업 #4(2026-07-21)] SDK가 max_budget_usd 초과로 턴을 끊으면(error_max_budget_usd)
     '턴 한도 도달(예산 상한)' 정직 마커를 달아 반환 — ①미완 참칭 없음 ②'턴 한도 도달' 문구 족이라

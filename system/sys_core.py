@@ -1587,6 +1587,16 @@ class Sys:
             if not task.done():              # 외부 취소·타임아웃 어느 쪽이든 내부 task 누수 방지
                 task.cancel()
 
+    def _backlog_relay(self, flow, st_id):
+        """복원 릴레이도 relay_for를 지나 log·미러 콜백을 다시 묶어 돌려준다."""
+        from .rule.backlog import relay_for
+        for ms in (getattr(flow, "milestones", None) or []):
+            st = next((x for x in (getattr(ms, "subtasks", None) or [])
+                       if str(getattr(x, "st_id", "")) == str(st_id)), None)
+            if st is not None:
+                return relay_for(flow, st)
+        return (getattr(flow, "backlog_relays", None) or {}).get(st_id)
+
     def _backlog_in_progress(self, flow):
         """[구조적 릴레이 — 단일 활성] 지금 in_progress인 백로그 하나를 (담당id, Backlog, st_id)로 돌려준다
         (없으면 None). 계획 단계처럼 실행도 '작업중 하나'만 몰기 위한 근거 — 미완 단위의 첫 in_progress."""
@@ -1594,11 +1604,10 @@ class Sys:
         ms = next((m for m in mss if m.status not in ("done", "superseded")), None)
         if ms is None:
             return None
-        store = getattr(flow, "backlog_relays", None) or {}
         for st in ms.subtasks:
             if st.status in ("done", "superseded"):
                 continue
-            r = store.get(st.st_id)
+            r = self._backlog_relay(flow, st.st_id)
             if not r or not getattr(r, "backlogs", None):
                 continue
             for b in r.backlogs:
@@ -1616,11 +1625,18 @@ class Sys:
         rem = [b for b in r.backlogs if getattr(b, "status", "") in ("open", "blocked")]
         if not rem:
             return None
-        by_owner = {}
+        by_owner, candidate_owner = {}, {}
+        bots = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
         for b in rem:
             owner = int(getattr(b, "submitter", 0) or 0)
+            if not owner and bots:
+                from .role_fit import role_fit
+                owner = max(bots, key=lambda k: role_fit(str(getattr(b, "body", "") or ""), bots[k]))
             if owner:
                 by_owner.setdefault(owner, []).append(b)
+                candidate_owner[b.backlog_id] = owner
+        if not candidate_owner:
+            return None
         bids = []
         for owner, owned in by_owner.items():
             opts = " · ".join(f"{b.backlog_id}:{(b.body or '')[:55]}" for b in owned)
@@ -1640,10 +1656,17 @@ class Sys:
                     bids.append((int(m.group(1)), bid_id, owner, str(ans)[:180]))
             self._log("backlog_handoff_bid", by=owner,
                       score=(int(m.group(1)) if m else 0), backlog=(m.group(2).upper() if m else ""))
-        if not bids:
-            return None
-        sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
-                          for score, bid_id, owner, reason in bids)
+        if bids:
+            sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
+                              for score, bid_id, owner, reason in bids)
+            valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
+        else:
+            # 전원이 패스했거나 형식 응답이 깨져도 최근 작업자의 배분권은 사라지지 않는다. 실제 남은
+            # 보유 목록을 그대로 보여 직접 선택하게 하고, 그 응답마저 깨질 때만 제출순을 안전망으로 쓴다.
+            sheet = "\n".join(
+                f"- {b.backlog_id} / {flow._info(candidate_owner[b.backlog_id]) or candidate_owner[b.backlog_id]}"
+                f" / 패스·응답 없음: {(b.body or '')[:70]}" for b in rem if b.backlog_id in candidate_owner)
+            valid = dict(candidate_owner)
         try:
             choice = await self.run_turn(
                 flow, int(holder),
@@ -1654,69 +1677,102 @@ class Sys:
             choice = ""
         cm = re.search(r"\[선정\s*:\s*(B\d+)\s*\]", str(choice or ""), re.I)
         selected = cm.group(1).upper() if cm else ""
-        valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
         fallback = selected not in valid
         if fallback:
-            # 응답 장애 안전망: 점수 우선, 동률은 원래 백로그 제출 순서.
-            order = {b.backlog_id: i for i, b in enumerate(rem)}
-            _score, selected, _owner, _reason = max(
-                bids, key=lambda x: (x[0], -order.get(x[1], 10**9)))
+            if bids:
+                # 응답 장애 안전망: 점수 우선, 동률은 원래 백로그 제출 순서.
+                order = {b.backlog_id: i for i, b in enumerate(rem)}
+                _score, selected, _owner, _reason = max(
+                    bids, key=lambda x: (x[0], -order.get(x[1], 10**9)))
+            else:
+                selected = next(b.backlog_id for b in rem if b.backlog_id in valid)
         owner = valid[selected]
         r.pick(int(holder), selected, int(owner))
+        from .rule.milestone import _ckpt
+        _ckpt(flow)
         self._log("backlog_handoff_selected", by=int(holder), backlog=selected,
                   to=int(owner), fallback=bool(fallback))
+        picked = next((b for b in rem if b.backlog_id == selected), None)
         try:
             await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
                                   f"[다음 선정] {flow._info(holder) or holder} → "
-                                  f"{flow._info(owner) or owner} · 백로그 {selected}")
+                                  f"{flow._info(owner) or owner} · "
+                                  f"{(getattr(picked, 'body', '') or '')[:70]}")
         except Exception:
             pass
         return selected
 
+    @staticmethod
+    def _backlog_turn_complete_text(result):
+        """정상 종료한 실작업 턴만 구조적 완료 신호로 인정한다. 오류·한도 컷은 다음 턴에서 잇는다."""
+        text = str(result or "").strip()
+        if not text or "턴 한도 도달" in text:
+            return False
+        return not text.startswith(("[크레딧 한도]", "API Error:", "(에이전트 "))
+
+    async def _finish_backlog_turn(self, flow, who, b, st_id, result):
+        """한 worker 턴의 정상 종료를 scoped 백로그 완료로 원자 기록하고 다음 릴레이를 잇는다."""
+        from .rule.backlog import handoff_note
+        from .rule.milestone import _ckpt
+        r = self._backlog_relay(flow, st_id)
+        if r is None:
+            return False
+        status = str(getattr(b, "status", ""))
+        if status == "in_progress":
+            if not self._backlog_turn_complete_text(result):
+                _ckpt(flow)  # 그 턴까지 쌓인 생각·파일 체크포인트는 보존하고 완료만 보류
+                self._log("backlog_turn_incomplete", st=str(st_id), backlog=str(b.backlog_id),
+                          drives=int(getattr(b, "_drive_n", 0) or 0))
+                return False
+            r.done(int(who), b.backlog_id, note=str(result or "")[:300])
+            handoff_note(flow, r, int(who), "완료됐습니다")
+            status = "done"
+        elif status not in ("done", "dropped"):
+            _ckpt(flow)
+            return False
+
+        _ckpt(flow)
+        self._log("backlog_turn_done", st=str(st_id), backlog=str(b.backlog_id),
+                  by=int(who), status=status, drives=int(getattr(b, "_drive_n", 0) or 0))
+        if status == "done":
+            try:
+                await flow.guide.post(
+                    int(getattr(flow, "user_channel", 0) or 0), 0,
+                    f"[완료] 백로그 {b.backlog_id} · {(b.body or '')[:70]} — 작업 기록됨.")
+            except Exception:
+                pass
+        # worker가 같은 턴 안에서 이미 다음 항목을 선정했다면 그 선택을 존중한다.
+        if not any(getattr(x, "status", "") == "in_progress" for x in r.backlogs):
+            await self._backlog_handoff(flow, r, int(who))
+        return True
+
     async def _claim_kick(self, flow):
         """[구조적 백로그 릴레이(2026-07-23, 사용자: '계획처럼 실행도 구조로 강제')] 봇의 자발적
         pick_backlog/report_iter 호출에 기대지 않고 **구조가 릴레이를 민다** — 계획 단계 게이트와 대칭.
-          ① in_progress 백로그가 있으면 그 담당을 이어-깨워 완성시키고(단일 활성), 봇이 report_iter로
-             status=done을 세우면 다음으로 넘어간다. ② 완료 신호 없이 구동 상한
-             (ORGANT_BACKLOG_DRIVE_CAP, 기본 3)에 닿으면 작업이 된 것으로 보고 **구조적으로 완료 기록**
-             (요약이 곧 기록·무한 재구동 차단). ③ in_progress가 없으면 다음 open을 **즉시 in_progress로
+          ① in_progress 백로그가 있으면 그 담당을 이어-깨워 완성시킨다(단일 활성).
+          ② 작업 턴이 정상 종료되면 구조가 그 scoped 백로그를 완료·체크포인트한다. 오류·취소·턴 한도는
+             완료로 둔갑시키지 않고 같은 항목을 다음 턴에서 잇는다.
+          ③ in_progress가 없으면 다음 open을 **즉시 in_progress로
              세워** '작업중 하나'를 화면에 띄우고 착수시킨다(봇의 pick 호출을 안 기다림).
         효과: 항상 '작업중 하나'가 화면에 보이고(단일 활성·누가·무슨 백로그 명시), 완료가 장부에 남으며,
-        릴레이가 스스로 잇는다. 봇의 자율(무엇을·어떻게 만들지)은 그대로 — 진행의 보장만 구조가 진다."""
+        릴레이가 스스로 잇는다. 품질 판정은 백로그별 자가 실증이 아니라 소진 뒤 마일스톤 검증이 맡는다."""
         try:
             from .rule.milestone import claim_kick_target
+            from .rule.backlog import backlog_scope_key
             _ch = int(getattr(flow, "user_channel", 0) or 0)
-            try:
-                _cap = max(1, int(os.environ.get("ORGANT_BACKLOG_DRIVE_CAP", "3") or 3))
-            except ValueError:
-                _cap = 3
             # ① 진행 중 백로그를 이어-구동 (단일 활성)
             active = self._backlog_in_progress(flow)
             if active is not None:
                 who, b, st_id = active
-                if getattr(b, "status", "") == "done":
-                    return
                 b._drive_n = getattr(b, "_drive_n", 0) + 1
-                if b._drive_n > _cap:                          # ② 상한 소진 → 구조적 완료 기록
-                    from .rule.backlog import handoff_note
-                    r = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
-                    if r is None:
-                        return
-                    r.done(int(who), b.backlog_id)
-                    handoff_note(flow, r, int(who), "완료됐습니다")
-                    self._log("backlog_autodone", backlog=str(b.backlog_id), drives=int(b._drive_n))
-                    try:
-                        await flow.guide.post(_ch, 0, f"[완료] 백로그 {b.backlog_id} — 작업 기록됨(위 발화가 요약).")
-                    except Exception:
-                        pass
-                    await self._backlog_handoff(flow, r, int(who))
-                    return
-                await self.run_turn(
+                result = await self.run_turn(
                     flow, who,
                     f"[작업중 — 이어서] 백로그 {b.backlog_id}(\"{(b.body or '')[:70]}\")가 아직 당신 손에 "
-                    f"있습니다 — **바로 이어서 완성**(파일·코드·실행)하고, 끝나면 마지막 발화로 '한 일 "
-                    f"요약' 3~5줄 + report_iter로 완료 보고하세요. 회의·의견 아니라 작업입니다.",
+                    f"있습니다 — **바로 이어서 완성**(파일·코드·실행)하세요. 선행 작업이 꼭 필요하면 "
+                    f"block_backlog로 보존하고, 끝냈으면 마지막 발화에 한 일·핵심 결정·파일 경로를 "
+                    f"3~5줄로 요약하세요. 정상 종료를 SYS가 완료로 기록합니다. 회의·의견이 아니라 작업입니다.",
                     Kind.INFO, "worker")
+                await self._finish_backlog_turn(flow, who, b, st_id, result)
                 return
             # ③ 진행 중 없음 → 다음 open을 구조적으로 착수(즉시 in_progress로 세워 화면에 띄운다)
             t = claim_kick_target(flow)
@@ -1726,28 +1782,32 @@ class Sys:
             kicked = getattr(flow, "_claim_kicked", None)
             if kicked is None:
                 kicked = flow._claim_kicked = set()
-            kicked.add(b.backlog_id)
+            kicked.add(backlog_scope_key(st_id, b.backlog_id))
             # [작업중 마커 복원(2026-07-24, ch96)] 필드 직접 변경은 BacklogRelay._emit을 건너뛰어
             # 실제 worker 턴은 도는데 ms_status 미러가 open으로 남고 UI의 B1 ▶가 사라졌다.
             # 첫 착수도 후속 핸드오프와 같은 정식 pick 변이를 써 상태 영속·화면 갱신을 즉시 발생시킨다.
-            r = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
+            r = self._backlog_relay(flow, st_id)
             if r is None:
                 return
             r.pick(int(who), b.backlog_id, int(who))
-            b._drive_n = 0
+            from .rule.milestone import _ckpt
+            _ckpt(flow)                            # worker가 도는 동안에도 ▶ 상태가 크래시 내구
+            b._drive_n = 1
             self._log("claim_kick", st=str(st_id), backlog=str(b.backlog_id), to=int(who))
             try:
                 await flow.guide.post(_ch, 0,
                     f"[작업중] {flow._info(who) or who} · 백로그 {b.backlog_id}: {(b.body or '')[:70]}")
             except Exception:
                 pass
-            await self.run_turn(
+            result = await self.run_turn(
                 flow, who,
                 f"[작업 시작] 회의는 끝났고 지금은 **작업 단계**입니다. 백로그 {b.backlog_id}"
                 f"(\"{(b.body or '')[:80]}\")를 당신이 맡았습니다 — **바로 실작업**(파일 생성·코드 작성·"
-                f"실행)을 시작하세요. 발언·회의 소집이 아니라 작업입니다. 끝나면 마지막 발화로 '한 일 "
-                f"요약'(무엇을 만들었는지·핵심 결정·만든 파일 경로) 3~5줄 + report_iter로 완료 보고하세요.",
+                f"실행)을 끝내세요. 선행 작업이 꼭 필요하면 block_backlog로 보존하고, 끝냈으면 마지막 "
+                f"발화로 한 일·핵심 결정·만든 파일 경로를 3~5줄로 요약하세요. 정상 종료를 SYS가 완료로 "
+                f"기록합니다. 발언·회의 소집이 아니라 작업입니다.",
                 Kind.INFO, "worker")
+            await self._finish_backlog_turn(flow, who, b, st_id, result)
         except Exception as e:
             self._log("claim_kick_error", err=str(e)[:80])
 
@@ -3045,6 +3105,12 @@ class Sys:
         # 오판돼 중단 마감됐다. 판정은 픽 전체: 한 사이클이라도 전진했으면 전진(reap pop이 리셋).
         _ch1 = int(flow.user_channel or 0)
         self._flow_cycle_progress[_ch1] = bool(_prog1) or bool(self._flow_cycle_progress.get(_ch1))
+        # 사용자 중지는 '미완+장부 전진'이어도 자동 재픽 대상이 아니다. 취소가 정상 마감 꼬리로
+        # 흡수되므로 reap이 task.result()만 보면 정상 반환과 구분 못 한다 — 채널별 종결 원인을 넘긴다.
+        if getattr(flow, "cancelled", False):
+            if not hasattr(self, "_flow_user_cancelled"):
+                self._flow_user_cancelled = {}
+            self._flow_user_cancelled[_ch1] = True
         # [완료 참칭 방지(2026-07-14)] 선거로 연 제작 요청인데 Task도 안 열린 채(flow.current None) 끝났으면
         # = 앵커가 아무것도 안 만든 것(평문 독백). done으로 마감하면 '완료' 참칭이라, 이 채널을 '산출물 0'로
         # 표시해 reap이 done 대신 **중단**으로 닫게 한다(정직한 미완).
@@ -3132,6 +3198,9 @@ class Sys:
         cid = int(channel_id)
         for f in list(self.active_flows.values()):
             if getattr(f, "user_channel", None) == cid and not f.done:
+                if not hasattr(self, "_flow_user_cancelled"):
+                    self._flow_user_cancelled = {}
+                self._flow_user_cancelled[cid] = True
                 f.cancelled = True
                 t = getattr(f, "_run_task", None)
                 if t is not None and not t.done():
@@ -3340,7 +3409,9 @@ class Sys:
                             # [사람 대기 파킹(2026-07-20, U-035)] 파킹 판은 장부가 전진했어도 재픽 금지 —
                             # 재픽이 곧 재주입 루프(봇 잡담 재개)였다. 사람의 답만이 재개 입구.
                             _ahum = getattr(self, "_flow_awaiting_human", {}).pop(int(_info["ch"]), False)
-                            if _open and _prog and not _qhalt and not _ahum:
+                            _user_stop = getattr(self, "_flow_user_cancelled", {}).pop(
+                                int(_info["ch"]), False)
+                            if _open and _prog and not _qhalt and not _ahum and not _user_stop:
                                 seen.discard(_mid)
                                 await guide.pick(_mid, unpick=True)
                                 self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
@@ -3350,7 +3421,7 @@ class Sys:
                                 # stopped 표기)는 done 마감 **전에** — 웹 op가 'picked & not done_ts'
                                 # 요청만 표기하므로, done을 먼저 찍으면 stopped가 안 남아 재개 버튼이
                                 # 0건 반환(안내 문구와 모순되는 유령 중단, resume 불가).
-                                if _qhalt or _open or _ahum:
+                                if _user_stop or _qhalt or _open or _ahum:
                                     try:
                                         await self.guide.mark_stopped(int(_info["ch"]))
                                     except Exception:
@@ -3358,7 +3429,10 @@ class Sys:
                                 await guide.pick(_mid, done=True)
                                 # [크레딧 한도 정지(2026-07-20)] 한도 소진 마감 = 재배달 없이 정직 종결
                                 # (충전/승인 후 사용자가 재개 — 피드는 '중단' 표시).
-                                if _qhalt:
+                                if _user_stop:
+                                    self._log("user_stopped_closed", mid=_mid, ch=_info["ch"])
+                                    log.info("■ 사용자 중지 — 재픽 없이 정지 마감: msg_id=%s", _mid)
+                                elif _qhalt:
                                     self._log("quota_halt_closed", mid=_mid, ch=_info["ch"])
                                     log.info("■ 크레딧 한도 — 정지 마감: msg_id=%s", _mid)
                                 elif _ahum:

@@ -72,12 +72,11 @@ def _tools(f, me, role):
     return {t.name: t for t in make_guide_tools(f, me, role)}
 
 
-def test_SYS_자동완료뒤_보유자응찰을_최근작업자가_선정(monkeypatch):
-    """자동완료도 relay.done을 지나며, 남은 백로그 보유자들이 응찰하고 최근 작업자의 선택이 우선한다."""
+def test_SYS_정상작업턴완료뒤_보유자응찰을_최근작업자가_선정(monkeypatch):
+    """정상 종료한 작업 턴은 relay.done을 지나며, 보유자들이 응찰하고 최근 작업자의 선택이 우선한다."""
     from system.rule.backlog import relay_for
     from system.rule.milestone import open_milestone, open_subtask
 
-    monkeypatch.setenv("ORGANT_BACKLOG_DRIVE_CAP", "1")
     g = FakeGuide()
     f = _flow(g)
     f.bot_info.update({13: "VFX"})
@@ -88,10 +87,11 @@ def test_SYS_자동완료뒤_보유자응찰을_최근작업자가_선정(monkey
     b2 = r.submit(12, "입력 로직 구현", force=True)
     b3 = r.submit(13, "타격 연출 구현", force=True)
     r.pick(11, b1.backlog_id, 11)
-    b1._drive_n = 1
     s = Sys(g, 1, None, bot_info={11: "L", 12: "M", 13: "VFX"})
 
     async def scripted(_flow, who, body, kind, role, micro=False):
+        if "작업중 — 이어서" in body:
+            return "기본 화면 구현과 실행 검증을 완료했습니다."
         if "응찰" in body and who == 12:
             return f"[응찰: 9, {b2.backlog_id}] 기반 작업이라 우선"
         if "응찰" in body and who == 13:
@@ -109,8 +109,8 @@ def test_SYS_자동완료뒤_보유자응찰을_최근작업자가_선정(monkey
                and e["backlog"] == b3.backlog_id and not e["fallback"] for e in s.flow_log)
 
 
-def test_SYS_첫백로그착수도_relay변이로_작업중미러갱신(monkeypatch):
-    """ch96: 직접 status 대입은 봇만 돌고 UI의 B1 ▶ 미러를 갱신하지 않았다. 첫 킥도 r.pick을 지난다."""
+def test_SYS_첫백로그는_작업중미러뒤_정상턴완료가_원장에남음(monkeypatch):
+    """첫 킥은 r.pick으로 ▶를 먼저 미러하고, 정상 작업 턴 종료는 done+체크포인트로 남긴다."""
     from system.rule.backlog import relay_for
     from system.rule.milestone import open_milestone, open_subtask
 
@@ -120,17 +120,20 @@ def test_SYS_첫백로그착수도_relay변이로_작업중미러갱신(monkeypa
     st = open_subtask(f, ms, "화면", [])
     r = relay_for(f, st)
     b = r.submit(12, "첫 화면 구현", force=True)
-    changed = []
-    r._on_change = lambda: changed.append(b.status)
+    changed, checkpoints = [], []
+    monkeypatch.setattr("system.rule.milestone.persist_ms_status",
+                        lambda _flow: changed.append(b.status))
+    f.checkpoint_task = lambda: checkpoints.append(b.status)
     s = Sys(g, 1, None, bot_info={11: "L", 12: "M"})
 
     async def scripted(*_args, **_kwargs):
-        return "작업 착수"
+        return "첫 화면 구현과 빌드 검증 완료"
     s.run_turn = scripted
 
     asyncio.run(s._claim_kick(f))
-    assert b.status == "in_progress" and b.assignee == 12
-    assert changed == ["in_progress"]                 # relay_pick → persist_ms_status/UI ▶
+    assert b.status == "done" and b.assignee == 12
+    assert "in_progress" in changed and changed[-1] == "done"  # worker가 도는 동안 ▶, 종료 뒤 ✓
+    assert "in_progress" in checkpoints and checkpoints[-1] == "done"
 
 
 def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_path, monkeypatch):
@@ -5797,6 +5800,7 @@ def test_request_cancel_사용자_작업중지():
     assert s.request_cancel(500) is True
     assert f.cancelled is True               # 이어가기 루프·워치독이 협조적으로 멈춘다
     assert ft._cancelled is True             # 진행 중인 리더 턴 즉시 인터럽트
+    assert s._flow_user_cancelled[500] is True  # reap이 정상 반환으로 오인해 재픽하지 않을 종결 원인
     assert s.request_cancel(999) is False    # 활성 흐름 없는 채널 → False
     f.done = True
     assert s.request_cancel(500) is False    # 이미 끝난 흐름은 취소 대상 아님

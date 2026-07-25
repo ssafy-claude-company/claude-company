@@ -1088,13 +1088,15 @@ def claim_kick_target(flow):
 
     규칙: 열린 주기의 미완 단위에서 ①in_progress가 하나라도 있으면 None(이미 손에 든 사람 있음)
     ②open 중 아직 킥 안 한(flow._claim_kicked) 첫 건의 제출자 — 봇이 킥을 씹으면 다음 open으로
-    한 번씩만 확대(백로그당 1회 상한, 무한 wake 없음)."""
+    한 번씩만 확대(백로그당 1회 상한, 무한 wake 없음). 킥 키는 (SubTask, Bn) 쌍이다. B1은 각
+    SubTask에서 반복되므로 Bn 단독 키면 첫 단계 B1이 뒤 모든 단계 B1까지 막는다."""
     mss = getattr(flow, "milestones", None) or []
     ms = next((m for m in mss if m.status not in ("done", "superseded")), None)
     if ms is None:
         return None
     store = getattr(flow, "backlog_relays", None) or {}
     kicked = getattr(flow, "_claim_kicked", None) or set()
+    from .backlog import backlog_scope_key
     for st in ms.subtasks:
         if st.status in ("done", "superseded"):
             continue
@@ -1104,7 +1106,7 @@ def claim_kick_target(flow):
         if any(b.status == "in_progress" for b in r.backlogs):
             return None                          # 순차 1활성 — 진행 중이면 킥 불요
         for b in r.backlogs:
-            if b.status != "open" or b.backlog_id in kicked:
+            if b.status != "open" or backlog_scope_key(st.st_id, b.backlog_id) in kicked:
                 continue
             if int(b.submitter or 0):
                 return (int(b.submitter), b, st.st_id)

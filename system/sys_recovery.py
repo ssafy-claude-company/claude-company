@@ -198,13 +198,23 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     except Exception:
         flow.roadmap = []                                 # [갭#5 격리] 손상 roadmap이 뒤 복원을 무산시키지 않게
     # [백로그 릴레이 §9 — 복원] 마일스톤과 같은 독립 복원(릴레이만 있는 시점의 죽음도 복구).
-    # log 바인딩은 복원 시점에 못 한다 — relay_for가 접근 시 재바인딩한다.
     try:
         from .rule.backlog import BacklogRelay
         flow.backlog_relays = {str(sid): BacklogRelay.from_ckpt(d)
                                for sid, d in (proj.get("backlog_relays") or {}).items()}
     except Exception:
         flow.backlog_relays = {}
+    # 복원 장부를 '누가 도구로 처음 접근할 때'까지 무콜백으로 두면 구조 드라이버가 직접 pick/done한
+    # 변이가 화면 미러에 안 남는다. 마일스톤 표현과 릴레이가 모두 복원된 바로 여기서 기존 릴레이만
+    # relay_for에 통과시켜 log·on_change를 재결합한다(없는 릴레이를 새로 만들지는 않음).
+    try:
+        from .rule.backlog import relay_for
+        for _ms in flow.milestones:
+            for _st in _ms.subtasks:
+                if _st.st_id in flow.backlog_relays:
+                    relay_for(flow, _st)
+    except Exception:
+        pass
     if flow.milestones:
         # [표면 미러] 복원 직후 1회 — HUD 공백 제거. **릴레이 복원 뒤**여야 한다(장부 복원 전에 쓰면
         # 빈 백로그로 스냅샷을 덮는다 — ch53 라이브: 스냅샷 bl 전부 소실 사인, 2026-07-10).

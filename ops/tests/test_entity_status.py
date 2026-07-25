@@ -87,10 +87,13 @@ def test_작업생각은_현재수행자의_유일한_백로그에만_귀속(mon
     b2 = r2.submit(101, "API 구현")
     r1.pick(101, b1.backlog_id, 202)
     f.backlog_relays = {"ST-1": r1, "ST-2": r2}
+    checkpoints = []
+    f.checkpoint_task = lambda: checkpoints.append(list(b1.activity))
 
     f.note_activity(202, "💭 컴포넌트 구조를 확인한다")
     assert b1.activity == ["[백엔드] 💭 컴포넌트 구조를 확인한다"]
     assert b2.activity == []
+    assert checkpoints and checkpoints[-1] == b1.activity  # 중지/재시작 뒤에도 원장에서 복원
 
     # 수행자가 실제로 쥔 일감이 없으면 전역 실황에는 남되 임의 백로그에 추측 귀속하지 않는다.
     f.note_activity(101, "💭 다음 순서를 살핀다")

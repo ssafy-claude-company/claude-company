@@ -97,7 +97,7 @@ def test_claim_kick_target_작업단계_선점킥_규칙(onflag):
     """[ch79/P-032 라이브 실측 수리 — 2026-07-19] 회의가 백로그를 등록하고 작업 단계로 전이했는데
     아무도 선점하지 않던 교착: SYS가 깨울 대상을 규칙으로 고른다 — 제출자에게 백로그당 1회,
     in_progress가 생기면 침묵(순차 1활성), 킥을 씹으면 다음 open으로 한 번씩만 확대."""
-    from system.rule.backlog import BacklogRelay
+    from system.rule.backlog import BacklogRelay, backlog_scope_key
     from system.rule.milestone import SubTask, claim_kick_target
     g = FakeGuide()
     f = _flow(g)
@@ -113,14 +113,38 @@ def test_claim_kick_target_작업단계_선점킥_규칙(onflag):
 
     who, b, st_id = claim_kick_target(f)
     assert (who, b.backlog_id, st_id) == (12, b1.backlog_id, st.st_id)   # 첫 open의 제출자
-    f._claim_kicked = {b1.backlog_id}                                    # 킥했는데 씹힘 → 다음 open 1회
+    f._claim_kicked = {backlog_scope_key(st.st_id, b1.backlog_id)}        # 킥했는데 씹힘 → 다음 open 1회
     who2, b_2, _ = claim_kick_target(f)
     assert (who2, b_2.backlog_id) == (13, b2.backlog_id)
     b1.status = "in_progress"                                            # 누가 집으면 침묵
     assert claim_kick_target(f) is None
     b1.status = "done"
-    f._claim_kicked = {b1.backlog_id, b2.backlog_id}                     # 전부 킥 소진 → 침묵
+    f._claim_kicked = {backlog_scope_key(st.st_id, b1.backlog_id),
+                       backlog_scope_key(st.st_id, b2.backlog_id)}        # 전부 킥 소진 → 침묵
     assert claim_kick_target(f) is None
+
+
+def test_claim_kick_key는_SubTask범위라_다른단계_B1을_막지않음(onflag):
+    """B1은 단계마다 반복된다. 앞 단계 B1 킥 기록이 다음 단계 B1 진입을 막지 않는다."""
+    from system.rule.backlog import BacklogRelay, backlog_scope_key
+    from system.rule.milestone import SubTask, claim_kick_target
+    g = FakeGuide()
+    f = _flow(g)
+    lead = _tools(f, 11, "leader")
+    _drive(lead, "set_milestone", {"goal": "게임", "criteria": "판정 정확 | pytest 50회 확인"})
+    ms = f.milestones[0]
+    st1 = SubTask(st_id=f"{ms.ms_id}/ST-1", goal="화면", criteria=[])
+    st2 = SubTask(st_id=f"{ms.ms_id}/ST-2", goal="API", criteria=[])
+    ms.subtasks.extend([st1, st2])
+    r1, r2 = BacklogRelay(st1.st_id), BacklogRelay(st2.st_id)
+    b11 = r1.submit(12, "화면 구현", force=True)
+    b21 = r2.submit(13, "API 구현", force=True)                 # 이 단계에서도 지역 ID는 B1
+    b11.status = "done"
+    f.backlog_relays = {st1.st_id: r1, st2.st_id: r2}
+    f._claim_kicked = {backlog_scope_key(st1.st_id, b11.backlog_id)}
+
+    who, b, st_id = claim_kick_target(f)
+    assert (who, b.backlog_id, st_id) == (13, "B1", st2.st_id)
 
 
 def test_ledger_signature_장부전진만_센다(onflag):

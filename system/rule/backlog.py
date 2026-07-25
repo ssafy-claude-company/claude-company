@@ -41,6 +41,11 @@ DROPPED = "dropped"
 DEADLOCK_BLOCKS = 2
 
 
+def backlog_scope_key(subtask_id, backlog_id) -> str:
+    """런타임 집합/맵용 전역 키. B1은 SubTask마다 다시 시작하므로 ID 단독 사용은 충돌한다."""
+    return f"{str(subtask_id)}::{str(backlog_id)}"
+
+
 class BacklogError(Exception):
     """릴레이 규약 위반(턴·상태 전이) — comm_engine.CommError와 같은 지위."""
 

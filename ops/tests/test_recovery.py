@@ -16,6 +16,41 @@ def test_미응답_사용자요청은_복구대상():
     assert find_pending_request([_req(1)], {11, 22}).message_id == "1"
 
 
+def test_복원된_백로그릴레이는_즉시_상태미러콜백재결합(monkeypatch):
+    """복원 relay를 도구가 먼저 만질 때까지 무콜백으로 두지 않는다 — 구조 pick도 즉시 미러돼야 한다."""
+    import asyncio
+    from system.flow import Flow
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import ms_to_dict, open_milestone, open_subtask
+    from system.sys_recovery import restore_open_task
+
+    mirrored = []
+    monkeypatch.setattr("system.rule.milestone.persist_ms_status",
+                        lambda flow: mirrored.append("mirror"))
+    src = Flow(None, channel_id=42, guild_id=1, leader_id=11,
+               bot_info={11: "리더", 12: "백엔드"})
+    ms = open_milestone(src, "구현", [{"desc": "빌드", "verify": "pytest"}])
+    st = open_subtask(src, ms, "API", [])
+    r = relay_for(src, st)
+    b = r.submit(12, "API 구현", force=True)
+    proj = {"milestones": [ms_to_dict(ms)],
+            "backlog_relays": {st.st_id: r.to_ckpt()}}
+
+    dst = Flow(None, channel_id=42, guild_id=1, leader_id=11,
+               bot_info={11: "리더", 12: "백엔드"})
+
+    class _Sys:
+        def _log(self, *_a, **_kw):
+            pass
+
+    asyncio.run(restore_open_task(_Sys(), dst, proj))
+    restored = dst.backlog_relays[st.st_id]
+    assert callable(getattr(restored, "_on_change", None))
+    before = len(mirrored)
+    restored.pick(12, b.backlog_id, 12)
+    assert len(mirrored) > before
+
+
 def test_Response가_달리면_완료로_해제():
     msgs = [_req(1), Response(body="done", from_id=11, replies_to="1")]
     assert find_pending_request(msgs, {11}) is None
