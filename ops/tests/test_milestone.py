@@ -868,6 +868,35 @@ def test_조건구분자는_라벨_본문파이프는_조건아님():
     assert c["desc"] == "스키마 enum(buy|pass|claim) 유지" and "python check.py" in c["verify"]
 
 
+def test_마크다운_inline_exact_verifier는_프리플라이트통과_내부backtick은_거부():
+    """U-056: 템플릿대로 exact command를 inline-code로 써도 통과하되 명령 내부 backtick은 못 숨긴다."""
+    from system.rule.evidence import direct_verifier_command
+    from system.rule.milestone import parse_criteria_lines, stage_preflight
+
+    line = "- 상태 전이 계약 통과 | 실증: `node test_state_machine.js`"
+    criterion = parse_criteria_lines(line)[0]
+    assert criterion["verify"] == "`node test_state_machine.js`"
+    assert direct_verifier_command(
+        criterion["verify"], require_existing=False
+    ) == "node test_state_machine.js"
+
+    draft = (
+        "# DRAFT [stage:milestone] — 상태 머신\n"
+        "## 결정\n"
+        "이번 주기: 상태 전이 구현\n"
+        f"{line}\n\n"
+        "## 참고 (자유 — 판정 대상 아님)\n"
+    )
+    assert stage_preflight("milestone", draft) == []
+
+    assert direct_verifier_command(
+        "node test_state_machine.js `whoami`", require_existing=False
+    ) == ""
+    assert direct_verifier_command(
+        "`node test_state_machine.js `whoami``", require_existing=False
+    ) == ""
+
+
 def test_게이트는_불량을_일괄보고():
     bad = [{"desc": "카운터 API", "verify": "확인한다"},
            {"desc": "버튼 UI", "verify": "잘 살펴본다"}]

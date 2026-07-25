@@ -10,8 +10,16 @@ import shlex
 
 
 def normalize_verifier_command(command) -> str:
-    """봉인·실행 비교에 쓰는 유일한 명령 정규형(바깥 공백만 무시, 내부는 exact)."""
-    return str(command or "").strip()
+    """봉인·실행 비교에 쓰는 유일한 명령 정규형.
+
+    바깥 공백과, 명령 전체를 감싼 Markdown 단일 inline-code 한 쌍만 무시한다. 명령 안의
+    backtick은 shell substitution일 수 있으므로 하나라도 끼어 있으면 벗기지 않고 기존 안전
+    검사에서 거부한다.
+    """
+    raw = str(command or "").strip()
+    if len(raw) >= 2 and raw.startswith("`") and raw.endswith("`") and raw.count("`") == 2:
+        return raw[1:-1].strip()
+    return raw
 
 
 def verifier_command_hash(command) -> str:

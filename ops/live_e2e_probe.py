@@ -42,6 +42,7 @@ ENV_FILE = Path("/etc/murmur-web.env")
 BASE_URL = "http://127.0.0.1:8000/api"
 LEADER_BOT_ID = "1513819740940927067"
 EXACT_VERIFIER = "node test_state_machine.js"
+EXPECTED_MILESTONE_COUNT = 1
 TERMINAL_BACKLOG_STATES = {"done", "dropped"}
 BAD_TRACE_EVENTS = {
     "awaiting_human_closed",
@@ -761,6 +762,15 @@ class ProbeState:
                 bool(live_ms_rows)
                 and all(ms.get("status") == "done" for ms in live_ms_rows),
                 {str(ms.get("ms")): ms.get("status") for ms in live_ms_rows},
+            ),
+            _assertion(
+                "requested_milestone_count_preserved",
+                len(live_ms_rows) == EXPECTED_MILESTONE_COUNT,
+                {
+                    "expected": EXPECTED_MILESTONE_COUNT,
+                    "actual": len(live_ms_rows),
+                    "milestones": [str(ms.get("ms") or "") for ms in live_ms_rows],
+                },
             ),
             _assertion(
                 "milestone_subtask_backlog_structure",

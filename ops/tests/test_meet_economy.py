@@ -2304,6 +2304,19 @@ def test_마일스톤회의_완수조건_이번주기_스코프(monkeypatch):
     assert "'이번 주기' 범위의 조건만" in draft
 
 
+def test_마일스톤회의_명시개수와_단일주기_검증귀속_코칭():
+    """[U-056] `구현 → 최종 검증`을 두 주기로 오해하지 않게 세 프롬프트 표면의 계약을 고정."""
+    from system.rule.milestone import stage_agenda, stage_draft_template, stage_frame
+
+    _, agenda = stage_agenda("milestone")
+    surfaces = (agenda, stage_draft_template("milestone", "안건"), stage_frame("milestone"))
+    for text in surfaces:
+        assert "`→`로 나뉜 각 항목은 각각 별도 마일스톤 주기" in text
+        assert "마일스톤 수를 명시하면 그 수를 그대로 보존" in text
+        assert "1개면 `단계:`에 한 항목만" in text
+        assert "`구현 → 최종 검증`처럼 두 주기로 쪼개지 마세요" in text
+
+
 def test_마일스톤회의_첫주기_산출물형태_불강제(monkeypatch):
     """[U-036 재작업 #3 롤백(2026-07-21, 사용자: '기획 문서 작성이 우선이면 그 작성을 우선시하는 게
     맞지 — 잘못된 패치')] 414e850이 회의 골격에 '첫 주기=실행물, 페이퍼 금지'를 못박았던 것을 되돌림 —
