@@ -6421,6 +6421,47 @@ def test_request_cancel_사용자_작업중지():
     assert s.request_cancel(500) is False    # 이미 끝난 흐름은 취소 대상 아님
 
 
+def test_active등록뒤_leader생성전_stop은_실행본문을_시작하지않음(tmp_path):
+    """active 등록 직후 상황조회 await에서 stop이 와도 leader task는 첫 실행 전에 취소된다."""
+    from system.protocol import Kind
+
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    ran = []
+
+    async def blocked_situation(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        return ""
+
+    async def must_not_run(*_args, **_kwargs):
+        ran.append(True)
+        return "실행되면 안 됨"
+
+    s._channel_situation = blocked_situation
+    s.run_turn = must_not_run
+
+    async def scenario():
+        carrier = asyncio.create_task(s.handle_user_input(
+            500, 11, "설명해줘", root_id="r-stop-before-leader",
+            request_kind=Kind.INFO))
+        await entered.wait()
+        flow = next(iter(s.active_flows.values()))
+        assert flow._run_task is None
+        assert s.request_cancel(500) is True
+        release.set()
+        out = await asyncio.wait_for(carrier, timeout=1)
+        assert out["flow"] is flow
+        assert flow._run_task.cancelled()
+
+    asyncio.run(scenario())
+    assert ran == []
+    assert any(e["event"] == "flow_user_stopped" for e in s.flow_log)
+
+
 def test_per_agent_모델이_organt_옵션까지_도달():
     """per-agent 모델(매체가 직원별 LLM 지정) — _make_builder(model_map)이 지정 봇에만 build_options
     model override를 실어 Organt 옵션까지 도달하고, 미지정 봇·디스코드 경로는 전역 cfg.model 그대로.
@@ -6486,6 +6527,95 @@ def test_Info_캐주얼은_프로젝트기계_없는_대화프롬프트():
     assert "대화로" in pc and "팀은 당신이 동적으로 짠다" not in pc
 
 
+def test_무지정_Info는_발제선거와_Task0중지없이_정상답변():
+    """배달자가 elect를 잘못 켜도 Info는 팀 응찰을 열거나 산출물-0 중지로 접히지 않는다."""
+    from system.protocol import Kind
+
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "기획", 12: "백엔드"},
+            workspace="/tmp/ws-info-election")
+    elections = []
+
+    async def must_not_elect(_ch, _body):
+        elections.append(True)
+        return 12, [12]
+
+    async def answer(_flow, _oid, _body, _kind, _role, **_kw):
+        return "정상 답변"
+
+    s._elect_proposer = must_not_elect
+    s.run_turn = answer
+    out = asyncio.run(s.handle_user_input(
+        777, 11, "이 기능은 왜 이렇게 동작해?", root_id="r-info",
+        elect=True, request_kind=Kind.INFO))
+
+    assert elections == []
+    assert out["mode"] == "flow" and out["flow"].final == "정상 답변"
+    events = [e["event"] for e in s.flow_log]
+    assert "flow_done" in events and "flow_no_deliverable" not in events
+
+
+def test_첫턴실패신호는_실질leader결산만쓰고_worker가_덮지않음(tmp_path):
+    """같은 Flow의 늦은 worker 성공이 루트 Codex 전송 실패를 정상으로 바꾸지 않는다."""
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+
+    class _Organt:
+        def __init__(self, ok, text):
+            self._organt_turn_record = {
+                "ok": ok,
+                "error": "" if ok else "root transport failed",
+            }
+            self.text = text
+
+        def will_resume(self):
+            return True
+
+        async def handle(self, _prompt, micro=False):
+            return self.text
+
+    def builder(_oid, _server, role, _flow):
+        if role == "leader":
+            return _Organt(False, "API Error: root transport failed")
+        return _Organt(True, "worker 정상 완료")
+
+    s = Sys(g, guild_id=1, organt_builder=builder,
+            bot_info={11: "L", 12: "M"}, workspace=str(tmp_path))
+    root = asyncio.run(s.run_turn(f, 11, "루트 작업", Kind.WORK, "leader"))
+    assert root.startswith("API Error:")
+    assert f._last_turn_ok is False
+    assert f._last_turn_error == "root transport failed"
+
+    assert asyncio.run(s.run_turn(f, 12, "하위 작업", Kind.WORK, "member")) == "worker 정상 완료"
+    assert f._last_turn_ok is False
+    assert f._last_turn_error == "root transport failed"
+
+
+def test_builder_턴결산은_Organt인스턴스별로_격리(tmp_path):
+    from system.config import Config
+    from system.audit import AuditLog
+    from organt_discord.main import _make_builder
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    cfg = Config(system_bot_token="x", channel_id=1, model="sonnet",
+                 workspace_dir=tmp_path, audit_log_path=logs / "audit.jsonl")
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    f.session_scope = "turn-record"
+    builder = _make_builder(cfg, AuditLog(cfg.audit_log_path), {11: "L", 12: "M"})
+    leader = builder(11, {}, "leader", f)
+    worker = builder(12, {}, "member", f)
+
+    leader.on_turn({"ok": False, "error": "root failed"})
+    worker.on_turn({"ok": True, "error": ""})
+
+    assert leader._organt_turn_record == {"ok": False, "error": "root failed"}
+    assert worker._organt_turn_record == {"ok": True, "error": ""}
+    assert not hasattr(f, "_last_turn_ok")
+
+
 def test_per_agent_persona가_organt_시스템프롬프트까지_도달():
     """per-agent 인격(스튜디오에서 봇별 정체성 지정) — _make_builder(persona_map)이 지정 봇의 system_prompt
     뒤에 그 개성을 덧붙여 Organt 옵션까지 도달하고, 미지정 봇·디스코드 경로는 기본 인격 그대로.
@@ -6538,9 +6668,8 @@ def test_request_cancel_흐름닫고_점유해제_큐드레인():
 
 def test_사용자요청_Info도_리더점유시_큐_유실없음():
     """[안전성/큐] 사용자 요청은 Work든 Info(단순 질문)든 동일하게 큐 게이트를 거친다 —
-    route_channel_request가 request.kind를 routing에 쓰지 않아(handle_user_input은 to_id·body만 받음)
-    Info가 진행 흐름에 끼어들 경로가 없다. 대상 리더가 점유 중이면 Info도 바로 큐에 걸리고,
-    흐름 종료 후 드레인되어 결국 처리된다(유실 없음)."""
+    대상 리더가 점유 중이면 Info도 바로 큐에 걸리고 흐름 종료 후 드레인되어 결국 처리된다.
+    큐가 request.kind를 보존하므로 Info의 정상 무Task 답변은 Work의 Task 0 게이트에 오인되지 않는다."""
     from system.protocol import Request, Kind
     g = FakeGuide()
     s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"}, workspace="/tmp/ws-info")
@@ -6564,6 +6693,81 @@ def test_사용자요청_Info도_리더점유시_큐_유실없음():
         gate.set()
         await asyncio.wait_for(t1, timeout=2)
         assert "이거 왜 이래요?" in ran                            # 큐 드레인 — 질문도 결국 처리
+        assert not any(e["event"] == "flow_no_deliverable" for e in s.flow_log)
+    asyncio.run(scenario())
+
+
+def test_선거후_큐드레인은_응찰결과를_보존하고_재선거하지않음():
+    """큐 진입 전에 끝난 참여 공고를 drain이 다시 열지 않는다 — winner/team을 항목에 함께 보존."""
+    from system.protocol import Kind
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None,
+            bot_info={11: "PM", 12: "프론트", 13: "QA"},
+            workspace="/tmp/ws-election-queue")
+    s.max_flows = 1
+    occupied = _flow(g, leader=11)
+    occupied.done = False
+    s.active_flows["occupied"] = occupied
+    elections = []
+
+    async def elect(_ch, _body):
+        elections.append(True)
+        return 12, [12, 13]
+
+    async def plain(_flow, _oid, _body, _kind, _role, **_kw):
+        return "처리"
+
+    s._elect_proposer = elect
+    s.run_turn = plain
+
+    async def scenario():
+        queued = await s.handle_user_input(
+            777, 11, "웹앱 제작", root_id="r", elect=True,
+            request_kind=Kind.WORK)
+        assert queued["mode"] == "queued"
+        assert len(elections) == 1
+        s.active_flows.clear()
+        s.max_flows = 0
+        item = s._pop_runnable_queued()
+        out = await s.handle_user_input(*item)
+        assert len(elections) == 1
+        assert out["flow"].leader == 12
+        assert out["flow"].join_bidders == [12, 13]
+
+    asyncio.run(scenario())
+
+
+def test_runner_claim요청은_내부큐복제없이_같은태스크가_슬롯대기():
+    """DB claim 운반체는 self.queue와 이중 소유하지 않는다 — 슬롯 뒤 단 한 흐름으로 시작."""
+    from system.protocol import Kind
+
+    g = FakeGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace="/tmp/ws-claimed-wait")
+    s.max_flows = 1
+    occupied = _flow(g, leader=11)
+    occupied.done = False
+    s.active_flows["occupied"] = occupied
+
+    async def answer(_flow, _oid, _body, _kind, _role, **_kw):
+        return "답"
+
+    s.run_turn = answer
+
+    async def scenario():
+        task = asyncio.create_task(s.handle_user_input(
+            777, 11, "질문", root_id="db-mid", request_kind=Kind.INFO,
+            wait_for_slot=True))
+        await asyncio.sleep(0.02)
+        assert not task.done()
+        assert s.queue == []
+        assert not any(
+            call[0] == "post" and "접수됨" in str(call)
+            for call in g.calls)
+        occupied.done = True
+        out = await asyncio.wait_for(task, timeout=1)
+        assert out["mode"] == "flow"
+
     asyncio.run(scenario())
 
 
@@ -7153,6 +7357,10 @@ def test_선거복구_갭2_미등록채널은_route_to있어도_재선거():
     assert s._should_elect({"to_id": None, "route_to": 12, "channel_id": 500}) is False
     # ④ 명시 To = 특정 봇 지목 → 선거 안 함
     assert s._should_elect({"to_id": 11, "route_to": None, "channel_id": 500}) is False
+    # ⑤ 무지정 새 채널이어도 Info는 제작 발제 선거 대상이 아님
+    assert s._should_elect(
+        {"to_id": None, "route_to": None, "channel_id": 501, "kind": "I"}
+    ) is False
 
 
 async def _acoro(v):

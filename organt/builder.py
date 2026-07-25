@@ -98,9 +98,18 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                 except Exception:
                     pass
         on_turn = None
+        turn_record = {}
         if flow is not None:
             def on_turn(rec):   # [관측 v1] wake 결산 → flow.log(=Sys._log, trace_id·seq 자동 부여)로 방출
                 try:
+                    # 같은 Flow 안의 회의·worker 턴도 병렬로 결산된다. 전역 flow 필드를 여기서 바로
+                    # 덮으면 worker 성공이 루트 전송 실패를 가리거나 그 반대가 된다. 이 Organt 인스턴스의
+                    # 최종 결산만 보관하고, Sys.run_turn이 실질 leader 턴일 때 구조 신호로 승격한다.
+                    turn_record.clear()
+                    turn_record.update(
+                        ok=bool(rec.get("ok")),
+                        error=str(rec.get("error") or "")[:300],
+                    )
                     if getattr(flow, "log", None):
                         flow.log("turn_done", bot=organt_id, role=label, **rec)
                 except Exception:
@@ -168,6 +177,7 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                                        + _pp)
         _org = Organt(cfg, build_options(cfg, **_bopts),
                       state_path=str(state_path), on_activity=heartbeat, narrate=narrate, on_turn=on_turn)
+        _org._organt_turn_record = turn_record
         # [GPT 봇(2026-07-22, 사용자: 'gpt로 봇들 지능 바꿔')] 모델이 gpt-*면 Claude SDK 대신 codex 경로로
         # 돈다 — 원 guide 도구를 그대로 심어 CodexBackend가 HTTP 브리지로 codex에 물린다(Claude 봇은 불변).
         if _m and str(_m).startswith("gpt-") and flow is not None:

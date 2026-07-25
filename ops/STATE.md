@@ -2,6 +2,45 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-25.
 
+## ★ U-053 첫 라이브 E2E가 검출한 Codex 스트림·거짓 완료 수리 (2026-07-25 GPT)
+- 전체 착지·웹/러너 재시작 뒤 `ops/live_e2e_probe.py --execute`로 새 비공개 실판
+  `U-053`(DB channel 99, 내부 P-050, request 5040, trace `t-5040`)을 시작했다.
+  첫 PM Codex 세션은 정상 생성됐지만, `custom_tool_call_output` 한 JSONL 이벤트가 비ASCII
+  escape 뒤 약 71KiB가 되어 asyncio 기본 StreamReader 64KiB 한계를 넘었다.
+  `turn_done(ok=false, Separator is not found…)` 뒤 Task/마일스톤/백로그 0인데
+  `flow_done`과 요청 `done_ts`가 찍힌 것을 probe의 40개 hard assertion이 실패로 잡았다.
+  이 판은 성공으로 인정하지 않으며, 새 수정본으로 별도 새 판을 다시 돌린다.
+- Codex subprocess StreamReader는 기본 4MiB(운영 조정 가능), 최소 64KiB·최대 16MiB의
+  유계 버퍼를 쓴다. 설정 상한을 넘는 무개행 이벤트는 `LimitOverrunError` 계보를 잡아
+  프로세스 그룹을 회수하고 실명 오류로 올린다. 100,000자 단일 JSON 이벤트 관통과
+  의도적 상한 초과 회수를 실제 subprocess 회귀로 고정했다. 동시에 전역 한 벌이던 MCP
+  bridge/tools를 **실질 턴별 새 bridge+고유 lease 포트**로 격리한다. 프로세스·bounded stderr·
+  서버를 모두 회수한 뒤 포트를 반환하고, 무도구 micro 턴은 MCP 자체를 띄우지 않는다.
+- 각 턴 결산의 `ok/error`를 Flow에 구조 신호로 넘긴다. Task/장부 생성 전 첫 실질 턴 실패는
+  최종 응답·`flow_done`·`done_ts`로 접지 않고 `flow_start_failed → request_start_retry`
+  및 즉시 unpick으로 새 프로세스 재시도한다. 시작 재시도 횟수는 작업 진전 재픽과 별도인
+  `start_retry_n`으로 요청 payload에 영속해 러너 재시작에도 기본 3회 상한이 되감기지 않는다.
+  반복 실패 시 `mark_stopped` 한 번이 `stopped+done_ts`를 원자 기록하며 별도 `done`은 쓰지 않는다.
+- 명시 담당자에게 보낸 Work는 선거를 생략한다는 별도 구멍도 닫았다. 요청 Kind를 영속 큐까지
+  보존해 `Work + Task 0`은 선거 여부와 무관하게 최종 성공 응답/`flow_done`을 금지하고
+  `flow_no_deliverable`로 중지한다. Info는 무지정이어도 참여 선거·Task 0 게이트를 열지 않고
+  정상 답변한다. 선거가 끝난 뒤 내부 큐에 들면 winner/team/election_done도 함께 영속해 재선거를
+  막는다. DB에서 이미 claim한 runner 요청은 내부 큐에 복제하지 않고 같은 태스크가 슬롯을 기다리며,
+  `max_flows`는 아직 active 등록 전인 inflight 예약까지 센다.
+- HTTP·ORM·로컬 pending은 단일 판독기로 합쳤다. `done_ts/stopped`만 terminal이며 채널의
+  oldest unresolved 한 건만 배달한다. live pick은 뒤 요청을 막고, 사람 대기 stale 원요청만
+  건너뛰어 승인/반려 답은 통과한다. stale picked 해제는 읽은 payload 전체 exact CAS라 stop/touch가
+  먼저 이기면 낡은 poll이 이를 덮지 않는다. HTTP claim은 세대 토큰, unpick은 연산 id를 가져
+  응답 유실 재전송에도 `repick_n/start_retry_n`이 정확히 한 번만 증가하며 과거 재전송이 새 claim을
+  해제하지 않는다.
+- active Flow 등록 뒤 leader task 생성 전 stop도 외부 운반체와 점유를 회수하고 Codex 본문을
+  시작하지 않는다. 웹이 즉시 terminal로 쓴 사용자 stop은 러너가 다시 channel-wide로 쓰지 않고,
+  읽은 `StopSignal(id, requested_at)` 세대만 ack한다. 따라서 stop→resume→새 stop 사이 늦은 ack가
+  재개 요청을 다시 중지하거나 새 중지 신호를 삼키지 않는다.
+- 착지 전 전체 검증: Django **459 OK** · system unittest OK · 브레인 pytest
+  **830 passed** · 프론트 프로덕션 build/UI 정본 계약 OK. 새 라이브 E2E 성공 전까지
+  이 작업은 완료가 아니다.
+
 ## ★ 완료 참칭 차단·백로그 표면 수렴 및 새 라이브 실증 준비 (2026-07-25 GPT)
 - 수정 전 라이브 기준선은 최근 `U-052` 요청이 DB에서 `picked+done_ts+stopped`, project root는
   `open_task` 유지, ms_status는 open·조건 0/2·SubTask/백로그 0건이었다. 따라서 완료/중지
@@ -23,8 +62,8 @@
 - 운영 실증 도구 `ops/live_e2e_probe.py`는 무인자 완전 dry-run, `--pid` 읽기 전용,
   `--execute` 명시 모드만 새 비공개 채널·고정 요청·마일스톤 교정 1회를 만든다. API/trace/활동,
   DB root·잔존 signal, projects.json, 실제+HTTP 파일 정확히 2개, E2E receipt 무결성, 격리된
-  `node test_state_machine.js` 재실행까지 한 보고서로 대조한다. **아직 라이브 실행 전**이며
-  전체 착지·서비스 재시작 후 새 판에서 성공할 때까지 완료로 기록하지 않는다.
+  `node test_state_machine.js` 재실행까지 한 보고서로 대조한다. 첫 실행 U-053은 위 스트림
+  결함을 검출해 실패했고, 수정본 착지·서비스 재시작 후 새 판에서 성공할 때까지 완료로 기록하지 않는다.
 - 착지 전 통합 기준선: Django **447 OK** · system unittest OK · 브레인 pytest
   **804 passed** · 프론트 프로덕션 build/UI 정본 계약 OK · probe compile/help/dry-run 및
   40개 synthetic hard assertion OK.
@@ -479,7 +518,12 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  680bbeb   ← HEAD — ★활동·백로그 실행 상태를 요청·범위별로 보존(2026-07-25):
+murmur  f23a8d0   ← HEAD — ★큐 전달·재시도·중지 세대 원자화(2026-07-25):
+                          HTTP/ORM/local pending을 단일 판독기로 통합하고 stale pick 해제를
+                          exact-payload CAS로 만들었다. HTTP claim/unpick 토큰으로 응답 유실
+                          재전송을 멱등화했으며, stop ack는 읽은 StopSignal 세대만 소거해
+                          resume·새 stop과의 경합을 차단한다. Django 459 통과.
+                          (이전 680bbeb) ★활동·백로그 실행 상태를 요청·범위별로 보존(2026-07-25):
                           request별 누적 활동 아카이브, terminal 이력 진입점, scoped `(MS,ST,B)`
                           피드 귀속과 claim CAS를 한 배치로 묶었다. UI는 criterion 통과와 실제
                           backlog 상태를 분리해 미통과 조건에 병합된 in_progress/done도 숨기지 않고,
@@ -691,7 +735,7 @@ murmur  680bbeb   ← HEAD — ★활동·백로그 실행 상태를 요청·범
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **447 OK** · system unittest: OK · 브레인 pytest(ops/tests): **804** · 프론트 빌드/UI 계약 OK.
+- sns: **447 OK** · system unittest: OK · 브레인 pytest(ops/tests): **808** · 프론트 빌드/UI 계약 OK.
   (2026-07-25 현행 — 정확한 현재치는 항상 `bash ops/verify.sh` 출력이 정본.)
 
 ## 파이프라인 재설계 — **라이브 영구 적용 (2026-07-09, 사용자 승인)**

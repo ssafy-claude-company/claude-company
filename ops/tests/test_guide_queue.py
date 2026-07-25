@@ -47,8 +47,11 @@ def test_stale_재노출_touch_로_방지(tmp_path):
 def test_unpick_정체컷_재큐(tmp_path):
     q = _store(tmp_path)
     q.add(intake(1, 10, 0, "W", "x")); q.pick(1)
-    q.pick(1, unpick=True)
-    assert [r["msg_id"] for r in q.get_pending()] == [1]   # 재노출
+    q.pick(1, unpick=True, start_retry=True)
+    rows = q.get_pending()
+    assert [r["msg_id"] for r in rows] == [1]   # 재노출
+    assert rows[0]["payload"]["repick_n"] == 1
+    assert rows[0]["payload"]["start_retry_n"] == 1
     assert q.pick(1)["claimed"] is True                    # 재claim 가능
 
 

@@ -1497,10 +1497,11 @@ class _RunGuide:
             return []
         self.served = True
         return [{"msg_id": self.mid, "channel_id": self.ch, "to_id": 11, "kind": "W",
-                 "body": "가위바위보 웹게임", "repick_n": 0}]
+                 "body": "가위바위보 웹게임", "repick_n": 0, "start_retry_n": 0}]
 
     async def pick(self, mid, done=False, unpick=False, touch=False, **kw):
-        self.picks.append({"mid": mid, "done": done, "unpick": unpick, "touch": touch})
+        self.picks.append({"mid": mid, "done": done, "unpick": unpick, "touch": touch,
+                           "start_retry": bool(kw.get("start_retry"))})
         return True
 
     def set_origin(self, ch):
@@ -1578,6 +1579,164 @@ def test_pending뒤_stop신호면_claim과_흐름시작을_건너뜀(monkeypatch
     assert any(e["event"] == "request_claim_skipped_stop" for e in s.flow_log)
 
 
+def test_runner_active등록뒤_leader전_stop은_운반체와_점유를_회수(
+    monkeypatch, tmp_path,
+):
+    """active Flow는 찾았지만 _run_task가 없는 경계에서도 stop이 외부 운반체를 취소해 실행을 막는다."""
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+    entered = asyncio.Event()
+
+    class _StopBeforeLeaderGuide(_RunGuide):
+        def __init__(self):
+            super().__init__()
+            self.stop_sent = False
+            self.acked = []
+
+        async def all_stops(self):
+            if entered.is_set() and not self.stop_sent:
+                self.stop_sent = True
+                return [{
+                    "channel": self.ch,
+                    "signal_id": 71,
+                    "requested_at": 12.5,
+                }]
+            return []
+
+        async def ack_stop(self, ch, signal_id=None, requested_at=None):
+            self.acked.append((ch, signal_id, requested_at))
+
+    g = _StopBeforeLeaderGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path), max_continue=1)
+    ran = []
+
+    async def blocked_situation(*_args, **_kwargs):
+        entered.set()
+        await asyncio.Future()
+
+    async def must_not_run(*_args, **_kwargs):
+        ran.append(True)
+        return "실행되면 안 됨"
+
+    s._channel_situation = blocked_situation
+    s.run_turn = must_not_run
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+
+    events = [e["event"] for e in s.flow_log]
+    assert ran == []
+    assert g.stopped == []                       # ack가 재개된 요청을 channel-wide 재중지하지 않음
+    assert g.acked == [(g.ch, 71, 12.5)]         # 읽은 StopSignal 세대만 확인
+    assert s.active_flows == {}
+    assert not s.engaged.busy_elsewhere(11, "other")
+    assert "cancel_requested" in events
+    assert "flow_cancelled_before_leader" in events
+    assert not getattr(s, "_flow_user_cancelled", {})
+
+
+def test_runner_max_flows는_아직시작전_inflight예약까지_센다(monkeypatch, tmp_path):
+    """한 poll의 서로 다른 요청도 max_flows=1이면 첫 요청만 claim한다."""
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+
+    class _TwoGuide(_RunGuide):
+        async def get_pending(self):
+            if self.served:
+                return []
+            self.served = True
+            return [
+                {"msg_id": 901, "channel_id": 501, "to_id": 11, "kind": "W",
+                 "body": "첫 작업", "repick_n": 0, "start_retry_n": 0},
+                {"msg_id": 902, "channel_id": 502, "to_id": 12, "kind": "W",
+                 "body": "둘째 작업", "repick_n": 0, "start_retry_n": 0},
+            ]
+
+    g = _TwoGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "A", 12: "B"},
+            workspace=str(tmp_path), max_continue=1)
+    s.max_flows = 1
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_route(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        return {"mode": "ignored"}
+
+    s.route_channel_request = blocked_route
+
+    async def scenario():
+        runner = asyncio.create_task(
+            s.run(g, leader=11, cap=2, poll=0.01, once=True))
+        await entered.wait()
+        await real_sleep(0)
+        claims = [
+            p for p in g.picks
+            if not p["done"] and not p["unpick"] and not p["touch"]
+        ]
+        assert [p["mid"] for p in claims] == [901]
+        release.set()
+        await asyncio.wait_for(runner, timeout=1)
+
+    asyncio.run(scenario())
+
+
+def test_runner_무지정_Info는_선거중지없이_응답_done(monkeypatch, tmp_path):
+    """실제 pending 입구의 Info는 참여 응찰도 산출물-0 중지도 열지 않는다."""
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+
+    class _InfoGuide(_RunGuide):
+        async def get_pending(self):
+            if self.served:
+                return []
+            self.served = True
+            return [{"msg_id": self.mid, "channel_id": self.ch, "to_id": None,
+                     "route_to": None, "kind": "I", "body": "이 기능은 왜 이래요?",
+                     "repick_n": 0, "start_retry_n": 0}]
+
+    g = _InfoGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path), max_continue=1)
+    elections = []
+
+    async def must_not_elect(*_args):
+        elections.append(True)
+        return 11, [11]
+
+    async def answer(_flow, _oid, _body, _kind, _role, **_kw):
+        return "정상 답변"
+
+    s._elect_proposer = must_not_elect
+    s.run_turn = answer
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+
+    events = [e["event"] for e in s.flow_log]
+    assert elections == []
+    assert "flow_done" in events and "flow_no_deliverable" not in events
+    assert any(p["done"] for p in g.picks)
+    assert g.stopped == []
+    assert any(c[0] == "resp" for c in g.calls)
+
+
 def test_사람대기_reap은_재픽없이_전용마감(monkeypatch, tmp_path):
     """[핸드오프 A 수용 — reap] 파킹 판은 장부가 전진했어도 재픽(=원요청 재주입) 금지 — done 마감+
     중지 표기(재개 버튼 생존)+awaiting_human_closed 전용 이벤트(정체 stalled_stopped와 구분)."""
@@ -1592,9 +1751,164 @@ def test_사람대기_reap은_재픽없이_전용마감(monkeypatch, tmp_path):
     evs = [e["event"] for e in s.flow_log]
     assert "awaiting_human_parked" in evs and "awaiting_human_closed" in evs
     assert "request_repick" not in evs and "stalled_stopped" not in evs
-    assert any(p["done"] for p in g.picks)                 # 요청 done — bridge 재배달 종결
+    assert not any(p["done"] for p in g.picks)             # mark_stopped가 stopped+done_ts를 원자 종결
     assert not any(p["unpick"] for p in g.picks)           # 재픽 0 = intervention 재주입 0
     assert g.stopped == [500]                              # 중지 표기 — 재개 버튼 경로 생존
+
+
+def test_첫실질턴_전송실패는_done아니라_즉시재시도(monkeypatch, tmp_path):
+    """Task/백로그가 열리기 전 API 실패를 정상 최종발화로 접지 않는다.
+
+    U-053 실판 회귀: Codex StreamReader 한계 오류 뒤 tasks=0인데 flow_done·done_ts가 찍혔다.
+    첫 실행 실패는 오류 응답 게시 없이 원 요청을 unpick하고, 별도 관측 이벤트로 남겨야 한다.
+    """
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+    g = _RunGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path), max_continue=1)
+
+    async def failed_first_turn(flow, _oid, _body, _kind, _role, **_kw):
+        flow._last_turn_ok = False
+        flow._last_turn_error = "Separator is not found, and chunk exceed the limit"
+        return "API Error: Separator is not found, and chunk exceed the limit"
+
+    s.run_turn = failed_first_turn
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+
+    events = [e["event"] for e in s.flow_log]
+    assert "flow_start_failed" in events and "request_start_retry" in events
+    assert "flow_done" not in events
+    assert any(p["unpick"] for p in g.picks)
+    assert any(p["unpick"] and p["start_retry"] for p in g.picks)
+    assert not any(p["done"] for p in g.picks)
+    assert not any(c[0] == "resp" for c in g.calls)
+    assert g.stopped == []
+
+
+def test_첫턴실패_재시도상한은_요청payload에서_재시작후에도_유지(monkeypatch, tmp_path):
+    """start_retry_n=3인 영속 요청은 새 Sys 프로세스에서도 다시 3회 돌지 않고 즉시 중지한다."""
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+
+    class _RetriedGuide(_RunGuide):
+        async def get_pending(self):
+            if self.served:
+                return []
+            self.served = True
+            return [{"msg_id": self.mid, "channel_id": self.ch, "to_id": 11, "kind": "W",
+                     "body": "가위바위보 웹게임", "repick_n": 21, "start_retry_n": 3}]
+
+    g = _RetriedGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path), max_continue=1)
+
+    async def failed_first_turn(flow, _oid, _body, _kind, _role, **_kw):
+        flow._last_turn_ok = False
+        flow._last_turn_error = "persistent transport failure"
+        return "API Error: persistent transport failure"
+
+    s.run_turn = failed_first_turn
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+
+    events = [e["event"] for e in s.flow_log]
+    assert "request_start_failed_stopped" in events
+    assert "request_start_retry" not in events
+    assert not any(p["unpick"] or p["done"] for p in g.picks)
+    assert g.stopped == [500]
+
+
+def test_명시담당_Work가_Task0이면_완료아닌_재개가능중지(monkeypatch, tmp_path):
+    """선거를 거치지 않는 To 지정 Work도 Task 0 평문 반환을 완료로 인정하지 않는다.
+
+    중지 표식은 done_ts보다 먼저 써야 bridge의 picked+미완 조건을 통과해 재개 버튼이 살아난다.
+    """
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+
+    class _OrderedGuide(_RunGuide):
+        def __init__(self):
+            super().__init__()
+            self.terminal_order = []
+
+        async def pick(self, mid, done=False, unpick=False, touch=False, **kw):
+            if done:
+                self.terminal_order.append("done")
+            return await super().pick(mid, done=done, unpick=unpick, touch=touch, **kw)
+
+        async def mark_stopped(self, ch):
+            self.terminal_order.append("stopped")
+            await super().mark_stopped(ch)
+
+    g = _OrderedGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path), max_continue=1)
+
+    async def plain_without_task(_flow, _oid, _body, _kind, _role, **_kw):
+        return "검토했습니다."
+
+    s.run_turn = plain_without_task
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+
+    events = [e["event"] for e in s.flow_log]
+    assert "flow_no_deliverable" in events and "false_complete_blocked" in events
+    assert "flow_done" not in events
+    assert g.terminal_order == ["stopped"]
+    assert not any(c[0] == "resp" for c in g.calls)
+
+
+def test_오분류_Work라도_캐주얼대화는_Task0_정상응답(monkeypatch, tmp_path):
+    """분류기가 Work로 보낸 좁은 캐주얼 요청은 기존 계약대로 직접 답하고 제작 게이트를 열지 않는다."""
+    from system.sys_core import Sys
+
+    real_sleep = asyncio.sleep
+
+    async def quick_sleep(_delay):
+        await real_sleep(0)
+
+    monkeypatch.setattr("system.sys_core.asyncio.sleep", quick_sleep)
+
+    class _CasualGuide(_RunGuide):
+        async def get_pending(self):
+            if self.served:
+                return []
+            self.served = True
+            return [{"msg_id": self.mid, "channel_id": self.ch, "to_id": 11, "kind": "W",
+                     "body": "배고파", "repick_n": 0}]
+
+    g = _CasualGuide()
+    s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L"},
+            workspace=str(tmp_path), max_continue=1)
+
+    async def casual_reply(_flow, _oid, _body, _kind, _role, **_kw):
+        return "뭐라도 챙겨 드세요."
+
+    s.run_turn = casual_reply
+    asyncio.run(s.run(g, leader=11, cap=1, poll=0.01, once=True))
+
+    events = [e["event"] for e in s.flow_log]
+    assert "flow_done" in events and "flow_no_deliverable" not in events
+    assert any(p["done"] for p in g.picks)
+    assert g.stopped == []
+    assert any(c[0] == "resp" for c in g.calls)
 
 
 def test_사용자중지_reap은_장부전진해도_재픽하지않음(monkeypatch, tmp_path):
@@ -1655,7 +1969,7 @@ def test_사용자중지_reap은_장부전진해도_재픽하지않음(monkeypat
     assert "user_stopped_closed" in events
     assert "request_repick" not in events and "stalled_stopped" not in events
     assert not any(p["unpick"] for p in g.picks)
-    assert any(p["done"] for p in g.picks)
+    assert not any(p["done"] for p in g.picks)
 
 
 def test_파킹판_사람답이_흐름시작에서_반영(monkeypatch, tmp_path):

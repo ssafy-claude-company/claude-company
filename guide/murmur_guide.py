@@ -13,6 +13,7 @@ import itertools
 import os
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -57,6 +58,10 @@ class MurmurGuide:
         self._thread_channel = {}                          # thread_id → channel_id (클라 보유)
         self._origin_channel = None                        # 이 요청의 채널 — 협업을 여기로 라우팅(러너가 세팅)
         self._last_msg = {}                                # channel_id → 마지막 기록 msg_id — [댓글형 시각화] 관찰([의견])을 직전 결과에 reply_to로 붙이는 근거
+        # HTTP는 응답 유실 시 같은 POST를 재전송한다. claim 세대와 unpick 연산 id를 요청 생명주기
+        # 동안 보존해, 서버가 이미 적용한 첫 POST를 두 번째 POST가 새 연산으로 오인하지 않게 한다.
+        self._claim_tokens = {}                             # msg_id → 현재 claim 세대
+        self._unpick_ops = {}                              # msg_id → (claim 세대, 연산 id)
 
     def _new_id(self):
         return next(self._ids)
@@ -345,10 +350,32 @@ class MurmurGuide:
         data = await self._get("/api/guide/pending/")
         return data.get("pending", [])
 
-    async def pick(self, msg_id, done=False, touch=False, unpick=False, idle=None, activity=None, actor=None):
+    async def pick(self, msg_id, done=False, touch=False, unpick=False, idle=None,
+                   activity=None, actor=None, start_retry=False):
         """요청 claim/진행표시(touch)/완료(done)/재개(unpick). claim 패배 시 False.
         activity: '지금 하는 일' 최근 줄 목록. actor: 지금 베턴 쥔 봇 id — live_status.actor를 현재 일꾼으로."""
+        mid = int(msg_id)
+        is_claim = not (unpick or done or touch)
         body = {"msg_id": msg_id, "done": done, "touch": touch, "unpick": unpick}
+        if is_claim:
+            # 같은 호출 안의 _post_sync 재전송뿐 아니라, 세 번 모두 응답만 유실돼 상위 폴이 다시
+            # claim하는 경우에도 같은 세대를 재사용한다. 확정 패배/종결 때만 아래에서 버린다.
+            claim_token = self._claim_tokens.get(mid) or uuid.uuid4().hex
+            self._claim_tokens[mid] = claim_token
+            self._unpick_ops.pop(mid, None)
+            body["claim_token"] = claim_token
+        else:
+            claim_token = self._claim_tokens.get(mid)
+            if claim_token:
+                body["claim_token"] = claim_token
+            if unpick:
+                prior = self._unpick_ops.get(mid)
+                if prior is None or prior[0] != claim_token:
+                    prior = (claim_token, uuid.uuid4().hex)
+                    self._unpick_ops[mid] = prior
+                body["op_id"] = prior[1]
+        if start_retry:
+            body["start_retry"] = True
         if idle is not None:
             body["idle"] = int(idle)
         if activity is not None:
@@ -356,7 +383,25 @@ class MurmurGuide:
         if actor is not None:
             body["actor"] = int(actor)
         res = await self._post("/api/guide/pick/", body)
-        return (res or {}).get("claimed", True)
+        out = res or {}
+        claimed = out.get("claimed", True)
+        if is_claim:
+            if claimed is False:
+                # 다른 세대가 이미 선점했거나 terminal이다. 이 클라이언트의 후보 토큰을 남기면
+                # 뒤의 touch/unpick이 타 세대를 겨냥할 수 있으므로 확정 응답에서만 정리한다.
+                if self._claim_tokens.get(mid) == claim_token:
+                    self._claim_tokens.pop(mid, None)
+            return claimed
+        if out.get("stale_generation") or out.get("stopped"):
+            return False
+        if unpick and out.get("ok", True):
+            self._unpick_ops.pop(mid, None)
+            if self._claim_tokens.get(mid) == claim_token:
+                self._claim_tokens.pop(mid, None)
+        elif done and out.get("ok", True):
+            if self._claim_tokens.get(mid) == claim_token:
+                self._claim_tokens.pop(mid, None)
+        return bool(out.get("ok", True))
 
     async def heartbeat(self, note="remote"):
         """엔진 살아있음 신호 — 매체(murmur)에 전송."""
@@ -368,10 +413,30 @@ class MurmurGuide:
 
     async def all_stops(self):
         d = await self._get("/api/guide/stops/")
+        signals = d.get("signals")
+        if isinstance(signals, list):
+            return signals
         return [int(c) for c in d.get("channels", [])]
 
-    async def mark_stopped(self, channel_id):
-        await self._post("/api/guide/stop_channel/", {"channel": int(channel_id)})
+    async def ack_stop(self, channel_id, signal_id=None, requested_at=None):
+        """이미 웹이 terminal로 쓴 사용자 stop 신호만 확인한다.
+
+        채널 전체 요청을 다시 쓰지 않아 stop 직후 사용자가 재개한 세대를 늦은 러너 ack가
+        재중지하지 않는다.
+        """
+        body = {"channel": int(channel_id), "ack_only": True}
+        if signal_id is not None:
+            body["signal_id"] = int(signal_id)
+        if requested_at is not None:
+            body["requested_at"] = float(requested_at)
+        await self._post("/api/guide/stop_channel/", body)
+
+    async def mark_stopped(self, channel_id, msg_id=None):
+        body = {"channel": int(channel_id)}
+        if msg_id is not None:
+            body["msg_id"] = int(msg_id)
+        res = await self._post("/api/guide/stop_channel/", body)
+        return int((res or {}).get("stopped") or 0)
 
     async def check_interject(self, channel_id):
         d = await self._get(f"/api/guide/interjects/?channel={channel_id}")

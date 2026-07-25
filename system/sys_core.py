@@ -737,6 +737,11 @@ class Sys:
         진짜 라우트다 — 미등록 채널의 route_to는 _route_to가 '마지막 발신자'를 넣는 휴리스틱이라, 선거
         도중 크래시→재클레임 재배달 시 응찰한 봇을 가리켜 선거를 건너뛰고 ad-hoc 단일 봇에 배정됐다
         (ch63 라이브 사인). 미등록 채널의 무지정 요청은 route_to가 있어도 재선거한다."""
+        # 참여 응찰은 제작 Work의 개시 절차다. 단순 질문/정보(Info)까지 선거하면 여러 직군을 깨운 뒤
+        # Task가 없다는 이유로 산출물-0 중지까지 이어진다. Kind가 없는 구 배달체는 Work로 간주한다.
+        _kind = getattr(m.get("kind"), "value", m.get("kind")) or "W"
+        if str(_kind).strip().lower() not in ("w", "work"):
+            return False
         if m.get("to_id"):
             return False
         if not m.get("route_to"):
@@ -2227,6 +2232,13 @@ class Sys:
                     _out = await self._absorb_role_profiles(await _do(), me=organt_id)
                 else:
                     _out = await self._absorb_role_profiles(await self._run_until_silent(_do, flow), me=organt_id)
+                if flow is not None and role == "leader" and not micro:
+                    # 첫 실질 턴 실패 판정은 이 leader Organt 인스턴스의 결산만 쓴다. 같은 Flow에서
+                    # 중첩 실행된 worker/micro 결산이 공유 신호를 앞뒤로 덮는 경합을 막는다.
+                    _turn_rec = getattr(organt, "_organt_turn_record", None) or {}
+                    if _turn_rec:
+                        flow._last_turn_ok = bool(_turn_rec.get("ok"))
+                        flow._last_turn_error = str(_turn_rec.get("error") or "")[:300]
                 # [파일 권한 마커 흡수 — 피드 청결(2026-07-08, 사용자: '[권한 이양] 이런거 남겨야 해?')]
                 # 응답 속 '[권한 이양 X]'(소유 이양)·'[편집 허락 X]'(편집권만)를 여기서 처리(file_owner 이전/
                 # file_permits 부여)하고 본문에서 제거 — 이양은 일어나되 기계 마커가 협업 피드를 어지럽히지
@@ -2427,37 +2439,58 @@ class Sys:
         return sys_store.valid_leader(self, proj)
 
     async def handle_user_input(self, channel_id, leader_id, user_text, root_id=None, attachments=None,
-                                elect=False) -> dict:
+                                elect=False, request_kind=None, elected_team=None,
+                                election_done=False, wait_for_slot=False) -> dict:
         proj = self.projects.get(int(channel_id))   # 이 채널이 등록된 프로젝트면 '개입'(이어지는 작업)
+        _joined_team = list(elected_team or [])
+        _request_kind_text = str(
+            getattr(request_kind, "value", request_kind) or "").strip().lower()
+        if _request_kind_text in ("i", "info"):
+            elect = False
+            election_done = True
         # [발제자 응찰 — 갭5] 무지정 새 요청이면 발제자를 봇 자기선택(응찰)으로 선출한다 — is_leader
         # 폴백(지정)의 대체. 등록 프로젝트 개입엔 적용 안 함(이어가는 담당이 이미 있음). 선출 실패
         # (아무도 응찰 안 함)면 leader_id 폴백 그대로(막다른 길 방지).
-        if elect and not proj:
+        if elect and not proj and not election_done:
             try:
                 _elected = await self._elect_proposer(channel_id, user_text)
             except Exception as _e:
                 self._log("propose_failed", err=str(_e)[:120])
                 _elected = None
-            _joined_team = None
             if _elected:
                 leader_id = int(_elected[0]) if isinstance(_elected, tuple) else int(_elected)
-                _joined_team = (_elected[1] if isinstance(_elected, tuple) else None)
+                _joined_team = list(_elected[1] if isinstance(_elected, tuple) else [])
+            election_done = True
         # [신규×신규 병렬 완화] 신규 요청도 고유 스코프로 동시 진행한다 — 과거 'main' 직렬은 등록
         # 경합 방지용이었으나 전역 점유·스코프 선점·원자 등록 이후 근거가 소멸(라이브: 서로 다른
         # 리더에게 보낸 두 신규가 직렬돼 병렬 의도가 좌절). 같은 리더면 전역 점유가 자연 직렬화한다.
         scope_key = proj["id"] if proj else f"new-{int(time.time() * 1000)}"
-        live = {k: f for k, f in self.active_flows.items() if not f.done}
-        # 이 흐름을 이끌 봇(전망치): 명시 To(리더 재지정 포함)가 로스터에 있으면 그 봇, 아니면 등록 리더.
-        # 게이트에서 미리 계산해야 '리더가 타 흐름 참여 중'을 흐름을 띄우기 전에 거를 수 있다.
-        prospective_lead = (leader_id if (leader_id and leader_id in self.bot_info)
-                            else (self._valid_leader(proj) if proj else leader_id))
-        # [병렬] 큐로 보내는 세 조건(버리지 않음 — 흐름 내 규약은 불변): ① 같은 스코프 진행 중(직렬)
-        # ② 운영 노브 상한(설정 시에만) ③ 리더가 타 흐름 점유 중(한 직원은 한 번에 한 흐름 — 같은
-        # 리더의 프로젝트들은 자연 직렬이 되고, 이것이 임의 흐름 수 상한을 대체하는 구조적 안전이다).
-        if (scope_key in live
+        while True:
+            live = {k: f for k, f in self.active_flows.items() if not f.done}
+            # 이 흐름을 이끌 봇(전망치): 명시 To(리더 재지정 포함)가 로스터에 있으면 그 봇, 아니면 등록 리더.
+            # 게이트에서 미리 계산해야 '리더가 타 흐름 참여 중'을 흐름을 띄우기 전에 거를 수 있다.
+            prospective_lead = (leader_id if (leader_id and leader_id in self.bot_info)
+                                else (self._valid_leader(proj) if proj else leader_id))
+            # [병렬] 대기 세 조건(흐름 내 규약은 불변): ① 같은 스코프 진행 중 ② 운영 상한
+            # ③ 리더가 타 흐름 점유 중. DB에서 이미 claim한 runner 요청은 공유 내부 큐에 복제하지
+            # 않고 이 태스크가 그대로 기다린다. 그래야 원 DB 운반체와 내부 큐 소비자가 경합해 같은
+            # 요청을 두 번 실행하는 경로가 없다. 직접 호출만 종전의 영속 큐를 사용한다.
+            _busy = bool(
+                scope_key in live
                 or (self.max_flows > 0 and len(live) >= self.max_flows)
-                or self.engaged.busy_elsewhere(prospective_lead, scope_key)):
-            self.queue.append((channel_id, leader_id, user_text, root_id))
+                or self.engaged.busy_elsewhere(prospective_lead, scope_key))
+            if not _busy:
+                break
+            if wait_for_slot:
+                await asyncio.sleep(0.2)
+                continue
+            # 요청 종류·선거 여부까지 큐에 보존한다. 특히 명시 담당자 Work가 대기열을 거친 뒤 Info처럼
+            # 취급되면 Task 0 완료 게이트를 비껴가므로, 신규 항목은 전체 호출 문맥을 직렬화한다.
+            # attachments는 bytes를 포함할 수 있어 projects.json을 통째로 직렬화 실패시킨다. 기존 큐도
+            # 첨부를 보존하지 않았으므로 여기서는 None을 유지하고, JSON-safe한 절차 문맥만 추가한다.
+            self.queue.append((channel_id, leader_id, user_text, root_id, None, bool(elect),
+                               getattr(request_kind, "value", request_kind),
+                               list(_joined_team), bool(election_done)))
             self._save_projects()   # [큐 영속] 적재 즉시 디스크 — 죽어도 대기 요청 유실 안 되게
             self._log("queued", text=user_text[:80], depth=len(self.queue), scope=scope_key,
                       lead_busy=bool(self.engaged.busy_elsewhere(prospective_lead, scope_key)))
@@ -2515,12 +2548,10 @@ class Sys:
                 pass
         flow = Flow(self.guide, channel_id, self.guild_id, lead, self.bot_info)
         # [참여 응찰 = 팀] 공고 응찰자 전원이 이 판의 팀 — create_task가 2차 공고 없이 그대로 쓴다
-        try:
-            flow.join_bidders = list(_joined_team or [])
-        except NameError:
-            flow.join_bidders = []
+        flow.join_bidders = list(_joined_team)
         flow.was_elect = bool(elect)   # [완료 참칭 방지] 선거로 연 새 제작 요청 — 앵커가 Task도 안 열고
         #   평문만 뱉으면(meet 미호출) 미완인데 완료로 마감되던 것 판정에 쓴다(kickoff 강제·중단 마킹).
+        flow.root_kind = request_kind
         flow._handoff = True   # [논블로킹 핸드오프] 프로덕션은 위임을 즉시-반환 핸드오프로(75초 detach·비동기 churn
                                #   차단). 동료 작업은 SYS가 호출 밖에서 직렬 완주시켜 결과로 잇는다. (테스트는 기본 동기.)
         flow.inbound_attachments = list(attachments or [])   # [파일 전송] 사용자 첨부 — 워크스페이스 준비 시 inbox/로 staging
@@ -2543,6 +2574,27 @@ class Sys:
         # (개입 복원 등 await 사이) 같은 채널의 연속 메시지가 둘 다 게이트를 통과해 '같은 프로젝트에
         # 흐름 2개'가 생길 수 있다(작업공간·베턴 이중화). 병렬 도입 전부터 있던 창을 함께 봉쇄.
         self.active_flows[scope_key] = flow
+        # active 등록 뒤 첫 leader task를 만들기 전에도 복원·상황조회 같은 await가 있다. 이 구간의
+        # runner 운반체가 취소되면 아래 정상 마감 꼬리에 도달하지 못하므로, 완료 콜백이 스코프와
+        # 전역 점유를 회수한다. scope의 동일 Flow일 때만 지워 뒤에 시작한 흐름을 건드리지 않는다.
+        _route_task = asyncio.current_task()
+        if _route_task is not None:
+            def _cleanup_cancelled_before_leader(done_task):
+                if (not done_task.cancelled()
+                        or getattr(flow, "_run_task", None) is not None
+                        or self.active_flows.get(scope_key) is not flow):
+                    return
+                flow.done = True
+                self.active_flows.pop(scope_key, None)
+                self.engaged.release_scope(scope_key)
+                getattr(self, "_flow_user_cancelled", {}).pop(
+                    int(flow.user_channel or 0), None)
+                self._log(
+                    "flow_cancelled_before_leader",
+                    channel=int(flow.user_channel or 0),
+                    user_stop=bool(getattr(flow, "cancelled", False)))
+
+            _route_task.add_done_callback(_cleanup_cancelled_before_leader)
         # [전역 점유 — 리더 선점] 같은 sync 블록에서 리더를 장부에 등록 + 흐름의 comm을 장부에 연결.
         # 다른 프로젝트의 동시 시작이 같은 리더를 집어가는 레이스가 구조적으로 불가능해진다
         # (asyncio 단일 스레드 — 게이트 검사~여기까지 await 없음). start_root의 재등록은 멱등.
@@ -2958,7 +3010,16 @@ class Sys:
                     try:
                         _ms0 = getattr(self.guide, "mark_stopped", None)
                         if _ms0:
-                            await _ms0(int(flow.user_channel or 0))
+                            try:
+                                await _ms0(
+                                    int(flow.user_channel or 0),
+                                    msg_id=int(flow.root_id))
+                            except (TypeError, ValueError):
+                                await _ms0(int(flow.user_channel or 0))
+                            if not hasattr(self, "_flow_terminal_marked"):
+                                self._flow_terminal_marked = {}
+                            self._flow_terminal_marked[
+                                int(flow.user_channel or 0)] = True
                     except Exception:
                         pass
                     try:
@@ -3016,7 +3077,16 @@ class Sys:
                     try:
                         _ms1 = getattr(self.guide, "mark_stopped", None)
                         if _ms1:
-                            await _ms1(int(flow.user_channel or 0))
+                            try:
+                                await _ms1(
+                                    int(flow.user_channel or 0),
+                                    msg_id=int(flow.root_id))
+                            except (TypeError, ValueError):
+                                await _ms1(int(flow.user_channel or 0))
+                            if not hasattr(self, "_flow_terminal_marked"):
+                                self._flow_terminal_marked = {}
+                            self._flow_terminal_marked[
+                                int(flow.user_channel or 0)] = True
                     except Exception:
                         pass
                     try:
@@ -3223,6 +3293,10 @@ class Sys:
 
         leader_task = asyncio.create_task(_run_leader())
         flow._run_task = leader_task   # [사용자 작업 중지] request_cancel이 즉시 인터럽트할 핸들
+        # active 등록~여기 사이 await에서 이미 stop을 받은 경우 create_task 직후(다음 event-loop
+        # 양보 전) 취소한다. 따라서 _run_leader/run_turn/Codex 본문은 한 줄도 시작하지 않는다.
+        if getattr(flow, "cancelled", False):
+            leader_task.cancel()
         _resume_cut = False            # [재개-컷] 워치독의 체크포인트-재개 취소인가(응답 게시·done 마킹 금지)
         try:
             # 무진행(행) 워치독: idle_timeout 동안 진행이 0이면 리더 턴 취소(리더-행 구멍 메움). 진행 중이면 무제한.
@@ -3243,6 +3317,34 @@ class Sys:
                 self._log("flow_resume_cut" if _resume_cut else "flow_idle_aborted")
         except Exception as e:                     # 리더가 죽어도 흐름은 닫고 보고한다
             result = f"(리더 처리 중 오류: {e})"
+        # [첫 턴 fail-closed] Task/장부를 하나도 만들기 전 실질 턴이 전송 실패했으면 그 오류 문자열을
+        # '리더의 최종 보고'로 취급해 요청을 done으로 닫지 않는다. builder의 turn_done 결산이 주 신호,
+        # API Error 문법은 외부 builder/테스트의 하위호환 백스톱이다. 마감 꼬리로 점유는 회수하되 reap이
+        # 원 요청을 즉시 unpick해 새 턴으로 재시도한다.
+        from ._util import _looks_transient as _root_turn_transient
+        _start_failed = bool(
+            not getattr(flow, "cancelled", False)
+            and not _resume_cut
+            and flow.current is None
+            and not getattr(flow, "tasks", None)
+            and (getattr(flow, "_last_turn_ok", None) is False
+                 or _root_turn_transient(result)
+                 or str(result or "").startswith("(리더 처리 중 오류:"))
+        )
+        _root_kind_text = _request_kind_text
+        _root_is_work = request_kind == Kind.WORK or _root_kind_text in ("w", "work")
+        _no_deliverable_attempt = bool(
+            not _start_failed
+            and flow.current is None
+            and not getattr(flow, "tasks", None)
+            and (_root_is_work
+                 # 구 직접 호출은 Kind를 넘기지 않고 elect만 지정했다. 그 하위호환에서만 선거를
+                 # 제작 의도로 해석하며, 명시 Info는 선거 여부와 무관하게 정상 무Task 답변이다.
+                 or (request_kind is None and getattr(flow, "was_elect", False)))
+            # 분류기가 Work로 보냈어도 "배고파" 같은 좁은 캐주얼 신호는 기존 계약상 직접 대화다.
+            # Task 구조가 필요한 제작 Work와 구분해 정상 무Task 답변을 중지로 오인하지 않는다.
+            and not _casual_turn(user_text, "leader")
+        )
         # 배포 강제: 배포 가능한 산출물인데 deploy를 안 불렀으면 리더에게 '배포만' 한 번 더(누락 방지).
         # 여기부터 마감 꼬리는 어떤 실패에도 끊기면 안 된다 — 끊기면 스코프·전역 점유가 유령으로
         # 남아 그 프로젝트(와 그 리더의 다른 프로젝트)가 영영 큐에 갇힌다(병렬에서 반경 확대).
@@ -3271,7 +3373,8 @@ class Sys:
                 result = (result or "") + f"\n\n[배포 링크] {_url}"
         except Exception:
             pass
-        if not getattr(flow, "cancelled", False) and not _resume_cut:
+        if (not getattr(flow, "cancelled", False) and not _resume_cut
+                and not _start_failed and not _no_deliverable_attempt):
             try:
                 # [마감 보고 정식화(2026-07-12)] format_response 평문은 디스코드 와이어 포맷 유물 —
                 # murmur에선 '[Response] Body:' 원문이 일반 채팅으로 노출되고 요청 카드에 답변이
@@ -3294,7 +3397,12 @@ class Sys:
             status_updater.cancel()
         if status_mid is not None:
             try:
-                mark = "⏸ 중단(미완 Task 이어가기 가능)" if flow.current is not None else "✅ 완료"
+                if _start_failed:
+                    mark = "⏳ 실행 오류 · 자동 재시도"
+                elif _no_deliverable_attempt:
+                    mark = "⏸ 작업 구조 미개시 · 중지"
+                else:
+                    mark = "⏸ 중단(미완 Task 이어가기 가능)" if flow.current is not None else "✅ 완료"
                 await self.guide.edit_message(status_ch, status_mid,
                                               self._status_text(flow, status_t0, final=mark))
             except Exception:
@@ -3333,8 +3441,13 @@ class Sys:
         # 표시해 reap이 done 대신 **중단**으로 닫게 한다(정직한 미완).
         if not hasattr(self, "_flow_no_deliverable"):
             self._flow_no_deliverable = {}
-        self._flow_no_deliverable[int(flow.user_channel or 0)] = bool(
-            getattr(flow, "was_elect", False) and flow.current is None)
+        self._flow_no_deliverable[int(flow.user_channel or 0)] = _no_deliverable_attempt
+        if _start_failed:
+            if not hasattr(self, "_flow_start_failed"):
+                self._flow_start_failed = {}
+            self._flow_start_failed[int(flow.user_channel or 0)] = (
+                getattr(flow, "_last_turn_error", "") or str(result or "")
+            )[:300]
         if flow.current is not None:
             flow.current.status.status = "중단"
             flow.current.status.result = (result or "")[:500]
@@ -3351,7 +3464,7 @@ class Sys:
             flow.current = None
         # 프로젝트 요약 + 미완 Task 영속 갱신(다음 개입 때 맥락·이어가기 대상으로 제공).
         # current가 None(=complete_task로 마감했거나 Task 자체가 없었음)이면 open_task를 비운다(완료 처리).
-        if flow.project_channel:
+        if flow.project_channel and not _start_failed and not _no_deliverable_attempt:
             p = self.projects.get(int(flow.project_channel))
             if p:
                 p["summary"] = (result or "")[:600]   # Project.Context — 개입 프롬프트에 주입됨
@@ -3373,8 +3486,15 @@ class Sys:
             await _flush_state_db(flow, kind="ms")
         except Exception:
             pass
-        self._log("flow_done", project=flow.project_channel is not None,
-                  tasks=len(flow.tasks), comm_done=flow.comm.done)
+        if _start_failed:
+            self._log("flow_start_failed", project=flow.project_channel is not None,
+                      tasks=len(flow.tasks), error=getattr(flow, "_last_turn_error", "")[:160])
+        elif _no_deliverable_attempt:
+            self._log("flow_no_deliverable", project=flow.project_channel is not None,
+                      tasks=len(flow.tasks), directed_work=bool(_root_is_work))
+        else:
+            self._log("flow_done", project=flow.project_channel is not None,
+                      tasks=len(flow.tasks), comm_done=flow.comm.done)
         self.active_flows.pop(scope_key, None)
         # [전역 점유 해제 안전망] 이 흐름의 모든 점유를 일괄 해제 — 정상 경로는 respond/escalate가
         # 대칭으로 풀지만, 예외·강제 종료로 남은 점유가 있어도 여기서 회사 풀로 돌려보낸다.
@@ -3609,7 +3729,7 @@ class Sys:
         *결정*하고, 매체 실행은 guide가 *구현*한다(추상↔구현). 러너/리스너는 Sys(guide,builder) 만들고
         이 run()만 부르면 됨 — 진입이 얇아진다(폴링·pick 로직은 여기·Guide로 이관)."""
         import traceback
-        inflight, seen, cut_resumes, last_beat = {}, set(), {}, 0.0   # 재픽 카운터는 payload 영속(2026-07-20)
+        inflight, seen, cut_resumes, last_beat = {}, set(), {}, 0.0
         last_roster = 0.0   # [런타임 합류] 로스터 리프레시 throttle(30s) — 신규 채용 봇 즉시 합류·형성
         log.info("요청 폴링 시작(동시 처리 — 상한 %d)", cap)
         # [수면 — 기억 증류 라이브화] 자기증류(경험→직무·개인 기준 압축)를 브레인 실행 루프에 배선한다.
@@ -3633,11 +3753,50 @@ class Sys:
             except Exception as exc:
                 log.warning("중지 신호 조회 실패(다음 폴 재시도): %s", exc)
                 return
-            for stop_channel in stop_channels:
+            for stop_item in stop_channels:
                 try:
+                    if isinstance(stop_item, dict):
+                        stop_channel = int(
+                            stop_item.get("channel", stop_item.get("channel_id")))
+                        signal_id = stop_item.get("signal_id")
+                        requested_at = stop_item.get("requested_at")
+                    else:
+                        stop_channel = int(stop_item)
+                        signal_id = requested_at = None
                     cancelled = self.request_cancel(stop_channel)
-                    await guide.mark_stopped(stop_channel)
-                    log.info("■ 작업 중지 — ch=%s(흐름취소=%s)", stop_channel, cancelled)
+                    waiting_cancelled = 0
+                    # runner-claimed 요청이 아직 슬롯을 기다리거나, active 등록은 됐지만 leader task가
+                    # 아직 없는 시작 경계라면 request_cancel만으로 취소할 실행 핸들이 없다. 같은 외부
+                    # 운반체를 취소하고, active 경계는 handle_user_input의 완료 콜백이 안전하게 회수한다.
+                    _active_without_leader = any(
+                        getattr(f, "user_channel", None) == int(stop_channel)
+                        and not f.done
+                        and getattr(f, "_run_task", None) is None
+                        for f in self.active_flows.values()
+                    )
+                    if not cancelled or _active_without_leader:
+                        for info in inflight.values():
+                            if (int(info["ch"]) == int(stop_channel)
+                                    and not info["task"].done()):
+                                info["task"].cancel()
+                                waiting_cancelled += 1
+                    # 웹이 stop 클릭 시 대상 요청을 이미 stopped+done으로 원자 표기한다. 여기서는
+                    # 그때 읽은 StopSignal 세대만 ack한다. 채널 요청을 다시 쓰면 사용자가 즉시
+                    # 재개한 새 세대를 늦은 ack가 재중지할 수 있다.
+                    _ack = getattr(guide, "ack_stop", None)
+                    if _ack is not None:
+                        try:
+                            await _ack(
+                                stop_channel, signal_id=signal_id,
+                                requested_at=requested_at)
+                        except TypeError:
+                            await _ack(stop_channel)
+                    else:
+                        # 구 Guide 하위호환. 실제 murmur 구현은 모두 ack_stop을 제공한다.
+                        await guide.mark_stopped(stop_channel)
+                    log.info(
+                        "■ 작업 중지 — ch=%s(흐름취소=%s, 대기취소=%s)",
+                        stop_channel, cancelled, waiting_cancelled)
                 except Exception as exc:
                     log.warning(
                         "중지 처리 실패 ch=%s(신호 보존 — 다음 폴 재시도): %s",
@@ -3675,6 +3834,63 @@ class Sys:
                         del inflight[_mid]
                         try:
                             _info["task"].result()
+                            _ch_done = int(_info["ch"])
+                            _start_error = getattr(self, "_flow_start_failed", {}).pop(
+                                _ch_done, None)
+                            if _start_error is not None:
+                                # 첫 실질 턴 전송 실패는 정상 완료도, 작업 무진전도 아니다. 요청 운반체를
+                                # 즉시 되살려 새 Codex 프로세스로 재시도하되 영구 설정 오류가 밤새 돌지
+                                # 않도록 별도 시작 재시도 상한 뒤에는 '중지'로 정직하게 접는다.
+                                for _attr in ("_flow_open_task", "_flow_cycle_progress",
+                                              "_flow_quota_halt", "_flow_awaiting_human",
+                                              "_flow_user_cancelled", "_flow_no_deliverable",
+                                              "_flow_terminal_marked"):
+                                    getattr(self, _attr, {}).pop(_ch_done, None)
+                                _start_n = int(_info.get("start_retry_n") or 0) + 1
+                                try:
+                                    _start_retry_max = max(
+                                        0, int(os.environ.get("ORGANT_START_RETRY_MAX", "3")))
+                                except ValueError:
+                                    _start_retry_max = 3
+                                if _start_n <= _start_retry_max:
+                                    # 응답 유실/HTTP 예외여도 서버가 unpick을 적용했을 수 있다. seen을
+                                    # 선제 해제해야 즉시 재노출 또는 stale 복구 뒤 같은 러너가 다시 집는다.
+                                    seen.discard(_mid)
+                                    _unpicked = await guide.pick(
+                                        _mid, unpick=True, start_retry=True)
+                                    if _unpicked is not False:
+                                        self._log("request_start_retry", mid=_mid,
+                                                  ch=_ch_done, n=_start_n,
+                                                  error=str(_start_error)[:160])
+                                        log.warning(
+                                            "↻ 첫 턴 실행 오류 — 요청 자동 재시도(%d/%d): msg=%s ch=%s",
+                                            _start_n, _start_retry_max, _mid, _ch_done)
+                                    else:
+                                        self._log("request_start_retry_rejected",
+                                                  mid=_mid, ch=_ch_done)
+                                else:
+                                    # mark_stopped 자체가 stopped+done_ts를 한 원자 terminal 갱신으로 쓴다.
+                                    # 실패를 삼킨 뒤 done만 쓰면 다시 거짓 완료가 되므로 예외는 바깥 재시도
+                                    # 경계로 올리고, 성공 뒤 별도 done은 호출하지 않는다.
+                                    seen.discard(_mid)
+                                    try:
+                                        await self.guide.mark_stopped(
+                                            _ch_done, msg_id=_mid)
+                                    except TypeError:
+                                        await self.guide.mark_stopped(_ch_done)
+                                    try:
+                                        await self.guide.post(
+                                            _ch_done, 0,
+                                            "[실행 환경 오류] 첫 작업 턴을 여러 번 시작하지 못해 요청을 "
+                                            "중지했습니다. 환경을 확인한 뒤 '재개'를 누르면 이어서 시도합니다.")
+                                    except Exception:
+                                        pass
+                                    self._log("request_start_failed_stopped",
+                                              mid=_mid, ch=_ch_done,
+                                              retries=_start_n - 1,
+                                              error=str(_start_error)[:160])
+                                    log.error("■ 첫 턴 실행 오류 반복 — 중지 마감: msg=%s", _mid)
+                                continue
                             # [정밀 복구 — 조기 done 차단(2026-07-12)] Task 미완인 채 흐름이 정상 반환하면
                             # 종전엔 무조건 done — 요청이 닫혀 이어갈 운반체가 사라졌다(ch53 929가 반나절
                             # 일찍 done, 운영자 수동 요청이 없었으면 판이 조용히 죽었음). 미완이면 unpick으로
@@ -3694,26 +3910,36 @@ class Sys:
                             _ahum = getattr(self, "_flow_awaiting_human", {}).pop(int(_info["ch"]), False)
                             _user_stop = getattr(self, "_flow_user_cancelled", {}).pop(
                                 int(_info["ch"]), False)
+                            _no_deliverable = getattr(self, "_flow_no_deliverable", {}).pop(
+                                int(_info["ch"]), False)
+                            _already_marked = getattr(
+                                self, "_flow_terminal_marked", {}).pop(
+                                    int(_info["ch"]), False)
                             if _open and _prog and not _qhalt and not _ahum and not _user_stop:
+                                seen.discard(_mid)
                                 _unpicked = await guide.pick(_mid, unpick=True)
                                 if _unpicked is not False:
-                                    seen.discard(_mid)
                                     self._log("request_repick", mid=_mid, ch=_info["ch"], n=_cn + 1)
                                     log.info("↻ Task 미완·장부 전진 — 같은 요청 재픽(누계 %d): msg=%s ch=%s", _cn + 1, _mid, _info["ch"])
                                 else:
                                     # 서버가 이미 stopped로 원자 종결한 요청은 되살리지 않는다.
                                     self._log("request_repick_rejected", mid=_mid, ch=_info["ch"])
                             else:
-                                # [재개 가능한 종결 순서(2026-07-20, U-035 실측)] mark_stopped(요청에
-                                # stopped 표기)는 done 마감 **전에** — 웹 op가 'picked & not done_ts'
-                                # 요청만 표기하므로, done을 먼저 찍으면 stopped가 안 남아 재개 버튼이
-                                # 0건 반환(안내 문구와 모순되는 유령 중단, resume 불가).
-                                if _user_stop or _qhalt or _open or _ahum:
-                                    try:
-                                        await self.guide.mark_stopped(int(_info["ch"]))
-                                    except Exception:
-                                        pass
-                                await guide.pick(_mid, done=True)
+                                # 중지 사유는 mark_stopped가 stopped+done_ts를 함께 소유한다. 별도 done을
+                                # 뒤따라 쓰면 stop 실패 때 거짓 완료가 되고, stop 직후 사용자의 resume를
+                                # 다시 죽이는 경합도 생긴다. 정상 완료만 pick(done)을 쓴다.
+                                _stop_terminal = bool(
+                                    _user_stop or _qhalt or _open or _ahum or _no_deliverable)
+                                if _stop_terminal:
+                                    seen.discard(_mid)
+                                    if not _user_stop and not _already_marked:
+                                        try:
+                                            await self.guide.mark_stopped(
+                                                int(_info["ch"]), msg_id=_mid)
+                                        except TypeError:
+                                            await self.guide.mark_stopped(int(_info["ch"]))
+                                else:
+                                    await guide.pick(_mid, done=True)
                                 # [크레딧 한도 정지(2026-07-20)] 한도 소진 마감 = 재배달 없이 정직 종결
                                 # (충전/승인 후 사용자가 재개 — 피드는 '중단' 표시).
                                 if _user_stop:
@@ -3743,11 +3969,7 @@ class Sys:
                                     log.info("■ 무진전 미완 — 중단 마감·사람 호출: msg_id=%s", _mid)
                                 # [완료 참칭 방지] 선거 제작 요청인데 산출물 0(Task 미개설)이면 done_ts는
                                 # 찍히되 **중단**으로 표시 — 피드가 '완료'가 아니라 '중단'으로 렌더(정직).
-                                if getattr(self, "_flow_no_deliverable", {}).pop(int(_info["ch"]), False):
-                                    try:
-                                        await self.guide.mark_stopped(int(_info["ch"]))  # 채널 요청을 중단으로(피드 '완료' 아님)
-                                    except Exception:
-                                        pass
+                                if _no_deliverable:
                                     self._log("false_complete_blocked", mid=_mid, ch=_info["ch"])
                                     log.info("⚠ 산출물 0 — 완료 아닌 중단으로 마감: msg_id=%s", _mid)
                                 else:
@@ -3776,9 +3998,9 @@ class Sys:
                                     self._resume_cut_mids.add(int(_mid))
                                 _info["task"].cancel()
                                 if _n <= 5:
+                                    seen.discard(_mid)
                                     _unpicked = await guide.pick(_mid, unpick=True)
                                     if _unpicked is not False:
-                                        seen.discard(_mid)
                                         log.info("⏱ %s — 체크포인트 후 재개 예약(%d/5): msg=%s ch=%s", _why, _n, _mid, _info["ch"])
                                     else:
                                         self._resume_cut_mids.discard(int(_mid))
@@ -3820,6 +4042,26 @@ class Sys:
                     else:
                         to_id = leader
                     ch = int(m["channel_id"])
+                    # run cap보다 Sys.max_flows가 작을 때 claim한 뒤 handle 내부 큐로 되돌아가 원 요청이
+                    # 조기 done 되던 경로를 입구에서 차단한다. DB pending이 그대로 유일한 대기열이다.
+                    _active = [
+                        f for f in self.active_flows.values()
+                        if not getattr(f, "done", False)
+                    ]
+                    _active_channels = {
+                        int(getattr(f, "user_channel", 0) or 0) for f in _active
+                    }
+                    # route task가 event loop를 아직 한 번도 못 받아 active_flows에 등록되기 전에도
+                    # 이미 claim된 inflight는 슬롯 예약이다. 서로 다른 pending 여러 건이 한 poll에서
+                    # 모두 live_n=0을 보고 max_flows를 넘는 경합을 막되, active로 올라온 같은 채널은
+                    # 중복 계산하지 않는다.
+                    _reserved_n = sum(
+                        1 for info in inflight.values()
+                        if int(info["ch"]) not in _active_channels
+                    )
+                    _capacity_used = len(_active) + _reserved_n
+                    if self.max_flows > 0 and _capacity_used >= self.max_flows:
+                        continue
                     if ch in busy_ch or to_id in busy_lead or self.engaged.holder(to_id) is not None:
                         continue
                     seen.add(mid)
@@ -3840,10 +4082,14 @@ class Sys:
                         seen.discard(mid)
                         continue
                     guide.set_origin(ch)
-                    inflight[mid] = {"task": asyncio.create_task(self.route_channel_request(ch, req, elect=_elect)), "ch": ch, "t0": _now,
+                    inflight[mid] = {"task": asyncio.create_task(
+                                         self.route_channel_request(
+                                             ch, req, elect=_elect, claimed=True)),
+                                     "ch": ch, "t0": _now,
                                      # [재픽 상한 영속(2026-07-20, ch79)] 횟수의 정본은 요청 payload —
                                      # 메모리 카운터는 재시작마다 리셋돼 상한 3이 무력화됐었다(밤샘 루프).
-                                     "repick_n": int(m.get("repick_n") or 0)}
+                                     "repick_n": int(m.get("repick_n") or 0),
+                                     "start_retry_n": int(m.get("start_retry_n") or 0)}
                     busy_ch.add(ch)
                     busy_lead.add(to_id)
                     log.info("▶ 요청 처리(동시 %d/%d): ch=%s to=%s kind=%s body=%r", len(inflight), cap, ch, to_id, m["kind"], m["body"][:42])
@@ -3861,7 +4107,8 @@ class Sys:
                 self._log("run_loop_error", err=str(e)[:200])   # [관측 v1] 폴링 루프 예외 실명화
             await asyncio.sleep(poll)
 
-    async def route_channel_request(self, channel_id, request: Request, root_id=None, elect=False) -> dict:
+    async def route_channel_request(self, channel_id, request: Request, root_id=None,
+                                    elect=False, claimed=False) -> dict:
         # [관측 v1] 이 요청 처리 동안의 trace_id 설정 — 이후 flow/audit 이벤트가 이 id를 달아
         # 한 요청→전체 인과 사슬을 /api/monitor/trace/<id>로 복원 가능. 요청 msg_id 기반(고유).
         self._trace_id = "t-" + str(request.message_id or int(time.time() * 1000))[-10:]
@@ -3871,7 +4118,8 @@ class Sys:
         return await self.handle_user_input(channel_id, request.to_id, request.body,
                                             root_id=request.message_id,
                                             attachments=getattr(request, "attachments", None),
-                                            elect=elect)
+                                            elect=elect, request_kind=request.kind,
+                                            wait_for_slot=claimed)
 
 
 def _ms_continuation_note(flow) -> str:

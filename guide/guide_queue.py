@@ -98,7 +98,7 @@ class QueueStore:
                 out.append(r)
         return out
 
-    def pick(self, msg_id, unpick=False, touch=False):
+    def pick(self, msg_id, unpick=False, touch=False, start_retry=False):
         """원자 claim/재큐/liveness. 반환 {ok, claimed, already_picked}."""
         now = time.time()
         with _locked(self.path):
@@ -111,6 +111,9 @@ class QueueStore:
             if unpick:                     # 정체컷 재큐 — picked 소거
                 p["picked"] = False
                 p.pop("picked_ts", None)
+                p["repick_n"] = int(p.get("repick_n") or 0) + 1
+                if start_retry:
+                    p["start_retry_n"] = int(p.get("start_retry_n") or 0) + 1
                 self._save(d)
                 return {"ok": True, "claimed": False, "unpicked": True}
             if touch:                      # liveness — picked_ts 갱신(8초 간격)
