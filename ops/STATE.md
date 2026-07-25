@@ -2,6 +2,33 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-25.
 
+## ★ 완료 참칭 차단·백로그 표면 수렴 및 새 라이브 실증 준비 (2026-07-25 GPT)
+- 수정 전 라이브 기준선은 최근 `U-052` 요청이 DB에서 `picked+done_ts+stopped`, project root는
+  `open_task` 유지, ms_status는 open·조건 0/2·SubTask/백로그 0건이었다. 따라서 완료/중지
+  표면이 충돌하고, 실제 백로그가 없는데 순수 criterion 두 줄이 B1/B2처럼 보이며, terminal
+  폴링 누락·역순 응답이 낡은 진행 상태를 화면에 남길 수 있었다.
+- 릴리스 증거는 **회의에서 비준한 exact verifier → SYS가 봉인한 동일 명령의 단일사용 run
+  receipt → 현재 artifact stamp·write epoch·command/spec hash 일치**로만 인정한다.
+  자연어 GOAL은 최종 마일스톤의 같은 설명 criterion이 exact command를 구조적으로 비준해야
+  하며, 단순 명령·inline 성공·외부 경로·stale/재사용 영수증은 거부한다. 완료 시 exact verifier를
+  현재 산출물에서 다시 실행한다.
+- 비대체 마일스톤마다 SubTask 1개 이상, 각 SubTask마다 백로그 1개 이상과 전량 terminal/done을
+  요구한다. 빈 장부·조기 done은 재개방하며, blocked 원본은 보충 회의→보충 백로그 완료→원본
+  재개까지 닫혀야 마일스톤 검증으로 간다. E2E pass도 실제 현재 SYS receipts와 전 checklist
+  결과가 없으면 Task 완료를 막고, 재시작 시 stamp/epoch가 맞는 상태만 복원한다.
+- 화면은 criterion 통과와 실제 backlog 상태를 분리해, 병합된 criterion이 미통과여도 실제
+  in_progress/done/blocked/dropped 행을 숨기지 않는다. `blId` 없는 순수 조건만 `기준`으로
+  표시한다. 메시지 초기 로드·poll·수동 갱신은 latest-only 한 경계이고 poll 자체도 직렬화하며,
+  terminal 뒤에도 ms_status를 매 poll 수렴시켜 오래된 응답이 `▶ 지금`·중지·완료를 뒤집지 못한다.
+- 운영 실증 도구 `ops/live_e2e_probe.py`는 무인자 완전 dry-run, `--pid` 읽기 전용,
+  `--execute` 명시 모드만 새 비공개 채널·고정 요청·마일스톤 교정 1회를 만든다. API/trace/활동,
+  DB root·잔존 signal, projects.json, 실제+HTTP 파일 정확히 2개, E2E receipt 무결성, 격리된
+  `node test_state_machine.js` 재실행까지 한 보고서로 대조한다. **아직 라이브 실행 전**이며
+  전체 착지·서비스 재시작 후 새 판에서 성공할 때까지 완료로 기록하지 않는다.
+- 착지 전 통합 기준선: Django **447 OK** · system unittest OK · 브레인 pytest
+  **804 passed** · 프론트 프로덕션 build/UI 정본 계약 OK · probe compile/help/dry-run 및
+  40개 synthetic hard assertion OK.
+
 ## ★ U-052 실판에서 확인한 GOAL 계약·사람 개입·종결 기록 수리 (2026-07-25 GPT)
 - 실제 웹 요청→Postgres→HTTP Guide→systemd 러너 경로의 `U-052`(내부 P-049,
   Task 130642-1)를 돌렸다. GOAL은 처음 드리프트했지만 사람 교정을 받아 9/9 비준됐고, 이후
@@ -452,7 +479,14 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  cba7164   ← HEAD — ★U-052 종결 Task 기록 진입점 보존(2026-07-25):
+murmur  680bbeb   ← HEAD — ★활동·백로그 실행 상태를 요청·범위별로 보존(2026-07-25):
+                          request별 누적 활동 아카이브, terminal 이력 진입점, scoped `(MS,ST,B)`
+                          피드 귀속과 claim CAS를 한 배치로 묶었다. UI는 criterion 통과와 실제
+                          backlog 상태를 분리해 미통과 조건에 병합된 in_progress/done도 숨기지 않고,
+                          순수 조건은 `기준`으로 표시한다. 초기 로드·poll·수동 새로고침은 같은
+                          latest-only 경계를 쓰며 중첩 poll을 직렬화하고 terminal 뒤에도 최종
+                          ms_status를 수렴시킨다. Django 447·UI 계약·프로덕션 빌드 통과.
+                          (이전 cba7164) ★U-052 종결 Task 기록 진입점 보존:
                           stopped/done 응답은 현재 actor/activity 없이 활동 줄 수만 유지하고,
                           Task 카드의 읽기 전용 전체 기록 모달로 기존 activity_log를 연다.
                           (이전 d38e9ec) ★scoped 피드·terminal claim 원자화:
@@ -657,7 +691,7 @@ murmur  cba7164   ← HEAD — ★U-052 종결 Task 기록 진입점 보존(2026
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
 
 ## 검증 기준선 (verify.sh)
-- sns: **420 OK** · system unittest: OK · 브레인 pytest(ops/tests): **750** · 프론트 빌드/UI 계약 OK.
+- sns: **447 OK** · system unittest: OK · 브레인 pytest(ops/tests): **804** · 프론트 빌드/UI 계약 OK.
   (2026-07-25 현행 — 정확한 현재치는 항상 `bash ops/verify.sh` 출력이 정본.)
 
 ## 파이프라인 재설계 — **라이브 영구 적용 (2026-07-09, 사용자 승인)**
