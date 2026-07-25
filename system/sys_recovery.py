@@ -6,7 +6,9 @@
 함수 첫 인자 `sys`는 Sys 인스턴스이고, 다른 Sys 메서드 호출은 `sys._X()` 경유 — 테스트
 monkeypatch·서브클래스 오버라이드 의미 보존.
 """
+import copy
 import re
+import secrets
 from typing import Optional
 
 from ._util import doc_collab_on, dossier_read, dossier_rel
@@ -32,6 +34,65 @@ def _parse_goal_doc(text) -> dict:
     return out
 
 
+def _interject_state_snapshot(flow):
+    """사람 개입 큐와 ack 재시도 장부를 한 체크포인트에 넣을 JSON-safe 값으로 만든다."""
+    pending = {}
+    raw_pending = getattr(flow, "pending_info", None) or {}
+    if isinstance(raw_pending, dict):
+        for member, entries in raw_pending.items():
+            try:
+                key = str(int(member))
+            except (TypeError, ValueError):
+                continue
+            values = entries if isinstance(entries, (list, tuple)) else [entries]
+            cleaned = [str(value) for value in values
+                       if value is not None and str(value)]
+            if cleaned:
+                pending[key] = cleaned
+
+    retry = {}
+    raw_retry = getattr(flow, "_ij_retry", None) or {}
+    if isinstance(raw_retry, dict):
+        for member, count in raw_retry.items():
+            try:
+                key, value = str(int(member)), int(count)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                retry[key] = value
+    return pending, retry
+
+
+def _restore_interject_state(flow, snap) -> None:
+    """구 스냅샷(키 없음)과 일부 손상 값을 빈 상태로 안전하게 복원한다."""
+    pending = {}
+    raw_pending = snap.get("pending_info") or {}
+    if isinstance(raw_pending, dict):
+        for member, entries in raw_pending.items():
+            try:
+                key = int(member)
+            except (TypeError, ValueError):
+                continue
+            values = entries if isinstance(entries, (list, tuple)) else [entries]
+            cleaned = [str(value) for value in values
+                       if value is not None and str(value)]
+            if cleaned:
+                pending[key] = cleaned
+
+    retry = {}
+    raw_retry = snap.get("interject_retry") or {}
+    if isinstance(raw_retry, dict):
+        for member, count in raw_retry.items():
+            try:
+                key, value = int(member), int(count)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                retry[key] = value
+    flow.pending_info = pending
+    flow._ij_retry = retry
+
+
 def task_snapshot(flow, ref) -> dict:
     """미완 Task를 다음 개입에서 '되살릴' 수 있도록 직렬화한다(상태블록·스레드·담당자·팀·목표 +
     수렴 진행 사실 전체). 원칙(2026-06-23, 사용자 '메모리 안정적으로 — field별 땜질 말고'): *사실*
@@ -41,6 +102,7 @@ def task_snapshot(flow, ref) -> dict:
     run에 묶여 안전하다. (종전 field별 영속이 act_by·contrib_checked 등을 빠뜨려 contrib 게이트가
     복구마다 '전원 idle'로 오판, 마감이 영영 안 닫히던 결함 — line 595·sys 521 주석이 'act_by 인메모리
     리셋 결함'을 알려진 결함으로 명시했으나 미수정이었음 — 을 포괄 교정.)"""
+    pending_info, interject_retry = _interject_state_snapshot(flow)
     return {
         "task_id": ref.task_id,
         "thread_id": ref.thread_id,
@@ -55,6 +117,11 @@ def task_snapshot(flow, ref) -> dict:
         "owner": int(ref.owner or 0),
         "owner_name": ref.status.owner or "",
         "team": [int(x) for x in ref.team],
+        # [사람 개입 crash safety] 직렬화 경계에서 큐와 ack/retry를 함께 묶는다. checkpoint는
+        # Task 생성 전도 보존하도록 이 두 필드를 프로젝트 root로 옮겨 유일 정본으로 저장한다.
+        # 문자열 키/값만 써 projects.json과 DB 미러 양쪽에서 JSON-safe하다.
+        "pending_info": pending_info,
+        "interject_retry": interject_retry,
         "result_so_far": (ref.status.result or "")[:500],
         "collab_notes": getattr(ref, "collab_notes", ""),   # 회의·표결 합의 — 재개 위임에도 동봉
         "acceptance": getattr(ref, "acceptance", ""),        # 수용 계약 — 동면·재개 너머 영속(없으면 마감 게이트가 매번 재정의 요구)
@@ -143,7 +210,7 @@ def checkpoint_open_task(sys, flow) -> None:
     진행 중 Task의 정체가 유실돼 복구가 '같은 Task 이어가기'가 아니라 '새 Task'로 시작했다
     (라이브 관측: 093740-1 동결 → 복구가 122245-1 신설, 옛 블록은 '진행' 박제 — 사용자 지적).
     guide의 전이 지점(create_task/set_goal/owner 확정/complete_task)이 flow.checkpoint_task로 호출."""
-    ch = flow.project_channel
+    ch = flow.project_channel or flow.user_channel
     if not ch or int(ch) not in sys.projects:
         return
     p = sys.projects[int(ch)]
@@ -153,8 +220,19 @@ def checkpoint_open_task(sys, flow) -> None:
     # 전에 last_task로 보관한다(읽기 전용 이력 — 복구 대상 아님, 피드 해석 폴백 전용).
     if flow.current is None and p.get("open_task"):
         p["last_task"] = p["open_task"]
-    p["open_task"] = (sys._task_snapshot(flow, flow.current)
-                      if flow.current is not None else None)
+    if flow.current is not None:
+        snap = sys._task_snapshot(flow, flow.current)
+        # task_snapshot은 독립 왕복에서도 개입 상태를 포함하지만, 프로젝트 레지스트리의 유일한
+        # 영속 정본은 Task 생성 전에도 존재하는 root다. 같은 원자 저장에서 root로 옮겨 중복본을
+        # 만들지 않고, open_task 내부 필드는 구 버전 복원 폴백으로만 읽는다.
+        p["pending_info"] = snap.pop("pending_info", {})
+        p["interject_retry"] = snap.pop("interject_retry", {})
+        p["open_task"] = snap
+    else:
+        pending_info, interject_retry = _interject_state_snapshot(flow)
+        p["pending_info"] = pending_info
+        p["interject_retry"] = interject_retry
+        p["open_task"] = None
     if getattr(flow, "file_owner", None) is not None:   # [소유 경계 영속] Task 전이마다 같이 저장
         p["file_owner"] = dict(flow.file_owner or {})
     # [미답 질문 영속(2026-07-09)] 상시 재주입 큐가 흐름 메모리라 재시작을 못 넘던 구멍 — 라이브에서
@@ -168,6 +246,13 @@ def checkpoint_open_task(sys, flow) -> None:
     # [마일스톤 파이프라인 §9 — 최대 저장] 주기 상태(마일스톤·SubTask·조건·증거) 전부 동승 —
     # 크래시·재시작 후 iter 중간부터 재개하는 토대. 플래그 OFF면 빈 리스트라 무비용.
     p["milestones"] = [ms_to_dict(m) for m in (getattr(flow, "milestones", None) or [])]
+    # [e2e §9] 분모·항목별 결과·최종 판정도 마일스톤과 같은 원자 체크포인트에 둔다.
+    # subprocess receipt ledger/nonce는 process-local이지만, 이미 소비·검증된 결과와 verifier의
+    # command/spec/artifact metadata는 복원 후 다시 무결성 검사할 수 있으므로 보존한다.
+    p["e2e_checklist"] = copy.deepcopy(getattr(flow, "e2e_checklist", None))
+    p["e2e_results"] = copy.deepcopy(getattr(flow, "e2e_results", None))
+    p["wrapup_state"] = copy.deepcopy(getattr(flow, "wrapup_state", None))
+    p["e2e_origin_context"] = list(getattr(flow, "e2e_origin_context", None) or [])
     # [로드맵 §9(2026-07-14)] 전체 구조 회의가 확정한 다단계 로드맵(달구지→자동차→스포츠카) —
     # 주기 완수마다 다음 단계 회의를 코칭하는 근거라 재시작을 넘어 살아야 한다.
     p["roadmap"] = list(getattr(flow, "roadmap", None) or [])
@@ -178,11 +263,122 @@ def checkpoint_open_task(sys, flow) -> None:
     sys._save_projects()
 
 
+def _restore_e2e_state(flow, proj) -> bool:
+    """persisted e2e 진행을 현재 artifact/epoch와 다시 대조해 복원한다.
+
+    미제출 verifier seal은 process-local 권한이므로 새 nonce/seal로 재무장한다. 이미 소비된 pass
+    결과는 command/spec/seal/stamp가 모두 맞을 때만 보존하고, 한 필드라도 손상·stale이면 e2e 전체를
+    폐기해 fresh open으로 되돌린다.
+    """
+    from .rule.evidence import (
+        command_matches_spec, direct_verifier_command, normalize_verifier_command,
+        verifier_command_hash, verifier_spec_hash,
+    )
+    from .rule.milestone import workspace_artifact_stamp, write_revision
+
+    checklist = copy.deepcopy(proj.get("e2e_checklist"))
+    results = copy.deepcopy(proj.get("e2e_results"))
+    wrapup = copy.deepcopy(proj.get("wrapup_state"))
+    flow.e2e_origin_context = list(proj.get("e2e_origin_context") or [])
+    if checklist is None:
+        flow.e2e_checklist = flow.e2e_results = flow.wrapup_state = None
+        flow._e2e_receipt_nonce = None
+        flow._run_receipts = {}
+        return False
+    try:
+        if not isinstance(checklist, list) or not isinstance(results, dict):
+            raise ValueError("invalid containers")
+        stamp, epoch = workspace_artifact_stamp(flow), write_revision(flow)
+        if not stamp:
+            raise ValueError("no artifact stamp")
+        items = {}
+        for item in checklist:
+            if not isinstance(item, dict):
+                raise ValueError("invalid item")
+            iid = str(item.get("id") or "")
+            spec = str(item.get("verifier_spec") or item.get("spec") or "")
+            if not iid or iid in items or not spec:
+                raise ValueError("invalid item identity")
+            items[iid] = item
+            command = normalize_verifier_command(item.get("verifier_command"))
+            if command:
+                if (item.get("verifier_command_hash") != verifier_command_hash(command)
+                        or item.get("verifier_spec_hash") != verifier_spec_hash(iid, spec)
+                        or not (
+                            bool(direct_verifier_command(
+                                command, getattr(flow, "workspace", "")))
+                            if item.get("verifier_structurally_ratified")
+                            else command_matches_spec(
+                                command, spec, getattr(flow, "workspace", ""))
+                        )):
+                    raise ValueError("invalid verifier")
+            elif iid in results and bool((results.get(iid) or {}).get("ok")):
+                raise ValueError("unbound pass")
+
+        for iid, row in results.items():
+            if iid not in items or not isinstance(row, dict):
+                raise ValueError("unknown result")
+            if not bool(row.get("ok")):
+                continue
+            item = items[iid]
+            if (row.get("evidence_source") != "sys_run"
+                    or not row.get("receipt_id")
+                    or row.get("artifact_stamp") != stamp
+                    or int(row.get("write_epoch", -1)) != epoch
+                    or not item.get("verifier_used")
+                    or row.get("verifier_seal") != item.get("verifier_seal")
+                    or row.get("verified_command") != item.get("verifier_command")
+                    or row.get("command_hash") != item.get("verifier_command_hash")
+                    or row.get("spec_hash") != item.get("verifier_spec_hash")):
+                raise ValueError("stale pass")
+
+        if wrapup is not None:
+            if (not isinstance(wrapup, dict)
+                    or wrapup.get("verdict") not in ("e2e_pass", "e2e_fail")
+                    or wrapup.get("artifact_stamp") != stamp
+                    or int(wrapup.get("write_epoch", -1)) != epoch):
+                raise ValueError("stale verdict")
+            if wrapup.get("verdict") == "e2e_pass":
+                if set(results) != set(items) or any(
+                        not bool(row.get("ok")) or not str(row.get("evidence") or "").strip()
+                        for row in results.values()):
+                    raise ValueError("incomplete pass verdict")
+
+        # 실행됐지만 e2e_result로 소비되지 않은 process-local receipt는 복구할 수 없다. exact command는
+        # 보존하되 새 seal로 다시 한 번 실행하게 한다.
+        for iid, item in items.items():
+            if iid not in results and item.get("verifier_command"):
+                item["verifier_seal"] = secrets.token_hex(16)
+                item["verifier_actor"] = 0
+                item["verifier_epoch"] = epoch
+                item["verifier_stamp"] = stamp
+                item["verifier_used"] = False
+        flow.e2e_checklist = checklist
+        flow.e2e_results = results
+        flow.wrapup_state = wrapup
+        flow._e2e_receipt_nonce = secrets.token_hex(16)
+        flow._run_receipts = {}
+        return True
+    except (TypeError, ValueError, OSError):
+        flow.e2e_checklist = flow.e2e_results = flow.wrapup_state = None
+        flow._e2e_receipt_nonce = None
+        flow._run_receipts = {}
+        return False
+
+
 async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     """프로젝트에 저장된 미완 Task가 있으면 이번 흐름에 그대로 되살린다 — 같은 상태블록·스레드·담당자
     (owner)·팀을 재부착해 '이어가기'가 사용자가 Task명을 부르지 않아도 그 Task를 잇게 한다(담당자가
     판단해 이어감). 검증 누계는 0에서 시작(verified=False 등) → 완료 전 run 재검증을 강제. 되살린
     스냅샷을 반환(없으면 None)."""
+    # [사람 개입 crash safety] 프로젝트 root가 새 정본이라 Task 생성 전 개입도 먼저 되살린다.
+    # root 키가 둘 다 없는 구 레지스트리는 open_task 내부의 전환기 스냅샷을 아래에서 폴백한다.
+    _root_interject = ("pending_info" in proj or "interject_retry" in proj)
+    if _root_interject:
+        _restore_interject_state(flow, proj)
+    else:
+        flow.pending_info = {}
+        flow._ij_retry = {}
     # [마일스톤 §9 — 복원] 주기 상태는 open_task와 독립으로 되살린다(마일스톤만 있고 미완 Task가
     # 없는 시점의 죽음도 복구). 손상 스냅샷은 빈 시작으로 저하 — 복구가 복구를 못 막게.
     try:
@@ -241,6 +437,9 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         if not snap:
             return None
         sys._log("open_task_fallback_last", task=snap.get("task_id"))
+    # root 정본이 없는 전환기/직접 task_snapshot 왕복만 Task 내부 상태를 폴백한다.
+    if not _root_interject:
+        _restore_interject_state(flow, snap)
     team = [int(x) for x in snap.get("team", []) if int(x) in flow.pool]
     if flow.leader not in team:
         team = [flow.leader] + team
@@ -342,6 +541,7 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     flow._deploy_writes = int(snap.get("deploy_writes", -1))
     for _r, _w in (snap.get("writes_by_role") or {}).items():
         flow.writes_by_role[_r] = int(_w)
+    _restore_e2e_state(flow, proj)
     flow.consec_fail = int(snap.get("consec_fail", 0) or 0)
     if snap.get("last_work_body"):
         ref.last_work_body = snap["last_work_body"]   # [정밀 복구] owner 위임 원문 복원 → SYS 이어가기가 replay

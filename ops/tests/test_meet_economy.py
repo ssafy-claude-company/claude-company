@@ -41,8 +41,11 @@ def _fill_draft(tmp_path):
     t = t.replace("목표: ⟦", "목표: 방명록 1주기 — ⟦")
     n = {"i": 0}
 
-    def _u(_m):
+    def _u(m):
         n["i"] += 1
+        hint = m.group(0)
+        if "절차" in hint or "exact command" in hint:
+            return f"python3 verify_draft_{n['i']}.py"
         return f"등록 항목 {n['i']} 동작을 curl로 확인"
     t = re.sub(r"⟦[^⟧\n]{1,150}⟧", _u, t)
     open(p, "w", encoding="utf-8").write(t)
@@ -479,7 +482,9 @@ def test_흐름중_재시작은_진행분_보존_같은단계_재회의(monkeypa
     assert draft_should_reset("milestone", _inprog) is False
     # 회의 개시 관통: 진행 DRAFT가 있는 채로 같은 단계 회의를 다시 열어도 내용 보존(덮어쓰기 0)
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
-    from system.rule.milestone import Criterion, Milestone
+    from system.rule.milestone import (
+        Criterion, Milestone, workspace_artifact_stamp, write_revision,
+    )
     from system._util import dossier_write, dossier_read, dossier_rel
     g, f = _meet_flow(tmp_path)
     f.floor_mode = "turn-taking"
@@ -665,9 +670,11 @@ def test_하위회의_R1과_실질편집턴에_GOAL_비준계약전문_무절단
     r1_prompts = [body for _, body in prompts if "독립 기고" in body]
     work_prompts = [body for _, body in prompts
                     if "발언권 획득" in body or "차례입니다" in body]
-    assert r1_prompts and work_prompts
+    vote_prompts = [body for _, body in prompts if "결론 확정 표결" in body]
+    assert r1_prompts and work_prompts and vote_prompts
     assert all("[상위 확정 계약" in body and tail in body for body in r1_prompts)
     assert all("[상위 확정 계약" in body and tail in body for body in work_prompts)
+    assert all("[상위 확정 계약" in body and tail in body for body in vote_prompts)
 
 
 def test_표결도중_도착한_사람개입은_실질슬롯_DRAFT재평가후_재표결(monkeypatch, tmp_path):
@@ -721,6 +728,166 @@ def test_표결도중_도착한_사람개입은_실질슬롯_DRAFT재평가후_�
     assert str(f.current.status.goal or "").startswith("사용자 교정 방명록")
     assert "meet_human_info_slot" in [event for event, _ in events]
     assert "stage_confirmed" in [event for event, _ in events]
+
+
+def test_DRAFT쓰기실패_표결중_사람개입은_등록전_실질슬롯_대화안재표결(monkeypatch, tmp_path):
+    """DRAFT가 생성되지 않은 대화 수렴안 폴백도 첫 표를 폐기하고, 사람 슬롯 뒤 새 안을 재표결한다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    events, order, vote_bodies = [], [], []
+    f.log = lambda event, **kw: events.append((event, kw))
+
+    from system import _util
+    real_dossier_write = _util.dossier_write
+    draft_writes = []
+
+    def fail_draft_write(flow, filename, text, task_id=None):
+        if filename == "DRAFT.md":
+            draft_writes.append(text)
+            return False
+        return real_dossier_write(flow, filename, text, task_id=task_id)
+
+    monkeypatch.setattr(_util, "dossier_write", fail_draft_write)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+
+    from system.rule import milestone
+    real_register_stage = milestone.register_stage
+    register_calls = []
+
+    def counted_register(flow, stage, prop, origin=""):
+        register_calls.append((stage, prop))
+        return real_register_stage(flow, stage, prop, origin)
+
+    monkeypatch.setattr(milestone, "register_stage", counted_register)
+    injected = {"done": False}
+
+    async def wake(to, body, kind):
+        if "발언권 응찰" in body:
+            return "[응찰: 7] 수렴안을 내겠습니다" if to == 12 else "[패스]"
+        if "사람 개입 반영 슬롯" in body:
+            order.append("human")
+            assert register_calls == []                 # 첫 표가 등록기로 내려가기 전에 슬롯이 선행
+            assert "수정된 `[수렴안]` 전문" in body     # 파일 없는 폴백에 맞는 실질 재제출 지시
+            assert f.pending_info.get(11)
+            f.pending_info.pop(11, None)                # 실런타임 run_turn ack의 큐 소비 대역
+            return (
+                "[답변] 사용자 교정을 반영했습니다.\n"
+                "[수렴안]\n"
+                "목표: 사용자 교정 방명록\n"
+                "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
+                "[/수렴안]"
+            )
+        if "발언권 획득" in body or "차례입니다" in body:
+            return (
+                "[수렴안]\n"
+                "목표: 최초 방명록\n"
+                "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
+                "[/수렴안]"
+            )
+        if "결론 확정 표결" in body:
+            order.append("vote")
+            vote_bodies.append(body)
+            if not injected["done"]:
+                injected["done"] = True
+                f.pending_info.setdefault(11, []).append("목표 이름을 사용자 교정 방명록으로 바꿔주세요")
+            return "[찬성: 이 Task의 목표와 실증 조건이 구체적입니다]"
+        if "종결 확인" in body:
+            return "[종료]"
+        return "[패스]"
+
+    f.wake = wake
+    asyncio.run(t["meet"].handler({
+        "topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견",
+    }))
+
+    assert draft_writes and _draft_path(tmp_path) is None       # 실제 DRAFT write 실패 경로 관통
+    hi = order.index("human")
+    assert "vote" in order[:hi] and "vote" in order[hi + 1:]   # 첫 표 폐기 → 슬롯 → 재표결
+    assert len(register_calls) == 1
+    assert "사용자 교정 방명록" in register_calls[0][1]
+    assert "사용자 교정 방명록" in vote_bodies[-1]             # 슬롯의 새 안을 재평가해 표결
+    assert not f.pending_info.get(11)
+    assert str(f.current.status.goal or "").startswith("사용자 교정 방명록")
+    assert "meet_human_info_slot" in [event for event, _ in events]
+    assert "stage_confirmed" in [event for event, _ in events]
+
+
+def test_DRAFT쓰기실패_wakecap경계_사람개입은_등록보류하고_큐보존(monkeypatch, tmp_path):
+    """표결이 wake_cap을 정확히 소진하면 pending 슬롯을 건너뛰지 않고 등록을 보류하며 큐를 보존한다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path)
+    f.floor_mode = "turn-taking"
+    events, prompts = [], []
+    f.log = lambda event, **kw: events.append((event, kw))
+
+    from system import _util
+    real_dossier_write = _util.dossier_write
+    draft_writes = []
+
+    def fail_draft_write(flow, filename, text, task_id=None):
+        if filename == "DRAFT.md":
+            draft_writes.append(text)
+            return False
+        return real_dossier_write(flow, filename, text, task_id=task_id)
+
+    monkeypatch.setattr(_util, "dossier_write", fail_draft_write)
+
+    # 2명·2R의 wake_cap은 26. 대화 발언 24회를 대본으로 채우고 최종 전원 표결 2회가 경계에
+    # 닿게 해, 그 표결 중 들어온 pending_info가 실질 슬롯 없이 등록되는지를 정확히 겨눈다.
+    from system.rule import floor
+
+    async def fill_to_cap(policy, state, opening, speak, bid=None, max_turns=64, on_alloc=None):
+        alloc = floor.Allocation(floor.SELF, next=12, reason="wake_cap 경계 대본")
+        for _ in range(24):
+            await speak(12, alloc)
+        return [opening]
+
+    monkeypatch.setattr(floor, "run_conversation", fill_to_cap)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+
+    from system.rule import milestone
+    real_register_stage = milestone.register_stage
+    register_calls = []
+
+    def counted_register(flow, stage, prop, origin=""):
+        register_calls.append((stage, prop))
+        return real_register_stage(flow, stage, prop, origin)
+
+    monkeypatch.setattr(milestone, "register_stage", counted_register)
+    injected = {"done": False}
+
+    async def wake(to, body, kind):
+        prompts.append(body)
+        if "결론 확정 표결" in body:
+            if not injected["done"]:
+                injected["done"] = True
+                f.pending_info.setdefault(11, []).append("경계에서 보존돼야 할 사용자 교정")
+            return "[찬성: 목표와 실증 조건이 구체적입니다]"
+        if "차례입니다" in body:
+            return (
+                "[수렴안]\n"
+                "목표: 경계 방명록\n"
+                "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
+                "[/수렴안]"
+            )
+        return "[패스]"
+
+    f.wake = wake
+    asyncio.run(t["meet"].handler({
+        "topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견",
+    }))
+
+    assert draft_writes and _draft_path(tmp_path) is None
+    assert register_calls == []                              # 슬롯 예산이 없으면 등록도 함께 보류
+    assert f.pending_info.get(11) == ["경계에서 보존돼야 할 사용자 교정"]
+    assert not any("사람 개입 반영 슬롯" in body for body in prompts)
+    names = [event for event, _ in events]
+    assert "meet_human_info_deferred_budget" in names
+    assert "stage_confirmed" not in names
+    assert not str(f.current.status.goal or "").strip()
 
 
 def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
@@ -801,15 +968,23 @@ def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypat
     """[전수 감사(2026-07-21, 사용자: '안정성·실효성·협업 실익이 보장된 상태에서 e2e를 돌려야지')]
     e2e 전수가 권고 문구뿐이라 검증 없이 마감·표류 가능하던 실효성 구멍 — 마일스톤 판의
     complete_task는 ①열린 주기 0 ②로드맵 소진 ③Task 경계 e2e 판정 존재를 요구한다.
-    e2e_fail(복기 정체 포함)은 정직 마감 허용(결함은 완료 보고에)."""
+    e2e_fail은 복기 입력일 뿐 완료 판정이 아니므로 Task 마감은 e2e_pass만 허용한다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path)
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12"}))
-    from system.rule.milestone import Criterion, Milestone
+    from system.rule.milestone import (
+        Criterion, Milestone, SubTask, workspace_artifact_stamp, write_revision,
+    )
+    from system.rule.backlog import Backlog, BacklogRelay
     ms = Milestone(ms_id="MS-1", goal="최소버전",
                    criteria=[Criterion("돈다", "run 재현", passed=True)])
+    st = SubTask("ST-1", "최소버전 구현", [], status="done")
+    relay = BacklogRelay(st.st_id)
+    relay._pool["B1"] = Backlog("B1", "구현", 12, status="done", assignee=12)
+    ms.subtasks = [st]
     f.milestones = [ms]
+    f.backlog_relays = {st.st_id: relay}
     out = asyncio.run(t["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
     assert "미완 주기" in out                              # 열린 주기 → 거부
     ms.status = "done"
@@ -819,9 +994,12 @@ def test_파이프라인_마감은_주기완주와_e2e판정이_관문(monkeypat
     f.roadmap = ["프로토타입"]
     out3 = asyncio.run(t["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
     assert "e2e_open" in out3 and "마감 불가" in out3       # 판정 없음 → 전수 검증 코칭 거부
-    f.wrapup_state = {"verdict": "e2e_fail", "defects": []}
+    f.wrapup_state = {
+        "verdict": "e2e_fail", "defects": [],
+        "artifact_stamp": workspace_artifact_stamp(f), "write_epoch": write_revision(f),
+    }
     out4 = asyncio.run(t["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
-    assert "e2e_open" not in out4 and "미완 주기" not in out4   # 판정 있으면 이 관문 통과(뒤 게이트로)
+    assert "마감 불가" in out4 and "e2e_pass가 아닙니다" in out4
 
 
 def test_결론직전_지명은_답슬롯_1턴_존중후_표결(monkeypatch, tmp_path):
@@ -933,7 +1111,7 @@ def test_백로그_발제귀속_R1_원저자_전사자아님(monkeypatch, tmp_pa
     f.current.status.goal = "게임"
     _okm, _nm = register_stage(f, "milestone",
                                "단계: 최소버전 → 완성\n이번 주기: 카드 게임 최소버전\n"
-                               "- 30턴 완주 | 실증: run 재현", "게임")
+                               "- 30턴 완주 | 실증: python3 verify_game.py", "게임")
     assert _okm, _nm
     # 프론트(13)가 R1에 UI 백로그를 냈다 — 그 원저자 기록
     f._r1_attr = [(13, "손 3장 선택 패널 렌더링과 클릭 피드백 구현")]
@@ -957,7 +1135,8 @@ def test_백로그0건_직군은_판단기회_없이_회의종료불가(monkeypa
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     f.current.status.goal = "게임"
     okm, _ = register_stage(f, "milestone",
-                            "이번 주기: 전투 화면\n- 전투 연출 확인 | 실증: run 재현", "게임")
+                            "이번 주기: 전투 화면\n"
+                            "- 전투 연출 확인 | 실증: python3 verify_battle.py", "게임")
     assert okm
     f._r1_targets = {12, 13}
     f._r1_attr = [(12, "충돌 순간 타격 VFX와 클리어 연출 구현")]
@@ -986,7 +1165,8 @@ def test_백로그0건이어도_실질기고했으면_수렴회의를_막지않�
     asyncio.run(t["create_task"].handler({"members": "12"}))
     f.current.status.goal = "게임"
     okm, _ = register_stage(f, "milestone",
-                            "이번 주기: 모바일 게임\n- 시작 확인 | 실증: run 재현", "게임")
+                            "이번 주기: 모바일 게임\n"
+                            "- 시작 확인 | 실증: python3 verify_start.py", "게임")
     assert okm
     f._r1_targets = {11, 12}
     f._r1_responded = {11, 12}
@@ -1031,7 +1211,7 @@ def test_병합_참조재진술_백로그_반려_거짓완료차단(monkeypatch,
     f.current.status.goal = "게임"
     _okm, _nm = register_stage(f, "milestone",
                                "단계: 최소버전 → 완성\n이번 주기: 카드 게임 최소버전\n"
-                               "- 30턴 완주 | 실증: run 재현", "게임")
+                               "- 30턴 완주 | 실증: python3 verify_game.py", "게임")
     assert _okm, _nm
     ok, note = register_stage(f, "subtask",
                               "단위: 게임 로직 | 실증: pytest 통과\n"
@@ -1062,7 +1242,7 @@ def test_병합회의_영역과_백로그_한번에_등록_작업직행(monkeypa
     f.current.status.goal = "게임"
     _okm, _nm = register_stage(f, "milestone",
                                "단계: 최소버전 → 완성\n이번 주기: 리듬 게임 최소버전\n"
-                               "- 30턴 완주 | 실증: run 재현", "게임")
+                               "- 30턴 완주 | 실증: python3 verify_game.py", "게임")
     assert _okm, _nm
     ok, note = register_stage(f, "subtask",
                               "단위: 게임 로직 | 실증: pytest 통과\n"
@@ -1115,7 +1295,7 @@ def test_마일스톤_과정서술은_반려_실물로(monkeypatch, tmp_path):
     assert not ok0 and "과정 서술" in note0
     ok1, _n1 = register_stage(f, "milestone",
                               "단계: 프로토타입 → 완성\n이번 주기: 브라우저에서 도는 타이밍 게임 1판\n"
-                              "- 30턴 완주 | 실증: run 재현", "게임")
+                              "- 30턴 완주 | 실증: python3 verify_game.py", "게임")
     assert ok1                                                     # 실물은 통과
 
 
@@ -1150,7 +1330,7 @@ def test_로드맵은_회의결론으로_독립계획블록_폐지(monkeypatch):
     f._pipeline_notes = []
     ok, note = register_stage(f, "milestone",
                               "단계: 프로토타입 → 완성도\n이번 주기: 프로토타입\n"
-                              "- 브라우저 30턴 완주 | 실증: run으로 30턴 재현", "게임")
+                              "- 브라우저 30턴 완주 | 실증: python3 verify_game.py", "게임")
     assert ok, note
     assert "계획: 프로토타입 → 완성도" in note and "이번 주기 = 1단계" in note   # 결론 칸으로
     assert not any("[로드맵]" in str(n) for n in f._pipeline_notes)            # 독립 블록 소멸

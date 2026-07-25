@@ -16,9 +16,11 @@ Organt 생성(모델·권한·State)은 organt_builder로 주입받는다.
 """
 import asyncio
 import glob
+import hashlib
 import json
 import os
 import re
+import secrets
 import time
 import logging
 from typing import Dict, Optional
@@ -48,6 +50,29 @@ from .sys_recovery import _parse_goal_doc   # noqa: F401
 
 
 log = logging.getLogger("organt.sys")
+
+
+def _activity_fingerprint(rows) -> str:
+    """고정 길이 sliding activity log도 내용 변화를 구분하는 안정 서명."""
+    h = hashlib.blake2s(digest_size=12)
+    values = list(rows or [])
+    for row in values:
+        h.update(str(row).encode("utf-8", "replace"))
+        h.update(b"\0")
+    return f"{len(values)}:{h.hexdigest()}"
+
+
+def _changed_activity_payload(state: dict, rows):
+    """heartbeat 전송용 변화 감지. 같은 길이라도 guard가 밀려 tail/content가 바뀌면 새 목록을 보낸다."""
+    values = list(rows or [])
+    if not values:
+        return None
+    sig = _activity_fingerprint(values)
+    if sig == state.get("act_sig"):
+        return None
+    state["act_sig"] = sig
+    return values
+
 
 class Sys:
     def __init__(self, guide, guild_id, organt_builder, bot_info: Optional[Dict[int, str]] = None,
@@ -1859,7 +1884,15 @@ class Sys:
         통과시키며, 재시도 상한 뒤에도 실패하면 거짓 완료 대신 사람 확인 대기로 파킹한다.
         """
         from .rule.milestone import (claim_kick_target, iter_verify, next_milestone,
-                                     renegotiate_criterion, wrapup_done)
+                                     promote_final_locked_criteria, renegotiate_criterion,
+                                     workspace_artifact_stamp, write_revision, wrapup_done)
+        from .rule.evidence import (
+            direct_verifier_command, normalize_verifier_command,
+            verifier_command_hash, verifier_spec_hash,
+        )
+        # 최종 로드맵 주기(단일 주기 포함)에는 GOAL 잠금 조건이 active 분모로 승격된다. 복원된
+        # 이미-done 최종 주기도 여기서 다시 열리므로 아래 기존 direct/bot 검증기를 그대로 탄다.
+        promote_final_locked_criteria(flow)
         ms = next_milestone(flow)
         if (ms is None or ms.status != "open"
                 or self._backlog_in_progress(flow) is not None
@@ -1867,15 +1900,17 @@ class Sys:
             return False
         relays = getattr(flow, "backlog_relays", None) or {}
         # 07-22 계약: SubTask는 검증 게이트가 아니라 작업 묶음 — 장부 소진이 곧 완수다.
+        if not ms.subtasks:
+            return False
         for st in ms.subtasks:
-            if st.status in ("done", "superseded"):
-                continue
             relay = relays.get(st.st_id)
             if relay is None or not getattr(relay, "backlogs", None):
                 return False
-            # blocked는 "선행 필요"를 보존한 미완 백로그다. 검증은 현재 실행 가능분 소진 시 열지만,
-            # 이 SubTask와 마일스톤은 닫지 않는다 — 검증 뒤 보충 회의가 선행 백로그를 추가한다.
+            # 최종 계약 검증은 산출물이 더 바뀌지 않는 경계에서만 유효하다. blocked/open 하나라도
+            # 남으면 먼저 선행·보충 백로그를 해결하고, 모든 장부가 terminal인 뒤에만 verifier를 연다.
             if not relay.all_done():
+                return False
+            if st.status in ("done", "superseded"):
                 continue
             try:
                 from .rule.backlog import on_subtask_wrapup
@@ -1898,11 +1933,10 @@ class Sys:
         # verify는 역사적으로 "curl로 200 확인" 같은 자연어 절차도 허용한다. 순수 셸인 경우만 SYS가
         # 직접 실행(A), 자연어는 작업 봇을 구조적으로 깨워 기존 run+report_iter 경로를 밟게 한다(B).
         # 실패는 재검증 루프가 아니라 단계기계의 보충 SubTask 회의로 넘긴다.
-        direct = [c for c in pending
-                  if not re.search(r"[가-힣]", c.verify)
-                  and re.match(r"^\s*(?:curl|pytest|npm|node|python\d*|grep|test|\./|manage\.py)\b",
-                               c.verify, re.I)
-                  ]
+        direct = [
+            c for c in pending
+            if direct_verifier_command(c.verify, getattr(flow, "workspace", None))
+        ]
         results = []
         for c in direct:
             c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
@@ -1910,25 +1944,128 @@ class Sys:
                 getattr(flow, "workspace", None), c.verify, timeout=60)
             tail = ((out or "") + (("\n[stderr] " + err) if (err or "").strip() else ""))[-400:].strip()
             evidence = f"exit={rc} `{c.verify[:80]}`" + (f"\n{tail}" if tail else "")
-            results.append({"desc": c.desc, "passed": bool(ok),
-                            "evidence": evidence if ok else ""})
+            result = {"desc": c.desc, "passed": bool(ok),
+                      "evidence": evidence if ok else ""}
+            if ok:
+                result.update({
+                    "_sys_run_receipt": evidence,
+                    "_sys_run_receipt_id": "auto-" + secrets.token_hex(10),
+                    "_verified_command": c.verify,
+                    "_verified_command_hash": verifier_command_hash(c.verify),
+                    "_verified_spec_hash": verifier_spec_hash(c.desc, c.verify),
+                })
+            results.append(result)
             self._log("milestone_auto_verify", ms=ms.ms_id, desc=c.desc[:60],
                       attempt=c.verify_attempts, passed=bool(ok), rc=rc, reason=reason[:100])
         if results:
+            # 여러 direct 검사가 build 산출물 등을 만들 수 있으므로 전부 끝난 한 최종 workspace 버전에
+            # 성공 receipt를 함께 봉인한다. 조건마다 중간 stamp를 쓰면 뒤 검사 출력 때문에 앞 영수증이
+            # 즉시 stale이 되는 순서 의존이 생긴다.
+            final_epoch, final_stamp = write_revision(flow), workspace_artifact_stamp(flow)
+            for result in results:
+                if result.get("passed"):
+                    result["_verified_write_epoch"] = final_epoch
+                    result["_verified_artifact_stamp"] = final_stamp
             passed, _ = iter_verify(flow, ms, results)
             if passed:
                 wrapup_done(flow, ms)
                 return True
 
+        # canonical 자연어 GOAL은 최종 마일스톤 회의가 같은 desc로 비준한 별도 exact command가
+        # 있을 때만 challenge를 연다. 같은 actor가 release 시점에 임의 command를 제안해 문자열
+        # category만 맞추는 경로는 release 증거로 승격하지 않는다.
+        def _ratified(c):
+            command = normalize_verifier_command(
+                getattr(c, "ratified_verifier_command", ""))
+            if (not command
+                    or getattr(c, "ratified_verifier_command_hash", "")
+                    != verifier_command_hash(command)
+                    or getattr(c, "ratified_verifier_spec_hash", "")
+                    != verifier_spec_hash(c.desc, c.verify)
+                    or not direct_verifier_command(
+                        command, getattr(flow, "workspace", ""))):
+                return ""
+            return command
+
+        natural_release = [
+            c for c in ms.criteria
+            if not c.passed and c.status == "active"
+            and getattr(c, "release_lock", False) and c not in direct
+        ]
+        bot_release = [(c, _ratified(c)) for c in natural_release if _ratified(c)]
+        unratified_release = [c for c in natural_release if not _ratified(c)]
+        who = (int(getattr(getattr(flow, "current", None), "owner", 0) or 0)
+               or int(getattr(flow, "anchor", 0) or 0))
+        for c, ratified_command in bot_release:
+            c.verify_attempts += 1
+            iter_before = ms.iter_n
+            stamp = workspace_artifact_stamp(flow)
+            challenge = {
+                "token": secrets.token_hex(16),
+                "ms_id": ms.ms_id,
+                "desc": c.desc,
+                "verify": c.verify,
+                "verifier_command": ratified_command,
+                "verifier_command_hash": verifier_command_hash(ratified_command),
+                "verifier_spec_hash": verifier_spec_hash(c.desc, c.verify),
+                "verifier_seal": secrets.token_hex(16),
+                "verifier_actor": 0,
+                "verifier_epoch": write_revision(flow),
+                "verifier_stamp": stamp,
+                "verifier_used": False,
+                "verifier_fixed": True,
+                "verifier_structurally_ratified": True,
+            }
+            flow._release_verify_challenge = challenge
+            try:
+                await self.run_turn(
+                    flow, who,
+                    "[GOAL 최종 잠금 구조 검증 — 단일 조건] 아래 command는 최종 마일스톤 회의가 "
+                    "canonical 자연어 GOAL 조건과 같은 desc로 이미 비준해 SYS가 고정했습니다. "
+                    "새 명령을 제안하거나 바꾸지 말고 run(command=<아래 exact command>, "
+                    "evidence_for=<desc 원문>)으로 **한 글자도 바꾸지 않고 1회 실행**하세요. 응답의 "
+                    "`[SYS run receipt]` id를 report_iter(results='조건 | pass/fail | 관측 요지', "
+                    "receipt='run-...')로 같은 턴에 제출해야 합니다. 다른 명령·이전 영수증은 "
+                    "거부됩니다. 파일 수정은 하지 마세요."
+                    f"\n- desc(그대로 복사): {c.desc}\n"
+                    f"  canonical spec: {c.verify}\n"
+                    f"  exact ratified command: {ratified_command}",
+                    Kind.INFO, "worker")
+            finally:
+                if getattr(flow, "_release_verify_challenge", None) is challenge:
+                    flow._release_verify_challenge = None
+            if ms.status == "wrapup":
+                wrapup_done(flow, ms)
+                return True
+            if ms.iter_n == iter_before:
+                iter_verify(flow, ms, [{"desc": c.desc, "passed": False, "evidence": ""}])
+
+        if unratified_release:
+            for c in unratified_release:
+                c.verify_attempts += 1
+            _pnote = getattr(flow, "post_system", None)
+            if callable(_pnote):
+                try:
+                    _pnote(
+                        "[GOAL verifier 비준 필요] canonical 자연어 조건과 같은 desc에 exact executable "
+                        "verifier command를 둔 최종 마일스톤 수렴안이 필요합니다: "
+                        + " · ".join(c.desc[:60] for c in unratified_release[:6]))
+                except Exception:
+                    pass
+            iter_verify(
+                flow, ms,
+                [{"desc": c.desc, "passed": False, "evidence": ""}
+                 for c in unratified_release],
+            )
+
         bot_verify = [c for c in ms.criteria
                       if not c.passed and c.status == "active"
+                      and not getattr(c, "release_lock", False)
                       and c not in direct]
         if bot_verify:
             for c in bot_verify:
                 c.verify_attempts += 1
             iter_before = ms.iter_n
-            who = (int(getattr(getattr(flow, "current", None), "owner", 0) or 0)
-                   or int(getattr(flow, "anchor", 0) or 0))
             rows = "\n".join(
                 f"- desc(그대로 복사): {c.desc}\n  실증절차: {c.verify}" for c in bot_verify)
             await self.run_turn(
@@ -2159,6 +2296,7 @@ class Sys:
                 if flow is not None:   # [사람 개입] 실제 주입 snapshot만 성공 후 소비(revive·late arrival·micro 보존)
                     try:
                         _pi = []
+                        _ij_state_changed = False
                         if _prompt_info:
                             _cur = list((flow.pending_info or {}).get(organt_id) or [])
                             _npi = len(_prompt_info)
@@ -2172,6 +2310,7 @@ class Sys:
                                     flow.pending_info[organt_id] = _rest
                                 else:
                                     flow.pending_info.pop(organt_id, None)
+                                _ij_state_changed = True
                             else:
                                 self._log("interject_consume_deferred", organt=organt_id)
                         # [개입 소화 확인(2026-07-13, 감사 P4)] 이 턴 프롬프트로 전달된 사람 개입에
@@ -2187,6 +2326,7 @@ class Sys:
                                 _n = _rt.get(int(organt_id), 0)
                                 if _n < 1:
                                     _rt[int(organt_id)] = _n + 1
+                                    _ij_state_changed = True
                                     for _ij_one in _ij:
                                         flow.pending_info.setdefault(organt_id, []).append(
                                             "[재전달 — 직전 개입에 응답이 안 보였습니다] "
@@ -2194,12 +2334,21 @@ class Sys:
                                             + " (이번 턴 서두에 '[답변]' 문단으로 짧게 응답부터 하세요.)")
                                 else:
                                     _rt.pop(int(organt_id), None)
+                                    _ij_state_changed = True
                                     self._log("interject_unacked", organt=organt_id)
                             else:
                                 _rt.pop(int(organt_id), None)
+                                _ij_state_changed = True
                         # [미답 질문 해소] 리더가 [답변]을 실제로 냈으면 상시 재주입 종료
                         if organt_id == flow.leader and "[답변]" in (_out or "") and getattr(flow, "unanswered_questions", None):
                             flow.unanswered_questions = []
+                            _ij_state_changed = True
+                        # 소비와 재전달 생성/_ij_retry 갱신이 모두 끝난 한 시점의 스냅샷만 쓴다.
+                        # 중간 상태를 저장하면 재시작 때 ack된 개입이 부활하거나 retry 횟수가 되감긴다.
+                        if _ij_state_changed:
+                            _checkpoint = getattr(flow, "checkpoint_task", None)
+                            if callable(_checkpoint):
+                                _checkpoint()
                     except Exception:
                         pass
                 return _out
@@ -3051,8 +3200,9 @@ class Sys:
                     self._log("e2e_boundary_kick", ch=int(flow.user_channel or 0), n=_e2e_kicks[0])
                     _kick_note = ("\n\n[Task 경계 — 전수 검증] 모든 주기가 닫혔습니다. 마감 전에 **e2e_open을 "
                                   "실제로 호출**해 전수 검증을 개시하세요: ①산출물의 노출 표면·주 사용 경로를 "
-                                  "e2e_scope로 등록 ②각 항목을 실제 실행(run·브라우저)으로 검사해 e2e_result "
-                                  "제출(증거 필수) ③전 항목 제출 후 e2e_finish. **판정 없이는 complete_task가 "
+                                  "e2e_scope로 등록 ②각 항목을 실제 실행(run·브라우저)하되 run의 "
+                                  "evidence_for에 항목 id를 넣고, 그 receipt로 e2e_result 제출 "
+                                  "③전 항목 제출 후 e2e_finish. **판정 없이는 complete_task가 "
                                   "거부됩니다** — 결함이 나오면 복기 주기가 열리고, 그게 정상 경로입니다.")
                 elif _needs_kickoff():
                     _kicks += 1
@@ -3185,7 +3335,6 @@ class Sys:
             self._flow_no_deliverable = {}
         self._flow_no_deliverable[int(flow.user_channel or 0)] = bool(
             getattr(flow, "was_elect", False) and flow.current is None)
-        open_task_snap = None
         if flow.current is not None:
             flow.current.status.status = "중단"
             flow.current.status.result = (result or "")[:500]
@@ -3193,6 +3342,11 @@ class Sys:
                 await flow.refresh(flow.current)   # Discord 실패가 마감 꼬리를 끊지 않게(유령 스코프 방지)
             except Exception:
                 pass
+        # note_activity(1초)·heartbeat(8초) throttle 안에서 stop/완료가 오더라도 마지막 backlog 생각과
+        # 요청별 활동 suffix가 사라지지 않게, current를 스냅샷으로 접기 전에 최신 한 장을 강제 확정한다.
+        await self._flush_terminal_observability(flow)
+        open_task_snap = None
+        if flow.current is not None:
             open_task_snap = self._task_snapshot(flow, flow.current)
             flow.current = None
         # 프로젝트 요약 + 미완 Task 영속 갱신(다음 개입 때 맥락·이어가기 대상으로 제공).
@@ -3327,6 +3481,14 @@ class Sys:
                             self._apply_waiver(f, approve=False)
                 except Exception:
                     pass
+                # InterjectSignal은 호출자가 성공 반환 뒤 삭제한다. 그보다 먼저 큐와 waiver 파생 노트를
+                # 프로젝트에 즉시 체크포인트해, signal 삭제→다른 전이→러너 재시작 틈의 유실을 막는다.
+                try:
+                    _checkpoint = getattr(f, "checkpoint_task", None)
+                    if callable(_checkpoint):
+                        _checkpoint()
+                except Exception:
+                    pass
                 # [G4 해제 — 사용자 개입(B-03)] '연속 무응답' 하드블록은 사람의 진행 중 개입도 해제 트리거다
                 # (loop_escalated의 사용자 해제 패턴과 동형 — 사람이 온 것 자체가 '판정·방향'의 신호).
                 try:
@@ -3405,6 +3567,31 @@ class Sys:
                 return [x[0] for x in (getattr(f, "activity_log", None) or [])]
         return []
 
+    async def _flush_terminal_observability(self, flow):
+        """흐름 종결 직전의 마지막 생각을 Task 원장·HUD·요청별 기록에 한 장으로 확정한다.
+
+        ``Flow.note_activity``의 1초 체크포인트와 run-loop heartbeat의 8초 전송은 정상 실행 중
+        쓰기 폭주를 막기 위한 throttle이다. 중지/완료 경계까지 그 throttle을 적용하면 직전 생각은
+        메모리 backlog에는 있지만 프로젝트 스냅샷·ms_status·요청 activity archive에는 없는 창이
+        생긴다. 종결은 한 번뿐이므로 여기서는 throttle을 우회해 최신 원장을 저장하고 전송한다.
+        """
+        try:
+            from .rule.milestone import _ckpt
+            _ckpt(flow)
+        except Exception:
+            pass
+        try:
+            activity = [row[0] for row in (getattr(flow, "activity_log", None) or [])]
+            root_id = int(getattr(flow, "root_id", 0) or 0)
+            if root_id and activity:
+                actor = getattr(getattr(flow, "comm", None), "alive", None)
+                await self.guide.pick(
+                    root_id, touch=True, activity=activity,
+                    actor=(int(actor) if actor else None),
+                )
+        except Exception:
+            pass
+
     def _flow_actor(self, channel_id):
         """[진행 가시성] 이 채널 흐름에서 '지금 실제 베턴을 쥔 봇'(comm.alive) — 하트비트가 매체로 실어
         live_status.actor를 현재 일꾼으로 갱신한다(사용자: "작업 중 사람 바뀌는지"). 종전 to_id 고정은
@@ -3467,10 +3654,9 @@ class Sys:
                             _idle = self._flow_idle(inflight[_mid]["ch"])
                             _act = self._flow_activity(inflight[_mid]["ch"])
                             # 활동이 늘었을 때만 전체 목록 전송(변화 없으면 재전송 안 함 — 대역 절약).
-                            # 비었으면 None → payload의 마지막 활동 유지(재시작·소강에 안 지워져 깜빡임 방지).
-                            _send_act = _act if (_act and len(_act) != inflight[_mid].get("act_n")) else None
-                            if _send_act is not None:
-                                inflight[_mid]["act_n"] = len(_act)
+                            # Flow._ACT_GUARD(2000) 도달 뒤엔 sliding window 길이가 고정되므로 len 비교가
+                            # 영구 정지한다. 내용 서명으로 tail 교체도 감지한다. 비면 None → 마지막 활동 유지.
+                            _send_act = _changed_activity_payload(inflight[_mid], _act)
                             await guide.pick(_mid, touch=True, idle=int(_idle) if _idle is not None else 0,
                                              activity=_send_act, actor=self._flow_actor(inflight[_mid]["ch"]))
                     except Exception:

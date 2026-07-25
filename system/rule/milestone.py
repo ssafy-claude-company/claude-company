@@ -11,12 +11,18 @@
 미설정이면 기존 파이프라인 동작 불변. 저장은 최대 저장(계약 §9): 모든 상태가 to_dict/from_dict로
 체크포인트에 동승하고, 전이마다 flow.log 이벤트로 재구축 가능해야 한다.
 """
+import hashlib
 import json
 import os
 import re
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+from .evidence import (
+    direct_verifier_command, looks_like_verification_command,
+    normalize_verifier_command, verifier_command_hash, verifier_spec_hash,
+)
 
 __all__ = [
     "pipeline_on", "Criterion", "SubTask", "Milestone",
@@ -27,6 +33,9 @@ __all__ = [
     "parse_iter_results", "rule_report_iter",
     "renegotiate_criterion", "approve_waiver", "rule_renegotiate",
     "extract_consensus", "flush_state_db", "canonical_parent_contract",
+    "promote_final_locked_criteria", "goal_locked_release_error",
+    "workspace_artifact_stamp", "write_revision", "invalidate_e2e_state",
+    "work_ledger_release_error",
 ]
 
 
@@ -55,6 +64,25 @@ class Criterion:
     status: str = "active"   # active | blocked_pending | waived
     block_reason: str = ""   # 왜 불가능한가(인프라 제약 등) — 사람 승인 판단의 근거
     verify_attempts: int = 0  # SYS 구조검증 횟수 — 재시작 뒤에도 실패 상한을 보존
+    # 최종 로드맵 주기에서 GOAL locked_criteria가 active 분모로 승격된 항목. 중간 주기에는 False.
+    # True인 조건은 하위 회의가 포기·이월할 수 없고 실제 증거 있는 pass만 Task release를 연다.
+    release_lock: bool = False
+    # release_lock 증거의 발급 주체·단일 사용 영수증·검증 당시 산출물 버전. 일반 report_iter 문자열은
+    # 이 필드를 만들 수 없으며, SYS 실행기가 발급한 rc=0 영수증만 채운다.
+    evidence_source: str = ""
+    receipt_id: str = ""
+    verified_write_epoch: int = -1
+    verified_artifact_stamp: str = ""
+    # 실제 subprocess 원문과 그 hash, 그리고 (desc, verify) 계약 hash. target 문자열만 맞춘 무관한
+    # 성공 명령의 영수증을 복원 뒤에도 진짜 실증으로 오인하지 않게 최대 저장한다.
+    verified_command: str = ""
+    verified_command_hash: str = ""
+    verified_spec_hash: str = ""
+    # canonical GOAL verify가 자연어여도 최종 마일스톤 회의가 같은 desc에 별도 exact command를
+    # 비준할 수 있다. canonical spec을 덮지 않고 이 immutable 결속을 별도 정본으로 보존한다.
+    ratified_verifier_command: str = ""
+    ratified_verifier_command_hash: str = ""
+    ratified_verifier_spec_hash: str = ""
 
 
 @dataclass
@@ -295,7 +323,8 @@ def _ms_one(flow, ms, relays):
     ms_cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
               "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in ms.criteria[:15]]
     # 상위 GOAL 계약은 관측용 별도 필드 — met/total 분모에는 절대 합치지 않는다.
-    locked_cr = [{"d": c.desc[:80], "v": (c.verify or "")[:160]}
+    locked_cr = [{"d": c.desc[:80], "v": (c.verify or "")[:160], "p": bool(c.passed),
+                  "e": (c.evidence or "")[:240]}
                  for c in (getattr(ms, "locked_criteria", None) or [])[:15]]
     return {"goal": ms.goal[:140], "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
             "cr": ms_cr, "locked_cr": locked_cr, "sts": sts}
@@ -484,6 +513,12 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
             if flow.log:
                 flow.log("ms_superseded", ms=_old.ms_id, by=ms.ms_id)
     flow.milestones.append(ms)
+    # 경계 판정 뒤 새 구현 주기가 생긴 순간 이전 checklist/results/verdict는 다른 산출물 버전의 값이다.
+    # e2e_fail 복기뿐 아니라 수동 재수립도 동일하게 fresh e2e를 요구한다.
+    invalidate_e2e_state(flow, f"새 마일스톤 {ms.ms_id}")
+    # 로드맵의 마지막 주기(로드맵이 없으면 이 단일 주기)에서만 상위 GOAL 조건을 실제 검증 분모로
+    # 승격한다. 중간 주기의 denominator는 그대로이고, 복원판은 같은 함수를 실행 관문에서 다시 부른다.
+    promote_final_locked_criteria(flow, checkpoint=False)
     _ckpt(flow)
     if flow.log:
         flow.log("ms_open", ms=ms.ms_id, goal=ms.goal[:80], criteria=len(ms.criteria),
@@ -547,6 +582,78 @@ def _backlogs_pending(flow, obj):
     return out
 
 
+def _release_boundary_ready(flow, obj) -> bool:
+    """GOAL release 증거는 최종 산출물 상태에서만 발급 — 모든 하위 장부와 단위가 먼저 종결돼야 한다."""
+    if not isinstance(obj, Milestone) or not obj.subtasks or _backlogs_pending(flow, obj):
+        return False
+    rels = getattr(flow, "backlog_relays", None) or {}
+    return all(
+        st.status in ("done", "superseded")
+        and rels.get(st.st_id) is not None
+        and bool(getattr(rels[st.st_id], "backlogs", None))
+        and all(b.status in ("done", "dropped") for b in rels[st.st_id].backlogs)
+        for st in obj.subtasks
+    )
+
+
+def work_ledger_release_error(flow, repair=False):
+    """Task release 전에 모든 유효 마일스톤의 실제 작업 장부가 존재·종결했는지 확인한다.
+
+    정상 실행기는 빈 SubTask/relay/backlog에서 검증을 시작하지 않지만, 구·손상 체크포인트가 이미
+    ``done``이면 그 실행기 자체를 건너뛸 수 있다. e2e/complete 경계도 같은 불변식을 독립 확인하고,
+    ``repair=True``이면 잘못 닫힌 주기/단위를 다시 열어 회의→백로그 실행 경로로 복귀시킨다.
+    """
+    relays = getattr(flow, "backlog_relays", None) or {}
+    problems = []
+    reopen_ms, reopen_st = [], []
+    for ms in (getattr(flow, "milestones", None) or []):
+        if ms.status == "superseded":
+            continue
+        subtasks = [st for st in (getattr(ms, "subtasks", None) or [])
+                    if st.status != "superseded"]
+        if not subtasks:
+            problems.append(f"{ms.ms_id}: SubTask 0개")
+            reopen_ms.append(ms)
+            continue
+        for st in subtasks:
+            relay = relays.get(st.st_id)
+            backlogs = list(getattr(relay, "backlogs", None) or []) if relay is not None else []
+            if not backlogs:
+                problems.append(f"{st.st_id}: 백로그 0개")
+                reopen_ms.append(ms)
+                reopen_st.append(st)
+                continue
+            pending = [b.backlog_id for b in backlogs
+                       if b.status not in ("done", "dropped")]
+            if pending:
+                problems.append(f"{st.st_id}: 미종결 {', '.join(pending[:3])}")
+                reopen_ms.append(ms)
+                reopen_st.append(st)
+            elif st.status not in ("done", "superseded"):
+                problems.append(f"{st.st_id}: 단위 미완")
+                reopen_ms.append(ms)
+                reopen_st.append(st)
+    if not problems:
+        return None
+    if repair:
+        changed = False
+        for ms in {id(x): x for x in reopen_ms}.values():
+            if ms.status in ("done", "wrapup"):
+                ms.status, ms.iter_stuck = "open", 0
+                changed = True
+        for st in {id(x): x for x in reopen_st}.values():
+            if st.status in ("done", "wrapup"):
+                st.status, st.iter_stuck = "open", 0
+                changed = True
+        if changed:
+            invalidate_e2e_state(flow, "작업 장부 누락/미종결 복원")
+            if getattr(flow, "log", None):
+                flow.log("work_ledger_release_reopened", problems=len(problems))
+            _ckpt(flow)
+    return ("작업 장부 미완 — 마일스톤마다 SubTask가 1개 이상, 각 단위마다 백로그가 1개 이상 "
+            "존재하고 모두 완료/중단되어야 합니다: " + " · ".join(problems[:6]))
+
+
 def iter_verify(flow, obj, results):
     """한 iter의 완수조건 검증. results = [{desc, passed, evidence}] — 봇들이 run으로 실증한 결과.
 
@@ -581,7 +688,9 @@ def iter_verify(flow, obj, results):
         return n
 
     _unclaimed = [c for c in obj.criteria if not c.passed and c.status != "waived"]
-    _unmatched, _rereported = [], []
+    _unmatched, _rereported, _untrusted_release = [], [], []
+    _current_epoch = write_revision(flow)
+    _current_stamp = workspace_artifact_stamp(flow)
     for r in (results or []):
         d = str(r.get("desc") or "").strip()
         c = by_desc.get(d)
@@ -621,7 +730,38 @@ def iter_verify(flow, obj, results):
             _unclaimed.remove(c)   # 결과 여러 건이 같은 조건을 중복 점유하지 않게
         ev = str(r.get("evidence") or "").strip()
         if bool(r.get("passed")) and ev:
-            c.passed, c.evidence = True, ev[:400]
+            if getattr(c, "release_lock", False):
+                # 공개 report_iter의 문자열은 증거가 아니다. SYS direct verifier 또는 정확한 검증 challenge
+                # 안에서 run 도구가 발급한 단일사용 rc=0 receipt만 private marker를 가질 수 있다.
+                verified_command = str(r.get("_verified_command") or "").strip()
+                command_hash = str(r.get("_verified_command_hash") or "")
+                spec_hash = str(r.get("_verified_spec_hash") or "")
+                trusted = (
+                    bool(r.get("_sys_run_receipt_id"))
+                    and bool(r.get("_sys_run_receipt"))
+                    and bool(verified_command)
+                    and command_hash == verifier_command_hash(verified_command)
+                    and spec_hash == verifier_spec_hash(c.desc, c.verify)
+                    and int(r.get("_verified_write_epoch", -2)) == _current_epoch
+                    and bool(_current_stamp)
+                    and str(r.get("_verified_artifact_stamp") or "") == _current_stamp
+                    and _release_boundary_ready(flow, obj)
+                )
+                if not trusted:
+                    _untrusted_release.append(c.desc[:60])
+                    continue
+                c.passed, c.evidence = True, str(r["_sys_run_receipt"])[:400]
+                c.evidence_source = "sys_run"
+                c.receipt_id = str(r["_sys_run_receipt_id"])[:120]
+                c.verified_write_epoch = _current_epoch
+                c.verified_artifact_stamp = _current_stamp
+                c.verified_command = verified_command[:500]
+                c.verified_command_hash = command_hash
+                c.verified_spec_hash = spec_hash
+            else:
+                c.passed, c.evidence = True, ev[:400]
+    if isinstance(obj, Milestone):
+        _sync_goal_locked_evidence(flow, obj)
     if _unmatched and flow.log:
         flow.log("iter_result_unmatched", id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""),
                  n=len(_unmatched), descs=_unmatched[:4])
@@ -673,6 +813,10 @@ def iter_verify(flow, obj, results):
         obj.iter_stuck += 1
     _ckpt(flow)
     note = "미충족: " + " · ".join(d[:40] for d in remain)
+    if _untrusted_release:
+        note += ("\n[GOAL 잠금 증거 거부] 임의 report_iter evidence나 백로그 종결 전 영수증으로는 "
+                 "최종 계약을 열 수 없습니다. 모든 백로그가 끝난 뒤 SYS 자동검증이 발급한 rc=0 run "
+                 "receipt로 다시 실증하세요: " + " · ".join(_untrusted_release[:4]))
     if _rereported:
         note += ("\n[이미 충족된 조건 재보고 " + str(len(_rereported)) + "건 — 접수돼 있습니다] "
                  "그 조건은 다시 보고하지 말고 위 미충족 조건만 진행하세요: "
@@ -713,6 +857,340 @@ def roadmap_phases(flow):
     return out
 
 
+_STAMP_SKIP_DIRS = {
+    ".git", ".collab", ".cache", ".mypy_cache", ".npm", ".pytest_cache",
+    ".ruff_cache", ".tox", ".venv", "__pycache__", "coverage", "htmlcov",
+    "node_modules", "playwright-report", "test-results", "venv",
+}
+_STAMP_SKIP_SUFFIXES = {
+    ".coverage", ".log", ".pid", ".pyc", ".pyo", ".swp", ".tmp",
+}
+_STAMP_BROAD_ROOTS = {"/", "/tmp", "/var", "/var/tmp", "/home", "/root", "/opt", "/srv"}
+
+
+def write_revision(flow) -> int:
+    """permissions가 영속하는 Write/Edit 누계. release receipt와 현재 산출물 사이 TOCTOU 1차 epoch."""
+    total = 0
+    for value in (getattr(flow, "writes_by_role", None) or {}).values():
+        try:
+            total += int(value or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def workspace_artifact_stamp(flow) -> str:
+    """작업공간의 authoring 입력 manifest hash.
+
+    캐시·의존성·테스트 런타임 출력은 제외하되 소스·설정·정적 자산은 내용까지 해시한다. run 도구가
+    Python/sed 같은 간접 쓰기로 permissions의 Write/Edit epoch를 우회해도 최종 release/e2e가 이전
+    영수증을 재사용하지 못하게 하는 2차 버전이다. 읽기 실패도 manifest에 표식으로 포함해 fail-open하지
+    않는다.
+    """
+    root = str(getattr(flow, "workspace", "") or "").strip()
+    try:
+        root = os.path.realpath(root)
+    except OSError:
+        return ""
+    if not root or root in _STAMP_BROAD_ROOTS or not os.path.isdir(root):
+        return ""
+    h = hashlib.sha256()
+    try:
+        for base, dirs, files in os.walk(root, topdown=True, followlinks=False):
+            dirs[:] = sorted(d for d in dirs if d not in _STAMP_SKIP_DIRS)
+            for name in sorted(files):
+                if name in (".DS_Store",) or any(name.endswith(s) for s in _STAMP_SKIP_SUFFIXES):
+                    continue
+                path = os.path.join(base, name)
+                rel = os.path.relpath(path, root).replace(os.sep, "/")
+                try:
+                    if os.path.islink(path):
+                        link_hash = hashlib.sha256(
+                            ("LINK:" + os.readlink(path)).encode("utf-8", "replace")
+                        )
+                        target = os.path.realpath(path)
+                        # regular-file symlink는 링크 문자열뿐 아니라 실제 실행되는 target 내용도
+                        # 결속한다. target이 바뀌었는데 receipt가 살아남는 구멍을 닫는다.
+                        if os.path.isfile(target):
+                            link_hash.update(b"\0TARGET:")
+                            with open(target, "rb") as fp:
+                                for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+                                    link_hash.update(chunk)
+                        digest = link_hash.digest()
+                    else:
+                        file_hash = hashlib.sha256()
+                        with open(path, "rb") as fp:
+                            # 큰 파일도 표본이 아니라 전체 내용을 스트리밍한다. 앞·뒤+크기 표본은
+                            # 동일 크기 파일의 중간 바이트 변경을 놓쳐 release/e2e 영수증을 이전
+                            # 산출물에 재사용하게 만든다. chunk 단위라 메모리는 파일 크기와 무관하다.
+                            for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+                                file_hash.update(chunk)
+                        digest = file_hash.digest()
+                    h.update(rel.encode("utf-8", "surrogateescape") + b"\0")
+                    h.update(digest)
+                except (OSError, ValueError) as exc:
+                    h.update(rel.encode("utf-8", "surrogateescape") + b"\0ERR:")
+                    h.update(type(exc).__name__.encode())
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def invalidate_e2e_state(flow, reason: str = "") -> bool:
+    """새 마일스톤/산출물 버전이 생기면 이전 경계의 checklist·results·verdict를 원자적으로 폐기."""
+    had = any(getattr(flow, name, None) is not None
+              for name in ("e2e_checklist", "e2e_results", "wrapup_state"))
+    flow.e2e_checklist = None
+    flow.e2e_results = None
+    flow.wrapup_state = None
+    flow._e2e_receipt_nonce = None
+    if hasattr(flow, "_run_receipts"):
+        flow._run_receipts = {}
+    if had and getattr(flow, "log", None):
+        flow.log("e2e_invalidated", reason=str(reason or "")[:100])
+    return had
+
+
+def _goal_locked_refs(flow):
+    """Task의 상위 GOAL 조건 정본.
+
+    현재 GOAL.md/current acceptance를 먼저 두고 저장된 모든 locked refs를 합친다. 같은 desc의 구
+    체크포인트가 다른 verify를 들고 있으면 최신 정본이 우선한다. 저장본 일부가 존재한다는 이유로 정본의
+    나머지 조건이 통째로 가려지지 않으며, 정본에서 읽히지 않는 고유 저장 조건은 보수적으로 유지한다.
+    """
+    canonical = _mk_criteria(_goal_acceptance_entries(flow))
+    stored = []
+    for ms in (getattr(flow, "milestones", None) or []):
+        stored.extend(list(getattr(ms, "locked_criteria", None) or []))
+    out, seen_desc = [], set()
+    for c in canonical + stored:
+        desc, verify = str(c.desc or "").strip(), str(c.verify or "").strip()
+        if not desc or not verify or desc in seen_desc:
+            continue
+        seen_desc.add(desc)
+        out.append(c)
+    return out
+
+
+def _final_release_milestone(flow):
+    """현재 상태에서 최종 GOAL 인수 분모를 맡을 마일스톤. 중간 로드맵이면 None."""
+    live = [m for m in (getattr(flow, "milestones", None) or [])
+            if m.status != "superseded"]
+    if not live:
+        return None
+    phases = roadmap_phases(flow)
+    done_n = sum(1 for m in live if m.status == "done")
+    active = next((m for m in live if m.status != "done"), None)
+    if active is not None:
+        if phases and done_n + 1 < len(phases):
+            return None
+        return active
+    if phases and done_n < len(phases):
+        return None
+    return live[-1]
+
+
+def _sync_goal_locked_evidence(flow, target=None):
+    """최종 active 조건의 실증 상태를 비분모 locked 참조에도 미러한다(HUD·복구 원장 일치)."""
+    target = target or _final_release_milestone(flow)
+    if target is None:
+        return 0
+    by_key = {(c.desc.strip(), c.verify.strip()): c for c in target.criteria
+              if getattr(c, "release_lock", False)}
+    changed = 0
+    for ms in (getattr(flow, "milestones", None) or []):
+        for ref in (getattr(ms, "locked_criteria", None) or []):
+            src = by_key.get((ref.desc.strip(), ref.verify.strip()))
+            if src is None:
+                continue
+            state = (
+                bool(src.passed), str(src.evidence or ""), str(src.status or "active"),
+                str(getattr(src, "evidence_source", "") or ""),
+                str(getattr(src, "receipt_id", "") or ""),
+                int(getattr(src, "verified_write_epoch", -1)),
+                str(getattr(src, "verified_artifact_stamp", "") or ""),
+                str(getattr(src, "verified_command", "") or ""),
+                str(getattr(src, "verified_command_hash", "") or ""),
+                str(getattr(src, "verified_spec_hash", "") or ""),
+                str(getattr(src, "ratified_verifier_command", "") or ""),
+                str(getattr(src, "ratified_verifier_command_hash", "") or ""),
+                str(getattr(src, "ratified_verifier_spec_hash", "") or ""),
+            )
+            old = (
+                bool(ref.passed), str(ref.evidence or ""), str(ref.status or "active"),
+                str(getattr(ref, "evidence_source", "") or ""),
+                str(getattr(ref, "receipt_id", "") or ""),
+                int(getattr(ref, "verified_write_epoch", -1)),
+                str(getattr(ref, "verified_artifact_stamp", "") or ""),
+                str(getattr(ref, "verified_command", "") or ""),
+                str(getattr(ref, "verified_command_hash", "") or ""),
+                str(getattr(ref, "verified_spec_hash", "") or ""),
+                str(getattr(ref, "ratified_verifier_command", "") or ""),
+                str(getattr(ref, "ratified_verifier_command_hash", "") or ""),
+                str(getattr(ref, "ratified_verifier_spec_hash", "") or ""),
+            )
+            if old != state:
+                (ref.passed, ref.evidence, ref.status, ref.evidence_source, ref.receipt_id,
+                 ref.verified_write_epoch, ref.verified_artifact_stamp,
+                 ref.verified_command, ref.verified_command_hash,
+                 ref.verified_spec_hash, ref.ratified_verifier_command,
+                 ref.ratified_verifier_command_hash,
+                 ref.ratified_verifier_spec_hash) = state
+                ref.block_reason = ""
+                changed += 1
+    return changed
+
+
+def promote_final_locked_criteria(flow, checkpoint=True) -> int:
+    """GOAL 잠금 조건을 **최종 주기에서만** active 검증 조건으로 승격한다.
+
+    복원된 구 체크포인트처럼 최종 주기가 이미 done이어도 증거 없는 잠금 조건이 새로 발견되면 open으로
+    되돌린다. 같은 desc의 하위 조건이 verify를 바꿨다면 중복 desc를 만들지 않고 상위 verify가 최종
+    계약으로 우선한다. 정확히 같은 조건은 재사용해 불필요한 분모 중복을 막는다.
+    """
+    refs = _goal_locked_refs(flow)
+    target = _final_release_milestone(flow)
+    if not refs or target is None:
+        return 0
+    changed = 0
+    needs_verify = False
+    # 부분/구 locked snapshot도 정본 우선 합집합으로 복구한다. 정확히 같은 참조의 실증 상태는 보존하고,
+    # 같은 desc의 낡은 verify는 정본으로 교체한다.
+    for ms in (getattr(flow, "milestones", None) or []):
+        existing = {(c.desc.strip(), c.verify.strip()): c
+                    for c in (getattr(ms, "locked_criteria", None) or [])}
+        merged = []
+        for ref in refs:
+            exact_ref = existing.get((ref.desc.strip(), ref.verify.strip()))
+            merged.append(exact_ref or Criterion(desc=ref.desc, verify=ref.verify))
+        if [(c.desc, c.verify) for c in merged] != [
+                (c.desc, c.verify) for c in (getattr(ms, "locked_criteria", None) or [])]:
+            ms.locked_criteria = merged
+            changed += 1
+    current_epoch = write_revision(flow)
+    current_stamp = workspace_artifact_stamp(flow)
+    for ref in refs:
+        exact = next((c for c in target.criteria
+                      if c.desc.strip() == ref.desc.strip()
+                      and c.verify.strip() == ref.verify.strip()), None)
+        if exact is None:
+            same_desc = next((c for c in target.criteria
+                              if c.desc.strip() == ref.desc.strip()), None)
+            if same_desc is not None:
+                # desc는 report_iter의 식별자라 중복할 수 없다. canonical 자연어 GOAL spec은 그대로
+                # 복원하되, 최종 마일스톤 *회의가 비준한* same-desc exact command는 별도 immutable
+                # ratification으로 먼저 보존한다(작업 전이라 script가 아직 없어도 argv 계약은 검사).
+                ratified = direct_verifier_command(
+                    same_desc.verify, getattr(flow, "workspace", ""),
+                    require_existing=False,
+                )
+                if ratified and not direct_verifier_command(
+                        ref.verify, getattr(flow, "workspace", ""),
+                        require_existing=False):
+                    existing_ratified = str(
+                        getattr(same_desc, "ratified_verifier_command", "") or "")
+                    if not existing_ratified or existing_ratified == ratified:
+                        same_desc.ratified_verifier_command = ratified
+                        same_desc.ratified_verifier_command_hash = verifier_command_hash(ratified)
+                        same_desc.ratified_verifier_spec_hash = verifier_spec_hash(
+                            ref.desc, ref.verify)
+                if flow.log:
+                    flow.log("goal_lock_contract_override", ms=target.ms_id, desc=ref.desc[:60])
+                same_desc.verify = ref.verify
+                same_desc.passed, same_desc.evidence = False, ""
+                same_desc.status, same_desc.block_reason = "active", ""
+                same_desc.evidence_source, same_desc.receipt_id = "", ""
+                same_desc.verified_write_epoch, same_desc.verified_artifact_stamp = -1, ""
+                same_desc.verified_command = ""
+                same_desc.verified_command_hash = same_desc.verified_spec_hash = ""
+                same_desc.release_lock = True
+                exact = same_desc
+            else:
+                exact = Criterion(desc=ref.desc, verify=ref.verify, release_lock=True)
+                target.criteria.append(exact)
+            changed += 1
+            needs_verify = True
+        elif not getattr(exact, "release_lock", False):
+            exact.release_lock = True
+            changed += 1
+        # 상위 잠금은 waived/blocked·임의 evidence·옛 산출물 영수증으로 우회할 수 없다.
+        valid_receipt = (
+            exact.passed
+            and str(exact.evidence or "").strip()
+            and getattr(exact, "evidence_source", "") == "sys_run"
+            and bool(getattr(exact, "receipt_id", ""))
+            and int(getattr(exact, "verified_write_epoch", -1)) == current_epoch
+            and bool(current_stamp)
+            and getattr(exact, "verified_artifact_stamp", "") == current_stamp
+            and bool(getattr(exact, "verified_command", ""))
+            and getattr(exact, "verified_command_hash", "")
+            == verifier_command_hash(getattr(exact, "verified_command", ""))
+            and getattr(exact, "verified_spec_hash", "")
+            == verifier_spec_hash(exact.desc, exact.verify)
+        )
+        if not valid_receipt:
+            if exact.passed or exact.evidence or exact.status != "active" or exact.block_reason:
+                changed += 1
+            exact.passed, exact.evidence = False, ""
+            exact.status, exact.block_reason = "active", ""
+            exact.evidence_source, exact.receipt_id = "", ""
+            exact.verified_write_epoch, exact.verified_artifact_stamp = -1, ""
+            exact.verified_command = ""
+            exact.verified_command_hash = exact.verified_spec_hash = ""
+            needs_verify = True
+    if needs_verify and target.status in ("wrapup", "done"):
+        target.status = "open"
+        target.iter_stuck = 0
+        changed += 1
+        invalidate_e2e_state(flow, "GOAL 잠금 재실증 필요")
+        if flow.log:
+            flow.log("goal_lock_final_reopened", ms=target.ms_id, criteria=len(refs))
+    changed += _sync_goal_locked_evidence(flow, target)
+    if changed:
+        _pnote(flow, f"[GOAL 최종 인수] 상위 잠금 조건 {len(refs)}건을 {target.ms_id} 실증 분모로 확정")
+        if flow.log:
+            flow.log("goal_lock_promoted", ms=target.ms_id, criteria=len(refs), reopened=needs_verify)
+        if checkpoint:
+            _ckpt(flow)
+    return changed
+
+
+def goal_locked_release_error(flow):
+    """증거 없는 GOAL 잠금 조건이 있으면 최종 e2e/complete_task 차단 사유를 반환한다."""
+    promote_final_locked_criteria(flow)
+    refs = _goal_locked_refs(flow)
+    if not refs:
+        return None
+    target = _final_release_milestone(flow)
+    if target is None:
+        return "GOAL 잠금 조건은 로드맵 최종 주기에서 실증해야 합니다."
+    active = {(c.desc.strip(), c.verify.strip()): c for c in target.criteria
+              if getattr(c, "release_lock", False)}
+    current_epoch = write_revision(flow)
+    current_stamp = workspace_artifact_stamp(flow)
+    missing = []
+    for ref in refs:
+        c = active.get((ref.desc.strip(), ref.verify.strip()))
+        if (c is None or not c.passed or not str(c.evidence or "").strip()
+                or getattr(c, "evidence_source", "") != "sys_run"
+                or not getattr(c, "receipt_id", "")
+                or int(getattr(c, "verified_write_epoch", -1)) != current_epoch
+                or not current_stamp
+                or getattr(c, "verified_artifact_stamp", "") != current_stamp
+                or not getattr(c, "verified_command", "")
+                or getattr(c, "verified_command_hash", "")
+                != verifier_command_hash(getattr(c, "verified_command", ""))
+                or getattr(c, "verified_spec_hash", "")
+                != verifier_spec_hash(c.desc, c.verify)):
+            missing.append(ref)
+    if not missing:
+        _sync_goal_locked_evidence(flow, target)
+        return None
+    return ("GOAL 잠금 조건 실증 미완: "
+            + " · ".join(f"{c.desc[:48]} (`{c.verify[:70]}`)" for c in missing[:5])
+            + " — 최종 주기의 기존 마일스톤 검증 경로에서 실제 run 증거로 통과해야 합니다.")
+
+
 def defer_criterion(flow, obj, c, reason: str):
     """[조건 이월 — 사람 개입 없는 1차 해소(2026-07-20, 사용자: '개입 최대한 줄여')] 이번 주기 범위
     밖 조건을 '다음 주기로 이월'한다 — 잣대를 버리는 게 아니라 옮기는 것: 조건이 obj.carried 원장에
@@ -720,7 +1198,8 @@ def defer_criterion(flow, obj, c, reason: str):
     완료 참칭 불가). 성립 조건(전부): ①마일스톤 조건일 것 ②미충족일 것 ③로드맵에 받아줄 후속
     phase가 있을 것 ④이월 후에도 이번 주기에 잣대가 최소 1개 남을 것. 못 옮기면 None(호출측이
     사람 경로로 — 그때만 최후수단)."""
-    if not isinstance(obj, Milestone) or c.passed or c.status == "waived":
+    if (not isinstance(obj, Milestone) or c.passed or c.status == "waived"
+            or getattr(c, "release_lock", False)):
         return None
     phases = roadmap_phases(flow)
     done_n = sum(1 for m in (getattr(flow, "milestones", None) or []) if m.status == "done")
@@ -769,6 +1248,9 @@ def renegotiate_criterion(flow, obj, target: str, reason: str) -> str:
         return f"이미 포기(waived)된 조건입니다: {c.desc[:40]}"
     if c.passed:
         return f"이미 충족된 조건입니다(재협상 불요): {c.desc[:40]}"
+    if getattr(c, "release_lock", False):
+        return (f"상위 GOAL 잠금 조건은 이월·포기할 수 없습니다: {c.desc[:40]} — "
+                f"실제 실증 `{c.verify[:80]}`을 통과해야 Task 최종 release가 열립니다.")
     deferred = defer_criterion(flow, obj, c, reason)
     if deferred:
         return deferred
@@ -830,6 +1312,13 @@ def approve_waiver(flow, obj, target: str, approve: bool = True) -> str:
               and x.status == "blocked_pending"), None)
     if c is None:
         return f"승인 대기 중인 재협상 조건을 못 찾음: {target[:40]}"
+    if getattr(c, "release_lock", False):
+        # 구 체크포인트·외부 복원에서 blocked_pending이 남아 있어도 사람 승인 경로가 상위 계약을
+        # 포기시키는 우회로가 되면 안 된다. 잠금을 active로 복구하고 실제 verify만 출구로 둔다.
+        c.status, c.block_reason = "active", ""
+        _ckpt(flow)
+        return (f"상위 GOAL 잠금 조건은 포기 승인할 수 없습니다: {c.desc[:40]} — "
+                f"실제 실증 `{c.verify[:80]}`을 통과해야 합니다.")
     c.status = "waived" if approve else "active"
     oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
     if flow.log:
@@ -917,7 +1406,25 @@ def _replan_defect_count(origin) -> int:
 def ms_replan(flow, defects) -> Optional[Milestone]:
     """e2e 전수 실패 → 결함 목록으로 새 마일스톤을 연다. 조건 초안은 결함의 부정형(각 결함 해소를
     조건으로) — **확정은 회의 몫**(조건 결정은 turn-taking 회의, 계약 §4). 여기는 진입점만."""
-    ds = [str(d).strip() for d in (defects or []) if str(d).strip()]
+    rows = []
+    for defect in (defects or []):
+        if isinstance(defect, dict):
+            line = (
+                f"({defect.get('kind')}) {str(defect.get('spec') or '')[:60]} — "
+                f"관측: {str(defect.get('observed') or '')[:60]}"
+            )
+            command = normalize_verifier_command(defect.get("verifier_command"))
+            # 실패 항목에 SYS가 이미 결속한 exact verifier가 있으면 보충 마일스톤도 같은 재현
+            # 명령을 계약으로 이어받는다. 자연어 절차로 되돌아가 다음 e2e_open을 막지 않는다.
+            if command and not looks_like_verification_command(
+                    command, getattr(flow, "workspace", "")):
+                command = ""
+            rows.append((line.strip(), command))
+        else:
+            line = str(defect).strip()
+            if line:
+                rows.append((line, ""))
+    ds = [line for line, _command in rows if line]
     if not ds:
         return None
     # [복기 진전 게이트(2026-07-20, 사용자: '무한반복·불안정 다 잡고 e2e — 비용 트레이드오프')]
@@ -940,8 +1447,13 @@ def ms_replan(flow, defects) -> Optional[Milestone]:
         _pnote(flow, f"[e2e 복기 정체] 결함 {len(ds)}건이 복기 {_stuck}회째 줄지 않습니다 — 같은 접근의 "
                      "반복을 멈춥니다(사람 확인 필요: 요청 구체화 또는 재개로 방향 제시).")
         return None
-    entries = [{"desc": f"결함 해소: {d[:80]}",
-                "verify": f"run으로 재현 절차 재실행 → 재현 0회 확인: {d[:120]}"} for d in ds]
+    entries = [
+        {
+            "desc": f"결함 해소: {line[:80]}",
+            "verify": command or f"run으로 재현 절차 재실행 → 재현 0회 확인: {line[:120]}",
+        }
+        for line, command in rows
+    ]
     ms = open_milestone(flow, goal=f"e2e 결함 {len(ds)}건 해소", criteria_entries=entries,
                         origin="e2e:" + " | ".join(d[:60] for d in ds)[:400])
     if isinstance(ms, str):        # 게이트 거부(이론상 없음 — 방어)
@@ -1488,7 +2000,9 @@ def stage_draft_template(stage, agenda=""):
                       "이번 주기: ⟦이번에 완성해 사용자에게 보여줄 딱 하나⟧\n\n완수조건:\n"
                       "(주의: **'이번 주기' 범위의 조건만** — 뒤 단계 몫(모션 세부·디자인 토큰 등 완제품 "
                       "사양)을 넣으면 이번 주기가 영영 안 끝납니다. 그건 그 단계 주기에서.)\n"
-                      "- ⟦조건⟧ | 실증: ⟦절차⟧\n"),
+                      "(실증은 자연어 절차가 아니라 실제 실행할 **exact command**. 최종 주기에서는 자연어 "
+                      "GOAL 조건을 **같은 desc**로 적고 그 command를 비준.)\n"
+                      "- ⟦조건⟧ | 실증: ⟦exact command⟧\n"),
         "subtask": ("단위: ⟦작업 영역/구성요소⟧\n단위: ⟦작업 영역/구성요소⟧\n\n"
                     "백로그: [영역명] ⟦구체 작업 1⟧\n백로그: [영역명] ⟦구체 작업 2⟧\n"
                     "백로그: [영역명] ⟦구체 작업 …(각 영역 필요한 만큼)⟧\n"),
@@ -1635,7 +2149,70 @@ def parse_units(lines):
     return out
 
 
-def stage_preflight(stage, text):
+def _proposal_roadmap_phases(lines):
+    """마일스톤 수렴안의 ``단계:`` 값을 등록과 preflight가 똑같이 해석한다."""
+    raw = [l.split(":", 1)[1].strip() for l in (lines or [])
+           if l.strip().startswith("단계:") and ":" in l]
+    return [phase.strip() for value in raw
+            for phase in re.split(r"\s+→\s+", value) if phase.strip()]
+
+
+def _milestone_verifier_errors(flow, entries, proposed_phases=None):
+    """마일스톤 exact verifier/최종 GOAL 비준 계약의 단일 판정 함수.
+
+    ``stage_preflight``와 ``register_stage``가 이 함수를 함께 써서, 비싼 표결을 끝낸 뒤에야
+    등록기가 같은 형식 결함을 발견하는 이중 게이트를 만들지 않는다.
+    """
+    workspace = getattr(flow, "workspace", "") if flow is not None else ""
+    rows = list(entries or [])
+    non_exact = [
+        str(row.get("desc") or "")
+        for row in rows
+        if not direct_verifier_command(
+            row.get("verify"), workspace, require_existing=False)
+    ]
+    errors = []
+    if non_exact:
+        errors.append(
+            "마일스톤 완수조건은 회의가 비준한 exact executable verifier command여야 합니다 "
+            "(자연어 절차·나중 QA의 임의 명령 제안은 release 증거가 될 수 없음). "
+            "예: `pytest -q tests/test_feature.py`, `python3 verify_feature.py`, "
+            "`curl -fsS https://host/health`. 미달: "
+            + " · ".join(x[:60] for x in non_exact[:6])
+        )
+
+    # flow 없는 독립 파서 테스트는 GOAL 정본을 알 수 없다. 실제 회의 경로는 반드시 flow를 넘겨
+    # 아래 same-desc 비준까지 표결 전에 검사한다.
+    if flow is None:
+        return errors
+    phases = list(proposed_phases or roadmap_phases(flow))
+    done_n = sum(1 for m in (getattr(flow, "milestones", None) or [])
+                 if getattr(m, "status", "") == "done")
+    final_cycle = not phases or done_n + 1 >= len(phases)
+    if final_cycle:
+        by_desc = {str(row.get("desc") or "").strip(): row for row in rows}
+        missing_ratification = [
+            ref.desc for ref in _goal_locked_refs(flow)
+            if not direct_verifier_command(
+                ref.verify, workspace, require_existing=False)
+            and not (
+                ref.desc.strip() in by_desc
+                and direct_verifier_command(
+                    by_desc[ref.desc.strip()].get("verify"),
+                    workspace, require_existing=False)
+            )
+        ]
+        if missing_ratification:
+            errors.append(
+                "최종 마일스톤은 자연어 GOAL 조건과 **같은 desc**에 그 조건을 검증할 exact "
+                "command를 별도 비준해야 합니다(canonical 자연 spec은 보존되고 command만 "
+                "immutable ratification으로 결속됨). 누락: "
+                + " · ".join(x[:60] for x in missing_ratification[:6])
+            )
+    return errors
+
+
+def stage_preflight(stage, text, flow=None):
     """[등록 사전 검사(2026-07-17, ch78 실측: 표결 가결 후 등록 거부 사이클 6~9분×N — 봇 비용 낭비)]
     register_stage와 **같은 파싱**으로 표결 전에 불량을 전부 찾는다(봇 비용 0, 상태 변경 없음).
     반환: 에러 목록(list[str]) — 비면 통과. 표결·등록의 이중 발견을 게이트 시점 단일 발견으로."""
@@ -1660,9 +2237,13 @@ def stage_preflight(stage, text):
     if stage in ("goal", "milestone"):
         _ct = "\n".join(l for l in lines if _crit_delim().search(l)
                         and not l.strip().startswith(("단위:", "단계:", "백로그:")))
-        _e = gate_criteria(parse_criteria_lines(_ct))
+        _entries = parse_criteria_lines(_ct)
+        _e = gate_criteria(_entries)
         if _e:
             errs.extend(ln for ln in _e.splitlines() if ln.strip())
+        if stage == "milestone":
+            errs.extend(_milestone_verifier_errors(
+                flow, _entries, _proposal_roadmap_phases(lines)))
     if stage == "subtask":
         _units = parse_units(lines)
         if not _units:
@@ -1707,7 +2288,25 @@ def stage_context(flow, stage):
         _cur = getattr(flow, "current", None)
         if stage == "milestone" and _cur is not None:
             g = str(getattr(_cur.status, "goal", "") or "").strip()
-            return f" [확정된 GOAL: {g[:80]}]" if g else ""
+            base = f" [확정된 GOAL: {g[:80]}]" if g else ""
+            natural = [
+                ref.desc for ref in _goal_locked_refs(flow)
+                if not direct_verifier_command(
+                    ref.verify, getattr(flow, "workspace", ""),
+                    require_existing=False)
+            ]
+            if natural:
+                phases = roadmap_phases(flow)
+                done_n = sum(
+                    1 for m in (getattr(flow, "milestones", None) or [])
+                    if getattr(m, "status", "") == "done")
+                final_now = not phases or done_n + 1 >= len(phases)
+                when = "이번 최종 주기에서" if final_now else "최종 주기에서"
+                base += (
+                    f" [{when} 자연어 GOAL 조건과 같은 desc의 exact command 비준 필수: "
+                    + " · ".join(x[:48] for x in natural[:5]) + "]"
+                )
+            return base
         _open = next((m for m in (getattr(flow, "milestones", None) or [])
                       if m.status not in ("done", "superseded")), None)
         if stage == "subtask" and _open is not None:
@@ -1749,7 +2348,9 @@ _STAGE_FRAME = {
             "어떻게 나눌지·누가 맡을지·섹션 구성·일정은 **여기서 정하지 마세요**(그건 다음 회의들입니다).",
     "milestone": "지금은 **이번에 완성해서 사용자에게 보여줄 딱 하나**를 정하는 단계입니다. 전체를 한 번에 "
             "만들려 하지 말고(달구지부터), **'이번에 완성해 보여줄 하나는?'** 에만 답하세요. 작업 분해·"
-            "담당자·일정은 다음 회의.",
+            "담당자·일정은 다음 회의. 모든 완수조건의 `실증:`에는 실제 실행할 **exact command**를 "
+            "쓰고, 최종 주기라면 자연어 GOAL 조건도 **같은 desc**로 다시 적어 그 exact command를 "
+            "비준하세요.",
     "subtask": "지금은 이번 것을 **어떤 작업 영역(덩어리)으로 나눌지 + 각 영역의 다음 일감 전부**를 정하는 "
             "단계입니다(한 회의 — 별도 백로그 회의 없음). 영역은 개인 배정이 아니라 순수 작업 분리(예: 저장 "
             "계층·게임 로직·화면 UI), 일감은 '백로그: [영역명] ⟦작업⟧' 줄로 열거하세요. 담당은 회의가 아니라 "
@@ -1825,11 +2426,18 @@ def register_stage(flow, stage, prop, origin=""):
         if _proc_err:
             return False, _proc_err
         if _cur is not None:
+            _crits = parse_criteria_lines(_crit_txt)
+            if not _crits:
+                return False, ("GOAL 수렴안에 실행형 완수조건이 없습니다 — 최소 1개를 "
+                               "'조건 | 실증: 실행 명령 또는 측정 가능한 verifier spec'으로 비준해야 "
+                               "최종 release가 열립니다.")
+            _goal_criteria_error = gate_criteria(_crits)
+            if _goal_criteria_error:
+                return False, _goal_criteria_error
             try:
                 _cur.status.goal = goal
             except Exception:
                 pass
-            _crits = parse_criteria_lines(_crit_txt)
             if _crits:
                 try:
                     # parse_criteria_lines의 반환은 dict다. 종전 속성 접근 예외가 조용히 삼켜져
@@ -1872,23 +2480,22 @@ def register_stage(flow, stage, prop, origin=""):
             return False, ("'이번 주기'가 '…되는/하는 단계'라는 **과정 서술**입니다 — 이번에 **완성해 "
                            "사용자에게 보여줄 실물 하나**(브라우저에서 도는 것·문서 산출물 등 완성 단위)로 "
                            "쓰세요. 그 과정(검증·확정)은 이 주기 안의 작업이지 완성 단위가 아닙니다.")
-        stages = [l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("단계:")]
-        # [phase 정규화(2026-07-20)] 골격이 유도하는 '한 줄 화살표' 표기(최소버전 → 확장)를 등록
-        # 시점에 phase 목록으로 분해 — 안 하면 로드맵이 1개로 세어져 다음 주기 회의·이월 수신처가
-        # 없다(띄운 화살표만 구분자 — roadmap_phases와 같은 계약).
-        stages = [p.strip() for s in stages for p in re.split(r"\s+→\s+", s) if p.strip()]
+        # [phase 정규화(2026-07-20)] preflight와 동일한 파서로 한 줄 화살표를 phase 목록으로.
+        stages = _proposal_roadmap_phases(lines)
         _road = ""
+        milestone_entries = parse_criteria_lines(_crit_txt)
+        verifier_errors = _milestone_verifier_errors(flow, milestone_entries, stages)
+        if verifier_errors:
+            return False, "\n".join(verifier_errors)
         if stages:
+            # 거부될 수 있는 검사를 전부 통과한 뒤에만 로드맵을 상태에 반영한다. 종전에는 verifier
+            # 거부인데도 roadmap만 먼저 남아 다음 preflight의 최종주기 판정을 바꾸는 부분 착지가 있었다.
             flow.roadmap = stages
-            # [로드맵 = 회의 결론(2026-07-21, 사용자: '제목 아래 그 칸이 결론 칸 — 저건 회의의 결론에
-            # 들어가야')] 종전 독립 '[로드맵]' 게시가 회의와 마일스톤 사이 고아 '계획' 블록으로 떠
-            # 있었다 — 이 등록 노트가 [회의 마무리]로 회의 블록 결론 칸에 실리므로, 계획(전체 단계열과
-            # 이번 주기의 좌표)은 그 결론의 한 줄로 산다(별도 게시 폐지).
             _k = sum(1 for m in (getattr(flow, "milestones", None) or [])
                      if getattr(m, "status", "") == "done") + 1
             _road = ("\n계획: " + " → ".join(s[:40] for s in stages[:8])
                      + f" (이번 주기 = {_k}단계)")
-        ms = open_milestone(flow, cyc or "이번 주기", parse_criteria_lines(_crit_txt),
+        ms = open_milestone(flow, cyc or "이번 주기", milestone_entries,
                             origin=f"마일스톤 회의: {origin[:50]}")
         if isinstance(ms, str):
             return False, ms
@@ -2243,6 +2850,66 @@ def parse_iter_results(text: str):
     return out
 
 
+def _bind_sys_release_receipt(flow, me_id, ms, tgt, results, receipt_id: str) -> bool:
+    """run 도구의 private ledger row를 현재 SYS release challenge 한 조건에 단일사용으로 결부한다."""
+    if tgt is not None:
+        return False
+    rid = str(receipt_id or "").strip()
+    ctx = getattr(flow, "_release_verify_challenge", None) or {}
+    ledger = getattr(flow, "_run_receipts", None) or {}
+    row = ledger.get(rid)
+    if not rid or not ctx or not row:
+        return False
+    if (str(ctx.get("ms_id") or "") != str(getattr(ms, "ms_id", ""))
+            or str(row.get("challenge") or "") != str(ctx.get("token") or "")
+            or str(row.get("evidence_for") or "") != str(ctx.get("desc") or "")
+            or not ctx.get("verifier_used")
+            or str(row.get("verifier_seal") or "") != str(ctx.get("verifier_seal") or "")
+            or str(row.get("command_hash") or "") != str(ctx.get("verifier_command_hash") or "")
+            or str(row.get("spec_hash") or "") != str(ctx.get("verifier_spec_hash") or "")
+            or str(row.get("command_hash") or "")
+            != verifier_command_hash(row.get("command"))
+            or str(row.get("spec_hash") or "")
+            != verifier_spec_hash(ctx.get("desc"), ctx.get("verify"))
+            or int(row.get("actor") or 0) != int(me_id)
+            or int(row.get("rc") if row.get("rc") is not None else -1) != 0
+            or int(row.get("write_epoch", -2)) != write_revision(flow)
+            or not row.get("artifact_stamp")
+            or str(row.get("artifact_stamp")) != workspace_artifact_stamp(flow)):
+        return False
+    target = next((c for c in ms.criteria
+                   if getattr(c, "release_lock", False)
+                   and c.desc.strip() == str(ctx.get("desc") or "").strip()
+                   and c.verify.strip() == str(ctx.get("verify") or "").strip()), None)
+    if target is None:
+        return False
+    claim = next((r for r in results
+                  if bool(r.get("passed"))
+                  and str(r.get("desc") or "").strip() == target.desc.strip()), None)
+    if claim is None:
+        return False
+    stderr = str(row.get("stderr") or "").strip()
+    tail = str(row.get("stdout") or "").strip()
+    receipt = f"SYS-RUN {rid} exit=0 `{str(row.get('command') or '')[:100]}`"
+    if tail:
+        receipt += "\n" + tail[-220:]
+    if stderr:
+        receipt += "\n[stderr] " + stderr[-120:]
+    claim["evidence"] = receipt
+    claim["_sys_run_receipt"] = receipt
+    claim["_sys_run_receipt_id"] = rid
+    claim["_verified_write_epoch"] = int(row["write_epoch"])
+    claim["_verified_artifact_stamp"] = str(row["artifact_stamp"])
+    claim["_verified_command"] = str(row.get("command") or "")
+    claim["_verified_command_hash"] = str(row.get("command_hash") or "")
+    claim["_verified_spec_hash"] = str(row.get("spec_hash") or "")
+    try:
+        flow._run_receipts.pop(rid, None)     # 성공 결부 순간 소진 — 다른 조건/턴에 재사용 불가
+    except Exception:
+        pass
+    return True
+
+
 def _find_subtask(ms: Milestone, key):
     """target 문자열(st_id 전체·꼬리·goal 부분일치)로 SubTask를 찾는다 — 봇이 정확한 id를 몰라도 되게."""
     k = str(key or "").strip()
@@ -2309,6 +2976,7 @@ def rule_report_iter(flow, me_id, args) -> str:
     if not results:
         return "results가 비었습니다 — 한 줄에 '조건 | pass/fail | 증거(run 출력 요지)'."
     obj = tgt or ms
+    _bind_sys_release_receipt(flow, me_id, ms, tgt, results, args.get("receipt"))
     # [백로그 의무화 2단(2026-07-10, 사용자)] 솔로 진행(위임 無)도 장부가 진실이도록 — 검증 제출된
     # 조건 단위를 SubTask 릴레이에 소급 등재(pass=done, fail=in_progress 보유). 위임형은 1단(자동
     # 제출)이 이미 등재하므로 매칭돼 중복 없음.
@@ -2395,7 +3063,21 @@ def rule_report_iter(flow, me_id, args) -> str:
 def _crit_dict(c):
     return {"desc": c.desc, "verify": c.verify, "passed": c.passed, "evidence": c.evidence,
             "status": c.status, "block_reason": c.block_reason,
-            "verify_attempts": c.verify_attempts}   # [#1] 재협상·구조검증 상태 동승
+            "verify_attempts": c.verify_attempts,
+            "release_lock": bool(getattr(c, "release_lock", False)),
+            "evidence_source": str(getattr(c, "evidence_source", "") or ""),
+            "receipt_id": str(getattr(c, "receipt_id", "") or ""),
+            "verified_write_epoch": int(getattr(c, "verified_write_epoch", -1)),
+            "verified_artifact_stamp": str(getattr(c, "verified_artifact_stamp", "") or ""),
+            "verified_command": str(getattr(c, "verified_command", "") or ""),
+            "verified_command_hash": str(getattr(c, "verified_command_hash", "") or ""),
+            "verified_spec_hash": str(getattr(c, "verified_spec_hash", "") or ""),
+            "ratified_verifier_command": str(
+                getattr(c, "ratified_verifier_command", "") or ""),
+            "ratified_verifier_command_hash": str(
+                getattr(c, "ratified_verifier_command_hash", "") or ""),
+            "ratified_verifier_spec_hash": str(
+                getattr(c, "ratified_verifier_spec_hash", "") or "")}
 
 
 def ms_to_dict(ms: Milestone) -> dict:
@@ -2417,7 +3099,23 @@ def ms_from_dict(d: dict) -> Milestone:
         return [Criterion(desc=str(r.get("desc") or ""), verify=str(r.get("verify") or ""),
                           passed=bool(r.get("passed")), evidence=str(r.get("evidence") or ""),
                           status=str(r.get("status") or "active"), block_reason=str(r.get("block_reason") or ""),
-                          verify_attempts=int(r.get("verify_attempts") or 0))
+                          verify_attempts=int(r.get("verify_attempts") or 0),
+                          release_lock=bool(r.get("release_lock")),
+                          evidence_source=str(r.get("evidence_source") or ""),
+                          receipt_id=str(r.get("receipt_id") or ""),
+                          verified_write_epoch=int(
+                              r.get("verified_write_epoch")
+                              if r.get("verified_write_epoch") is not None else -1),
+                          verified_artifact_stamp=str(r.get("verified_artifact_stamp") or ""),
+                          verified_command=str(r.get("verified_command") or ""),
+                          verified_command_hash=str(r.get("verified_command_hash") or ""),
+                          verified_spec_hash=str(r.get("verified_spec_hash") or ""),
+                          ratified_verifier_command=str(
+                              r.get("ratified_verifier_command") or ""),
+                          ratified_verifier_command_hash=str(
+                              r.get("ratified_verifier_command_hash") or ""),
+                          ratified_verifier_spec_hash=str(
+                              r.get("ratified_verifier_spec_hash") or ""))
                 for r in (rows or [])]
     ms = Milestone(ms_id=str(d.get("ms_id") or ""), goal=str(d.get("goal") or ""),
                    criteria=_crit(d.get("criteria")), status=str(d.get("status") or "open"),

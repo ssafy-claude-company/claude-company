@@ -59,6 +59,11 @@ class Flow:
         self.e2e_checklist = None      # e2e 분모 — rule/wrapup.assemble_base_checklist가 조립
         self.e2e_results = None        # 항목별 제출 결과(id → {ok, observed, evidence})
         self.wrapup_state = None       # 마지막 e2e 판정(§9 — ckpt 동승 대상)
+        # release 자연어 검증용 process-local 장부. run 도구만 영수증을 발급하고 SYS exact challenge가
+        # 열린 같은 턴의 report_iter가 단일사용한다. 재시작 시 비어 fail-closed라 영속 대상이 아니다.
+        self._run_receipts = {}
+        self._release_verify_challenge = None
+        self._e2e_receipt_nonce = None
         self.event_counts = None       # §8 오버헤드 집계(sys_core가 tallying_logger로 채움, ON에서만)
         self._last_ms_sig = None        # [파이프라인 §5] 직전 세그먼트의 주기 시그(ms_id,iter) — 주기 전진 감지
         # [조건 재협상 #1] 사람 에스컬레이트 콜백((text)->None). SYS가 Sys._escalate_human을 주입한다

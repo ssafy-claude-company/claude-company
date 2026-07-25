@@ -23,8 +23,15 @@ from system.sys_core import Sys
 
 
 class _Guide:
+    def __init__(self):
+        self.picks = []
+
     async def post(self, *_args, **_kwargs):
         return "m1"
+
+    async def pick(self, msg_id, **kwargs):
+        self.picks.append((msg_id, kwargs))
+        return True
 
 
 def _flow_with_two_subtasks():
@@ -56,6 +63,42 @@ def _tools(flow, me=22):
 
 def _tool_text(result):
     return result["content"][0]["text"]
+
+
+def test_종결_flush는_throttle안_마지막생각을_원장과_요청기록에_남긴다():
+    from system.rule.milestone import ms_status_snapshot
+
+    flow, (_st1, _relay1, _backlog1), (_st2, relay2, backlog2) = (
+        _flow_with_two_subtasks()
+    )
+    flow.root_id = "777"
+    relay2.pick(22, backlog2.backlog_id, 22)
+    saved = []
+    flow.checkpoint_task = lambda: saved.append(ms_status_snapshot(flow))
+
+    # 직전 미러 시각을 지금으로 고정해 두 note 모두 정상 1초 throttle 안에 놓는다.
+    import time
+    flow._last_backlog_activity_mirror = time.monotonic()
+    flow.note_activity(22, "첫 생각")
+    flow.note_activity(22, "중지 직전 마지막 생각")
+    assert not saved
+    assert len(backlog2.activity) == 2
+
+    sys = Sys(
+        flow.guide, guild_id=1, organt_builder=None,
+        bot_info=flow.bot_info, workspace="/tmp/unused-terminal-flush",
+    )
+    asyncio.run(sys._flush_terminal_observability(flow))
+
+    mirrored = next(
+        b for ms in saved[-1]["list"] for st in ms["sts"] for b in st["bl"]
+        if st["id"] == _st2.st_id and b["id"] == backlog2.backlog_id
+    )
+    assert mirrored["act"] == backlog2.activity
+    assert flow.guide.picks[-1][0] == 777
+    assert flow.guide.picks[-1][1]["activity"] == [
+        row[0] for row in flow.activity_log
+    ]
 
 
 def test_pipeline_ctx는_첫_open단위가_아니라_실제_ST2_B1을_태깅한다():

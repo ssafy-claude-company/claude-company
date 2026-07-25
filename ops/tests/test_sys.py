@@ -1,6 +1,8 @@
 """재구현 검증(P2P 모델): Guide 도구 + 베턴 wake + 단일흐름."""
 import asyncio
 
+import pytest
+
 from system.guide_tools import (Flow, make_guide_tools, _wants_real_data,
                              _synthesizes_data, _has_real_dataset, _is_verifier,
                              _capability_gaps, _needed_caps_coverage, _deploy_infeasibility,
@@ -142,7 +144,7 @@ def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_p
     from system.rule.milestone import open_milestone, open_subtask
 
     g = FakeGuide()
-    monkeypatch.setenv("ORGANT_RUN_USER", "test-no-such-user")  # sandbox는 setuid 불가; 비루트 배포와 같은 경로
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
     f = _flow(g)
     f.workspace = str(tmp_path)
     ms = open_milestone(f, "구조 검증", [{"desc": "산출물 존재", "verify": "test -f result.txt"}])
@@ -159,13 +161,606 @@ def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_p
     assert any(e["event"] == "milestone_auto_verify" and e["passed"] for e in s.flow_log)
 
 
+def test_GOAL_Error계약이_하위_false계약을_이기고_실제run전엔_최종통과금지(
+    tmp_path, monkeypatch,
+):
+    """U-052 release gate: 단일/최종 주기에만 GOAL lock을 active로 승격해 기존 auto verify를 탄다.
+
+    하위 회의가 금지 전이를 ``false`` 반환으로 바꿔도 상위의 ``Error + 상태 보존`` 실행 검사가
+    실패하는 동안 e2e/complete_task는 열리지 않는다. done으로 조작한 구 체크포인트도 다시 open된다.
+    """
+    from system.rule.milestone import (
+        approve_waiver, goal_locked_release_error, ms_from_dict, ms_to_dict,
+        open_subtask, register_stage, renegotiate_criterion, rule_report_iter,
+    )
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.wrapup import rule_e2e_open
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    tools = _tools(f, 11, "leader")
+    asyncio.run(tools["create_task"].handler({"members": "12"}))
+
+    parent = (
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n"
+        "공개 계약: transition(nextState)는 금지 전이에 Error를 던지고 현재 상태를 보존한다.\n"
+        "- 금지 전이는 Error를 던지고 상태를 보존 | 실증: python3 test_parent_contract.py"
+    )
+    ok, note = register_stage(f, "goal", parent, "U-052")
+    assert ok, note
+    ok2, note2 = register_stage(
+        f, "milestone",
+        "이번 주기: 상태 머신 단일 구현\n"
+        "- 금지 전이는 false를 반환 | 실증: python3 test_child_contract.py",
+        "U-052 child",
+    )
+    assert ok2, note2
+    ms = f.milestones[-1]
+    assert [(c.desc, c.release_lock) for c in ms.criteria] == [
+        ("금지 전이는 false를 반환", False),
+        ("금지 전이는 Error를 던지고 상태를 보존", True),
+    ]
+    st = open_subtask(f, ms, "상태 머신 구현", [])
+    relay = relay_for(f, st)
+    relay._pool["B1"] = Backlog("B1", "상태 머신 구현", 12, status="done", assignee=12)
+
+    # 실제 잘못된 구현: 금지 전이에 예외 대신 false를 돌려준다(상태는 보존).
+    (tmp_path / "state_machine.py").write_text(
+        "class Machine:\n"
+        "    def __init__(self): self.state = 'idle'\n"
+        "    def transition(self, next_state):\n"
+        "        if next_state == 'done': return False\n"
+        "        self.state = next_state\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_child_contract.py").write_text(
+        "from state_machine import Machine\n"
+        "m = Machine()\n"
+        "assert m.transition('done') is False\n"
+        "assert m.state == 'idle'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_parent_contract.py").write_text(
+        "from state_machine import Machine\n"
+        "m = Machine()\n"
+        "try:\n"
+        "    m.transition('done')\n"
+        "except RuntimeError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise AssertionError('금지 전이가 Error를 던지지 않음')\n"
+        "assert m.state == 'idle'\n",
+        encoding="utf-8",
+    )
+    s = Sys(g, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+
+    forged = rule_report_iter(f, 11, {
+        "results": "금지 전이는 Error를 던지고 상태를 보존 | pass | exit=0이라고 주장",
+    })
+    assert "GOAL 잠금 증거 거부" in forged and not ms.criteria[-1].passed
+    assert "e2e 개시 불가" in rule_e2e_open(f)
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False
+    child_c, parent_c = ms.criteria
+    assert child_c.passed and child_c.evidence               # 하위 false 검사는 실제 통과했지만
+    assert not parent_c.passed and parent_c.release_lock      # 상위 Error 검사는 실제 실패
+    assert goal_locked_release_error(f) and ms.status == "open"
+    denied = renegotiate_criterion(f, ms, parent_c.desc, "하위 false 계약으로 대체")
+    assert "이월·포기할 수 없습니다" in denied
+    assert parent_c.status == "active" and not parent_c.passed
+    parent_c.status = "blocked_pending"                       # 구/손상 체크포인트도 승인 우회 불가
+    denied_waiver = approve_waiver(f, ms, parent_c.desc, approve=True)
+    assert "포기 승인할 수 없습니다" in denied_waiver
+    assert parent_c.status == "active" and not parent_c.passed
+
+    # 구 체크포인트가 잘못 done으로 남아도 e2e/완료 방어선이 잠금 조건을 동적 승격해 다시 연다.
+    ms.status = "done"
+    f.wrapup_state = {"verdict": "e2e_pass", "defects": []}
+    assert "e2e 개시 불가" in rule_e2e_open(f) and ms.status == "open"
+    complete = asyncio.run(tools["complete_task"].handler({"result": "끝"}))["content"][0]["text"]
+    assert "마감 불가" in complete and "미완 주기" in complete
+
+    # 구현을 상위 계약대로 고친 뒤 같은 기존 auto verify 경로가 실제 run 영수증을 붙여 release를 연다.
+    (tmp_path / "state_machine.py").write_text(
+        "class Machine:\n"
+        "    def __init__(self): self.state = 'idle'\n"
+        "    def transition(self, next_state):\n"
+        "        if next_state == 'done': raise RuntimeError('invalid transition')\n"
+        "        self.state = next_state\n",
+        encoding="utf-8",
+    )
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert ms.status == "done" and parent_c.passed and "exit=0" in parent_c.evidence
+    assert goal_locked_release_error(f) is None
+    assert "e2e 개시 —" in rule_e2e_open(f)
+    parent_specs = [it for it in f.e2e_checklist if "Error를 던지고 상태를 보존" in it["spec"]]
+    assert len(parent_specs) == 1                              # 최종 e2e 분모에도 dedup 1회
+    restored = ms_from_dict(ms_to_dict(ms))
+    assert any(c.release_lock and c.passed and c.evidence_source == "sys_run"
+               and c.receipt_id and c.verified_artifact_stamp for c in restored.criteria)
+
+    # trusted pass 뒤 authoring epoch가 바뀌면 옛 receipt/e2e 분모를 재사용하지 않고 다시 연다.
+    f.writes_by_role["개발"] = 1
+    assert goal_locked_release_error(f) and ms.status == "open"
+    assert f.e2e_checklist is None and f.e2e_results is None and f.wrapup_state is None
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert parent_c.verified_write_epoch == 1 and goal_locked_release_error(f) is None
+
+
+def test_GOAL잠금은_SubTask와_백로그0개거나_미종결이면_검증자체를_시작하지않음(
+    tmp_path, monkeypatch,
+):
+    """release receipt는 계획 체인과 모든 백로그 terminal 경계 뒤에만 발급된다."""
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import open_subtask, register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
+    goal = ("목표: 경계 검증\n"
+            "- 최종 파일 OK | 실증: python3 verify_release.py")
+    assert register_stage(f, "goal", goal, "boundary")[0]
+    assert register_stage(
+        f, "milestone",
+        "이번 주기: 최종 파일\n- 최종 파일 OK | 실증: python3 verify_release.py",
+        "boundary-ms",
+    )[0]
+    ms = f.milestones[-1]
+    c = next(x for x in ms.criteria if x.release_lock)
+    (tmp_path / "verify_release.py").write_text("print('ok')\n", encoding="utf-8")
+    s = Sys(f.guide, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False  # SubTask 0
+    assert c.verify_attempts == 0 and not c.passed
+    st = open_subtask(f, ms, "구현", [])
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False  # relay/backlog 0
+    assert c.verify_attempts == 0 and not c.passed
+    relay = relay_for(f, st)
+    b = relay._pool["B1"] = Backlog(
+        "B1", "선행 구현", 12, status="blocked", assignee=12, block_reason="선행 필요")
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False  # 미종결 blocked
+    assert c.verify_attempts == 0 and not c.passed
+    b.status = "done"
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert c.passed and c.evidence_source == "sys_run" and c.verify_attempts == 1
+
+
+def test_자연어GOAL잠금은_SYS봉인한_exact_command_1회영수증만_결부(
+    tmp_path, monkeypatch,
+):
+    """자연어 spec도 target/spec 봉인 뒤 같은 검사 명령을 실행한 receipt만 release를 연다."""
+    import re as _re
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import (
+        open_subtask, register_stage, rule_report_iter, stage_context,
+        stage_frame, stage_preflight,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    (tmp_path / "browser_check.py").write_text(
+        "print('title=Home console_errors=0')\n", encoding="utf-8")
+    (tmp_path / "unrelated_test.py").write_text(
+        "print('unrelated pass')\n", encoding="utf-8")
+    asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
+    decision = ("목표: 브라우저 인수\n"
+                "- 홈 화면이 실제로 열린다 | 실증: 브라우저에서 홈을 열어 제목과 콘솔 오류 0건 확인")
+    assert register_stage(f, "goal", decision, "natural")[0]
+    preflight_missing = stage_preflight(
+        "milestone",
+        "## 결정\n이번 주기: 홈 완성\n"
+        "- 다른 조건 | 실증: python3 browser_check.py\n",
+        f,
+    )
+    assert any("같은 desc" in err and c_desc in err
+               for err in preflight_missing for c_desc in ("홈 화면이 실제로 열린다",))
+    assert getattr(f, "roadmap", []) == []          # 사전검사·거부는 부분 상태를 남기지 않는다
+    assert "같은 desc" in stage_context(f, "milestone")
+    assert "exact command" in stage_frame("milestone")
+    assert stage_preflight(
+        "milestone",
+        "## 결정\n이번 주기: 홈 완성\n"
+        "- 홈 화면이 실제로 열린다 | 실증: python3 browser_check.py\n",
+        f,
+    ) == []
+    rejected = register_stage(
+        f, "milestone",
+        "이번 주기: 홈 완성\n"
+        "- 홈 화면이 실제로 열린다 | 실증: 브라우저에서 홈을 열어 제목과 콘솔 오류 0건 확인",
+        "natural-ms-unratified",
+    )
+    assert not rejected[0] and "exact executable verifier" in rejected[1]
+    assert register_stage(
+        f, "milestone",
+        "이번 주기: 홈 완성\n"
+        "- 홈 화면이 실제로 열린다 | 실증: python3 browser_check.py",
+        "natural-ms",
+    )[0]
+    ms = f.milestones[-1]
+    st = open_subtask(f, ms, "홈 구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog("B1", "홈 구현", 12, status="done", assignee=12)
+    c = next(x for x in ms.criteria if x.release_lock)
+    assert "GOAL 잠금 증거 거부" in rule_report_iter(
+        f, 11, {"results": f"{c.desc} | pass | 브라우저 정상이라고 주장"})
+    assert not c.passed
+    s = Sys(f.guide, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+
+    async def verifier(flow, who, body, kind, role, micro=False):
+        assert flow._release_verify_challenge["desc"] == c.desc
+        tools = _tools(flow, who, "member")
+        trivial = await tools["run"].handler(
+            {"command": "true", "evidence_for": c.desc, "seal": "yes"})
+        assert "봉인 불가" in trivial["content"][0]["text"]
+        unrelated = await tools["run"].handler({
+            "command": "python3 unrelated_test.py",
+            "evidence_for": c.desc, "seal": "yes",
+        })
+        assert "봉인 불가" in unrelated["content"][0]["text"]
+        swapped = await tools["run"].handler({
+            "command": "python3 browser_other_check.py", "evidence_for": c.desc,
+        })
+        assert "exact command" in swapped["content"][0]["text"]
+        ran = await tools["run"].handler({
+            "command": "python3 browser_check.py", "evidence_for": c.desc,
+        })
+        rid = _re.search(
+            r"\[SYS run receipt\]\s+(run-[0-9a-f]+)",
+            ran["content"][0]["text"],
+        ).group(1)
+        note = rule_report_iter(
+            flow, who,
+            {"results": f"{c.desc} | pass | 모델 주장문", "receipt": rid},
+        )
+        assert "전 조건 충족" in note or "wrapup" in note
+        return "검증 제출 완료"
+
+    s.run_turn = verifier
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert c.passed and c.evidence_source == "sys_run"
+    assert c.verified_command == "python3 browser_check.py"
+    assert c.verified_command_hash and c.verified_spec_hash
+    assert c.ratified_verifier_command == "python3 browser_check.py"
+    assert c.ratified_verifier_command_hash and c.ratified_verifier_spec_hash
+    assert c.receipt_id.startswith("run-") and "title=Home" in c.evidence
+    assert c.receipt_id not in f._run_receipts
+
+
+def test_release_verifier명령은_성공마스킹_inline_외부경로를_영수증으로인정하지않음(
+    tmp_path,
+):
+    from system.rule.evidence import looks_like_verification_command
+
+    (tmp_path / "manage.py").write_text("print('manage')\n", encoding="utf-8")
+    (tmp_path / "browser_check.py").write_text("print('browser ok')\n", encoding="utf-8")
+    (tmp_path / "node_test.js").write_text(
+        "const test=require('node:test'); test('ok',()=>{});\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_ok.py").write_text(
+        "def test_ok(): assert True\n", encoding="utf-8")
+    assert looks_like_verification_command(
+        "python3 manage.py test app.tests", str(tmp_path))
+    assert looks_like_verification_command("test -f artifact.txt", str(tmp_path))
+    assert looks_like_verification_command("pytest tests", str(tmp_path))
+    assert looks_like_verification_command("node --test node_test.js", str(tmp_path))
+    assert looks_like_verification_command(
+        "curl -fsS https://example.invalid/health", str(tmp_path))
+    for command in (
+        "true",
+        "echo pass",
+        "python3 -c \"assert True\"",
+        "node -e \"console.log('pass')\"",
+        "python3 definitely_missing_browser_check.py || exit 0",
+        "python3 definitely_missing_browser_check.py 2>&1 | grep -q 'No such file'",
+        "python3 definitely_missing_browser_check.py 2>&1 | grep -q .",
+        "python3 definitely_missing_browser_check.py | wc -l",
+        "pytest tests # browser",
+        "cd .. && python3 browser_check.py",
+        "cd -P .. && python3 browser_check.py",
+        "python3 browser_check.py > proof.txt",
+        "python3 browser_check.py &",
+        "python3 $(echo browser_check.py)",
+        "pytest tests || true",
+        "pytest tests || :",
+        "pytest tests || echo pass",
+        "pytest tests; true",
+        "pytest tests; exit 0",
+        "set +e; pytest tests",
+        "test x = x",
+        "pytest --version",
+        "pytest --rootdir=..",
+        "npm test --prefix ..",
+        "python3 -m pytest --help",
+        "python3 -m pytest --collect-only",
+        "npx playwright --version",
+        "npx playwright test",
+        "grep --version",
+        "node --test",
+        "curl https://example.invalid/health",
+        "curl -f not-a-url",
+        "test -e /etc/passwd",
+        "grep root /etc/passwd",
+        "test -e ../../etc/passwd",
+    ):
+        assert not looks_like_verification_command(command, str(tmp_path)), command
+
+
+def test_root_run은_bwrap안에서_0700부모_workspace와_toolchain은살고_host비밀은숨김(
+    tmp_path, monkeypatch,
+):
+    """sync run/async verifier가 같은 bwrap+setpriv 경계를 쓰며 cwd liveness와 격리를 함께 지킨다."""
+    import os
+    import shutil
+
+    if os.geteuid() != 0:
+        pytest.skip("root 권한강등 경로 전용")
+    if not shutil.which("bwrap") or not shutil.which("setpriv"):
+        pytest.skip("live 격리 도구가 없는 개발 환경")
+
+    from system.guide_tools import run_workspace_command
+
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    private = tmp_path / "private"
+    workspace = private / "workspace"
+    sibling = private / "sibling"
+    workspace.mkdir(parents=True)
+    sibling.mkdir()
+    os.chmod(private, 0o700)
+    (private / "host-secret.txt").write_text("ROOT SECRET\n", encoding="utf-8")
+    os.chmod(private / "host-secret.txt", 0o600)
+    (sibling / "other-secret.txt").write_text("OTHER SECRET\n", encoding="utf-8")
+    os.chmod(sibling / "other-secret.txt", 0o600)
+    (workspace / "package.json").write_text('{"name":"isolated-probe"}\n', encoding="utf-8")
+    (workspace / "test_probe.py").write_text(
+        "def test_isolated(): assert True\n", encoding="utf-8")
+    (workspace / "isolation_check.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "status = Path('/proc/self/status').read_text()\n"
+        "for name in ('CapInh','CapPrm','CapEff','CapBnd','CapAmb'):\n"
+        "    assert f'{name}:\\t0000000000000000' in status\n"
+        "assert 'NoNewPrivs:\\t1' in status\n"
+        "assert Path.cwd() == Path('/tmp/workspace')\n"
+        "assert Path(os.environ['HOME']) == Path('/tmp/workspace')\n"
+        "assert not Path('/root/.ssh').exists()\n"
+        "cache = os.environ.get('PLAYWRIGHT_BROWSERS_PATH')\n"
+        "assert not cache or Path(cache).is_dir()\n"
+        "print('ISOLATED_OK')\n",
+        encoding="utf-8",
+    )
+
+    f = _flow(FakeGuide())
+    f.workspace = str(workspace)
+    sync = asyncio.run(_tools(f, 11, "leader")["run"].handler(
+        {"command": "python3 isolation_check.py"}))["content"][0]["text"]
+    assert "ISOLATED_OK" in sync and "[exit 0]" in sync
+
+    for command, expected in (
+        ("pytest -q test_probe.py", "1 passed"),
+        ("python -m pytest -q test_probe.py", "1 passed"),
+        ("npm pkg get name", "isolated-probe"),
+    ):
+        ok, rc, out, err, reason = asyncio.run(
+            run_workspace_command(str(workspace), command))
+        assert ok and rc == 0 and expected in out, (command, out, err, reason)
+
+    # cd ..는 host parent가 아니라 격리된 빈 /tmp만 본다. host /tmp·/var/tmp와 sibling도 숨는다.
+    ok, rc, *_ = asyncio.run(run_workspace_command(
+        str(workspace),
+        "cd .. && test -d workspace && test ! -e private/host-secret.txt "
+        "&& test ! -e /var/tmp/organt-other-workspace",
+    ))
+    assert ok and rc == 0
+    denied = asyncio.run(run_workspace_command(
+        str(workspace), f"test -r {private / 'host-secret.txt'}"))
+    assert denied[0] is False and denied[1] == 1
+    sibling_denied = asyncio.run(run_workspace_command(
+        str(workspace), f"test -r {sibling / 'other-secret.txt'}"))
+    assert sibling_denied[0] is False and sibling_denied[1] == 1
+
+    monkeypatch.setenv("ORGANT_RUN_USER", "definitely-no-such-user")
+    invalid = asyncio.run(run_workspace_command(str(workspace), "test -f package.json"))
+    assert invalid[0] is False and "비특권 사용자" in invalid[4]
+
+
+def test_마일스톤0개인_GOAL_Task는_complete와_e2e를_우회하지못함(
+    tmp_path, monkeypatch,
+):
+    from system.rule.milestone import register_stage
+    from system.rule.wrapup import rule_e2e_open
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    tools = _tools(f, 11, "leader")
+    asyncio.run(tools["create_task"].handler({"members": "12"}))
+    assert register_stage(
+        f, "goal",
+        "목표: 잠금 있는 결과물\n- 결과물 계약 | 실증: python3 verify.py",
+        "zero-ms",
+    )[0]
+    out = asyncio.run(tools["complete_task"].handler({"result": "완료 주장"}))["content"][0]["text"]
+    assert "마감 불가" in out and "마일스톤이 하나도 없습니다" in out
+    assert "e2e 개시 불가" in rule_e2e_open(f)
+    assert f.current is not None
+
+
+def test_e2e_fail에서_replan생성이멈춰도_complete는_failclosed(
+    tmp_path, monkeypatch,
+):
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import (
+        open_milestone, open_subtask, workspace_artifact_stamp, write_revision,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    tools = _tools(f, 11, "leader")
+    asyncio.run(tools["create_task"].handler({"members": "12"}))
+    (tmp_path / "artifact.txt").write_text("still defective\n", encoding="utf-8")
+    ms = open_milestone(
+        f, "완성", [{"desc": "파일 존재", "verify": "test -f artifact.txt"}])
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "구현", 12, status="done", assignee=12)
+    st.status = "done"
+    ms.criteria[0].passed, ms.criteria[0].evidence = True, "이전 iter 증거"
+    ms.status = "done"
+    f.wrapup_state = {
+        "verdict": "e2e_fail",
+        "defects": [{"id": "surface:1", "observed": "500"}],
+        "artifact_stamp": workspace_artifact_stamp(f),
+        "write_epoch": write_revision(f),
+    }
+
+    out = asyncio.run(tools["complete_task"].handler(
+        {"result": "복기 정체라 완료 주장"}))["content"][0]["text"]
+    assert "마감 불가" in out and "e2e_pass가 아닙니다" in out
+    assert f.current is not None and f.wrapup_state["verdict"] == "e2e_fail"
+
+
+def test_done복원판도_SubTask나_백로그0개면_e2e와_complete가_장부경계에서_복원(
+    tmp_path, monkeypatch,
+):
+    """GOAL lock이 없는 구 체크포인트도 빈 작업 장부로 Task 경계를 우회하지 못한다."""
+    from system.rule.milestone import open_milestone, open_subtask
+    from system.rule.wrapup import rule_e2e_open
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    tools = _tools(f, 11, "leader")
+    asyncio.run(tools["create_task"].handler({"members": "12"}))
+    ms = open_milestone(
+        f, "구 복원 주기", [{"desc": "기동", "verify": "python3 verify.py"}])
+    ms.criteria[0].passed, ms.criteria[0].evidence, ms.status = True, "구 증거", "done"
+
+    no_st = rule_e2e_open(f)
+    assert "e2e 개시 불가" in no_st and "SubTask 0개" in no_st
+    assert ms.status == "open"                              # 회의→단위 생성 경로로 복원
+
+    st = open_subtask(f, ms, "구현 단위", [])
+    st.status, ms.status = "done", "done"                   # relay/backlog가 사라진 손상 복원판
+    out = asyncio.run(tools["complete_task"].handler(
+        {"result": "빈 장부 완료 주장"}))["content"][0]["text"]
+    assert "마감 불가" in out and "백로그 0개" in out
+    assert ms.status == "open" and st.status == "open"      # backlog 회의가 다시 열릴 상태
+
+
+def test_complete는_e2e뒤_artifact변경을_무효화하고_direct_GOAL을_즉시재실행(
+    tmp_path, monkeypatch,
+):
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import (
+        Criterion, open_milestone, open_subtask, workspace_artifact_stamp,
+    )
+    from system.rule.task import _final_release_recheck
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    (tmp_path / "verify.py").write_text("print('current ok')\n", encoding="utf-8")
+    ms = open_milestone(f, "최종", [{"desc": "최종 계약", "verify": "python3 verify.py"}])
+    c = ms.criteria[0]
+    c.release_lock, c.passed = True, True
+    c.evidence, c.evidence_source, c.receipt_id = "old", "sys_run", "old-receipt"
+    c.verified_write_epoch, c.verified_artifact_stamp = 0, workspace_artifact_stamp(f)
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog("B1", "구현", 12, status="done", assignee=12)
+    st.status, ms.status = "done", "done"
+    f.e2e_checklist, f.e2e_results = [{"id": "condition:1"}], {}
+    f.wrapup_state = {
+        "verdict": "e2e_pass", "artifact_stamp": workspace_artifact_stamp(f), "write_epoch": 0,
+    }
+
+    assert asyncio.run(_final_release_recheck(f)) is None
+    assert c.receipt_id.startswith("complete-") and "current ok" in c.evidence
+    (tmp_path / "verify.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+    err = asyncio.run(_final_release_recheck(f))
+    assert "GOAL 잠금 재실증 실패" in err
+    assert not c.passed and ms.status == "open"
+    assert f.wrapup_state is None and f.e2e_checklist is None and f.e2e_results is None
+
+
+def test_complete직전에는_natural_GOAL의_회의비준_exact도_다시실행(
+    tmp_path, monkeypatch,
+):
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import (
+        Criterion, Milestone, workspace_artifact_stamp, write_revision,
+    )
+    from system.rule.task import _final_release_recheck
+
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    (tmp_path / "browser_acceptance.py").write_text(
+        "print('NATURAL_FINAL_RECHECK_OK')\n", encoding="utf-8")
+    c = Criterion(
+        "홈 화면이 열린다",
+        "브라우저에서 홈 제목과 콘솔 오류 0건 확인",
+        passed=True,
+        evidence="prior receipt",
+        release_lock=True,
+        evidence_source="sys_run",
+        receipt_id="run-prior",
+    )
+    command = "python3 browser_acceptance.py"
+    stamp = workspace_artifact_stamp(f)
+    c.verified_write_epoch = write_revision(f)
+    c.verified_artifact_stamp = stamp
+    c.verified_command = c.ratified_verifier_command = command
+    c.verified_command_hash = c.ratified_verifier_command_hash = verifier_command_hash(command)
+    c.verified_spec_hash = c.ratified_verifier_spec_hash = verifier_spec_hash(c.desc, c.verify)
+    f.milestones = [Milestone("MS-final", "최종", [c], status="done")]
+
+    assert asyncio.run(_final_release_recheck(f)) is None
+    assert c.verify_attempts == 1
+    assert c.receipt_id.startswith("complete-")
+    assert "NATURAL_FINAL_RECHECK_OK" in c.evidence
+    assert c.verified_command == command and c.verified_artifact_stamp == stamp
+
+
+def test_complete는_구e2e판정의_artifact_stamp불일치를_fresh검증으로돌림(
+    tmp_path, monkeypatch,
+):
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import open_milestone, open_subtask
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    tools = _tools(f, 11, "leader")
+    asyncio.run(tools["create_task"].handler({"members": "12"}))
+    ms = open_milestone(f, "완성", [{"desc": "기동", "verify": "python3 verify.py"}])
+    ms.criteria[0].passed, ms.criteria[0].evidence, ms.status = True, "old", "done"
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "구현", 12, status="done", assignee=12)
+    st.status = "done"
+    f.wrapup_state = {"verdict": "e2e_pass", "artifact_stamp": "old-version", "write_epoch": 0}
+    f.e2e_checklist, f.e2e_results = [{"id": "condition:1"}], {"condition:1": {"ok": True}}
+    (tmp_path / "app.py").write_text("print('new')\n", encoding="utf-8")
+
+    out = asyncio.run(tools["complete_task"].handler({"result": "완료"}))["content"][0]["text"]
+    assert "마감 불가" in out and "artifact stamp" in out and "fresh 전수 검증" in out
+    assert f.wrapup_state is None and f.e2e_checklist is None and f.e2e_results is None
+
+
 def test_SYS_마일스톤_verify_실패는_보충회의_후_무진전누적시에만_파킹(tmp_path, monkeypatch):
     """실패 즉시 사람에게 넘기지 않고 SubTask 보충을 먼저 열며, 반복 무진전만 최후 파킹한다."""
     from system.rule.backlog import Backlog, relay_for
     from system.rule.milestone import meeting_stage, open_milestone, open_subtask
 
     monkeypatch.setenv("ORGANT_ITER_STUCK_LIMIT", "3")
-    monkeypatch.setenv("ORGANT_RUN_USER", "test-no-such-user")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
     g = FakeGuide()
     f = _flow(g)
     from types import SimpleNamespace
@@ -188,11 +783,11 @@ def test_SYS_마일스톤_verify_실패는_보충회의_후_무진전누적시�
 
 
 def test_검증성공해도_선행필요_blocked_백로그가_남으면_보충회의로(tmp_path, monkeypatch):
-    """검증과 최대 구현은 별도 게이트 — blocked 원본을 보존하고 선행 백로그를 추가할 자리를 연다."""
+    """blocked 원본을 보존하고 선행 백로그를 먼저 추가한다 — 최종 실증은 장부 종결 뒤에만."""
     from system.rule.backlog import Backlog, relay_for
     from system.rule.milestone import meeting_stage, open_milestone, open_subtask
 
-    monkeypatch.setenv("ORGANT_RUN_USER", "test-no-such-user")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
     g = FakeGuide()
     f = _flow(g)
     from types import SimpleNamespace
@@ -206,10 +801,12 @@ def test_검증성공해도_선행필요_blocked_백로그가_남으면_보충�
     s = Sys(g, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
 
     assert asyncio.run(s._verify_exhausted_milestone(f)) is False
-    assert ms.criteria[0].passed is True               # 마일스톤 실증은 실제로 끝남
+    assert ms.criteria[0].passed is False              # 뒤 작업이 바꿀 수 있어 아직 실증하지 않음
+    assert ms.criteria[0].verify_attempts == 0
     assert ms.status == "open" and st.status == "open" # 그러나 최대 구현은 아직 미완
     assert r.get("B1").status == "blocked"             # 원 백로그를 버리거나 완료 처리하지 않음
-    assert asyncio.run(s._verify_exhausted_milestone(f)) is False  # 검증 반복도 없음
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is False  # premature 검증 반복도 없음
+    assert ms.criteria[0].verify_attempts == 0
     assert meeting_stage(f) == "backlog"               # 선행 백로그를 보충할 회의로
 
 
@@ -292,6 +889,20 @@ def test_파일전송_인바운드_staging과_프롬프트(tmp_path):
     assert "inbox/ref.png" in p_mem                                           # 워커 프롬프트 안내
 
 
+def test_활동2000행_guard뒤에도_같은길이_새tail은_heartbeat로_전송():
+    """activity_log sliding window가 2000행 고정돼도 len이 아닌 내용 서명으로 새 활동을 감지한다."""
+    from system.sys_core import _changed_activity_payload
+
+    state = {}
+    first = [f"활동-{i}" for i in range(2000)]
+    assert _changed_activity_payload(state, first) == first
+    assert _changed_activity_payload(state, list(first)) is None       # 진짜 무변화는 대역 절약
+    slid = first[1:] + ["활동-2000"]                                  # 길이는 여전히 2000
+    assert len(slid) == len(first)
+    assert _changed_activity_payload(state, slid) == slid              # 새 tail heartbeat 계속 전송
+    assert _changed_activity_payload(state, slid) is None
+
+
 def test_run_안전가드():
     f = _flow(FakeGuide())
     rt = {t.name: t for t in make_guide_tools(f, 11, "leader")}["run"]
@@ -372,34 +983,38 @@ def test_run_셸은_배포비밀을_못_읽는다(tmp_path, monkeypatch):
 
 def test_run_백그라운드_프로세스_그룹째_정리():
     """run이 백그라운드로 띄운 자식(서버 등)을 끝나면 그룹째 정리 → 포트/프로세스 누수 없음."""
-    import os
+    import socket
     import time as _t
     f = _flow(FakeGuide())
     f.workspace = "/tmp"
     rt = {t.name: t for t in make_guide_tools(f, 11, "leader")}["run"]
-    # 마커는 작업공간 내 상대경로로 기록(절대경로 '> /' 리다이렉트는 안전가드가 차단).
-    name = f"organt_runtest_{os.getpid()}.pid"
-    marker = f"/tmp/{name}"
-    # 백그라운드로 오래 자는 자식을 띄우고 그 PID를 기록 → run 반환 뒤엔 죽어 있어야 함.
-    out = asyncio.run(rt.handler({"command": f"sleep 30 & echo $! > {name}; echo started"}))
+    # bwrap PID namespace의 $!는 namespace-local 번호(예: 3)라 host /proc/$!를 조회하면 전혀
+    # 다른 프로세스를 오인한다. 공유 network의 실제 listen socket으로 생존 여부를 관측한다.
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    out = asyncio.run(rt.handler({
+        "command": (
+            f"python3 -m http.server {port} & sleep 0.3; "
+            f"curl -fsS http://127.0.0.1:{port}/ -o /dev/null; echo started"
+        )
+    }))
     text = out["content"][0]["text"]
-    assert "[exit 0]" in text and "started" in text   # 거부 아닌 실제 실행 확인
-    with open(marker) as fp:
-        pid = int(fp.read().strip())
-    os.remove(marker)
+    assert "[exit 0]" in text and "started" in text   # 서버가 실제 응답한 뒤 run이 반환
 
-    def _running(p):  # 좀비(Z)는 죽은 것으로 간주 — 자원/포트를 더는 잡지 않음
+    def _listening():
+        sock = socket.socket()
         try:
-            with open(f"/proc/{p}/stat") as fp:
-                return fp.read().split(") ", 1)[1].split(" ", 1)[0] != "Z"
-        except (FileNotFoundError, ProcessLookupError):
-            return False
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+        finally:
+            sock.close()
 
-    for _ in range(40):       # init의 reaping을 잠깐 기다림(최대 ~2s)
-        if not _running(pid):
+    for _ in range(40):       # namespace init/group 정리를 잠깐 기다림(최대 ~2s)
+        if not _listening():
             break
         _t.sleep(0.05)
-    assert not _running(pid), f"백그라운드 자식(pid={pid})이 정리되지 않고 누수됨"
+    assert not _listening(), f"백그라운드 서버(port={port})가 정리되지 않고 누수됨"
 
 
 def test_recruit로_부족직군_풀인력_합류():
@@ -6072,6 +6687,139 @@ def test_개입_C_접두없는_pending_info도_미답이면_재전달후_답변�
     assert 11 not in f.pending_info
     assert 11 not in getattr(f, "_ij_retry", {})
     assert not any(e["event"] == "interject_unacked" for e in s.flow_log)
+
+
+def test_개입_D_전달_retry_ack가_체크포인트와_실제턴을_거쳐_재시작왕복(
+    monkeypatch, tmp_path,
+):
+    """deliver 직후와 consume/retry 직후를 저장해 재시작이 개입을 잃거나 ack 뒤 부활시키지 않는다."""
+    monkeypatch.setattr("system.sys_core.build_guide_server", lambda *a, **k: object())
+    prompts = []
+    outputs = iter(("답변 표식 없이 작업만 진행", "[답변] 재시작된 교정을 반영했습니다."))
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            prompts.append(prompt)
+            return next(outputs)
+
+    project_file = str(tmp_path / "projects.json")
+    g = FakeGuide()
+    bot = _Bot()
+    builder = lambda oid, srv, role, flow=None: bot
+    s1 = Sys(g, guild_id=1, organt_builder=builder, bot_info={11: "L", 12: "M"},
+             workspace=str(tmp_path), projects_path=project_file)
+    f1 = _flow(g)
+    f1.workspace = str(tmp_path)
+    f1.project_channel = 500
+    f1.checkpoint_task = lambda: s1._checkpoint_open_task(f1)
+    s1.projects[500] = {"id": "P-1", "leader": 11, "open_task": None}
+    asyncio.run(_tools(f1, 11, "leader")["create_task"].handler({"members": "12"}))
+    s1.active_flows[500] = f1
+
+    assert s1.deliver_human_info(500, 11, "재시작에도 살아야 하는 교정") is True
+    delivered = s1.projects[500]
+    assert "재시작에도 살아야 하는 교정" in delivered["pending_info"]["11"][0]
+    assert "pending_info" not in delivered["open_task"]       # 프로젝트 root 한 곳이 영속 정본
+
+    # 러너 재시작 1: deliver가 반환된 뒤 InterjectSignal이 없어져도 다음 실질 턴에 주입된다.
+    s2 = Sys(g, guild_id=1, organt_builder=builder, bot_info={11: "L", 12: "M"},
+             workspace=str(tmp_path), projects_path=project_file)
+    s2.onboarded.update({11, 12})
+    s2.bot_profiles.update({11: "기준", 12: "기준"})
+    f2 = _flow(g)
+    f2.workspace = str(tmp_path)
+    f2.project_channel = 500
+    asyncio.run(s2._restore_open_task(f2, s2.projects[500]))
+    f2.checkpoint_task = lambda: s2._checkpoint_open_task(f2)
+    asyncio.run(s2.run_turn(f2, 11, "첫 실질 작업", Kind.WORK, "leader"))
+    assert "재시작에도 살아야 하는 교정" in prompts[0]
+    assert s2.projects[500]["interject_retry"] == {"11": 1}
+    assert s2.projects[500]["pending_info"]["11"][0].startswith("[재전달")
+
+    # 러너 재시작 2: retry 횟수와 재전달문도 함께 복원되고, [답변] 소비 결과가 즉시 저장된다.
+    s3 = Sys(g, guild_id=1, organt_builder=builder, bot_info={11: "L", 12: "M"},
+             workspace=str(tmp_path), projects_path=project_file)
+    s3.onboarded.update({11, 12})
+    s3.bot_profiles.update({11: "기준", 12: "기준"})
+    f3 = _flow(g)
+    f3.workspace = str(tmp_path)
+    f3.project_channel = 500
+    asyncio.run(s3._restore_open_task(f3, s3.projects[500]))
+    assert f3._ij_retry == {11: 1}
+    f3.checkpoint_task = lambda: s3._checkpoint_open_task(f3)
+    asyncio.run(s3.run_turn(f3, 11, "두 번째 실질 작업", Kind.WORK, "leader"))
+    assert "[재전달" in prompts[1] and "재시작에도 살아야 하는 교정" in prompts[1]
+    assert f3.pending_info == {} and f3._ij_retry == {}
+    assert s3.projects[500]["pending_info"] == {}
+    assert s3.projects[500]["interject_retry"] == {}
+
+    # 러너 재시작 3 + 구 스냅샷: ack된 항목은 부활하지 않고, 새 키가 없던 장부도 빈 상태로 복원된다.
+    s4 = Sys(g, guild_id=1, organt_builder=builder, bot_info={11: "L", 12: "M"},
+             workspace=str(tmp_path), projects_path=project_file)
+    f4 = _flow(g)
+    f4.project_channel = 500
+    asyncio.run(s4._restore_open_task(f4, s4.projects[500]))
+    assert f4.pending_info == {} and f4._ij_retry == {}
+    f4.pending_info = {11: ["전환기 Task 내부 개입"]}
+    f4._ij_retry = {11: 1}
+    transitional_snap = s4._task_snapshot(f4, f4.current)
+    assert transitional_snap["pending_info"] == {"11": ["전환기 Task 내부 개입"]}
+    assert transitional_snap["interject_retry"] == {"11": 1}
+    f_transitional = _flow(g)
+    asyncio.run(s4._restore_open_task(
+        f_transitional, {"id": "P-transitional", "open_task": transitional_snap}))
+    assert f_transitional.pending_info == {11: ["전환기 Task 내부 개입"]}
+    assert f_transitional._ij_retry == {11: 1}
+    old_snap = dict(transitional_snap)
+    old_snap.pop("pending_info")
+    old_snap.pop("interject_retry")
+    old_proj = {"id": "P-old", "open_task": old_snap}
+    f_old = _flow(g)
+    asyncio.run(s4._restore_open_task(f_old, old_proj))
+    assert f_old.pending_info == {} and f_old._ij_retry == {}
+
+
+def test_개입_E_Task생성전에도_프로젝트root에서_재시작후_주입소비(
+    monkeypatch, tmp_path,
+):
+    """선거·구성처럼 open Task가 아직 없는 구간도 프로젝트 root 체크포인트로 개입을 보존한다."""
+    monkeypatch.setattr("system.sys_core.build_guide_server", lambda *a, **k: object())
+    prompts = []
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            prompts.append(prompt)
+            return "[답변] Task 생성 전 교정을 확인했습니다."
+
+    project_file = str(tmp_path / "pre-task-projects.json")
+    g = FakeGuide()
+    bot = _Bot()
+    builder = lambda oid, srv, role, flow=None: bot
+    s1 = Sys(g, guild_id=1, organt_builder=builder, bot_info={11: "L", 12: "M"},
+             workspace=str(tmp_path), projects_path=project_file)
+    s1.projects[500] = {"id": "P-pre", "leader": 11, "open_task": None}
+    f1 = _flow(g)
+    f1.project_channel = 500
+    f1.checkpoint_task = lambda: s1._checkpoint_open_task(f1)
+    s1.active_flows[500] = f1
+    assert s1.deliver_human_info(500, 11, "Task 전에 온 방향 교정") is True
+    assert s1.projects[500]["open_task"] is None
+    assert "Task 전에 온 방향 교정" in s1.projects[500]["pending_info"]["11"][0]
+
+    s2 = Sys(g, guild_id=1, organt_builder=builder, bot_info={11: "L", 12: "M"},
+             workspace=str(tmp_path), projects_path=project_file)
+    s2.onboarded.update({11, 12})
+    s2.bot_profiles.update({11: "기준", 12: "기준"})
+    f2 = _flow(g)
+    f2.workspace = str(tmp_path)
+    f2.project_channel = 500
+    assert asyncio.run(s2._restore_open_task(f2, s2.projects[500])) is None
+    assert "Task 전에 온 방향 교정" in f2.pending_info[11][0]
+    f2.checkpoint_task = lambda: s2._checkpoint_open_task(f2)
+    asyncio.run(s2.run_turn(f2, 11, "구성 다음 실질 턴", Kind.WORK, "leader"))
+    assert "Task 전에 온 방향 교정" in prompts[0]
+    assert s2.projects[500]["pending_info"] == {}
+    assert s2.projects[500]["interject_retry"] == {}
 
 
 # ───────────────── 사수 전수 — 시작 기준은 채용봇이 아니라 같은 직군 선배가 ─────────────────

@@ -13,6 +13,8 @@ SYS가 대상 동료를 중첩 베턴으로 깨워(flow.wake) 응답을 돌려�
 """
 import asyncio
 import os
+import secrets
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -22,6 +24,11 @@ import anyio
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from ._util import _dbg, _looks_transient, _ok, _speech_clip  # noqa: F401  [_speech_clip: sys_core + PJT/tests(test_sys)가 파사드에서 직접 import — 유지, _looks_transient: system/tests(test_misc)가 파사드에서 import — 유지]
+from .rule.evidence import (
+    command_matches_spec, looks_like_verification_command as _evidence_command,
+    direct_verifier_command, normalize_verifier_command,
+    verifier_command_hash, verifier_spec_hash,
+)
 
 from .tool_names import ORIGIN, FLOW_TOOLS, COORD_TOOLS, LEADER_TOOLS  # noqa: F401  [FLOW/COORD/LEADER_TOOLS: guide/discord_main·PJT(organt_discord·scripts·tests) 소비 — 유지, ORIGIN: 소비 불확실 — 호환 유지]
 
@@ -87,7 +94,8 @@ def _run_drop_creds():
     ORGANT_GUIDE_TOKEN)을 우회로 읽을 수 있다(라이브 확인됨). run 셸을 비특권 사용자로 떨어뜨리면
     600 root 파일·root 프로세스 environ을 *권한 자체로* 못 읽는다(node·npm 빌드는 HOME·캐시를
     작업공간으로 잡아주면 정상). 루트가 아니면(로컬 개발) None — 이미 비특권. 사용자명은
-    ORGANT_RUN_USER로 교체 가능(기본 nobody). 강등불가 시 deny-list가 폴백."""
+    ORGANT_RUN_USER로 교체 가능(기본 nobody). root에서 사용자/강등 도구를 못 찾으면 호출자가
+    fail-closed한다."""
     try:
         if os.geteuid() != 0:
             return None
@@ -119,6 +127,120 @@ def _chown_tree(path, uid, gid):
         pass
 
 
+def _rewrite_workspace_paths(command, workspace, replacement=".") -> str:
+    """0700 부모를 다시 순회하지 않도록 *정확한 workspace 경계*만 cwd 상대경로로 바꾼다.
+
+    단순 ``str.replace('/x/ws', '.')``는 ``/x/ws2``까지 ``.2``로 오염시킨다. 앞은 셸 토큰
+    경계이고 뒤는 경로 구분자/토큰 끝인 경우만 치환해 sibling 경로와 일반 문자열을 보존한다.
+    """
+    cmd, ws = str(command or ""), str(workspace or "").strip()
+    roots = set()
+    if ws:
+        roots.add(ws.rstrip("/"))
+        try:
+            roots.add(os.path.realpath(ws).rstrip("/"))
+        except OSError:
+            pass
+    for root in sorted((p for p in roots if p and p != "/"), key=len, reverse=True):
+        pattern = _re.compile(
+            rf"(?<![A-Za-z0-9_./-]){_re.escape(root)}"
+            rf"(?=(?:/|[\s;&|<>()\"'`]|$))"
+        )
+        cmd = pattern.sub(str(replacement), cmd)
+    return cmd
+
+
+def _prepare_run_exec(workspace, command):
+    """root가 cwd에 먼저 들어간 뒤 bubblewrap 격리+uid 강등하도록 공통 argv/env를 만든다.
+
+    ``Popen(user=...)``은 child가 비특권이 된 뒤 0700 ``/root`` 아래 cwd로 chdir해 live 작업공간에
+    진입하지 못한다. bwrap은 root인 채 host workspace를 ``/tmp/workspace``에 bind하고 host
+    ``/root``를 빈 tmpfs로 가린 뒤, 최종 command만 setpriv로 host nobody uid/gid·capability 0으로
+    내린다. 따라서 npm/getcwd/하위 cd는 정상인 반면 ``cd ..``나 절대 sibling 경로로 host 비밀에
+    닿을 수 없다.
+    """
+    ws = str(workspace or "").strip()
+    cmd = normalize_verifier_command(command)
+    env = _scrubbed_run_env()
+    if os.geteuid() != 0:
+        exec_cmd = _rewrite_workspace_paths(cmd, ws)
+        return ["/bin/sh", "-c", exec_cmd], env, ""
+    drop = _run_drop_creds()
+    if not drop:
+        return None, None, "root run의 비특권 사용자(ORGANT_RUN_USER)를 찾을 수 없습니다."
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        return None, None, "root run 격리·권한강등 도구 bwrap을 찾을 수 없습니다."
+    setpriv = shutil.which("setpriv")
+    if not setpriv:
+        return None, None, "root run 최종 권한강등 도구 setpriv를 찾을 수 없습니다."
+    uid, gid = drop
+    real_ws = os.path.realpath(ws)
+    _chown_tree(real_ws, uid, gid)
+    sandbox_ws = "/tmp/workspace"
+    exec_cmd = _rewrite_workspace_paths(cmd, ws, sandbox_ws)
+    env["HOME"] = sandbox_ws
+    env["npm_config_cache"] = "/tmp/npm-cache"
+    env["XDG_CACHE_HOME"] = "/tmp/npm-cache"
+    argv = [
+        bwrap,
+        "--ro-bind", "/", "/",
+        "--tmpfs", "/root",
+        "--tmpfs", "/tmp",
+        "--tmpfs", "/var/tmp",
+        "--tmpfs", "/run",
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--dir", sandbox_ws,
+        "--bind", real_ws, sandbox_ws,
+        "--dir", "/tmp/npm-cache",
+    ]
+    # 라이브 venv의 shebang/interpreter는 /root/ClaudeCompany/.venv를 가리킨다. host /root는
+    # 숨기되 이 비밀 없는 실행환경만 읽기 전용으로 다시 노출한다.
+    venv = os.environ.get("VIRTUAL_ENV") or "/root/ClaudeCompany/.venv"
+    sandbox_path = ":".join(
+        part for part in str(env.get("PATH") or "/usr/local/bin:/usr/bin:/bin").split(":")
+        if part and not os.path.realpath(part).startswith("/root/")
+    )
+    if os.path.isdir(venv) and os.path.realpath(venv).startswith("/root/"):
+        real_venv = os.path.realpath(venv)
+        argv.extend(["--dir", os.path.dirname(real_venv),
+                     "--dir", real_venv,
+                     "--ro-bind", real_venv, real_venv])
+        legacy_root = "/root/murmur-stack"
+        if (os.path.islink(legacy_root)
+                and os.path.realpath(legacy_root) == os.path.dirname(real_venv)):
+            # 기존 venv console-script shebang이 이 역사적 symlink 경로를 품고 있다.
+            argv.extend(["--symlink", os.path.dirname(real_venv), legacy_root])
+        sandbox_path = os.path.join(real_venv, "bin") + ":" + sandbox_path
+    env["PATH"] = sandbox_path
+    playwright_cache = "/root/.cache/ms-playwright"
+    if os.path.isdir(playwright_cache):
+        argv.extend([
+            "--dir", "/root/.cache",
+            "--dir", playwright_cache,
+            "--ro-bind", playwright_cache, playwright_cache,
+        ])
+        env["PLAYWRIGHT_BROWSERS_PATH"] = playwright_cache
+    argv.extend([
+        "--chdir", sandbox_ws,
+        "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+        "--die-with-parent",
+        "--setenv", "HOME", sandbox_ws,
+        "--setenv", "PATH", sandbox_path,
+        "--setenv", "npm_config_cache", "/tmp/npm-cache",
+        "--setenv", "XDG_CACHE_HOME", "/tmp/npm-cache",
+        *(["--setenv", "PLAYWRIGHT_BROWSERS_PATH", playwright_cache]
+          if os.path.isdir(playwright_cache) else []),
+        setpriv,
+        "--reuid", str(uid), "--regid", str(gid), "--clear-groups",
+        "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all",
+        "--bounding-set=-all",
+        "--", "/bin/sh", "-c", exec_cmd,
+    ])
+    return argv, env, ""
+
+
 async def run_workspace_command(workspace, command, timeout=60):
     """run 도구와 SYS 자동검증이 함께 쓰는 안전한 작업공간 셸 프리미티브.
 
@@ -141,16 +263,13 @@ async def run_workspace_command(workspace, command, timeout=60):
         return False, None, "", "", "run은 실행·빌드·검증 전용이며 파일 작성 명령은 허용되지 않습니다."
 
     of, ef = tempfile.TemporaryFile(), tempfile.TemporaryFile()
-    env, drop, extra = _scrubbed_run_env(), _run_drop_creds(), {}
-    if drop:
-        uid, gid = drop
-        _chown_tree(ws, uid, gid)
-        env["HOME"] = ws
-        env.setdefault("npm_config_cache", os.path.join(ws, ".npm"))
-        extra = {"user": uid, "group": gid, "extra_groups": []}
+    argv, env, prep_error = _prepare_run_exec(ws, cmd)
+    if prep_error:
+        of.close(); ef.close()
+        return False, None, "", "", prep_error
     try:
-        p = await asyncio.create_subprocess_shell(
-            cmd, cwd=ws, stdout=of, stderr=ef, start_new_session=True, env=env, **extra)
+        p = await asyncio.create_subprocess_exec(
+            *argv, cwd=ws, stdout=of, stderr=ef, start_new_session=True, env=env)
         timed_out = False
         try:
             rc = await asyncio.wait_for(p.wait(), timeout=max(1, int(timeout)))
@@ -171,6 +290,190 @@ async def run_workspace_command(workspace, command, timeout=60):
     if timed_out:
         return False, rc, out, err, f"실행 시간초과({int(timeout)}s)"
     return rc == 0, rc, out, err, ""
+
+
+def _looks_like_verification_command(command: str) -> bool:
+    """호환용 파사드 — 실제 판정은 rule.evidence의 단일 계약을 쓴다."""
+    return _evidence_command(command)
+
+
+def _receipt_evidence_target(flow, evidence_for) -> str:
+    """현재 SYS 경계가 요구하는 정확한 증거 대상. 빈 값은 영수증 발급 불가."""
+    supplied = str(evidence_for or "").strip()
+    challenge = getattr(flow, "_release_verify_challenge", None) or {}
+    if challenge:
+        expected = str(challenge.get("desc") or "").strip()
+        return expected if supplied == expected else ""
+    if getattr(flow, "_e2e_receipt_nonce", None):
+        known = {
+            str(item.get("id") or "").strip()
+            for item in (getattr(flow, "e2e_checklist", None) or [])
+            if isinstance(item, dict)
+        }
+        return supplied if supplied and supplied in known else ""
+    return ""
+
+
+def _verification_record(flow, evidence_for):
+    """현재 target의 SYS 소유 verifier challenge 레코드와 명세를 찾는다."""
+    target = str(evidence_for or "").strip()
+    challenge = getattr(flow, "_release_verify_challenge", None) or {}
+    if challenge and target == str(challenge.get("desc") or "").strip():
+        return "release", challenge, str(challenge.get("verify") or "").strip()
+    if getattr(flow, "_e2e_receipt_nonce", None):
+        item = next(
+            (row for row in (getattr(flow, "e2e_checklist", None) or [])
+             if isinstance(row, dict) and str(row.get("id") or "").strip() == target),
+            None,
+        )
+        if item is not None:
+            return "e2e", item, str(item.get("verifier_spec") or item.get("spec") or "").strip()
+    return None, None, ""
+
+
+def _seal_verifier_command(flow, actor, evidence_for, command) -> str:
+    """검증 명령을 현재 target/spec/artifact에 봉인한다. 실행은 다음 exact run 한 번만 허용."""
+    from .rule.milestone import workspace_artifact_stamp, write_revision
+
+    kind, record, spec = _verification_record(flow, evidence_for)
+    target = str(evidence_for or "").strip()
+    cmd = normalize_verifier_command(command)
+    if record is None:
+        return "verifier 봉인 불가 — 현재 release/e2e challenge의 정확한 target id가 아닙니다."
+    fixed = bool(record.get("verifier_fixed"))
+    existing = normalize_verifier_command(record.get("verifier_command"))
+    if (kind == "release"
+            and not direct_verifier_command(spec, getattr(flow, "workspace", ""))
+            and not record.get("verifier_structurally_ratified")):
+        return (
+            "verifier 봉인 불가 — 자연어 GOAL은 실행 시점의 임의 command 제안으로 비준할 수 "
+            "없습니다. 최종 마일스톤 회의가 같은 desc에 exact executable verifier를 별도 "
+            "비준해야 합니다.")
+    if fixed and existing and cmd != existing:
+        return (f"verifier 봉인 불가 — {target}은 SYS가 정한 exact 명령만 허용합니다: "
+                f"`{existing[:180]}`")
+    structurally_ratified = bool(record.get("verifier_structurally_ratified"))
+    admissible = (
+        _evidence_command(cmd, getattr(flow, "workspace", ""))
+        if structurally_ratified and fixed and existing == cmd
+        else command_matches_spec(cmd, spec, getattr(flow, "workspace", ""))
+    )
+    if not admissible:
+        return ("verifier 봉인 불가 — true/echo/inline -c·-e/작업공간 밖 test가 아닌 실제 "
+                "테스트·빌드·HTTP·브라우저 검사 명령이어야 하며, 실행형 verify가 이미 있으면 "
+                "그 원문과 정확히 같아야 합니다.")
+    stamp = workspace_artifact_stamp(flow)
+    if not stamp:
+        return "verifier 봉인 불가 — 작업공간 artifact stamp를 만들 수 없습니다."
+    record.update({
+        "verifier_command": cmd,
+        "verifier_command_hash": verifier_command_hash(cmd),
+        "verifier_spec_hash": verifier_spec_hash(target, spec),
+        "verifier_seal": secrets.token_hex(16),
+        "verifier_actor": int(actor),
+        "verifier_epoch": write_revision(flow),
+        "verifier_stamp": stamp,
+        "verifier_used": False,
+    })
+    return (f"verifier 봉인 완료 — target={target}. 다음 run에서 evidence_for를 그대로 두고 "
+            f"아래 명령을 한 글자도 바꾸지 말고 1회 실행하세요:\n`{cmd}`")
+
+
+def _authorize_sealed_verifier_run(flow, actor, evidence_for, command):
+    """실행 직전 exact seal을 단일사용으로 소비한다. 반환=(receipt seal metadata, 오류문구)."""
+    from .rule.milestone import workspace_artifact_stamp, write_revision
+
+    kind, record, spec = _verification_record(flow, evidence_for)
+    target = str(evidence_for or "").strip()
+    cmd = normalize_verifier_command(command)
+    if record is None:
+        return None, "SYS receipt 실행 불가 — 현재 challenge의 정확한 evidence_for가 아닙니다."
+    expected = normalize_verifier_command(record.get("verifier_command"))
+    command_hash = verifier_command_hash(cmd)
+    spec_hash = verifier_spec_hash(target, spec)
+    if (not expected or not record.get("verifier_seal")
+            or record.get("verifier_used")
+            or cmd != expected
+            or command_hash != str(record.get("verifier_command_hash") or "")
+            or spec_hash != str(record.get("verifier_spec_hash") or "")
+            or int(record.get("verifier_actor") or 0) not in (0, int(actor))
+            or not (
+                _evidence_command(cmd, getattr(flow, "workspace", ""))
+                if record.get("verifier_structurally_ratified")
+                and record.get("verifier_fixed") and expected == cmd
+                else command_matches_spec(
+                    cmd, spec, getattr(flow, "workspace", ""))
+            )):
+        return None, ("SYS receipt 실행 불가 — 먼저 run(seal='yes')로 이 target의 verifier를 봉인하고, "
+                      "봉인된 exact command를 같은 실행자가 한 번만 실행해야 합니다.")
+    if (int(record.get("verifier_epoch", -2)) != write_revision(flow)
+            or not record.get("verifier_stamp")
+            or str(record.get("verifier_stamp")) != workspace_artifact_stamp(flow)):
+        return None, ("SYS receipt 실행 불가 — verifier 봉인 뒤 산출물 버전이 달라졌습니다. 현재 버전에서 "
+                      "같은 target/command를 다시 seal한 뒤 실행하세요.")
+    if int(record.get("verifier_actor") or 0) == 0:
+        record["verifier_actor"] = int(actor)
+    record["verifier_used"] = True
+    return {
+        "kind": kind,
+        "target": target,
+        "seal": str(record["verifier_seal"]),
+        "command_hash": command_hash,
+        "spec_hash": spec_hash,
+    }, ""
+
+
+def _issue_run_receipt(
+    flow, actor, command, rc, stdout="", stderr="", evidence_for="", seal_meta=None,
+) -> str:
+    """실제 run subprocess 종료 뒤에만 생성되는 process-local 영수증.
+
+    release verifier가 연 exact challenge token을 함께 봉인한다. 장부는 같은 봇 턴 안의 report_iter가
+    단일사용으로 소비하며 재시작 시 사라져도 잠금은 fail-closed(조건 자체의 최종 receipt는 별도 직렬화).
+    """
+    from .rule.milestone import workspace_artifact_stamp, write_revision
+    challenge = getattr(flow, "_release_verify_challenge", None) or {}
+    e2e_nonce = str(getattr(flow, "_e2e_receipt_nonce", "") or "")
+    if not challenge and not e2e_nonce:
+        return ""                              # 일반 작업 run은 manifest hashing/ledger 비용 불필요
+    target = _receipt_evidence_target(flow, evidence_for)
+    _kind, record, spec = _verification_record(flow, target)
+    command_hash = verifier_command_hash(command)
+    spec_hash = verifier_spec_hash(target, spec)
+    if (rc is None or int(rc) != 0
+            or not target or record is None or not seal_meta
+            or str(seal_meta.get("target") or "") != target
+            or str(seal_meta.get("seal") or "") != str(record.get("verifier_seal") or "")
+            or str(seal_meta.get("command_hash") or "") != command_hash
+            or str(seal_meta.get("spec_hash") or "") != spec_hash
+            or not record.get("verifier_used")
+            or int(record.get("verifier_actor") or 0) != int(actor)
+            or normalize_verifier_command(record.get("verifier_command"))
+            != normalize_verifier_command(command)
+            or not _evidence_command(command, getattr(flow, "workspace", ""))):
+        return ""
+    rid = "run-" + secrets.token_hex(10)
+    ledger = getattr(flow, "_run_receipts", None)
+    if ledger is None:
+        ledger = flow._run_receipts = {}
+    ledger[rid] = {
+        "actor": int(actor),
+        "command": str(command or "")[:500],
+        "rc": rc,
+        "stdout": str(stdout or "")[-500:],
+        "stderr": str(stderr or "")[-300:],
+        "challenge": str(challenge.get("token") or ""),
+        "e2e_nonce": e2e_nonce,
+        "evidence_for": target,
+        "verifier_seal": str(seal_meta["seal"]),
+        "command_hash": command_hash,
+        "spec_hash": spec_hash,
+        "write_epoch": write_revision(flow),
+        "artifact_stamp": workspace_artifact_stamp(flow),
+    }
+    while len(ledger) > 48:
+        ledger.pop(next(iter(ledger)))
+    return rid
 
 
 # [Task Rule → rule/task.py] 완료·인수 검증 게이트는 원래 §7 설계대로 rule/task로 분리(guide_tools 병합 해체)
@@ -548,10 +851,12 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         @tool("report_iter",
               "진행 중 주기의 완수조건 실증 결과를 제출한다(검증 참여자 누구나). results=한 줄에 "
               "'조건 | pass/fail | 증거(run 출력 요지)' — **증거 없는 pass는 인정되지 않는다**. "
+              "GOAL 최종 잠금 조건은 SYS 검증 challenge 중 run이 발급한 receipt id도 함께 제출해야 하며 "
+              "임의 evidence 문자열로는 통과하지 않는다. "
               "target=SubTask id(또는 goal 일부)를 주면 그 SubTask의 검증 — 통과 시 잔여 백로그가 "
               "자동 정리되고 SubTask가 닫힌다. 비우면 마일스톤 검증: 전부 실증되면 wrapup(잔여 정리)로 "
               "넘어가고, 정리가 끝나면 wrapup='done'으로 닫는다. 마감은 사람이 아니라 조건이다.",
-              {"results": str, "target": str, "wrapup": str})
+              {"results": str, "target": str, "wrapup": str, "receipt": str})
         async def report_iter(args):
             from .rule.milestone import flush_pipeline_notes as _flush
             _r = _ok(rule_report_iter(flow, me_id, args))
@@ -593,8 +898,11 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
           "sync_playwright 페이지 로드→로드시간·콘솔에러·스크린샷 확인('실행됨'과 '사용할 만함'은 다르다). "
           "출력 반환. 서버 구동은 'node server.js & sleep 1; curl -s localhost:3000/'처럼 백그라운드+점검으로 "
           "묶으면 됨 — run이 끝나면 백그라운드 프로세스까지 자동 정리하므로 kill 불필요(다음 run의 포트 충돌 없음). "
-          "파괴·git·시스템경로 명령은 차단.",
-          {"command": str})
+          "파괴·git·시스템경로 명령은 차단. GOAL 잠금 검증 중에는 evidence_for=조건 desc 원문, e2e 중에는 "
+          "evidence_for=검사 항목 id를 함께 쓴다. 먼저 seal='yes'로 SYS가 target+spec+현재 artifact에 "
+          "exact command를 봉인하고, 다음 호출에서 seal을 비운 채 **동일 명령을 1회** 실행해야 receipt가 "
+          "발급된다. true/echo/inline -c·-e/작업공간 밖 test 및 봉인과 다른 명령은 불가.",
+          {"command": str, "evidence_for": str, "seal": str})
     async def run(args):
         cmd = str(args.get("command", ""))
         _hold = _clarify_hold(flow, me_id)   # [G2 — clarify 행동 잠금(B-02)] 되묻기 답 오기 전 추측 실행 금지
@@ -659,21 +967,29 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                        "server.js 작성은 Write, 패키지 설치·서버 구동·curl 점검은 run. 남의 도메인 산출물을 "
                        "run으로 대신 찍어내지 말고 그 owner에게 Work로 위임하세요.")
 
+        _seal_requested = str(args.get("seal") or "").strip().lower() in (
+            "yes", "true", "1", "seal", "봉인",
+        )
+        if _seal_requested:
+            return _ok(_seal_verifier_command(
+                flow, me_id, args.get("evidence_for"), cmd))
+        _seal_meta = None
+        if str(args.get("evidence_for") or "").strip():
+            _seal_meta, _seal_error = _authorize_sealed_verifier_run(
+                flow, me_id, args.get("evidence_for"), cmd)
+            if _seal_error:
+                return _ok(_seal_error)
+
         def _exec():
             # 자체 세션(프로세스그룹)으로 실행 → 직속 셸 종료 후 그룹째 정리한다.
             of, ef = tempfile.TemporaryFile(), tempfile.TemporaryFile()
-            env = _scrubbed_run_env()
-            drop = _run_drop_creds()
-            popen_extra = {}
-            if drop:
-                uid, gid = drop
-                _chown_tree(str(flow.workspace), uid, gid)
-                env["HOME"] = str(flow.workspace)
-                env.setdefault("npm_config_cache", os.path.join(str(flow.workspace), ".npm"))
-                popen_extra = {"user": uid, "group": gid, "extra_groups": []}
-            p = subprocess.Popen(cmd, shell=True, cwd=str(flow.workspace),
+            argv, env, prep_error = _prepare_run_exec(flow.workspace, cmd)
+            if prep_error:
+                of.close(); ef.close()
+                raise RuntimeError(prep_error)
+            p = subprocess.Popen(argv, shell=False, cwd=str(flow.workspace),
                                  stdout=of, stderr=ef, start_new_session=True,
-                                 env=env, **popen_extra)
+                                 env=env)
             timed_out = False
             try:
                 rc = p.wait(timeout=60)
@@ -709,6 +1025,16 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             # 시스템이 직접 캡처한 영수증(에이전트 말이 아니라 실제 출력). 완료 보고에 떼어낼 수 없게 묶인다.
             errtail = ("\n[stderr] " + err[-200:]) if (err or "").strip() else ""
             flow.current.evidence = f"exit={rc} `{cmd[:50]}`\n{(out or '')[-400:]}{errtail}"
+        _receipt_required = bool(getattr(flow, "_release_verify_challenge", None)
+                                 or getattr(flow, "_e2e_receipt_nonce", None))
+        try:
+            _receipt_id = _issue_run_receipt(
+                flow, me_id, cmd, rc, out, err,
+                evidence_for=args.get("evidence_for"),
+                seal_meta=_seal_meta,
+            )
+        except Exception:
+            _receipt_id = ""
         # [기동증명 코칭 — 백그라운드 시작만 하고 끝내는 실수 감지(라이브 P-005: 백엔드가 server.js를 다음 run에서
         # curl하려고 별도 run에 `node server.js … &`로 띄웠다 reap돼 죽은 서버에 curl→무한 헤맴)] 명령이 *끝의
         # 단일 `&`로 백그라운드 시작*이면(뒤에 점검 없음), 이 프로세스는 run 종료 시 그룹째 정리돼 다음 run엔
@@ -721,7 +1047,14 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                      "— 다음 run엔 살아있지 않습니다(run 간 포트충돌 방지 설계). 서버 **기동증명은 반드시 한 run "
                      "안에** start→대기→점검을 묶으세요: `node server.js & sleep 1; curl -s 127.0.0.1:$PORT/헬스경로 "
                      "&& curl -s -X POST 127.0.0.1:$PORT/api/…` (별도 run으로 나누면 서버가 죽어 curl이 붙지 못합니다).")
-        return _ok(f"[exit {rc}] (작업공간)\n[stdout]\n{out[-1500:]}\n[stderr]\n{err[-600:]}{_hint}")
+        _receipt_note = (
+            f"\n[SYS run receipt] {_receipt_id}" if _receipt_id
+            else ("\n[SYS run receipt 발급 실패 — target에 봉인된 exact verifier command를 "
+                  "현재 산출물에서 단일사용 실행해야 함]"
+                  if _receipt_required else "")
+        )
+        return _ok(f"[exit {rc}] (작업공간)\n[stdout]\n{out[-1500:]}\n[stderr]\n{err[-600:]}"
+                   f"{_receipt_note}{_hint}")
 
     tools.append(run)
 
@@ -973,7 +1306,8 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     if _pipe_on():
         @tool("e2e_open",
               "Task 경계(모든 마일스톤 done)에서 **전수 e2e 검증을 개시**한다 — 전 마일스톤의 완수조건"
-              "(최종 버전 재실증)과 사용자 원문이 검사 분모로 자동 조립돼 항목 id 목록이 반환된다. "
+              "(최종 버전 재실증)은 회의 비준/이전 SYS 실증으로 고정된 exact verifier만 재사용한다. "
+              "사용자 원문은 무관한 suite로 별도 pass 처리하지 않고 검증 scope 해석 컨텍스트로 보존한다. "
               "개시 후: 산출물의 노출 표면을 e2e_scope로 추가하고, 각 항목을 실제 실행으로 검사해 "
               "e2e_result로 제출하라.",
               {})
@@ -983,7 +1317,8 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
 
         @tool("e2e_scope",
               "e2e 분모 확장 — 산출물을 열어 파악한 **노출 표면**(surfaces: 페이지·라우트·API·명령, "
-              "한 줄에 하나)과 **주 사용 경로**(arcs: 실기동 관통 시나리오, 한 줄에 하나)를 제출한다. "
+              "한 줄에 `검사 설명 || exact verifier command`)과 **주 사용 경로**(arcs: 같은 형식의 "
+              "실기동 관통 시나리오)를 제출한다. inline assert/print나 무관한 성공 명령은 봉인되지 않는다. "
               "추가된 항목 id가 반환된다 — 이 목록이 '전수'의 분모가 되므로 아는 표면을 빠뜨리지 마라.",
               {"surfaces": str, "arcs": str})
         async def e2e_scope(args):
@@ -993,10 +1328,11 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         @tool("e2e_result",
               "e2e 항목 하나의 검사 결과 제출. item=항목 id(예: condition:1), ok=pass/fail, "
               "observed=관측한 것 한 줄, evidence=**실행 증거**(run 출력·브라우저 확인 요지 — 증거 없는 "
-              "pass는 결함으로 판정된다).",
-              {"item": str, "ok": str, "observed": str, "evidence": str})
+              "pass는 결함으로 판정된다). pass면 e2e_open 뒤 해당 검사를 실행한 run 응답의 "
+              "`[SYS run receipt]` id를 receipt에 반드시 붙인다(항목마다 새 영수증, 재사용 불가).",
+              {"item": str, "ok": str, "observed": str, "evidence": str, "receipt": str})
         async def e2e_result(args):
-            return _ok(rule_e2e_result(flow, args))
+            return _ok(rule_e2e_result(flow, args, me_id=me_id))
         tools.append(e2e_result)
 
         @tool("e2e_finish",

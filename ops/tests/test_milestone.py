@@ -21,6 +21,56 @@ def _flow():
     return f
 
 
+def test_산출물stamp는_큰파일의_동일크기_중간변경도_탐지(tmp_path):
+    """release/e2e 버전은 큰 파일의 앞·뒤 표본이 아니라 전체 authoring 내용에 귀속된다."""
+    from system.rule.milestone import workspace_artifact_stamp
+
+    f = _flow()
+    f.workspace = str(tmp_path)
+    artifact = tmp_path / "large-artifact.bin"
+    artifact.write_bytes(b"A" * (5 * 1024 * 1024))
+    before = workspace_artifact_stamp(f)
+
+    with artifact.open("r+b") as fh:
+        fh.seek(2 * 1024 * 1024 + 17)  # 종전 앞/뒤 1MiB 표본 밖, 파일 크기는 그대로
+        fh.write(b"B")
+
+    after = workspace_artifact_stamp(f)
+    assert before and after and before != after
+
+
+def test_산출물stamp는_lockfile_next배포물_symlink_target을묶고_dependency_cache는제외(
+    tmp_path,
+):
+    from system.rule.milestone import workspace_artifact_stamp
+
+    f = _flow()
+    f.workspace = str(tmp_path)
+    lock = tmp_path / "package-lock.json"
+    built = tmp_path / ".next" / "server" / "app.js"
+    cached = tmp_path / "node_modules" / "pkg" / "index.js"
+    external = tmp_path.parent / f"{tmp_path.name}-runtime.js"
+    lock.write_text('{"lockfileVersion":3}\n', encoding="utf-8")
+    built.parent.mkdir(parents=True)
+    built.write_text("runtime-v1\n", encoding="utf-8")
+    cached.parent.mkdir(parents=True)
+    cached.write_text("cache-v1\n", encoding="utf-8")
+    external.write_text("linked-v1\n", encoding="utf-8")
+    (tmp_path / "runtime-link.js").symlink_to(external)
+
+    base = workspace_artifact_stamp(f)
+    cached.write_text("cache-v2\n", encoding="utf-8")
+    assert workspace_artifact_stamp(f) == base                 # 설치 cache는 비용상 제외
+    lock.write_text('{"lockfileVersion":3,"packages":{}}\n', encoding="utf-8")
+    lock_changed = workspace_artifact_stamp(f)
+    assert lock_changed != base                                # 의존성 해석판은 결속
+    built.write_text("runtime-v2\n", encoding="utf-8")
+    built_changed = workspace_artifact_stamp(f)
+    assert built_changed != lock_changed                       # 실제 Next 배포물도 결속
+    external.write_text("linked-v2\n", encoding="utf-8")
+    assert workspace_artifact_stamp(f) != built_changed        # 실행되는 symlink target도 결속
+
+
 def test_플래그_미설정이면_파이프라인_OFF():
     os.environ.pop("ORGANT_PIPELINE", None)
     assert pipeline_on() is False              # 안전값 — 라이브 동작 불변(계약 §12)
@@ -576,7 +626,11 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
 
     # ② 마일스톤 단계 — GOAL 섰으니 로드맵/주기
     assert meeting_stage(f) == "milestone"
-    ok, _ = register_stage(f, "milestone", "단계: MVP\n단계: 확장\n이번 주기: 방명록 MVP\n로드 | curl 확인")
+    ok, _ = register_stage(
+        f, "milestone",
+        "단계: MVP\n단계: 확장\n이번 주기: 방명록 MVP\n"
+        "로드 | 실증: python3 verify_guestbook.py",
+    )
     assert ok and f.roadmap == ["MVP", "확장"]
     _ms = [m for m in f.milestones if m.status not in ("done", "superseded")][0]
     assert not _ms.subtasks                                  # 마일스톤 회의는 단위를 안 만든다
@@ -604,8 +658,8 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
 def test_GOAL_비준전문_공개계약_완수조건_체크포인트와_하위잠금계보(monkeypatch, tmp_path):
     """U-052: GOAL 표결 원문이 TaskRef/문서/체크포인트에 남고 하위 주기가 이를 대체하지 못한다.
 
-    상위 조건은 각 마일스톤의 active 분모에 합치지 않는다. 여러 주기로 나눈 첫 주기까지 전체
-    Task 조건을 요구하는 대신, 별도 locked_criteria 참조와 Task 최종 acceptance 게이트로 보존한다.
+    상위 조건은 중간 마일스톤의 active 분모에 합치지 않는다. 마지막 로드맵 주기에서만 실제
+    release_lock 조건으로 승격되어 기존 실증 경로를 타고, 별도 locked_criteria에도 계보가 남는다.
     """
     import types
     from system._util import dossier_read
@@ -639,6 +693,8 @@ def test_GOAL_비준전문_공개계약_완수조건_체크포인트와_하위�
     assert canonical_parent_contract(f) == parent            # 80/160자 절단 없는 비준 전문
 
     child = (
+        "단계: MVP\n"
+        "단계: 확장\n"
         "이번 주기: Node18 상태 머신 최소 구현\n"
         "- 금지 전이는 false를 반환 | 실증: node test_child_contract.js"
     )
@@ -647,7 +703,7 @@ def test_GOAL_비준전문_공개계약_완수조건_체크포인트와_하위�
     ms = f.milestones[-1]
     assert [(c.desc, c.verify) for c in ms.criteria] == [
         ("금지 전이는 false를 반환", "node test_child_contract.js")
-    ]                                                        # 이번 주기 분모는 회의가 정한 1건 그대로
+    ]                                                        # 중간 주기 분모는 회의가 정한 1건 그대로
     assert [(c.desc, c.verify) for c in ms.locked_criteria] == [
         ("금지 전이는 Error와 상태 불변을 보장", "node test_state_machine.js")
     ]                                                        # 상위 계약은 대체되지 않고 별도 실상태에 남음
@@ -657,6 +713,54 @@ def test_GOAL_비준전문_공개계약_완수조건_체크포인트와_하위�
     assert [(c.desc, c.verify) for c in restored.locked_criteria] == [
         ("금지 전이는 Error와 상태 불변을 보장", "node test_state_machine.js")
     ]
+
+    ms.status = "done"
+    ok3, note3 = register_stage(
+        f, "milestone",
+        "이번 주기: 확장판 최종 인수\n"
+        "- 확장 API 로드 | 실증: node test_expansion.js",
+        "U-052 final",
+    )
+    assert ok3, note3
+    final_ms = f.milestones[-1]
+    assert [(c.desc, c.verify, c.release_lock) for c in final_ms.criteria] == [
+        ("확장 API 로드", "node test_expansion.js", False),
+        ("금지 전이는 Error와 상태 불변을 보장", "node test_state_machine.js", True),
+    ]                                                        # 최종 주기에서만 상위 계약이 실제 분모
+    assert ms_status_snapshot(f)["total"] == 2
+
+
+def test_GOAL_정본과_부분저장잠금은_합집합이고_같은desc는_정본verify우선(tmp_path):
+    """부분 복원 locked refs가 하나 있다는 이유로 최신 GOAL의 나머지 조건을 가리지 않는다."""
+    import types
+    from system.rule.milestone import Criterion
+
+    f = _flow()
+    f.workspace = str(tmp_path)
+    f.current = types.SimpleNamespace(
+        acceptance=(
+            "- 계약 A | 실증: python3 verify_a.py\n"
+            "- 계약 B | 실증: python3 verify_b.py"
+        ),
+        status=types.SimpleNamespace(goal="g"),
+    )
+    f.roadmap = ["중간", "최종"]
+    first = open_milestone(f, "중간", [{"desc": "중간 산출물", "verify": "python3 mid.py"}])
+    first.locked_criteria = [
+        Criterion("계약 A", "python3 stale_a.py"),       # 같은 desc의 낡은 verify
+        Criterion("구 저장 전용 계약", "python3 legacy.py"),
+    ]
+    first.status = "done"
+    final = open_milestone(f, "최종", [{"desc": "최종 산출물", "verify": "python3 final.py"}])
+
+    expected = [
+        ("계약 A", "python3 verify_a.py"),
+        ("계약 B", "python3 verify_b.py"),
+        ("구 저장 전용 계약", "python3 legacy.py"),
+    ]
+    assert [(c.desc, c.verify) for c in final.locked_criteria] == expected
+    assert [(c.desc, c.verify) for c in first.locked_criteria] == expected
+    assert [(c.desc, c.verify) for c in final.criteria if c.release_lock] == expected
 
 
 def test_회의산물_백로그도_주인을_갖고_태어난다(monkeypatch):
@@ -672,7 +776,10 @@ def test_회의산물_백로그도_주인을_갖고_태어난다(monkeypatch):
     f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
                                       status=types.SimpleNamespace(goal="g", purpose=""),
                                       acceptance="", standard="", interfaces="")
-    register_stage(f, "milestone", "이번 주기: MVP\n동작 | curl 확인")
+    register_stage(
+        f, "milestone",
+        "이번 주기: MVP\n동작 | 실증: python3 verify_mvp.py",
+    )
     ms = [m for m in f.milestones if m.status not in ("done", "superseded")][0]
     register_stage(f, "subtask", "단위: 백엔드 | curl 확인")
     st = ms.subtasks[0]
@@ -706,7 +813,10 @@ def test_백로그회의_발제자_귀속과_무주출생금지(monkeypatch):
     f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
                                       status=types.SimpleNamespace(goal="g", purpose=""),
                                       acceptance="", standard="", interfaces="")
-    register_stage(f, "milestone", "이번 주기: MVP\n동작 | curl 확인")
+    register_stage(
+        f, "milestone",
+        "이번 주기: MVP\n동작 | 실증: python3 verify_mvp.py",
+    )
     register_stage(f, "subtask", "단위: 백엔드 | curl 확인")
     st = [m for m in f.milestones if m.status not in ("done", "superseded")][0].subtasks[0]
     f._draft_attr = {"백로그: API 구현": 12}          # 봇 12가 초안에 쓴 줄(diff 귀속)
@@ -730,7 +840,10 @@ def test_백로그_소진되고_주기_미완이면_추가분해회의가_체인
     f.current = types.SimpleNamespace(task_id="T1", team=[11, 12],
                                       status=types.SimpleNamespace(goal="g", purpose=""),
                                       acceptance="", standard="", interfaces="")
-    register_stage(f, "milestone", "이번 주기: MVP\n동작 | curl 확인")
+    register_stage(
+        f, "milestone",
+        "이번 주기: MVP\n동작 | 실증: python3 verify_mvp.py",
+    )
     register_stage(f, "subtask", "단위: 백엔드 | curl 확인")
     st = [m for m in f.milestones if m.status not in ("done", "superseded")][0].subtasks[0]
     register_stage(f, "backlog", "백로그: API 구현")

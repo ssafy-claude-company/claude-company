@@ -9,10 +9,13 @@
 실물 그대로(make_guide_tools 등록분을 handler로 구동). 실 QA 봇 관통은 라이브 스모크(§13)의 몫.
 """
 import asyncio
+import re
 
 import pytest
 
-from system.rule.milestone import iter_verify, next_milestone, wrapup_done
+from system.rule.milestone import (
+    iter_verify, next_milestone, open_subtask, wrapup_done,
+)
 from system.rule.wrapup import E2E_FAIL, E2E_PASS, tallying_logger
 from test_sys import FakeGuide, _flow, _tools
 
@@ -31,10 +34,27 @@ def _drive(tools, name, args=None):
     return _txt(asyncio.run(tools[name].handler(args or {})))
 
 
-def test_e2e_full_rehearsal_fail_replan_then_pass(onflag):
+def _run_receipt(tools, item) -> str:
+    out = _drive(
+        tools, "run",
+        {"command": item["verifier_command"],
+         "evidence_for": item["id"]},
+    )
+    match = re.search(r"\[SYS run receipt\]\s+(run-[0-9a-f]+)", out)
+    assert match, out
+    return match.group(1)
+
+
+def test_e2e_full_rehearsal_fail_replan_then_pass(onflag, tmp_path):
     g = FakeGuide()
     f = _flow(g)
+    f.workspace = str(tmp_path)
     f.origin_request = "버튼 누르면 카운트가 1씩 증가. 새로고침해도 값이 유지"
+    for name in (
+        "api_increment_check.py", "persist_check.py", "browser_check.py",
+        "http_get_check.py", "api_post_check.py", "browser_arc_check.py",
+    ):
+        (tmp_path / name).write_text("print('verified')\n", encoding="utf-8")
     events = []
     f.log = tallying_logger(f, lambda ev, **kw: events.append((ev, kw)))   # sys_core 배선과 동형
 
@@ -42,15 +62,20 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag):
     lead = _tools(f, 11, "leader")
     assert "개설" in _drive(lead, "set_milestone", {
         "goal": "카운터 API",
-        "criteria": "POST /count가 값을 증가시킨다 | curl POST 후 GET으로 확인\n"
-                    "값이 파일에 저장된다 | 재기동 후 GET 값 유지 확인"})
+        "criteria": "POST /count가 값을 증가시킨다 | python3 api_increment_check.py\n"
+                    "값이 파일에 저장된다 | python3 persist_check.py"})
     assert "개설" in _drive(lead, "set_milestone", {
-        # [#4 게이트 강화 여파] '브라우저 클릭 확인'(빈 서술)은 이제 등록 거부 — 실행 가능형으로.
-        "goal": "프론트", "criteria": "버튼 클릭이 화면 숫자를 올린다 | playwright로 클릭 후 숫자 1 증가 확인"})
+        "goal": "프론트",
+        "criteria": "버튼 클릭이 화면 숫자를 올린다 | python3 browser_check.py"})
     assert len(f.milestones) == 2
 
     # ② iter 실증(증거 있는 충족) → 잔여 정리 → done — Task 경계 도달
+    from system.rule.backlog import Backlog, relay_for
     for ms in list(f.milestones):
+        st = open_subtask(f, ms, f"{ms.goal} 구현", [])
+        relay_for(f, st)._pool["B1"] = Backlog(
+            "B1", f"{ms.goal} 구현", 12, status="done", assignee=12)
+        st.status = "done"
         passed, _ = iter_verify(f, ms, [{"desc": c.desc, "passed": True, "evidence": "run 출력 OK"}
                                         for c in ms.criteria])
         assert passed and wrapup_done(f, ms) == "done"
@@ -58,16 +83,25 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag):
     # ③ QA(멤버) 표면으로 e2e 관통 — 개시(분모: 조건 3 + 원문 2)
     qa = _tools(f, 12, "member")
     out = _drive(qa, "e2e_open")
-    assert "e2e 개시" in out and "condition:1" in out and "origin:1" in out
+    assert "e2e 개시" in out and "condition:1" in out
+    assert "origin:1" not in out and "사용자 원문 컨텍스트" in out
     assert "surface:1" in _drive(qa, "e2e_scope",
-                                 {"surfaces": "GET /\nPOST /count", "arcs": "기동→클릭 3회→새로고침 값 유지"})
+                                 {"surfaces":
+                                      "GET / || python3 http_get_check.py\n"
+                                      "POST /count || python3 api_post_check.py",
+                                  "arcs":
+                                      "기동→클릭 3회→새로고침 값 유지 || "
+                                      "python3 browser_arc_check.py"})
 
     # ④ 전 항목 제출 — surface:2 하나만 실패(관측·증거 동봉)
     for it in f.e2e_checklist:
         fail = it["id"] == "surface:2"
-        _drive(qa, "e2e_result", {"item": it["id"], "ok": "fail" if fail else "pass",
-                                  "observed": "POST가 500 응답" if fail else "OK",
-                                  "evidence": "curl -X POST 출력 로그"})
+        args = {"item": it["id"], "ok": "fail" if fail else "pass",
+                "observed": "POST가 500 응답" if fail else "OK",
+                "evidence": "curl -X POST 출력 로그"}
+        if not fail:
+            args["receipt"] = _run_receipt(qa, it)
+        _drive(qa, "e2e_result", args)
 
     # ⑤ 판정 → e2e_fail + 복기 마일스톤 자동 개설(§6 복기 재진입)
     fin = _drive(qa, "e2e_finish")
@@ -81,14 +115,23 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag):
 
     # ⑥ 복기 라운드 — 결함 해소 실증 → done → 재관통 → e2e_pass
     rm = next_milestone(f)
+    repair_st = open_subtask(f, rm, "POST 결함 수정", [])
+    relay_for(f, repair_st)._pool["B1"] = Backlog(
+        "B1", "POST 결함 수정", 12, status="done", assignee=12)
+    repair_st.status = "done"
     passed, _ = iter_verify(f, rm, [{"desc": c.desc, "passed": True, "evidence": "재실행 — 미재현 확인"}
                                     for c in rm.criteria])
     assert passed and wrapup_done(f, rm) == "done"
     assert "e2e 개시" in _drive(qa, "e2e_open")                      # 분모 재조립(복기 조건 포함)
-    _drive(qa, "e2e_scope", {"surfaces": "GET /\nPOST /count", "arcs": "기동→클릭 3회→새로고침 값 유지"})
+    _drive(qa, "e2e_scope", {
+        "surfaces": "GET / || python3 http_get_check.py\n"
+                    "POST /count || python3 api_post_check.py",
+        "arcs": "기동→클릭 3회→새로고침 값 유지 || python3 browser_arc_check.py",
+    })
     for it in f.e2e_checklist:
         _drive(qa, "e2e_result", {"item": it["id"], "ok": "pass",
-                                  "observed": "OK", "evidence": "재검사 출력"})
+                                  "observed": "OK", "evidence": "재검사 출력",
+                                  "receipt": _run_receipt(qa, it)})
     assert "e2e_pass" in _drive(qa, "e2e_finish")
     assert [e for e, _ in events].count(E2E_PASS) == 1
 

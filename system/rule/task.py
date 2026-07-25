@@ -3,6 +3,8 @@
 여기로 되돌린다. 전부 순수 함수(workspace/text/labels → bool/…): Organt이 complete_task로 마감을
 선언할 때 SYS가 강제하는 *광역 Task Rule*. guide_tools는 이 모듈을 import해 도구에서 소비한다."""
 import os
+import re
+import secrets
 from dataclasses import dataclass, field
 from typing import List
 
@@ -13,6 +15,100 @@ from .task_gates import (  # noqa: F401 (M9 재수출)
 
 # 폰트·영상) 파일 확장자. 지각 비대칭 차원(특히 사운드)을 코드로 합성한 placeholder가 아니라 실제 받아온
 # 자원으로 채웠는지의 **도메인 중립** 증거 — 특정 직군·장르 하드코딩이 아니라 '실재물 파일 존재'다.
+
+
+async def _final_release_recheck(flow):
+    """complete 직전 실행 가능한 GOAL locks를 현재 작업공간에서 다시 run한다.
+
+    e2e 판정과 마감 사이의 변경 창을 마지막으로 닫는다. 검증 명령 자체가 authoring manifest를 바꾸거나
+    실패하면 이전 e2e도 다른 버전의 값이므로 최종 마일스톤을 reopen하고 fresh 검증을 요구한다.
+    자연어 lock은 직전 SYS challenge receipt의 epoch+stamp 일치가 goal_locked_release_error에서 보장된다.
+    """
+    from ..guide_tools import run_workspace_command
+    from .evidence import (
+        command_matches_spec, direct_verifier_command,
+        normalize_verifier_command, verifier_command_hash, verifier_spec_hash,
+    )
+    from .milestone import (_ckpt as _ms_ckpt, _final_release_milestone,
+                            _sync_goal_locked_evidence, invalidate_e2e_state,
+                            workspace_artifact_stamp, write_revision)
+
+    target = _final_release_milestone(flow)
+    if target is None:
+        return "최종 GOAL 인수 마일스톤을 찾을 수 없습니다."
+    workspace = getattr(flow, "workspace", None)
+    initial_stamp = workspace_artifact_stamp(flow)
+    initial_epoch = write_revision(flow)
+    direct = []
+    for c in target.criteria:
+        if not getattr(c, "release_lock", False):
+            continue
+        stored = normalize_verifier_command(getattr(c, "verified_command", ""))
+        structurally_ratified = bool(
+            stored
+            and getattr(c, "ratified_verifier_command", "") == stored
+            and getattr(c, "ratified_verifier_command_hash", "")
+            == verifier_command_hash(stored)
+            and getattr(c, "ratified_verifier_spec_hash", "")
+            == verifier_spec_hash(c.desc, c.verify)
+        )
+        trusted_stored = bool(
+            stored
+            and getattr(c, "evidence_source", "") == "sys_run"
+            and getattr(c, "verified_command_hash", "") == verifier_command_hash(stored)
+            and getattr(c, "verified_spec_hash", "") == verifier_spec_hash(c.desc, c.verify)
+            and int(getattr(c, "verified_write_epoch", -2)) == initial_epoch
+            and getattr(c, "verified_artifact_stamp", "") == initial_stamp
+            and (
+                bool(direct_verifier_command(stored, workspace))
+                if structurally_ratified
+                else command_matches_spec(stored, c.verify, workspace)
+            )
+        )
+        command = stored if trusted_stored else direct_verifier_command(c.verify, workspace)
+        if command:
+            direct.append((c, command))
+    changed = False
+    for c, command in direct:
+        before_stamp = workspace_artifact_stamp(flow)
+        before_epoch = write_revision(flow)
+        c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
+        ok, rc, out, err, reason = await run_workspace_command(
+            workspace, command, timeout=60)
+        after_stamp = workspace_artifact_stamp(flow)
+        after_epoch = write_revision(flow)
+        tail = ((out or "") + (("\n[stderr] " + err) if (err or "").strip() else ""))[-400:].strip()
+        if (not ok or not before_stamp or before_stamp != after_stamp
+                or before_epoch != after_epoch):
+            c.passed, c.evidence = False, ""
+            c.evidence_source, c.receipt_id = "", ""
+            c.verified_write_epoch, c.verified_artifact_stamp = -1, ""
+            c.verified_command = ""
+            c.verified_command_hash = c.verified_spec_hash = ""
+            c.status, c.block_reason = "active", ""
+            target.status, target.iter_stuck = "open", 0
+            invalidate_e2e_state(
+                flow, "complete 직전 GOAL 재실증 실패" if not ok else "검증 중 산출물 변경")
+            _sync_goal_locked_evidence(flow, target)
+            _ms_ckpt(flow)
+            why = (f"exit={rc} {reason or tail[-120:]}" if not ok
+                   else "검증 명령 실행 전후 authoring manifest가 달라짐")
+            return (f"GOAL 잠금 재실증 실패: {c.desc[:60]} — {why}. "
+                    "최종 마일스톤 검증과 fresh e2e를 다시 거쳐야 합니다.")
+        evidence = f"exit={rc} `{command[:80]}`" + (f"\n{tail}" if tail else "")
+        c.passed, c.evidence = True, evidence[:400]
+        c.evidence_source = "sys_run"
+        c.receipt_id = "complete-" + secrets.token_hex(10)
+        c.verified_write_epoch = after_epoch
+        c.verified_artifact_stamp = after_stamp
+        c.verified_command = command
+        c.verified_command_hash = verifier_command_hash(command)
+        c.verified_spec_hash = verifier_spec_hash(c.desc, c.verify)
+        changed = True
+    if changed:
+        _sync_goal_locked_evidence(flow, target)
+        _ms_ckpt(flow)
+    return None
 
 
 @dataclass
@@ -678,10 +774,22 @@ async def complete_task(flow, role, args):
     args = _merge_gate_args(args)   # [B-16] 마커 인자 → result 합성(기계적 동등)
     # [파이프라인 마감 관문(2026-07-21, 전수 감사 — e2e가 권고뿐이라 검증 없이 마감 가능하던 실효성
     # 구멍)] 마일스톤 판은 ①열린 주기 없음 ②로드맵 소진 ③Task 경계 전수 검증(e2e) 판정 존재가
-    # 마감의 전제. e2e_fail이라도 복기 정체로 끝났으면 정직 마감 허용(결함은 완료 보고에 실린다).
-    from .milestone import pipeline_on as _po2, roadmap_phases as _rp2
+    # 마감의 전제. 복기 생성이 정체돼도 e2e_fail은 완료로 바꾸지 않고 fail-closed로 유지한다.
+    from .milestone import (goal_locked_release_error as _glerr2,
+                            invalidate_e2e_state as _invalidate_e2e2,
+                            pipeline_on as _po2,
+                            promote_final_locked_criteria as _promote_gl2,
+                            roadmap_phases as _rp2,
+                            work_ledger_release_error as _ledger_err2,
+                            workspace_artifact_stamp as _artifact_stamp2,
+                            write_revision as _write_rev2)
     _mss2 = getattr(flow, "milestones", None) or []
-    if _po2() and _mss2:
+    if _po2():
+        if not _mss2:
+            return _ok("마감 불가 — 마일스톤이 하나도 없습니다. 확정된 GOAL을 이번 주기 완수조건으로 "
+                       "내리는 마일스톤 회의를 먼저 열고, SubTask·백로그 실행→최종 실증→e2e 순서로 "
+                       "진행하세요.")
+        _promote_gl2(flow)   # 구 체크포인트의 이미-done 최종 주기도 증거 없으면 open으로 복원
         _openm = [m.ms_id for m in _mss2 if m.status != "done"]
         if _openm:
             return _ok(f"마감 불가 — 미완 주기 {', '.join(_openm[:4])}. 주기 완수조건을 실증(report_iter)해 "
@@ -690,10 +798,30 @@ async def complete_task(flow, role, args):
         if _road2 and sum(1 for m in _mss2 if m.status == "done") < len(_road2):
             return _ok("마감 불가 — 로드맵에 남은 단계가 있습니다(시스템이 다음 주기 회의를 엽니다). "
                        "전 단계 완주 후 e2e 전수를 거쳐 마감하세요.")
-        if not (getattr(flow, "wrapup_state", None) or {}).get("verdict"):
+        _ledger_error = _ledger_err2(flow, repair=True)
+        if _ledger_error:
+            return _ok(f"마감 불가 — {_ledger_error}")
+        _glerr = _glerr2(flow)
+        if _glerr:
+            return _ok(f"마감 불가 — {_glerr}")
+        _wrap2 = getattr(flow, "wrapup_state", None) or {}
+        if not _wrap2.get("verdict"):
             return _ok("마감 불가 — Task 경계 전수 검증(e2e)이 아직입니다. e2e_open → 표면·경로 등록"
                        "(e2e_scope) → 전 항목 실증 제출(e2e_result, 증거 필수) → e2e_finish 판정 후 "
                        "마감하세요. 결함이 나오면 복기 주기가 열립니다(정상 경로).")
+        if _wrap2.get("verdict") != "e2e_pass":
+            return _ok(
+                "마감 불가 — 마지막 Task 경계 판정이 e2e_pass가 아닙니다. 실패 결함의 복기 "
+                "마일스톤을 완수하고 현재 버전으로 e2e 전 항목을 다시 통과해야 합니다. "
+                "복기 생성이 정체/실패했어도 결함 상태를 완료로 바꾸지 않습니다.")
+        _stamp2, _epoch2 = _artifact_stamp2(flow), _write_rev2(flow)
+        if (not _wrap2.get("artifact_stamp")
+                or _wrap2.get("artifact_stamp") != _stamp2
+                or int(_wrap2.get("write_epoch", -1)) != _epoch2):
+            _invalidate_e2e2(flow, "e2e 판정 뒤 산출물 변경 또는 구 판정")
+            _ckpt(flow)
+            return _ok("마감 불가 — e2e 판정 뒤 산출물 버전이 달라졌거나 구 판정에 artifact stamp가 "
+                       "없습니다. 현재 버전으로 e2e_open부터 fresh 전수 검증을 다시 진행하세요.")
     _msg = _gate_verified(flow)
     if _msg:
         return _ok(_msg)
@@ -741,4 +869,8 @@ async def complete_task(flow, role, args):
     _msg = _gate_contrib(flow, args, third, has_product, _engx, _scopex)
     if _msg:
         return _ok(_msg)
+    if _po2():
+        _msg = await _final_release_recheck(flow)
+        if _msg:
+            return _ok(f"마감 불가 — {_msg}")
     return _ok(await _finalize_done(flow, g, args, third, has_product))

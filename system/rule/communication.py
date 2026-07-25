@@ -686,8 +686,11 @@ async def meet(flow, me_id, args):
             before = wakes["n"]
             body = (
                 "[회의 — 사람 개입 반영 슬롯] 최종 표결·등록 전에 SYS가 이 프롬프트에 붙인 사용자 "
-                "개입을 먼저 소화하세요. 출력 서두에 `[답변]` 문단으로 사용자에게 짧게 답하고, 결론이 "
-                "바뀌어야 하면 공동 DRAFT를 지금 Read/Edit하세요. 개입을 다음 단계로 미루지 마세요.\n\n"
+                "개입을 먼저 소화하세요. 출력 서두에 `[답변]` 문단으로 사용자에게 짧게 답하고, "
+                + ("결론이 바뀌어야 하면 공동 DRAFT를 지금 Read/Edit하세요. "
+                   if _draft_path is not None else
+                   "결론이 바뀌어야 하면 수정된 `[수렴안]` 전문을 지금 다시 제출하세요. ")
+                + "개입을 다음 단계로 미루지 마세요.\n\n"
                 + _mk_body(target, None)
             )
             await _speech(target, body, "사람 개입")
@@ -805,7 +808,8 @@ async def meet(flow, me_id, args):
                 # 문서' 기준으로 심사 — 다음 단계 몫(세부 메커닉·분해)이 없다고 반대를 쏟아 만장일치 불가.
                 # 이 회의가 정하는 딱 하나 기준으로만 판단시키고, 표결은 즉답(도구 금지)으로 강제.
                 _fr = (f"\n[이 회의가 정하는 것] {_stage_frame}" if _stage_frame else "")
-                return (f"[회의 — 결론 확정 표결] 주제: {topic}{_fr}\n제출된 결론:\n{prop}\n\n"
+                return (f"[회의 — 결론 확정 표결] 주제: {topic}{_fr}{_parent_frame}\n"
+                        f"제출된 결론:\n{prop}\n\n"
                         f"**이 회의 안건 기준으로만** 확정 여부를 판단하세요 — 다음 단계 몫(세부 설계·작업 "
                         f"분해·구현 스펙)이 없다는 이유로 반대하지 마세요(그건 다음 회의들이 정합니다). "
                         f"이 안건의 결론으로 충분하면 `[찬성: 왜 충분한지 한 줄]`, 이 안건 범위에서 빠진 게 "
@@ -1133,7 +1137,7 @@ async def meet(flow, me_id, args):
                 if _dtxt.strip() and _ph == 0 and _obj == 0:
                     try:
                         from .milestone import stage_preflight as _ms_pre
-                        _pre_errs = [e for e in _ms_pre(_stage, _dtxt) if e]
+                        _pre_errs = [e for e in _ms_pre(_stage, _dtxt, flow) if e]
                     except Exception:
                         _pre_errs = []
                     if _pre_errs:
@@ -1413,39 +1417,82 @@ async def meet(flow, me_id, args):
                 continue
             _fresh = conv_props[_before:]                   # 이번 패스에 제출된 수렴안 후보
             if _fresh:
-                _top = Counter(_fresh).most_common(1)[0][0]
+                _fallback_props = list(_fresh)
+                _fallback_seen = len(conv_props)
+                _top = Counter(_fallback_props).most_common(1)[0][0]
                 # [반대 사유 병합→재비준(2026-07-15, 사용자: '자기거 없어서 부결이면 합쳐야지')] 제출된
                 # 수렴안이 '내 도메인 게 빠졌다'로 부결되면, 그 반대 사유들을 수렴안에 병합해 갱신하고
                 # 재비준한다 — 모두의 것이 들어갈 때까지 자라 만장일치가 됨(완성된 수렴안). 상한까지
                 # 병합해도 안 되면(무한 반대) 회의 계속(revive).
-                _passed, _dissents, _ = await _ratify_vote(_top)
                 _mrg = 0
-                while (not _passed and _dissents and _mrg < 3 and wakes["n"] < wake_cap):
-                    _mrg += 1
-                    if flow.log:
-                        flow.log("consensus_merge", round=_mrg, dissents=len(_dissents), stage=str(_stage))
-                    _top = await _merge_dissents(_top, _dissents)   # 반대 사유 병합
-                    _passed, _dissents, _ = await _ratify_vote(_top)   # 재비준
-                if _passed:
-                    _ok, _note = _ms_regstage(flow, _stage, _top, topic)   # 이 단계 결론 '하나'만 등록
-                    if _ok:
-                        _landed, _conclusion = True, _note
-                        _confirm_note = "\n\n" + _note
+                _fallback_human_blocked = False
+                while True:
+                    # [DRAFT 실패 폴백도 사람 개입 선행] 대화 수렴안은 파일 재독해가 없으므로, 슬롯
+                    # 응답에서 새 [수렴안]이 나오면 그 후보를 즉시 다시 뽑고 표결한다. 새 안이 없어도
+                    # 사람 개입을 소화한 뒤 기존 안을 반드시 재표결한다.
+                    _human_slot = await _meet_human_info_slot()
+                    if _human_slot == "served":
+                        _new_props = conv_props[_fallback_seen:]
+                        _fallback_seen = len(conv_props)
+                        if _new_props:
+                            _fallback_props = list(_new_props)
+                            _top = Counter(_fallback_props).most_common(1)[0][0]
+                        _mrg = 0
+                        continue
+                    if _human_slot == "blocked":
+                        _fallback_human_blocked = True
+                        break
+
+                    _passed, _dissents, _ = await _ratify_vote(_top)
+                    if _passed:
+                        # micro 표결 중 도착한 개입은 이 표를 폐기한다. 슬롯에서 수렴안을 다시
+                        # 평가한 뒤 위 루프로 돌아가 새 표가 통과해야만 동기 등록기로 내려간다.
+                        _human_slot = await _meet_human_info_slot()
+                        if _human_slot == "served":
+                            _new_props = conv_props[_fallback_seen:]
+                            _fallback_seen = len(conv_props)
+                            if _new_props:
+                                _fallback_props = list(_new_props)
+                                _top = Counter(_fallback_props).most_common(1)[0][0]
+                            _mrg = 0
+                            continue
+                        if _human_slot == "blocked":
+                            _fallback_human_blocked = True
+                            break
+                        _ok, _note = _ms_regstage(
+                            flow, _stage, _top, topic)   # 이 단계 결론 '하나'만 등록
+                        if _ok:
+                            _landed, _conclusion = True, _note
+                            _confirm_note = "\n\n" + _note
+                            if flow.log:
+                                flow.log("stage_confirmed", stage=str(_stage), passes=_pass, merges=_mrg)
+                            try:
+                                from .milestone import flush_pipeline_notes as _fpn
+                                await _fpn(flow)   # [마커 즉시 게시] 도구 래퍼 밖 등록도 피드 마커 유실 없음
+                            except Exception:
+                                pass
+                            break                           # 채택 완료 — 회의 종료
                         if flow.log:
-                            flow.log("stage_confirmed", stage=str(_stage), passes=_pass, merges=_mrg)
-                        try:
-                            from .milestone import flush_pipeline_notes as _fpn
-                            await _fpn(flow)   # [마커 즉시 게시] 도구 래퍼 밖 등록도 피드 마커 유실 없음
-                        except Exception:
-                            pass
-                        break                               # 채택 완료 — 회의 종료
+                            flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
+                        await _say_speech(
+                            flow, me_id, "[회의]",
+                            f"수렴안이 채택됐으나 등록이 보류됐습니다 — {_note} (다듬어 재수렴)")
+                        _file_reg_objection(_note)   # DRAFT 경로가 생긴 경우에만 이의 기록(폴백에서는 no-op)
+                        break
+                    if _dissents and _mrg < 3 and wakes["n"] < wake_cap:
+                        _mrg += 1
+                        if flow.log:
+                            flow.log("consensus_merge", round=_mrg, dissents=len(_dissents),
+                                     stage=str(_stage))
+                        _top = await _merge_dissents(_top, _dissents)   # 다음 표 직전 개입 재검문
+                        continue
                     if flow.log:
-                        flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
-                    await _say_speech(flow, me_id, "[회의]",
-                                      f"수렴안이 채택됐으나 등록이 보류됐습니다 — {_note} (다듬어 재수렴)")
-                    _file_reg_objection(_note)   # 등록 거부 사유를 DRAFT 이의로 걸어 다음 라운드가 해소하게(채널 게시만으론 봇이 모름)
-                elif flow.log:
-                    flow.log("meet_consensus_rejected", passes=_pass, merges=_mrg)
+                        flow.log("meet_consensus_rejected", passes=_pass, merges=_mrg)
+                    break
+                if _landed:
+                    break
+                if _fallback_human_blocked:
+                    break
             elif flow.log:
                 flow.log("meet_gate_unmet", passes=_pass)
             _gate_unmet["on"] = True                        # 재응찰: 종결표결에 게이트 전면화

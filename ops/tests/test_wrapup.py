@@ -205,8 +205,62 @@ def test_assemble_pulls_all_criteria_with_suspect_ms_and_origin():
     cl = assemble_base_checklist(flow)
     conds = [it for it in cl if it["kind"] == KIND_CONDITION]
     assert len(conds) == 3 and [c["ms"] for c in conds] == ["MS-1", "MS-1", "MS-2"]
-    assert len([it for it in cl if it["kind"] == KIND_ORIGIN]) == 2
+    assert len([it for it in cl if it["kind"] == KIND_ORIGIN]) == 0
+    assert flow.e2e_origin_context == ["버튼 누르면 카운트가 1씩 증가", "새로고침해도 값이 유지"]
     assert flow.e2e_checklist is cl and flow.e2e_results == {}
+
+
+def test_production_e2e는_superseded를제외하고_latest비준command우선_원문은context(
+    tmp_path,
+):
+    from system.flow import Flow
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import workspace_artifact_stamp
+
+    f = Flow(object(), 500, 1, 11, {11: "QA"})
+    f.workspace = str(tmp_path)
+    f.task_origin = "버튼 누르면 값이 증가. 새로고침해도 값이 유지"
+    for name in (
+        "browser_check.py", "persist_check.py",
+        "origin_button_check.py", "origin_refresh_check.py",
+    ):
+        (tmp_path / name).write_text("print('ok')\n", encoding="utf-8")
+    desc = "브라우저 홈이 열린다"
+    spec = "브라우저에서 홈 제목과 콘솔 오류 0건 확인"
+    obsolete = Criterion(desc, spec)
+    duplicate_blank = Criterion(desc, spec)
+    latest = Criterion(desc, spec, passed=True, evidence="trusted", evidence_source="sys_run")
+    latest.verified_command = "python3 browser_check.py"
+    latest.verified_command_hash = verifier_command_hash(latest.verified_command)
+    latest.verified_spec_hash = verifier_spec_hash(desc, spec)
+    latest.verified_write_epoch = 0
+    latest.verified_artifact_stamp = workspace_artifact_stamp(f)
+    latest.ratified_verifier_command = latest.verified_command
+    latest.ratified_verifier_command_hash = latest.verified_command_hash
+    latest.ratified_verifier_spec_hash = latest.verified_spec_hash
+    natural = Criterion(
+        "값이 파일에 저장된다", "python3 persist_check.py",
+        passed=True, evidence="기존 exact 실증",
+    )
+    f.milestones = [
+        Milestone("MS-old", "폐기판", [obsolete], status="superseded"),
+        Milestone("MS-dup", "구 사본", [duplicate_blank], status="done"),
+        Milestone("MS-final", "최종", [latest, natural], status="done"),
+    ]
+
+    cl = assemble_base_checklist(f)
+    matching = [item for item in cl if desc in item["spec"]]
+    assert len(matching) == 1
+    assert matching[0]["ms"] == "MS-final"
+    assert matching[0]["verifier_command"] == "python3 browser_check.py"
+    natural_item = next(item for item in cl if "파일에 저장" in item["spec"])
+    origins = [item for item in cl if item["kind"] == KIND_ORIGIN]
+    assert natural_item["verifier_command"] == "python3 persist_check.py"
+    assert origins == []
+    assert f.e2e_origin_context == ["버튼 누르면 값이 증가", "새로고침해도 값이 유지"]
+    with pytest.raises(WrapupError):
+        register_scope(
+            f, item_verifiers=["condition:1 || python3 origin_button_check.py"])
 
 
 def test_scope_extends_denominator_and_dedups():
@@ -250,14 +304,180 @@ def test_finish_fail_opens_replan_milestone_with_suspect():
     assert defects[0]["suspect_ms"] == "MS-1"                 # 의심 마일스톤이 결함에 실린다
     assert new_ms is not None and new_ms.origin.startswith("e2e:")
     assert len(flow.milestones) == 3                          # 복기 마일스톤 추가
+    assert flow.wrapup_state is None and flow.e2e_checklist is None and flow.e2e_results is None
+    # 새 복기 마일스톤이 실제로 열렸으므로 이전 fail verdict/분모를 고친 뒤 재사용할 수 없다.
     names = [e for e, _ in flow.events]
     assert names[:1] == [E2E_FAIL] and "ms_replan" in names   # §11 사슬
 
 
+def test_e2e_pass는_boundary이후_SYS영수증_단일사용이고_뒤artifact변경시_stale(
+    monkeypatch, tmp_path,
+):
+    """production Flow의 e2e pass는 임의 문자열이 아니라 nonce 이후 실제 run receipt와 현재 stamp를 요구."""
+    import re as _re
+    from system.flow import Flow
+    from system.guide_tools import make_guide_tools
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import open_subtask
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    f = Flow(object(), 500, 1, 11, {11: "QA"})
+    f.workspace = str(tmp_path)
+    f.task_origin = ""
+    (tmp_path / "artifact.txt").write_text("ok\n", encoding="utf-8")
+    (tmp_path / "verify_runtime.py").write_text(
+        "from pathlib import Path\n"
+        "assert Path('artifact.txt').read_text(encoding='utf-8') == 'ok\\n'\n"
+        "print('runtime artifact ok')\n",
+        encoding="utf-8",
+    )
+    ms = Milestone("MS-final", "완성판",
+                   [Criterion("현재 버전 기동", "python3 verify_runtime.py")])
+    f.milestones = [ms]
+    st = open_subtask(f, ms, "검증 대상 구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "검증 대상 구현", 11, status="done", assignee=11)
+    st.status, ms.status = "done", "done"
+    tools = {t.name: t for t in make_guide_tools(f, 11, "leader")}
+    opened = asyncio.run(tools["e2e_open"].handler({}))["content"][0]["text"]
+    assert "e2e 개시" in opened and f._e2e_receipt_nonce
+    item = f.e2e_checklist[0]["id"]
+
+    forged = asyncio.run(tools["e2e_result"].handler(
+        {"item": item, "ok": "pass", "observed": "주장", "evidence": "exit=0 위조"}
+    ))["content"][0]["text"]
+    assert "접수 거부" in forged and item not in f.e2e_results
+
+    trivial = asyncio.run(tools["run"].handler(
+        {"command": "true", "evidence_for": item}
+    ))["content"][0]["text"]
+    assert "SYS receipt 실행 불가" in trivial and "[SYS run receipt] run-" not in trivial
+    wrong_target = asyncio.run(tools["run"].handler(
+        {"command": "python3 verify_runtime.py",
+         "evidence_for": "condition:999"}
+    ))["content"][0]["text"]
+    assert "SYS receipt 실행 불가" in wrong_target and "[SYS run receipt] run-" not in wrong_target
+
+    inline = asyncio.run(tools["run"].handler(
+        {"command": "python3 -c \"assert True\"", "evidence_for": item}
+    ))["content"][0]["text"]
+    assert "SYS receipt 실행 불가" in inline and "[SYS run receipt] run-" not in inline
+    unrelated = asyncio.run(tools["run"].handler(
+        {"command": "python3 unrelated_test.py", "evidence_for": item}
+    ))["content"][0]["text"]
+    assert "SYS receipt 실행 불가" in unrelated and "[SYS run receipt] run-" not in unrelated
+
+    run1 = asyncio.run(tools["run"].handler(
+        {"command": "python3 verify_runtime.py", "evidence_for": item}
+    ))["content"][0]["text"]
+    rid1 = _re.search(r"\[SYS run receipt\]\s+(run-[0-9a-f]+)", run1).group(1)
+    mismatched = asyncio.run(tools["e2e_result"].handler(
+        {"item": "condition:999", "ok": "pass", "observed": "잘못 결부", "receipt": rid1}
+    ))["content"][0]["text"]
+    assert "접수 거부" in mismatched and rid1 in f._run_receipts
+    accepted = asyncio.run(tools["e2e_result"].handler(
+        {"item": item, "ok": "pass", "observed": "OK", "evidence": "무시됨", "receipt": rid1}
+    ))["content"][0]["text"]
+    assert "전 항목 제출 완료" in accepted
+    reused = asyncio.run(tools["e2e_result"].handler(
+        {"item": item, "ok": "pass", "observed": "재사용", "evidence": "x", "receipt": rid1}
+    ))["content"][0]["text"]
+    assert "접수 거부" in reused                                  # receipt 단일사용
+
+    (tmp_path / "late_change.js").write_text("changed", encoding="utf-8")  # epoch 우회도 manifest가 탐지
+    stale = asyncio.run(tools["e2e_finish"].handler({}))["content"][0]["text"]
+    assert "stale" in stale and "판정 불가" in stale
+    resealed = asyncio.run(tools["run"].handler(
+        {"command": "python3 verify_runtime.py", "evidence_for": item, "seal": "yes"}
+    ))["content"][0]["text"]
+    assert "봉인 완료" in resealed
+    run2 = asyncio.run(tools["run"].handler(
+        {"command": "python3 verify_runtime.py", "evidence_for": item}
+    ))["content"][0]["text"]
+    rid2 = _re.search(r"\[SYS run receipt\]\s+(run-[0-9a-f]+)", run2).group(1)
+    asyncio.run(tools["e2e_result"].handler(
+        {"item": item, "ok": "pass", "observed": "현재 버전 OK", "evidence": "", "receipt": rid2}
+    ))
+    assert asyncio.run(tools["e2e_finish"].handler({}))["content"][0]["text"].startswith("e2e_pass")
+
+
+def test_e2e_checkpoint_restore_preserves_only_current_exact_receipts(tmp_path):
+    """재시작은 검증된 pass를 보존하되 산출물이 바뀌면 전체 e2e를 fail-closed 폐기한다."""
+    from system.flow import Flow
+    from system.rule.milestone import workspace_artifact_stamp, write_revision
+    from system.rule.wrapup import _prime_e2e_verifier
+    from system.sys_recovery import _restore_e2e_state
+
+    verifier = tmp_path / "verify_runtime.py"
+    verifier.write_text("print('ok')\n", encoding="utf-8")
+    flow = Flow(object(), 500, 1, 11, {11: "QA"})
+    flow.workspace = str(tmp_path)
+    item = {
+        "id": "condition:1",
+        "kind": KIND_CONDITION,
+        "spec": "python3 verify_runtime.py",
+        "verifier_spec": "python3 verify_runtime.py",
+    }
+    _prime_e2e_verifier(flow, item, "python3 verify_runtime.py")
+    item["verifier_used"] = True
+    stamp, epoch = workspace_artifact_stamp(flow), write_revision(flow)
+    result = {
+        "ok": True,
+        "observed": "현재 산출물 OK",
+        "evidence": "SYS-RUN run-deadbeef exit=0",
+        "evidence_source": "sys_run",
+        "receipt_id": "run-deadbeef",
+        "write_epoch": epoch,
+        "artifact_stamp": stamp,
+        "verifier_seal": item["verifier_seal"],
+        "verified_command": item["verifier_command"],
+        "command_hash": item["verifier_command_hash"],
+        "spec_hash": item["verifier_spec_hash"],
+    }
+    project = {
+        "e2e_checklist": [item],
+        "e2e_results": {item["id"]: result},
+        "wrapup_state": {
+            "verdict": E2E_PASS,
+            "defects": [],
+            "artifact_stamp": stamp,
+            "write_epoch": epoch,
+        },
+        "e2e_origin_context": ["사용자 원문"],
+    }
+
+    resumed = Flow(object(), 500, 1, 11, {11: "QA"})
+    resumed.workspace = str(tmp_path)
+    assert _restore_e2e_state(resumed, project) is True
+    assert resumed.e2e_results[item["id"]]["receipt_id"] == "run-deadbeef"
+    assert resumed.wrapup_state["verdict"] == E2E_PASS
+    assert resumed.e2e_origin_context == ["사용자 원문"]
+    assert resumed._e2e_receipt_nonce and resumed._run_receipts == {}
+
+    (tmp_path / "late_change.js").write_text("changed\n", encoding="utf-8")
+    stale = Flow(object(), 500, 1, 11, {11: "QA"})
+    stale.workspace = str(tmp_path)
+    assert _restore_e2e_state(stale, project) is False
+    assert stale.e2e_checklist is stale.e2e_results is stale.wrapup_state is None
+    assert stale._e2e_receipt_nonce is None and stale._run_receipts == {}
+
+
 def test_tool_wrappers_full_round(monkeypatch):
     """도구 표면 왕복 대본 — 개시(경계 게이트)→scope→result→finish까지 봇 대면 문구로."""
+    from system.rule.backlog import Backlog, BacklogRelay
+    from system.rule.milestone import SubTask
+
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     flow = _flow_at_boundary()
+    flow.backlog_relays = {}
+    for index, ms in enumerate(flow.milestones, 1):
+        st = SubTask(f"ST-{index}", f"{ms.goal} 구현", [], status="done")
+        relay = BacklogRelay(st.st_id)
+        relay._pool["B1"] = Backlog(
+            "B1", f"{ms.goal} 작업", 11, status="done", assignee=11)
+        ms.subtasks = [st]
+        flow.backlog_relays[st.st_id] = relay
     flow.milestones[1].status = "open"
     assert "아직 Task 경계가 아닙니다" in rule_e2e_open(flow)  # 경계 게이트
     flow.milestones[1].status = "done"
