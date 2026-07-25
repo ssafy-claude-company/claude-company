@@ -2,6 +2,33 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-25.
 
+## ★ U-052 실판에서 확인한 GOAL 계약·사람 개입·종결 기록 수리 (2026-07-25 GPT)
+- 실제 웹 요청→Postgres→HTTP Guide→systemd 러너 경로의 `U-052`(내부 P-049,
+  Task 130642-1)를 돌렸다. GOAL은 처음 드리프트했지만 사람 교정을 받아 9/9 비준됐고, 이후
+  마일스톤 회의가 확정 계약 `transition(nextState)`·금지 전이 `Error`+상태 보존을
+  `transition(event)`·`false` 반환으로 바꾸는 결론을 9/9 등록했다. 교정을 다시 보냈지만
+  substantive 프롬프트가 만들어진 뒤 도착한 `pending_info`를 그 턴 종료가 통째로 비우고,
+  개입을 싣지 않는 micro 응찰·표결도 같은 큐를 소비해 교정이 사라진 것이 원인이었다. 판은 정식
+  stop했고 `cancel_requested → flow_user_stopped → flow_done → user_stopped_closed`,
+  `picked+stopped+done_ts`, 재픽/재claim 0, 자식 프로세스 회수를 확인했다.
+- non-micro 턴은 **프롬프트에 실제 실린 큐 prefix만** 성공 뒤 소비한다. 프롬프트 생성 뒤 늦게
+  도착한 항목은 다음 실질 턴에 남고, micro 턴은 개입을 보지도 소비하지도 않는다. 일반 HTTP
+  개입의 접두 없는 원문도 응답 확인·1회 재전달 대상이다. 단계 회의는 표결 직전과 표결 직후
+  등록 직전에 Task 팀 전체의 대기 개입을 재검문해, 대상자에게 `[답변]`+DRAFT 편집 실질 턴을
+  준 뒤 기존 표를 폐기하고 DRAFT를 다시 평가·재표결한다. 예산이 이미 소진됐으면 등록을
+  중단하고 큐를 보존한다.
+- GOAL 등록기의 dict/attribute 오용으로 비어 있던 `acceptance`를 정본 문법으로 저장하고, 명시한
+  공개 계약은 `interfaces`에, **표결 원문 전문은 GOAL.md `Ratified Decision`**에 손실 없이
+  영속하며 즉시 체크포인트한다. 모든 하위 R1·실질 편집·이의 해소 턴에는 이 전문을 무절단
+  상위 계약으로 주입한다. GOAL 완수조건은 각 주기의 검증 분모를 부풀리지 않는 별도
+  `locked_criteria` 계보로 직렬화·HUD 보존하고, Task 최종 acceptance 게이트의 정본으로 유지한다.
+- 중지·완료 Task는 현재 작업 신호(`activity`·`actor`·`▶`)를 되살리지 않으면서
+  `activity_n`만 보존한다. Task 카드의 `전체 기록 보기 · N`이 기존 `activity_log`를 읽는
+  읽기 전용 모달을 열어, 중지 뒤 생각 기록이 사라진 것처럼 보이던 진입점 단절을 닫았다.
+  수정 커밋은 브레인 `686e230`, murmur `cba7164`. 착지 전 전체 검증은 Django **430 OK** ·
+  브레인 pytest **781 passed** · system unittest OK · 프론트 build/UI 계약 OK. 새 라이브
+  완주 실증은 전체 착지·서비스 재시작 뒤 별도 새 판에서 수행한다.
+
 ## ★ U-051 라이브 재실증에서 발견한 백로그 원장 경합 수리 (2026-07-25 GPT)
 - 실제 웹 요청→Postgres→HTTP Guide→systemd 러너→GPT 경로로 새 비공개 실증 채널
   `U-051`(내부 P-048, Task 120715-1)을 돌렸다. 목표의 코드 계약
@@ -425,7 +452,10 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  d38e9ec   ← HEAD — ★scoped 피드·terminal claim 원자화(2026-07-25):
+murmur  cba7164   ← HEAD — ★U-052 종결 Task 기록 진입점 보존(2026-07-25):
+                          stopped/done 응답은 현재 actor/activity 없이 활동 줄 수만 유지하고,
+                          Task 카드의 읽기 전용 전체 기록 모달로 기존 activity_log를 연다.
+                          (이전 d38e9ec) ★scoped 피드·terminal claim 원자화:
                           같은 actor·같은 ST라도 B1→B2면 raw 그룹/turnblock/폴더 행 전 구간을
                           분리하고 entry의 `(ST,B)`를 보존한다. HTTP·로컬 command·SnsGuide claim
                           CAS가 stopped/done 최신값을 함께 검사해 중지 직후 스테일 claim 부활을
