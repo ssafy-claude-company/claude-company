@@ -13,14 +13,9 @@
 | 변도진-1 | ops/organt_discord/** | 2026-07-08 06:06 |
 | 변도진-1 | system/protocol.py | 2026-07-08 06:06 |
 | 변도진-1 | organt/builder.py | 2026-07-08 06:06 |
-| 변도진-1 | murmur/backend/** | 2026-07-08 06:06 |
 | 이현준-2 | system/flow.py | 2026-07-09 02:36 |
-| 이현준-2 | system/sys_recovery.py | 2026-07-09 02:36 |
 | 이현준-3 | system/rule/wrapup* | 2026-07-09 03:18 |
-| 이현준-3 | system/sys_core.py | 2026-07-09 03:18 |
 | 이현준-2 | system/rule/task.py | 2026-07-09 03:22 |
 | 이현준-2 | system/rule/task_pipeline.py | 2026-07-09 03:22 |
 | 변도진-2 | system/atelier_client.py | 2026-07-13 09:45 |
-| 변도진-2 | system/guide_tools.py | 2026-07-13 09:45 |
 | 변도진-2 | system/tool_names.py | 2026-07-13 09:45 |
-| 변도진-2 | ops/tests/test_sys.py | 2026-07-13 09:45 |
