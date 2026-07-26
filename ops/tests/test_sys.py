@@ -7853,3 +7853,57 @@ def test_마이크로wake는_풀프레임_없이_본문만_각인은_다음_실�
     for marker in ("[협의로 규격", "[run으로", "[경험]", "동료:", "직무 기준", "[실 사용성"):
         assert marker not in out                    # 풀 프레임 블록 전부 미탑재
     assert len(out) < 300                           # 본문 위주(조립 최소)
+
+
+def test_대체된_주기는_마감을_막지_않는다(monkeypatch, tmp_path):
+    """[2026-07-26 전 기간 로그 감사] 직렬 강제로 대체된(superseded) 주기를 complete_task만 '미완'으로
+    세어, e2e도 못 열고 마감도 못 하는 영구 교착이 됐다(next_milestone은 이미 닫힌 것으로 취급 —
+    술어 3곳 불일치). 대체된 주기는 남은 일이 아니다."""
+    import asyncio as _a
+    from system.rule.milestone import open_milestone
+    from system.rule.task import complete_task
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
+    f.current.status.goal = "상태 머신"
+    open_milestone(f, "1차 주기", [{"desc": "A 충족", "verify": "pytest tests/test_a.py"}])
+    open_milestone(f, "2차 주기", [{"desc": "B 충족", "verify": "pytest tests/test_b.py"}])
+    assert len(f.milestones) == 2 and f.milestones[0].status == "superseded"
+    f.milestones[-1].status = "done"
+    out = str(_a.run(complete_task(f, "leader", {})))
+    assert "미완 주기" not in out, out      # 교착 해소 — 다음 관문(e2e)까지는 간다
+
+
+def test_e2e통과_뒤_마감을_구조가_구동한다(monkeypatch, tmp_path):
+    """[2026-07-26] 전 주기 완료·e2e 전수 통과까지 구조가 데려다 놓고도 마지막 complete_task 호출만
+    자발이라, 판정이 서는 순간 일반 이어가기 턴으로 새고 예산이 소진돼 다 끝낸 판이 '중단'으로
+    기록됐다. 마감 시점을 구조가 만들고 판정은 기존 fail-closed 관문이 한다(인자는 만들지 않는다)."""
+    import asyncio as _a
+    from system.sys_core import Sys as SYS
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    s = SYS.__new__(SYS)
+    s.flow_log = []
+    s._log = lambda ev, **kw: s.flow_log.append({"event": ev, **kw})
+    calls = []
+
+    async def _rt(flow, who, body, kind, role, **kw):
+        calls.append((who, body))
+        flow.current = None            # 봇이 관문을 통과해 실제로 마감함
+        return ""
+    s.run_turn = _rt
+
+    class _T:
+        team = [11, 12]
+    class _F:
+        current = _T()
+        anchor = 11
+        leader = 11
+        wrapup_state = {"verdict": "e2e_pass"}
+    f = _F()
+    assert _a.run(s._drive_task_close(f)) is True
+    assert calls and "complete_task" in calls[0][1]          # 마감 전용 턴이 실제로 나갔다
+    assert any(e["event"] == "task_close_complete" for e in s.flow_log), s.flow_log

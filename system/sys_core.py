@@ -2222,6 +2222,44 @@ class Sys:
             )
         return True
 
+    async def _drive_task_close(self, flow):
+        """e2e_pass 뒤 Task 마감을 bounded하게 구동한다 — 마지막 한 칸의 자발성 제거.
+
+        전 주기 완료·e2e 전수 통과까지 구조가 데려다 놓고도, 마지막 `complete_task` 호출만은
+        봇의 자발 선택이었다(러너 루프 어디에도 마감 구동이 없다). e2e 판정이 서는 순간
+        `_needs_e2e()`는 False가 되어 일반 이어가기 턴으로 새고, 진전이 없으니 이어가기 예산이
+        소진돼 다 끝낸 판이 '중단'으로 기록된다 — 완주가 장부에 안 남는 마지막 구멍.
+
+        인자(증거)는 만들지 않는다 — 구조가 값을 지어내면 거짓 완료가 된다. SYS는 '지금이
+        마감 시점'이라는 결정론적 전이와 전용 턴만 제공하고, 게이트 통과 여부는 기존
+        complete_task 관문이 fail-closed로 판정한다. 불응은 세 번 뒤 파킹.
+        """
+        if flow.current is None:
+            return False
+        actor = int(getattr(flow, "_e2e_actor", 0) or 0)
+        team = [int(m) for m in (getattr(flow.current, "team", None) or [])]
+        if actor not in team:
+            actor = int(getattr(flow, "anchor", 0) or 0) or int(getattr(flow, "leader", 0) or 0)
+        turn_no = int(getattr(flow, "_close_turns", 0) or 0) + 1
+        flow._close_turns = turn_no
+        await self.run_turn(
+            flow, actor,
+            "[SYS — Task 마감 전용 턴] 전 주기가 닫혔고 Task 경계 전수 검증(e2e)이 통과했습니다. "
+            "새 구현·새 백로그·재검증을 시작하지 말고, 이 Task를 complete_task로 마감하세요. "
+            "마감 관문이 요구하는 산출물·교차검증 인자를 실제 증거로 채워 제출하면 됩니다. "
+            "관문이 거절하면 그 사유만 해소하고 다시 마감하세요.",
+            Kind.INFO, "worker",
+        )
+        if flow.current is None:
+            self._log("task_close_complete", by=actor, turn=turn_no)
+            return True
+        if turn_no >= 3:
+            flow._stage_stuck = "task-close"
+            self._log("task_close_stalled", by=actor, attempts=turn_no)
+        else:
+            self._log("task_close_turn", by=actor, turn=turn_no)
+        return True
+
     async def run_turn(
         self, flow: Flow, organt_id, body, kind, role, micro=False, tool_mode=None,
     ) -> str:
@@ -3135,9 +3173,14 @@ class Sys:
                 # 돌려야지')] 종전 e2e는 권고 문구뿐이라 전 주기 완료 후 전수 검증 없이 표류·마감이
                 # 가능했다(실효성 구멍). 전 주기 done + 로드맵 소진 + 판정 없음 = Task 경계다.
                 # 실제 개시·bounded 검증 턴은 _drive_task_boundary_e2e가 맡고 일반 앵커 턴으로 새지 않는다.
+                # [superseded 교착 해소(2026-07-26, 전 기간 로그 감사)] 주기가 직렬 강제로 대체되면
+                # (open_milestone) 옛 주기는 superseded로 닫힌다. 그런데 여기서만 "done"을 요구해
+                # e2e가 영영 안 열리고, complete_task는 그 주기를 '미완'으로 보고 마감을 막아 판이
+                # 어느 쪽으로도 못 가는 영구 교착이 됐다(next_milestone은 이미 closed로 취급 — 술어
+                # 3곳 불일치). 대체된 주기는 '남은 일'이 아니다 — 닫힌 것으로 본다.
                 _mss = getattr(flow, "milestones", None) or []
                 if not (flow.current is not None and _mss
-                        and all(m.status == "done" for m in _mss)
+                        and all(m.status in ("done", "superseded") for m in _mss)
                         and not (getattr(flow, "wrapup_state", None) or {}).get("verdict")):
                     return False
                 try:
@@ -3146,6 +3189,14 @@ class Sys:
                 except Exception:
                     _road = []
                 return not _road or sum(1 for m in _mss if m.status == "done") >= len(_road)
+
+            def _needs_task_close():
+                # e2e 전수 통과 + 아직 Task가 열려 있음 = 마감 시점. 세 번까지만 구동하고(불응은
+                # 파킹) 그 뒤엔 일반 경로로 돌려보내 토큰을 태우지 않는다.
+                if flow.current is None or not _ms_on():
+                    return False
+                return ((getattr(flow, "wrapup_state", None) or {}).get("verdict") == "e2e_pass"
+                        and int(getattr(flow, "_close_turns", 0) or 0) < 3)
 
             def _needs_kickoff():
                 # [작업 단계 회의 강요 봉합(2026-07-20, e2e 실측: 미룸 5회·강제 2회)] 킥오프 meet 강제는
@@ -3322,6 +3373,11 @@ class Sys:
                 # 불응은 세 번 뒤 stopped로 파킹되며 일반 continue 프롬프트로 돌아가 토큰을 태우지 않는다.
                 if _needs_e2e() and not flow.cancelled:
                     await self._drive_task_boundary_e2e(flow)
+                    continue
+                # [마감 구동(2026-07-26)] e2e가 통과했는데 마감만 자발 호출이라 일반 턴으로 새던
+                # 마지막 칸 — 구조가 마감 시점을 만들고 판정은 기존 fail-closed 관문이 한다.
+                if _needs_task_close() and not flow.cancelled:
+                    await self._drive_task_close(flow)
                     continue
                 # [첫 선점 킥(2026-07-19, ch79 실측)] 계획 단계가 끝난 작업 단계 — 대기 백로그가 있는데
                 # 아무도 안 집었으면 제출자를 깨워 선점을 강제(백로그당 1회, 자가 가드라 매 세그 호출 무해).

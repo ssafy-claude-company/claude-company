@@ -975,6 +975,147 @@ async def meet(flow, me_id, args):
             except Exception:
                 pass
 
+        async def _r1_coverage_recover(note) -> bool:
+            """[R1 커버리지 비수렴 봉합(2026-07-26 — ch95 실증·전수 인벤토리 1위 정체원)]
+
+            R1 독립 기고 응답 집합은 **첫 개회에 한 번만** 수집돼 그대로 얼어붙는다(재개회는 중복
+            기고 낭비를 막으려 스킵). 그래서 그 순간 바빴거나 오류였던 참여자는 영영 '미응답'으로
+            남고, 등록기의 직군 커버리지는 매번 같은 사유로 거부한다 — 회의는 문구만 고쳐 같은 안을
+            다시 내고 판은 등록 0건으로 멎는다(ch95: 13분간 서브태스크 등록 0·확정 0).
+
+            기회를 안 준 채 막는 것이 문제이므로 **기회를 한 번 더 준다**. 그래도 응답이 없으면
+            '자기 판단 기회를 행사하지 않은 것'으로 보아 묵시 패스로 확정해 수렴시킨다 — 아무에게도
+            일을 강제하지 않으면서(패스=일 없음) 무한 반려만 끊는다.
+            반환 True = 장부를 바꿨으니 다음 라운드에서 재등록을 시도할 만하다.
+            """
+            if "직군별 판단 응답이 빠졌습니다" not in str(note or ""):
+                return False
+            _tg_c = {int(x) for x in (getattr(flow, "_r1_targets", None) or set())}
+            _pz_c = dict(getattr(flow, "_r1_passes", None) or {})
+            _rd_c = {int(x) for x in (getattr(flow, "_r1_responded", None) or set())}
+            _miss_c = sorted(_tg_c - _rd_c - set(_pz_c))
+            if not _miss_c:
+                return False
+            if getattr(flow, "_r1_recovered", False):
+                return False          # 기회는 이미 한 번 더 줬다(아래에서 묵시 패스까지 확정됨)
+            flow._r1_recovered = True
+
+            def _r1b_c(c):
+                return (f"[독립 기고 — 재수집(등록 보류 해소)] 안건: {(_agenda or topic)[:160]}"
+                        f"{_parent_frame}\n"
+                        f"당신({flow._info(c)}) 몫의 판단이 아직 장부에 없어 등록이 보류됐습니다. "
+                        f"**결정 구획에 들어갈 구체 값·조건·이견을 3~5줄**로 적어주세요. "
+                        f"**도구·파일 금지, 이 텍스트만 보고 즉답.** 자기 직군에 맡을 일이 정말 "
+                        f"없으면 `[패스: 이유]`로 근거를 남기세요(무응답은 묵시 패스로 확정됩니다).")
+
+            try:
+                _got_c = 0
+                for _m_c, _r_c, _n_c in await _fork_collect(flow, me_id, _miss_c,
+                                                            _r1b_c, micro=True):
+                    _t_c = str(_r_c or "").strip()
+                    _pm_c = re.match(r"^\[패스\s*:\s*(.+?)\]", _t_c, re.S)
+                    if _pm_c and _pm_c.group(1).strip():
+                        _pz_c[int(_m_c)] = _pm_c.group(1).strip()[:200]
+                        _got_c += 1
+                    elif _t_c and not _t_c.startswith("[패스") and "API Error" not in _t_c[:20]:
+                        _rd_c.add(int(_m_c))
+                        _got_c += 1
+                        try:      # 재수집 기고도 발제 귀속에 실어 실제 저자에게 크레딧이 가게 한다.
+                            _at_c = list(getattr(flow, "_r1_attr", None) or [])
+                            for _cl_c in _t_c.splitlines():
+                                _cl_c = _cl_c.strip("·-* \t")
+                                if len(_cl_c) >= 6:
+                                    _at_c.append((int(_m_c), _cl_c[:200]))
+                            flow._r1_attr = _at_c
+                        except Exception:
+                            pass
+                # 두 번(첫 R1 + 재수집) 물었는데도 침묵이면 기회를 행사하지 않은 것 — 같은 회의
+                # 안에서 묵시 패스로 확정한다. 다음 반려를 기다리면 그전에 무진전 감지가 회의를
+                # 끝내버려(실측) 수렴이 영영 안 온다.
+                _still_c = sorted(_tg_c - _rd_c - set(_pz_c))
+                for _mm_c in _still_c:
+                    _pz_c[int(_mm_c)] = "(두 번 물었으나 무응답 — 묵시 패스로 확정)"
+                flow._r1_passes, flow._r1_responded = _pz_c, _rd_c
+                if flow.log:
+                    flow.log("r1_coverage_recollected", asked=len(_miss_c), got=_got_c,
+                             implicit=len(_still_c))
+                # 원인이 해소됐으므로 그 사유로 걸린 등록 이의는 낡은 것 — 남겨두면 완성 게이트가
+                # 영원히 미해소로 잡아 재등록 자체가 못 열린다(기존 stale 이의 정리와 동형).
+                if _draft_path is not None:
+                    try:
+                        _dt_c = str(_dread(flow, "DRAFT.md") or "")
+                        _keep_c = [ln for ln in _dt_c.splitlines()
+                                   if not (ln.lstrip().startswith("> [이의 @등록]")
+                                           and "직군별 판단 응답이 빠졌습니다" in ln)]
+                        if len(_keep_c) != len(_dt_c.splitlines()):
+                            _dwrite(flow, "DRAFT.md", "\n".join(_keep_c) + "\n")
+                            if flow.log:
+                                flow.log("stale_r1_coverage_objection_cleared")
+                    except Exception:
+                        pass
+                return True
+            except Exception:
+                return False
+
+        async def _independence_recover(note) -> bool:
+            """[독립 검증자 부재 비수렴 봉합(2026-07-26 — U-062 실증)]
+
+            등록기가 '제작자와 겹치는 검증 항목'을 fail-closed로 거부하는 것은 옳다 — 무관한
+            직군을 임의 검수자로 세우는 것은 독립성 참칭이다. 그런데 Task 팀 안에 검증 적합자가
+            아예 없으면 회의는 문구만 고친 같은 후보안을 다시 내고 등록기는 같은 사유로 또
+            거부한다(U-062: 두 번 재현, 백로그 0건으로 실행에 진입 못 함).
+
+            반려문이 이미 답을 말하고 있다 — "recruit로 QA/검수 직군을 Task 팀에 충원하거나".
+            봇이 그걸 안 밟으므로 **구조가 그 충원을 집행**한다: 로스터에서 이 검증 항목에 적합한
+            (제작자·팀 밖) 동료를 Task 팀에 합류시켜 다음 등록이 실제로 다른 담당자를 갖게 한다.
+            적합자가 로스터에도 없으면 손대지 않는다 — 참칭보다 멈춤이 옳고, 무진전 감지가
+            사람 파킹으로 데려간다.
+            """
+            if "독립 검증 담당자 분리 계약을 충족할 수 없습니다" not in str(note or ""):
+                return False
+            if getattr(flow, "_independence_recruited", False) or flow.current is None:
+                return False
+            try:
+                from ..role_fit import role_fit as _rf_v
+                from .comm_ceremonies import _recruit_join as _join_v
+                from .comm_helpers import _is_spare as _spare_v
+            except Exception:
+                return False
+            _team_v = {int(x) for x in (getattr(flow.current, "team", None) or [])}
+            _q_v = f"{_agenda or topic} 독립 검증 QA".strip()
+            _pool_v = []
+            for _bid_v, _lab_v in (getattr(flow, "bot_info", None) or {}).items():
+                try:
+                    _bid_v = int(_bid_v)
+                except (TypeError, ValueError):
+                    continue
+                _lab_v = str(_lab_v or "").strip()
+                if _bid_v in _team_v or not _lab_v or _spare_v(flow, _bid_v):
+                    continue
+                _sc_v = _rf_v(_q_v, _lab_v)
+                if _sc_v > 0:
+                    _pool_v.append((_sc_v, _bid_v, _lab_v))
+            if not _pool_v:
+                if flow.log:
+                    flow.log("independence_recruit_unavailable", team=len(_team_v))
+                return False
+            _pool_v.sort(key=lambda r: (-r[0], r[1]))
+            _sc_v, _pick_v, _lab_v = _pool_v[0]
+            flow._independence_recruited = True
+            _err_v = await _join_v(flow, _pick_v, _lab_v, via="구조 충원", fresh=True)
+            if _err_v:
+                if flow.log:
+                    flow.log("independence_recruit_failed", to=_pick_v, why=str(_err_v)[:80])
+                return False
+            if flow.log:
+                flow.log("independence_auto_recruited", to=_pick_v, role=_lab_v, fit=_sc_v)
+            await _say_speech(
+                flow, me_id, "[회의]",
+                f"[구조 충원] 팀에 독립 검증을 맡을 수 있는 동료가 없어 "
+                f"{flow._info(_pick_v) or _pick_v}({_lab_v})을(를) 이 Task 팀에 합류시켰습니다 — "
+                f"검증 항목 귀속을 이 동료로 다시 잡아 재수렴하세요.")
+            return True
+
         async def _merge_dissents(prop, dissents):
             """[반대 사유 병합(2026-07-15, 사용자: '자기거 없어서 부결난거면 그걸 합쳐야지')] 부결된
             수렴안에 동료들의 '빠졌다'는 지적을 다 합쳐 갱신 — 모두의 것이 들어갈 때까지 자라 만장일치가
@@ -1310,6 +1451,8 @@ async def meet(flow, me_id, args):
                         await _say_speech(flow, me_id, "[회의]",
                                           f"결론 파일이 등록 게이트에 보류됐습니다 — {_note} (DRAFT를 다듬어 재수렴)")
                         _file_reg_objection(_note)   # 채널 게시만으론 다음 라운드 wake에 안 실려 봇이 모른다 → 이의로 걸어 해소 강제
+                        await _r1_coverage_recover(_note)   # 얼어붙은 R1 미응답 → 기회 재부여 → 묵시 패스(무한 반려 차단)
+                        await _independence_recover(_note)   # 팀에 검증 적합자 부재 → 구조가 충원 집행(U-062)
                     else:
                         # [부결 이의의 파일 반영 — SYS 서기(2026-07-16, ch76 실측)] 표결은 마이크로 즉답
                         # (도구 금지)이라 반대자가 이의를 파일에 못 남긴다 → 이의 0 유지 → ready→부결 무한.
@@ -1508,6 +1651,8 @@ async def meet(flow, me_id, args):
                             flow, me_id, "[회의]",
                             f"수렴안이 채택됐으나 등록이 보류됐습니다 — {_note} (다듬어 재수렴)")
                         _file_reg_objection(_note)   # DRAFT 경로가 생긴 경우에만 이의 기록(폴백에서는 no-op)
+                        await _r1_coverage_recover(_note)   # 폴백 경로에도 같은 수렴 보장(장부는 DRAFT와 무관)
+                        await _independence_recover(_note)   # 폴백 경로도 동일
                         break
                     if _dissents and _mrg < 3 and wakes["n"] < wake_cap:
                         _mrg += 1

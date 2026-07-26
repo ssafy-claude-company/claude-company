@@ -2616,3 +2616,89 @@ def test_iter_무한검증은_진전아님(monkeypatch, tmp_path):
     # 조건 하나 실제 충족 → 진전
     ms.criteria[0].passed = True
     assert ledger_signature(f) != sig0
+
+
+def test_R1_미응답_커버리지는_기회재부여_뒤_묵시패스로_수렴(monkeypatch, tmp_path):
+    """[2026-07-26 — ch95 실증·전수 인벤토리 1위 정체원] R1 독립 기고 응답 집합은 첫 개회에 한 번만
+    수집돼 얼어붙는다. 그때 침묵한 참여자는 영영 '미응답'으로 남아 직군 커버리지가 매번 거부되고,
+    회의는 문구만 고친 같은 안을 다시 낸다(ch95: 13분간 등록 0건). 기회를 한 번 더 주고, 그래도
+    무응답이면 묵시 패스로 확정해 사람 없이 수렴한다 — 소유는 아무에게도 강제하지 않는다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "브랜드 스토리텔러"})
+    f.floor_mode = "turn-taking"
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+
+    async def wake(to, b, k):
+        if "발언권 응찰" in b:
+            return "[응찰: 5] 초안을 채우겠습니다" if to == 12 else "[패스]"
+        if "발언권 획득" in b or "차례입니다" in b:
+            _fill_draft(tmp_path)
+            return "결정 구획을 채웠습니다."
+        if "결론 확정 표결" in b:
+            return "[찬성]"
+        if "종결 확인" in b:
+            return "[종료]"
+        return "[패스]"          # 이유 없는 패스 = 미응답(ch95 재현 — 기회 미행사로 집계)
+    f.wake = wake
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.current.status.goal = "방명록"
+    from system.rule.milestone import Criterion, Milestone, SubTask
+    st = SubTask(st_id="ST-1", goal="등록", criteria=[Criterion("등록 검증", "pytest 통과")])
+    f.milestones = [Milestone(ms_id="MS-1", goal="1주기",
+                              criteria=[Criterion("방명록 동작", "run 재현")], subtasks=[st])]
+    asyncio.run(t["meet"].handler({"topic": "다음 일감 전부 열거", "members": "", "rounds": "3",
+                                   "my_opinion": "여는 의견"}))
+    names = [e for e, _ in events]
+    # 첫 등록은 커버리지로 반려된다(기회 미행사가 사실이므로 — 이 성질은 유지)
+    assert any(e == "stage_register_rejected"
+               and "직군별 판단 응답이 빠졌습니다" in str(kw.get("reason") or "")
+               for e, kw in events), names
+    # 그 반려가 무한 반복이 아니라 한 라운드 안에서 수렴한다: 재수집 → 무응답은 묵시 패스 → 낡은 이의 정리
+    _rc = next(kw for e, kw in events if e == "r1_coverage_recollected")
+    assert _rc["asked"] == 2 and _rc["implicit"] == 2, _rc
+    assert "stale_r1_coverage_objection_cleared" in names, names
+    assert "stage_confirmed" in names, names          # 같은 회의에서 실제로 등록까지 간다
+    assert names.count("stage_register_rejected") == 1, names
+
+
+def test_팀에_독립검증_적합자가_없으면_구조가_충원한다(monkeypatch, tmp_path):
+    """[2026-07-26 — U-062 실증] 등록기는 제작자와 겹치는 검증 항목을 fail-closed로 거부한다(옳다 —
+    무관한 직군을 검수자로 세우는 것은 독립성 참칭). 그런데 팀에 적합자가 없으면 회의는 문구만 고친
+    같은 안을 다시 내고 거부가 무한 반복됐다(백로그 0건). 반려문이 요구하는 '충원'을 구조가 집행한다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    # 팀(11 기획·12 브랜드)엔 검증 적합자가 없고, 로스터에만 QA(14)가 있다.
+    g, f = _meet_flow(tmp_path, bots={11: "기획", 12: "브랜드", 14: "QA"})
+    events = []
+    f.log = lambda ev, **kw: events.append((ev, kw))
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    assert 14 not in f.current.team
+
+    from system.rule.communication import meet as _meet   # noqa: F401 (구조 충원은 meet 내부 경로)
+    from system.rule.comm_ceremonies import _recruit_join
+    # 구조 충원이 쓰는 합류 경로 자체의 계약: 로스터 QA를 Task 팀에 넣는다.
+    err = asyncio.run(_recruit_join(f, 14, "QA", via="구조 충원", fresh=True))
+    assert err is None, err
+    assert 14 in f.current.team and 14 in f.project_team
+
+    # 충원 뒤에는 등록기가 실제로 제작자와 다른 담당자를 찾는다(더 이상 '적합자 없음' 반려 아님).
+    from system.rule.milestone import register_stage
+    f.origin_request = "구현 백로그와 독립 QA 백로그를 서로 다른 담당자에게 등록하세요."
+    f.current.status.goal = "상태 머신"
+    okm, note = register_stage(f, "milestone",
+                               "이번 주기: 상태 머신 완성\n"
+                               "- 상태 전이 계약 충족 | 실증: node test_state_machine.js",
+                               "상태 머신")
+    assert okm, note
+    f._r1_attr = [(12, "CommonJS 상태 머신 구현"), (12, "독립 QA로 전이 테스트 작성")]
+    ok, note2 = register_stage(f, "subtask",
+                               "단위: 상태 머신 구현과 검증\n"
+                               "백로그: [상태 머신 구현과 검증] CommonJS 상태 머신 구현\n"
+                               "백로그: [상태 머신 구현과 검증] 독립 QA로 전이 테스트 작성",
+                               "상태 머신")
+    assert ok, note2
+    _st = f.milestones[-1].subtasks[-1]
+    _bl = f.backlog_relays[_st.st_id].backlogs
+    assert _bl[-1].submitter == 14        # 검증 항목은 충원된 QA에게 — 제작자(12)와 분리

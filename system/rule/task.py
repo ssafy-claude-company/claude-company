@@ -794,7 +794,9 @@ async def complete_task(flow, role, args):
                        "내리는 마일스톤 회의를 먼저 열고, SubTask·백로그 실행→최종 실증→e2e 순서로 "
                        "진행하세요.")
         _promote_gl2(flow)   # 구 체크포인트의 이미-done 최종 주기도 증거 없으면 open으로 복원
-        _openm = [m.ms_id for m in _mss2 if m.status != "done"]
+        # [superseded 교착 해소(2026-07-26)] 직렬 강제로 대체된(superseded) 주기는 '미완 주기'가
+        # 아니다 — 여기서만 미완으로 세어 마감을 영구히 막았다(_needs_e2e·next_milestone과 술어 불일치).
+        _openm = [m.ms_id for m in _mss2 if m.status not in ("done", "superseded")]
         if _openm:
             return _ok(f"마감 불가 — 미완 주기 {', '.join(_openm[:4])}. 주기 완수조건을 실증(report_iter)해 "
                        f"닫은 뒤, Task 경계에서 전수 검증(e2e)을 거쳐 마감하세요.")
