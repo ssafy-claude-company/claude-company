@@ -210,7 +210,16 @@ async def vote_stop(flow, me_id, args):
                         f"진전으로 세지 않습니다. 다음 판단(다음 단계 착수 / 접기)은 새 meet로.")
         elif passed and target == "task":
             _eff = (f"\n\n[Task 중지 상신] 팀 표결 가결({board}) — 다만 Task 통째 중지는 사람 주권입니다"
-                    f"(불변식). 사용자에게 중지 승인을 요청했습니다. 승인 전까지 판은 유지됩니다.")
+                    f"(불변식). 사용자에게 중지 승인을 요청했고, 승인 전까지 판은 **일을 멈추고 대기**합니다"
+                    f"(장부는 그대로 — 승인하면 종료, 반려하고 '재개'하면 이어서 진행).")
+            # [중지 상신 = 대기 파킹(2026-07-26, 대기지점 전수 조사)] 종전엔 '판은 유지됩니다'라
+            # 팀이 그만두자고 결정한 뒤에도 봇들이 계속 돌며 토큰을 태웠고, 사람 승인엔 기한도
+            # 표시도 없어 무기한 방치됐다. 결정 주권은 그대로 사람에게 두되(중지 자체는 사람이
+            # 승인), 그 사이의 **작업은 멈춘다** — 파킹 신호만 세우고 집행은 sys_core가 한다.
+            try:
+                flow._stage_stuck = f"팀 중지 표결 가결 — 사용자 승인 대기({reason[:40]})"[:80]
+            except Exception:
+                pass
             try:
                 _tid = getattr(flow.current, "thread_id", None) or getattr(flow, "user_channel", None)
                 if _tid:

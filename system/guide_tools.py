@@ -844,6 +844,17 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             if _deadlock:
                 _msg += (f" ⚠ 같은 백로그가 {_bl.block_count}회 차단됐습니다 — 접근이 결과를 못 바꾸는 "
                          f"신호입니다. renegotiate_criterion(조건 재협상) 또는 vote_stop(판 접기)을 고려하세요.")
+                # [교착신호 구조화(2026-07-26, 대기지점 전수 조사)] 종전엔 이 신호가 **권고 문구뿐**이라
+                # 봇이 안 밟으면 같은 차단이 계속 쌓였다(차단→재방문→또 차단). 같은 접근이 두 번 결과를
+                # 못 바꿨으면 더 굴리는 건 토큰만 태우는 일 — 파킹 신호를 세워 사람에게 넘긴다
+                # (집행은 sys_core 이어가기 루프. 거짓 완료가 아니라 정직한 멈춤이다).
+                try:
+                    flow._stage_stuck = f"백로그 교착 — {bid}({str(reason or '')[:40]})"[:80]
+                    if flow.log:
+                        flow.log("backlog_deadlock_parked", backlog=str(bid),
+                                 blocks=int(_bl.block_count))
+                except Exception:
+                    pass
             _res = _ok(_msg)
             await _flush(flow)
             return _res

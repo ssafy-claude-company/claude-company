@@ -766,6 +766,18 @@ async def _finalize_done(flow, g, args, third, has_product):
         flow.log("task_contrib_overridden", task=flow.current.task_id,
                  idle=[int(m) for m in contrib_idle_now])
     done_ref.status.status = "완료"
+    # [완주 관측 구멍 메움(2026-07-26, 전 기간 로그 감사)] 종전엔 마감 성공 경로가 **아무 이벤트도
+    # 내지 않았다** — 조건부 신호(단독 마감·기여 미흡·역량 적립)가 우연히 걸릴 때만 흔적이 남아,
+    # 로그만으로는 '완주한 판'과 '중단된 판'을 구분할 수 없었다(전 기간 완주 3회를 부산물로만 확인).
+    # 마감은 파이프라인의 종착이므로 무조건 관측 가능해야 한다.
+    if flow.log:
+        try:
+            flow.log("task_completed", task=str(getattr(done_ref, "task_id", "") or ""),
+                     owner=int(getattr(done_ref.status, "owner", 0) or 0),
+                     cross_checks=int(getattr(done_ref, "cross_checks", 0) or 0),
+                     offdomain=int(getattr(done_ref, "cross_check_offdomain", 0) or 0))
+        except Exception:
+            pass
     # [보고=관찰, 주장 아님 — '거짓말'의 *핵심* 교정(2026-06-20 라이브 P-025)] 봇 narrative의 URL은
     # confabulate된다(봇이 *요청한* 이름 taas-…를 URL로 보고 → 404; 실제 배포는 시스템이 캐논 슬롯
     # organt-p-NNN으로 _check_live 검증해 flow.deployed에 보유). 게이트를 차원마다 N개 더 다는 대신,

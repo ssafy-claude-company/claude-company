@@ -1242,8 +1242,22 @@ async def meet(flow, me_id, args):
         _prevote_seen = set()   # [표결 전 기여 관문] 도메인 점검 1턴을 이미 준 미발언 표결자 — 1회 상한(지각 합류는 새로 잡힘)
         _skip_discuss = False   # [이의 해소 fastpath(2026-07-20)] 해소 위임 직후엔 재토론 없이 재검·재표결
         _last_pass_hash = None  # [무진전 패스 감지(2026-07-20)] 초안 결정구획 해시 — 무변화 패스=즉시 중단
+        # [보편 패스 상한(2026-07-26, 대기지점 전수 조사)] 이 게이트 루프는 종전 `while True` +
+        # 경로별 개별 가드였다. 무진전 감지·이월 확정은 **DRAFT 경로 안에만** 있어, ①비DRAFT 폴백
+        # 경로 ②반대가 다수라 이월 조건(찬성≥반대)이 영영 안 서는 표결은 비용 소진 말고는 끝이
+        # 없었다. 경로와 무관하게 패스 자체를 유계로 만든다 — 빠져나가면 아래 '수렴 소진' 경로가
+        # 정직한 상신과 파킹 사다리로 데려간다(거짓 완료 없음). 정상 회의는 몇 패스에 끝나므로
+        # 이 상한은 폭주만 잡는다.
+        try:
+            _pass_cap = max(3, int(os.environ.get("ORGANT_MEET_PASS_CAP", "12") or 12))
+        except ValueError:
+            _pass_cap = 12
         while True:
             _pass += 1
+            if _pass > _pass_cap:
+                if flow.log:
+                    flow.log("meet_pass_cap", passes=_pass - 1, stage=str(_stage or ""))
+                break
             _before = len(conv_props)
             # 재응찰 = 전원 발언권 되살려 다시 토론(사용자 '발언권 다 살려 선택 응찰'). 회의가 단계별로
             # 작아져(회의 하나당 하나) 재토론 비용이 크지 않다 — 종전의 '효율 재응찰(수렴안만 요청)'은

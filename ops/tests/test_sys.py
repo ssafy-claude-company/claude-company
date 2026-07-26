@@ -7898,8 +7898,13 @@ def test_e2e통과_뒤_마감을_구조가_구동한다(monkeypatch, tmp_path):
 
     class _T:
         team = [11, 12]
+        owner = 12
+        cross_check_offdomain = 1        # 독립 검증은 이미 올라와 있음 → 곧장 마감 구동
+    class _C:
+        done = False
     class _F:
         current = _T()
+        comm = _C()
         anchor = 11
         leader = 11
         wrapup_state = {"verdict": "e2e_pass"}
@@ -7907,3 +7912,45 @@ def test_e2e통과_뒤_마감을_구조가_구동한다(monkeypatch, tmp_path):
     assert _a.run(s._drive_task_close(f)) is True
     assert calls and "complete_task" in calls[0][1]          # 마감 전용 턴이 실제로 나갔다
     assert any(e["event"] == "task_close_complete" for e in s.flow_log), s.flow_log
+
+
+def test_교차검증_0이면_마감전에_독립검증을_구조가_위임(monkeypatch, tmp_path):
+    """[2026-07-26 대기지점 전수 조사] 마감 관문은 '제작자 아닌 동료의 실제 검증 1회'를 하드 의무로
+    요구하는데(옳다), 그 검증은 자원자가 나타나야만 올라갔다 — 아무도 안 맡으면 마감이 영원히 안 열린다.
+    구조가 독립 도메인 동료에게 진짜 검증을 위임해 게이트를 정당하게 연다(카운터 조작 아님)."""
+    import asyncio as _a
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow(g, leader=11)
+    f.workspace = str(tmp_path)
+    f.bot_info = {11: "기획", 12: "백엔드", 13: "QA"}
+    asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12,13"}))
+    if 13 not in f.current.team:
+        f.current.team.append(13)              # 팀: 기획(11)·백엔드(12)·QA(13)
+    f.current.owner = 12                       # 제작자 = 백엔드
+    f.current.cross_check_offdomain = 0        # 아무도 검증을 안 맡은 상태
+    f.wrapup_state = {"verdict": "e2e_pass"}
+    sent = []
+
+    async def _wake(to, b, k):
+        sent.append((to, b))
+        return "검증했습니다 — 실제로 열어 처음부터 끝까지 써봤고 결함 없습니다."
+    f.wake = _wake
+
+    from system.sys_core import Sys
+    s = Sys.__new__(Sys)
+    s.flow_log = []
+    s._log = lambda ev, **kw: s.flow_log.append({"event": ev, **kw})
+
+    async def _rt(flow, who, body, kind, role, **kw):
+        return ""
+    s.run_turn = _rt
+
+    async def _drain(flow):
+        return ""
+    s._drain_inflight = _drain
+
+    assert _a.run(s._drive_task_close(f)) is True
+    ev = [e for e in s.flow_log if e["event"] == "task_close_crosscheck_sent"]
+    assert ev and ev[0]["to"] == 13, s.flow_log      # 제작자(12)와 다른 도메인인 QA(13)에게
+    assert f._close_cc_sent is True                  # 1회만 — 반복 위임 없음

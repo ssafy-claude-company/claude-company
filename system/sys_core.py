@@ -2234,12 +2234,51 @@ class Sys:
         마감 시점'이라는 결정론적 전이와 전용 턴만 제공하고, 게이트 통과 여부는 기존
         complete_task 관문이 fail-closed로 판정한다. 불응은 세 번 뒤 파킹.
         """
-        if flow.current is None:
+        ref = flow.current
+        if ref is None:
             return False
         actor = int(getattr(flow, "_e2e_actor", 0) or 0)
-        team = [int(m) for m in (getattr(flow.current, "team", None) or [])]
+        team = [int(m) for m in (getattr(ref, "team", None) or [])]
         if actor not in team:
             actor = int(getattr(flow, "anchor", 0) or 0) or int(getattr(flow, "leader", 0) or 0)
+        # [교차검증 무기한 대기 봉합(2026-07-26, 대기지점 전수 조사)] 마감 관문은 '다른 멤버의 실제
+        # 검증 1회'를 하드 의무로 요구하는데(옳다 — 리더 단독 마감이 사용성 결함을 통과시킨 이력),
+        # 그 검증은 누군가 자발적으로 맡아야만 올라간다. 아무도 안 맡으면 마감이 영원히 열리지
+        # 않는다. 구조가 **실제 검증을 독립 도메인 동료에게 위임**해 게이트를 정당하게 연다 —
+        # 카운터를 올리는 게 아니라 진짜 검증 응답으로 열리므로 안전 성질은 그대로다.
+        if (int(getattr(ref, "cross_check_offdomain", 0) or 0) == 0
+                and not getattr(flow, "_close_cc_sent", False)
+                and not flow.comm.done):
+            try:
+                from .rule.communication import _jobs_of, _norm_job
+                _own = int(getattr(ref, "owner", 0) or 0) or int(getattr(flow, "leader", 0) or 0)
+                _od = {_norm_job(j) for j in _jobs_of(flow._info(_own) or "")} - {""}
+                from .rule.task_gates import _is_verifier
+                _cands = [
+                    m for m in team
+                    if m != _own
+                    and ({_norm_job(j) for j in _jobs_of(flow._info(m) or "")} - {""})
+                    and not (({_norm_job(j) for j in _jobs_of(flow._info(m) or "")} - {""}) & _od)
+                ]
+                # 검증 직군 우선, 마감을 부를 당사자는 후순위 — 게이트가 경계하는 '리더 독점'
+                # (스스로 만들고 스스로 검증)으로 흐르지 않게 한다.
+                _cands.sort(key=lambda m: (not _is_verifier(flow._info(m)), m == actor, m))
+                _peer = _cands[0] if _cands else None
+                if _peer:
+                    flow._close_cc_sent = True
+                    self._log("task_close_crosscheck_sent", to=int(_peer), owner=_own)
+                    _tls = {t.name: t for t in make_guide_tools(flow, actor, "leader")}
+                    await _tls["request"].handler({
+                        "to_id": str(_peer), "kind": "Work",
+                        "body": ("[SYS — 마감 전 독립 검증] 이 Task의 산출물이 완성되고 전수 검증도 "
+                                 "통과했습니다. 마감에는 제작자가 아닌 동료의 실제 사용 검증 1회가 "
+                                 "필요합니다. 산출물을 **사용자처럼 처음부터 끝까지 직접 써보고**(화면이면 "
+                                 "직접 열어 보고) 결함이 있으면 결함을, 없으면 무엇을 어떻게 확인했는지 "
+                                 "증거와 함께 보고하세요. 새 기능 구현은 하지 마세요.")})
+                    await self._drain_inflight(flow)
+                    return True
+            except Exception as _e_cc:
+                self._log("task_close_crosscheck_failed", why=str(_e_cc)[:80])
         turn_no = int(getattr(flow, "_close_turns", 0) or 0) + 1
         flow._close_turns = turn_no
         await self.run_turn(
