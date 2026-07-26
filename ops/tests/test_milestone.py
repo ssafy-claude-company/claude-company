@@ -1296,6 +1296,46 @@ def test_GOAL_marker는_legacy_bold_desc를_중복조건으로_만들지않는�
     assert not c.passed and c.receipt_id == ""
 
 
+def test_GOAL_MD_표결원문의_whole_bold_desc도_canonical_marker를_오염시키지않는다(
+    monkeypatch, tmp_path,
+):
+    import types
+    from system.rule.evidence import verifier_spec_hash
+    from system.rule.milestone import (
+        _goal_acceptance_entries, ensure_goal_ratification_scaffold, register_stage,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    desc = "홈 화면이 실제로 열린다"
+    spec = "브라우저에서 `python3 browser_check.py`로 제목과 오류 0건을 확인한다"
+    f = _flow()
+    f.workspace = str(tmp_path)
+    f.current = types.SimpleNamespace(
+        task_id="T-bold-goal-doc", team=[11, 12],
+        status=types.SimpleNamespace(goal="", purpose=""),
+        acceptance="", standard="", interfaces="",
+    )
+    ok, note = register_stage(
+        f, "goal",
+        f"목표: 홈 완성\n- **{desc}** | 실증: {spec}",
+        "whole-bold-goal",
+    )
+    assert ok, note
+    assert _goal_acceptance_entries(f) == [{"desc": desc, "verify": spec}]
+
+    draft = (
+        "# DRAFT [stage:milestone] — 홈 최종 인수\n"
+        "## 결정\n"
+        "단계: 완성\n"
+        "이번 주기: 홈 완성\n\n"
+        "## 참고 (자유 — 판정 대상 아님)\n"
+    )
+    scaffolded = ensure_goal_ratification_scaffold(f, draft)
+    marker = "GOAL@" + verifier_spec_hash(desc, spec)
+    assert f"- {marker} | 실증: python3 browser_check.py" in scaffolded
+    assert desc + "**" not in scaffolded
+
+
 def test_게이트는_불량을_일괄보고():
     bad = [{"desc": "카운터 API", "verify": "확인한다"},
            {"desc": "버튼 UI", "verify": "잘 살펴본다"}]

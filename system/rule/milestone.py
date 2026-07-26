@@ -1613,7 +1613,8 @@ def _goal_acceptance_entries(flow):
                   or _goal_doc_section(doc, "Acceptance"))
     rows = []
     for line in str(source or "").splitlines():
-        clean = line.strip().lstrip("-•* ").strip()
+        clean = re.sub(
+            r"^(?:[-•]\s*|\*\s+)", "", line.strip(), count=1).strip()
         if not clean:
             continue
         if _crit_delim().search(clean):
@@ -1622,7 +1623,11 @@ def _goal_acceptance_entries(flow):
         # 2026-07-25 이전 GOAL.md가 쓰던 ``- 조건 (실증: 절차)``도 복구한다.
         old = re.match(r"^(.*?)\s*\((?:실증|검증|측정)\s*[:：]\s*(.*?)\)\s*$", clean)
         if old:
-            rows.append({"desc": old.group(1).strip(), "verify": old.group(2).strip()})
+            old_desc = old.group(1).strip()
+            if (len(old_desc) >= 4 and old_desc.startswith("**")
+                    and old_desc.endswith("**")):
+                old_desc = old_desc[2:-2].strip()
+            rows.append({"desc": old_desc, "verify": old.group(2).strip()})
     out, seen = [], set()
     for row in rows:
         desc = str(row.get("desc") or "").strip()
