@@ -57,9 +57,10 @@ from .comm_engine import (  # noqa: F401 (M9 베턴엔진 재수출)
 from .comm_helpers import (  # noqa: F401
     _CAPS, _HOLLOW_PING, _JOB_SEP, _SPARE_LABEL, _add_members, _body_overlap,
     _capability_gaps, _clarify_hold, _cooldown_probe, _find_variant_job, _fork_collect,
-    _classify_vote, _free_alternatives, _group_of, _is_spare, _is_substantive, _job_tokens,
-    _jobs_of, _kw, _needed_caps_coverage, _norm_job, _same_job, _offdomain_capability_hit,
-    _resolve_members, _say, _say_speech, _uniq)
+    _classify_vote, _free_alternatives, _group_of, _HUMAN_INFO_SLOT_PREFIX,
+    _is_spare, _is_substantive, _job_tokens, _jobs_of, _kw, _needed_caps_coverage,
+    _norm_job, _same_job, _offdomain_capability_hit, _resolve_members, _say, _say_speech,
+    _uniq)
 from .comm_ceremonies import vote, vote_stop, parallel_work, recruit  # noqa: F401 (M9 재수출)
 
 
@@ -697,7 +698,7 @@ async def meet(flow, me_id, args):
             target = targets[0]
             before = wakes["n"]
             body = (
-                "[회의 — 사람 개입 반영 슬롯] 최종 표결·등록 전에 SYS가 이 프롬프트에 붙인 사용자 "
+                f"{_HUMAN_INFO_SLOT_PREFIX} 최종 표결·등록 전에 SYS가 이 프롬프트에 붙인 사용자 "
                 "개입을 먼저 소화하세요. 출력 서두에 `[답변]` 문단으로 사용자에게 짧게 답하고, "
                 + ("결론이 바뀌어야 하면 공동 DRAFT를 지금 Read/Edit하세요. "
                    if _draft_path is not None else

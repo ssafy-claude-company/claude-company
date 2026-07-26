@@ -7047,6 +7047,57 @@ def test_개입_C_접두없는_pending_info도_미답이면_재전달후_답변�
     assert not any(e["event"] == "interject_unacked" for e in s.flow_log)
 
 
+def test_개입_C2_전용회의슬롯의_실질응답은_답변문구없이도_구조적으로_ack(
+    monkeypatch, tmp_path,
+):
+    """전용 슬롯은 턴 자체가 개입 응답 맥락이므로 실제 반영 출력에 literal 표식을 강제하지 않는다."""
+    from system.rule.comm_helpers import _HUMAN_INFO_SLOT_PREFIX
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            assert "DRAFT 목표를 사용자 교정대로 바꿔주세요" in prompt
+            return "공동 DRAFT의 목표와 검증 기준을 사용자 교정대로 수정했습니다."
+
+    s, f = _interject_turn_rig(monkeypatch, tmp_path, _Bot())
+    assert s.deliver_human_info(500, 11, "DRAFT 목표를 사용자 교정대로 바꿔주세요") is True
+
+    out = asyncio.run(s.run_turn(
+        f, 11, f"{_HUMAN_INFO_SLOT_PREFIX} 최종 표결 전에 개입을 반영하세요.",
+        Kind.INFO, "leader",
+    ))
+
+    assert "[답변]" not in out
+    assert 11 not in f.pending_info
+    assert 11 not in getattr(f, "_ij_retry", {})
+    assert any(e["event"] == "interject_slot_acked" for e in s.flow_log)
+    assert not any(e["event"] == "interject_unacked" for e in s.flow_log)
+
+
+def test_개입_C3_전용회의슬롯도_패스면_ack하지않고_재전달보존(
+    monkeypatch, tmp_path,
+):
+    """전용 프레임이라는 이유만으로 무응답/패스를 성공 취급해 사람 개입을 잃어서는 안 된다."""
+    from system.rule.comm_helpers import _HUMAN_INFO_SLOT_PREFIX
+
+    class _Bot:
+        async def handle(self, prompt, micro=False):
+            return "[패스]"
+
+    s, f = _interject_turn_rig(monkeypatch, tmp_path, _Bot())
+    assert s.deliver_human_info(500, 11, "반드시 보존할 교정") is True
+
+    asyncio.run(s.run_turn(
+        f, 11, f"{_HUMAN_INFO_SLOT_PREFIX} 최종 표결 전에 개입을 반영하세요.",
+        Kind.INFO, "leader",
+    ))
+
+    retry = f.pending_info.get(11) or []
+    assert len(retry) == 1 and retry[0].startswith("[재전달")
+    assert "반드시 보존할 교정" in retry[0]
+    assert getattr(f, "_ij_retry", {}).get(11) == 1
+    assert not any(e["event"] == "interject_slot_acked" for e in s.flow_log)
+
+
 def test_개입_D_전달_retry_ack가_체크포인트와_실제턴을_거쳐_재시작왕복(
     monkeypatch, tmp_path,
 ):

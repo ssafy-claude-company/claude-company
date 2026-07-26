@@ -284,6 +284,27 @@ def _is_substantive(body: str) -> bool:
     return not (len(b) <= 30 and any(h in low for h in _HOLLOW_PING))
 
 
+# 사람 개입 전용 회의 슬롯은 SYS가 만든 이 프레임으로만 식별한다. 일반 실질 턴은 개입에 대한
+# 답인지 다른 작업 결과인지 구별할 수 없어 계속 `[답변]` 표식이 필요하지만, 이 슬롯의 출력은
+# 턴 자체가 개입에 대한 응답이라는 구조적 맥락을 가진다.
+_HUMAN_INFO_SLOT_PREFIX = "[회의 — 사람 개입 반영 슬롯]"
+
+
+def _is_human_info_slot_ack(body: str) -> bool:
+    """전용 개입 슬롯의 성공적 실질 출력인지 보수적으로 판정한다.
+
+    자연어 응답에는 특정 문구를 강제하지 않는다. 대신 패스·표결 제어문·쿼터/전송 실패는 확인으로
+    보지 않아 pending_info의 at-least-once 재전달을 그대로 유지한다.
+    """
+    b = str(body or "").strip()
+    if not _is_substantive(b):
+        return False
+    if b.startswith(("[패스", "[종료", "[응찰", "[찬성", "[반대",
+                     "[크레딧 한도]", "API Error:", "(에이전트 ", "(발언 실패:")):
+        return False
+    return True
+
+
 import re as _re_vote
 
 
@@ -440,4 +461,3 @@ async def _say_speech(flow, who, prefix, full):
         await _say(flow, who, f"{prefix} {_speech_clip(full, 8000)}")
     else:
         await _say(flow, who, f"{prefix} {_speech_clip(full, 500)}")   # 폴백 매체(디스코드)는 종전 clip
-

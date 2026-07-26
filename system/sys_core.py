@@ -28,7 +28,9 @@ from typing import Dict, Optional
 from ._util import doc_collab_on, dossier_read, dossier_rel
 from .audit import CAP_MIN   # noqa: F401 — 재수출(파사드 보존: 기존 소비자는 sys_core 이름을 봄)
 from .rule.communication import CommError, Engagement, _bid_score as _bid_of
-from .rule.comm_helpers import _SPARE_LABEL
+from .rule.comm_helpers import (
+    _HUMAN_INFO_SLOT_PREFIX, _SPARE_LABEL, _is_human_info_slot_ack,
+)
 
 
 def _is_spare_label(label) -> bool:
@@ -2294,7 +2296,15 @@ class Sys:
                             _rt = getattr(flow, "_ij_retry", None)
                             if _rt is None:
                                 _rt = flow._ij_retry = {}
-                            if "[답변]" not in (_out or ""):
+                            # 일반 턴은 출력이 개입에 대한 답인지 모호하므로 `[답변]`을 계속 요구한다.
+                            # 반면 SYS 전용 개입 슬롯은 턴의 목적 자체가 구조적 응답 맥락이다. 그 슬롯의
+                            # 실질 출력은 문구 누락만으로 재전달/미응답 처리하지 않는다. 패스·오류·빈 출력은
+                            # helper가 거부하므로 내용 유실 방지(at-least-once)는 그대로다.
+                            _slot_ack = (
+                                str(body or "").lstrip().startswith(_HUMAN_INFO_SLOT_PREFIX)
+                                and _is_human_info_slot_ack(_out)
+                            )
+                            if "[답변]" not in (_out or "") and not _slot_ack:
                                 _n = _rt.get(int(organt_id), 0)
                                 if _n < 1:
                                     _rt[int(organt_id)] = _n + 1
@@ -2311,6 +2321,8 @@ class Sys:
                             else:
                                 _rt.pop(int(organt_id), None)
                                 _ij_state_changed = True
+                                if _slot_ack and "[답변]" not in (_out or ""):
+                                    self._log("interject_slot_acked", organt=organt_id)
                         # [미답 질문 해소] 리더가 [답변]을 실제로 냈으면 상시 재주입 종료
                         if organt_id == flow.leader and "[답변]" in (_out or "") and getattr(flow, "unanswered_questions", None):
                             flow.unanswered_questions = []
