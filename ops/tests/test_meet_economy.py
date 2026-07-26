@@ -1126,6 +1126,219 @@ def test_백로그_발제귀속_R1_원저자_전사자아님(monkeypatch, tmp_pa
     assert int(b.submitter) == 13, f"R1 원저자(프론트 13)에 귀속돼야 — 전사자 앵커 아님, got {b.submitter}"
 
 
+def test_같은발제자가_구현과_독립QA를_전사해도_수행자는_구조적으로분리(monkeypatch, tmp_path):
+    """U-059: 회의 정리자가 모든 줄의 저자로 잡혀도 명시된 독립 검증은 제작자와 같은 손에 갈 수 없다."""
+    from system.rule.milestone import claim_kick_target, register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    _g, f = _meet_flow(
+        tmp_path,
+        bots={11: "기획", 12: "백엔드", 13: "QA"},
+    )
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
+    f.origin_request = (
+        "구현 백로그와 독립 QA 백로그를 서로 다른 담당자에게 등록하고 실제 수행하세요."
+    )
+    f.current.status.goal = "상태 머신"
+    okm, note = register_stage(
+        f,
+        "milestone",
+        "이번 주기: 상태 머신 완성\n"
+        "- 상태 전이 계약 충족 | 실증: node test_state_machine.js",
+        "상태 머신",
+    )
+    assert okm, note
+
+    # 최종 DRAFT의 세 줄을 모두 앵커가 정리한 라이브 상황. R1/DRAFT 귀속만 따르면 셋 다 11이다.
+    f._r1_attr = [
+        (11, "CommonJS 상태 머신 구현"),
+        (11, "16개 전이 독립 QA 테스트 작성"),
+        (11, "최종 실행 증거 확인"),
+    ]
+    f._draft_attr = {}
+    ok, note = register_stage(
+        f,
+        "subtask",
+        "단위: 상태 머신 구현과 검증\n"
+        "백로그: [상태 머신 구현과 검증] CommonJS 상태 머신 구현\n"
+        "백로그: [상태 머신 구현과 검증] 독립 QA로 16개 전이 테스트 작성\n"
+        "백로그: [상태 머신 구현과 검증] 구현자와 다른 담당자가 최종 검증과 실행 증거 확인",
+        "상태 머신",
+    )
+    assert ok, note
+    st = f.milestones[-1].subtasks[0]
+    rows = f.backlog_relays[st.st_id].backlogs
+    assert [row.submitter for row in rows] == [11, 13, 13]
+    assert len({row.submitter for row in rows}) == 2
+    # 첫 구현은 기존 발제자부터, 이후 handoff/claim은 QA 보유분으로 이어질 구조적 원장이 섰다.
+    who, backlog, st_id = claim_kick_target(f)
+    assert (who, backlog.backlog_id, st_id) == (11, "B1", st.st_id)
+
+
+def _독립검증_귀속판(tmp_path, bots, members):
+    from system.rule.milestone import register_stage
+
+    _g, f = _meet_flow(tmp_path, bots=bots)
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": members}))
+    f.origin_request = (
+        "구현 백로그와 독립 QA 백로그를 서로 다른 담당자에게 등록하고 실제 수행하세요."
+    )
+    f.current.status.goal = "상태 머신"
+    okm, note = register_stage(
+        f,
+        "milestone",
+        "이번 주기: 상태 머신 완성\n"
+        "- 상태 전이 계약 충족 | 실증: node test_state_machine.js",
+        "상태 머신",
+    )
+    assert okm, note
+    return f
+
+
+def test_독립실행과_서로다른브라우저는_담당자분리계약이아님(monkeypatch, tmp_path):
+    """산출물 속성의 bare '독립/서로 다른'이 기존 R1 원저자 귀속을 바꾸면 안 된다."""
+    from system.rule.milestone import register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    _g, f = _meet_flow(tmp_path, bots={11: "기획", 12: "QA"})
+    t = _tools(f, 11, "leader")
+    asyncio.run(t["create_task"].handler({"members": "12"}))
+    f.origin_request = (
+        "서로 다른 브라우저에서 독립 실행 가능한 상태 머신과 QA 테스트를 작성하세요."
+    )
+    f.current.status.goal = "상태 머신"
+    okm, note = register_stage(
+        f,
+        "milestone",
+        "이번 주기: 상태 머신 완성\n"
+        "- 상태 전이 계약 충족 | 실증: node test_state_machine.js",
+        "상태 머신",
+    )
+    assert okm, note
+    f._r1_attr = [
+        (11, "CommonJS 상태 머신 구현"),
+        (11, "QA 브라우저 호환 테스트 작성"),
+    ]
+    ok, note = register_stage(
+        f,
+        "subtask",
+        "단위: 상태 머신 구현과 검증\n"
+        "백로그: [상태 머신 구현과 검증] CommonJS 상태 머신 구현\n"
+        "백로그: [상태 머신 구현과 검증] QA 브라우저 호환 테스트 작성",
+        "상태 머신",
+    )
+    assert ok, note
+    rows = f.backlog_relays[f.milestones[-1].subtasks[0].st_id].backlogs
+    assert [row.submitter for row in rows] == [11, 11]
+
+
+def test_독립QA줄이_구현보다_먼저와도_제작자를_피함(monkeypatch, tmp_path):
+    """귀속 계산은 줄 순서가 아니라 같은 회의 전체 제작자 집합을 기준으로 한다."""
+    from system.rule.milestone import register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _독립검증_귀속판(
+        tmp_path, {11: "기획", 12: "백엔드", 13: "QA"}, "12,13")
+    f._r1_attr = [
+        (11, "독립 QA로 16개 전이 테스트 작성"),
+        (11, "CommonJS 상태 머신 구현"),
+    ]
+    ok, note = register_stage(
+        f,
+        "subtask",
+        "단위: 상태 머신 구현과 검증\n"
+        "백로그: [상태 머신 구현과 검증] 독립 QA로 16개 전이 테스트 작성\n"
+        "백로그: [상태 머신 구현과 검증] CommonJS 상태 머신 구현",
+        "상태 머신",
+    )
+    assert ok, note
+    rows = f.backlog_relays[f.milestones[-1].subtasks[0].st_id].backlogs
+    assert [row.submitter for row in rows] == [13, 11]
+
+
+def test_독립검증_비제작후보가_없으면_등록을_닫고_충원을_안내(monkeypatch, tmp_path):
+    """명시 계약을 같은 사람 소유로 조용히 등록하지 않는다."""
+    from system.rule.milestone import register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _독립검증_귀속판(tmp_path, {11: "기획"}, "")
+    f._r1_attr = [
+        (11, "CommonJS 상태 머신 구현"),
+        (11, "독립 QA로 전이 테스트 작성"),
+    ]
+    ok, note = register_stage(
+        f,
+        "subtask",
+        "단위: 상태 머신 구현과 검증\n"
+        "백로그: [상태 머신 구현과 검증] CommonJS 상태 머신 구현\n"
+        "백로그: [상태 머신 구현과 검증] 독립 QA로 전이 테스트 작성",
+        "상태 머신",
+    )
+    assert not ok
+    assert "독립 검증 담당자 분리 계약" in note and "recruit" in note
+    assert not f.milestones[-1].subtasks
+
+
+def test_독립검증_후보가_있어도_역할적합0이면_등록을_닫음(monkeypatch, tmp_path):
+    """무관한 직군을 임의 검수자로 지명하는 것도 독립성 충족으로 참칭하지 않는다."""
+    from system.rule.milestone import register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _독립검증_귀속판(tmp_path, {11: "기획", 12: "브랜드"}, "12")
+    f._r1_attr = [
+        (11, "CommonJS 상태 머신 구현"),
+        (11, "독립 QA로 전이 테스트 작성"),
+    ]
+    ok, note = register_stage(
+        f,
+        "subtask",
+        "단위: 상태 머신 구현과 검증\n"
+        "백로그: [상태 머신 구현과 검증] CommonJS 상태 머신 구현\n"
+        "백로그: [상태 머신 구현과 검증] 독립 QA로 전이 테스트 작성",
+        "상태 머신",
+    )
+    assert not ok
+    assert "역할 적합도가 0보다 큰 후보" in note and "recruit" in note
+    assert not f.milestones[-1].subtasks
+
+
+def test_완료된_구현회의뒤_독립QA만_추가해도_기존제작자를_피함(monkeypatch, tmp_path):
+    """현재 마일스톤의 완료 SubTask도 제작 이력이라 후속 QA가 같은 사람에게 돌아갈 수 없다."""
+    from system.rule.milestone import register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _독립검증_귀속판(
+        tmp_path, {11: "기획", 12: "백엔드", 13: "QA"}, "12,13")
+    f._r1_attr = [(11, "CommonJS 상태 머신 구현")]
+    ok1, note1 = register_stage(
+        f,
+        "subtask",
+        "단위: 상태 머신 구현\n"
+        "백로그: [상태 머신 구현] CommonJS 상태 머신 구현",
+        "상태 머신",
+    )
+    assert ok1, note1
+    old_st = f.milestones[-1].subtasks[0]
+    old_backlog = f.backlog_relays[old_st.st_id].backlogs[0]
+    old_backlog.status = "done"
+    old_backlog.assignee = 11
+    old_st.status = "done"
+
+    f._r1_attr = [(11, "독립 QA로 16개 전이 테스트 작성")]
+    ok2, note2 = register_stage(
+        f,
+        "subtask",
+        "단위: 독립 검증\n"
+        "백로그: [독립 검증] 독립 QA로 16개 전이 테스트 작성",
+        "상태 머신",
+    )
+    assert ok2, note2
+    qa_st = f.milestones[-1].subtasks[-1]
+    assert f.backlog_relays[qa_st.st_id].backlogs[0].submitter == 13
+
+
 def test_백로그0건_직군은_판단기회_없이_회의종료불가(monkeypatch, tmp_path):
     """소유를 강제하지 않고, 실질 기고 또는 이유 있는 패스로 직군별 판단 기회만 보장한다."""
     from system.rule.milestone import register_stage

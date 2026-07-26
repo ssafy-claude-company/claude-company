@@ -3050,6 +3050,113 @@ def register_stage(flow, stage, prop, origin=""):
                     _best, _who_r = _ov, _bid
             return _who_r if _best >= 0.5 else None
 
+        # 발제 귀속은 보통 곧 전담이지만, "구현자와 다른 독립 QA/검수자"처럼 역할 분리를 명시한
+        # 계약에서는 같은 발제자가 구현·검증 줄을 정리해 썼다는 이유로 한 사람이 양쪽을 수행하면
+        # 독립성 자체가 사라진다. 내용별 직군 할당을 강제하지 않고, 명시된 독립 검증 항목만 실제
+        # 제작 항목의 주인들과 분리한다. 적임자가 없으면 같은 사람에게 조용히 되돌리지 않고 충원·개서를
+        # 요구해 명시 계약을 fail-closed한다.
+        _origin_o = str(getattr(flow, "origin_request", "") or "")
+
+        def _assignee_separation_signal(_text_i):
+            """사람/소유 주체를 실제로 분리하라는 명시 계약만 잡는다.
+
+            bare ``독립``은 '독립 실행 가능', bare ``서로 다른``은 '서로 다른 브라우저'처럼
+            산출물 속성을 꾸밀 수 있다. 그런 문구와 QA가 우연히 한 요청에 있다는 이유로
+            R1 원저자 귀속을 바꾸지 않는다.
+            """
+            _t_i = str(_text_i or "").lower()
+            return bool(_re3.search(
+                r"((?:서로\s*|각기\s*)?다른\s*"
+                r"(?:담당자|수행자|작업자|작성자|구현자|개발자|제작자|저자|"
+                r"검증자|검수자|리뷰어|사람|인원|주인|소유자)|"
+                r"별도(?:의)?\s*(?:담당자|수행자|작업자|검증자|검수자|리뷰어|사람|인원)|"
+                r"독립(?:적인)?\s*(?:검증자|검수자|리뷰어|qa\s*(?:담당자|수행자))|"
+                r"(?:담당자|수행자|작업자|작성자|구현자|개발자|제작자|저자|"
+                r"검증자|검수자|리뷰어)\s*(?:를|을|은|는|가|이)?\s*(?:분리|구분|분담)|"
+                r"(?:different|separate)\s+(?:assignee|owner|reviewer|author|"
+                r"implementer|developer|person|people)|"
+                r"independent\s+(?:assignee|owner|reviewer|author|person)|"
+                r"(?:reviewer|assignee|owner)\s+(?:different\s+from|separate\s+from)\s+"
+                r"(?:the\s+)?(?:author|implementer|developer|producer)|"
+                r"someone\s+other\s+than\s+(?:the\s+)?(?:author|implementer|developer|producer))",
+                _t_i,
+            ))
+
+        def _review_signal(_text_i):
+            _t_i = str(_text_i or "").lower()
+            return bool(_re3.search(
+                r"(^|[^a-z])(qa|quality\s*assurance|review)([^a-z]|$)|"
+                r"(검증|검수|테스트|실증|회귀|품질\s*확인)",
+                _t_i,
+            ))
+
+        def _review_role_signal(_text_i):
+            _t_i = str(_text_i or "").lower()
+            return bool(_re3.search(
+                r"(^|[^a-z])(qa|quality\s*assurance|reviewer)([^a-z]|$)|"
+                r"(검수자|검증자|테스트\s*담당|품질\s*담당|교차\s*(?:검증|검수|리뷰))",
+                _t_i,
+            ))
+
+        _contract_separates_review = (
+            _assignee_separation_signal(_origin_o) and _review_signal(_origin_o)
+        )
+
+        def _independent_review(_body_i):
+            return (
+                _review_signal(_body_i)
+                and (
+                    _assignee_separation_signal(_body_i)
+                    or (_contract_separates_review and _review_role_signal(_body_i))
+                )
+            )
+
+        _team_o = [
+            int(x) for x in (
+                getattr(getattr(flow, "current", None), "team", None)
+                or getattr(flow, "project_team", None)
+                or _bots_o.keys()
+            )
+            if int(x or 0) in _bots_o
+        ]
+
+        def _independence_unavailable(_body_i, _producer_owners_i, _why_i):
+            _producers_i = ", ".join(map(str, sorted(_producer_owners_i))) or "미상"
+            return (
+                "독립 검증 담당자 분리 계약을 충족할 수 없습니다 — "
+                f"제작 담당({_producers_i})과 겹치는 검증 항목 "
+                f"'{str(_body_i or '')[:70]}'에 {_why_i}. "
+                "recruit로 QA/검수 직군을 Task 팀에 충원하거나, 제작자와 실제로 다른 담당자가 "
+                "검증 항목을 맡도록 수렴안/R1 귀속을 다시 작성하세요."
+            )
+
+        def _independent_owner(_body_i, _base_i, _producer_owners_i):
+            _base_i = int(_base_i or 0)
+            if (not _independent_review(_body_i)
+                    or _base_i not in _producer_owners_i):
+                return _base_i, ""
+            _cands_i = [
+                mid for mid in _team_o
+                if mid not in _producer_owners_i and str(_bots_o.get(mid) or "").strip()
+            ]
+            if not _cands_i:
+                return _base_i, _independence_unavailable(
+                    _body_i, _producer_owners_i,
+                    "제작자가 아닌 Task 팀 후보가 없습니다",
+                )
+            from ..role_fit import role_fit as _rf_independent
+            # stable max: 동점이면 Task 팀의 기존 순서를 보존한다.
+            _winner_i = max(
+                _cands_i,
+                key=lambda mid: _rf_independent(_body_i, _bots_o[mid]),
+            )
+            if _rf_independent(_body_i, _bots_o[_winner_i]) <= 0:
+                return _base_i, _independence_unavailable(
+                    _body_i, _producer_owners_i,
+                    "검증 역할 적합도가 0보다 큰 후보가 없습니다",
+                )
+            return _winner_i, ""
+
         # blocked 보충은 이름/시각 추측이 아니라 원본 scope 링크로 연결한다. 같은 ST에 blocked가
         # 하나뿐이면 영역 배정만으로 안전하게 자동 연결하고, 여러 개거나 교차 영역 선행이면 회의가
         # `[해결: ST::Bn]`을 명시해야 한다. 모든 blocked가 이번 회의 항목 하나 이상과 연결돼야 등록.
@@ -3128,16 +3235,65 @@ def register_stage(flow, stage, prop, origin=""):
                 flow.log("backlog_role_coverage", owners=len(_predicted_owners),
                          responded=len(_coverage_responded), passes=len(_coverage_passes), missing="")
 
+        # 먼저 전체 귀속을 계산해야 QA 줄이 구현 줄보다 앞에 있어도 같은 회의의 제작 주인들을 모두
+        # 제외할 수 있다. 순차 등록 중 "지금까지 본 항목"만 보면 줄 순서가 독립성 결과를 바꾼다.
+        _planned = []
+        for _s, _st_d, _body, _supplement_for in _supplement_plan:
+            _base_owner = int(
+                _r1_author(_body)
+                or _attr_of(draft_norm_line(_s) or _s)
+                or _owner_fb(_st_d, _body)
+                or 0
+            )
+            _planned.append([
+                _s, _st_d, _body, _supplement_for, _base_owner,
+            ])
+        # 현재 회의보다 먼저 끝난 구현도 자기검증의 제작 이력이다. 현재 마일스톤의 정본 SubTask는
+        # done을 포함해 전부 보되 superseded만 제외하고, 실제 수행자가 따로 있으면 submitter와 함께
+        # 제외한다. 그래야 '구현 회의 → 완료 → 후속 독립 QA 회의' 순서도 한 회의 등록과 동형이다.
+        _existing_producer_owners = set()
+        for _st_existing in (getattr(_open, "subtasks", None) or []):
+            if getattr(_st_existing, "status", "") == "superseded":
+                continue
+            _relay_existing = store.get(_st_existing.st_id)
+            for _backlog_existing in (
+                    getattr(_relay_existing, "backlogs", None) or []):
+                if _independent_review(getattr(_backlog_existing, "body", "")):
+                    continue
+                for _owner_existing in (
+                        getattr(_backlog_existing, "submitter", 0),
+                        getattr(_backlog_existing, "assignee", 0)):
+                    if int(_owner_existing or 0):
+                        _existing_producer_owners.add(int(_owner_existing))
+
+        _producer_owners = _existing_producer_owners | {
+            int(row[4])
+            for row in _planned
+            if int(row[4] or 0) and not _independent_review(row[2])
+        }
+        for row in _planned:
+            _base_owner = int(row[4] or 0)
+            _new_owner, _independence_error = _independent_owner(
+                row[2], _base_owner, _producer_owners)
+            if _independence_error:
+                return False, _independence_error
+            row[4] = _new_owner
+            if int(row[4] or 0) != _base_owner and flow.log:
+                flow.log(
+                    "backlog_independence_reassigned",
+                    by=_base_owner, to=int(row[4]), body=str(row[2])[:100],
+                )
+
         n = 0
         _per = {}
         _skipped = 0
-        for _s, _st_d, _body, _supplement_for in _supplement_plan:
+        for _s, _st_d, _body, _supplement_for, _who in _planned:
             try:
                 # [참조·재진술 반려(2026-07-22, U-041)] 순수 참조는 submit 관문이 반려(force 무관),
                 # 재진술은 중복 게이트(force=False)가 잡는다 — 병합 회의도 예외 없이(종전 force=True가
                 # 두 게이트를 다 우회해 'B4'·재진술이 백로그로 태어난 것이 근본).
-                # 귀속 우선순위: R1 원저자(실제 낸 사람) > DRAFT 편집 저자 > 적임 폴백
-                _who = _r1_author(_body) or _attr_of(draft_norm_line(_s) or _s) or _owner_fb(_st_d, _body)
+                # 기본 귀속 우선순위는 R1 원저자 > DRAFT 편집 저자 > 적임 폴백. 명시된 독립 검증만
+                # 위에서 제작 주인과 다른 Task 팀원으로 분리한다.
                 _new_b = relay_for(flow, _st_d).submit(_who, _body, force=False)
                 if _supplement_for:
                     _new_b.supplement_for = list(_supplement_for)
