@@ -366,15 +366,15 @@ def test_GOAL잠금은_SubTask와_백로그0개거나_미종결이면_검증자�
     assert c.passed and c.evidence_source == "sys_run" and c.verify_attempts == 1
 
 
-def test_자연어GOAL잠금은_SYS봉인한_exact_command_1회영수증만_결부(
+def test_자연어GOAL잠금은_worker도구없이_SYS가_비준exact를_실행봉인(
     tmp_path, monkeypatch,
 ):
-    """자연어 spec도 target/spec 봉인 뒤 같은 검사 명령을 실행한 receipt만 release를 연다."""
-    import re as _re
+    """U-058: worker 턴에 run/report_iter가 없어도 비준된 exact command를 SYS가 직접 봉인한다."""
     from system.rule.backlog import Backlog, relay_for
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
     from system.rule.milestone import (
         open_subtask, register_stage, rule_report_iter, stage_context,
-        stage_frame, stage_preflight,
+        stage_frame, stage_preflight, workspace_artifact_stamp, write_revision,
     )
 
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
@@ -383,8 +383,6 @@ def test_자연어GOAL잠금은_SYS봉인한_exact_command_1회영수증만_결�
     f.workspace = str(tmp_path)
     (tmp_path / "browser_check.py").write_text(
         "print('title=Home console_errors=0')\n", encoding="utf-8")
-    (tmp_path / "unrelated_test.py").write_text(
-        "print('unrelated pass')\n", encoding="utf-8")
     asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
     decision = ("목표: 브라우저 인수\n"
                 "- 홈 화면이 실제로 열린다 | 실증: 브라우저에서 홈을 열어 제목과 콘솔 오류 0건 확인")
@@ -428,45 +426,107 @@ def test_자연어GOAL잠금은_SYS봉인한_exact_command_1회영수증만_결�
         f, 11, {"results": f"{c.desc} | pass | 브라우저 정상이라고 주장"})
     assert not c.passed
     s = Sys(f.guide, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+    calls = []
 
-    async def verifier(flow, who, body, kind, role, micro=False):
-        assert flow._release_verify_challenge["desc"] == c.desc
-        tools = _tools(flow, who, "member")
-        trivial = await tools["run"].handler(
-            {"command": "true", "evidence_for": c.desc, "seal": "yes"})
-        assert "봉인 불가" in trivial["content"][0]["text"]
-        unrelated = await tools["run"].handler({
-            "command": "python3 unrelated_test.py",
-            "evidence_for": c.desc, "seal": "yes",
-        })
-        assert "봉인 불가" in unrelated["content"][0]["text"]
-        swapped = await tools["run"].handler({
-            "command": "python3 browser_other_check.py", "evidence_for": c.desc,
-        })
-        assert "exact command" in swapped["content"][0]["text"]
-        ran = await tools["run"].handler({
-            "command": "python3 browser_check.py", "evidence_for": c.desc,
-        })
-        rid = _re.search(
-            r"\[SYS run receipt\]\s+(run-[0-9a-f]+)",
-            ran["content"][0]["text"],
-        ).group(1)
-        note = rule_report_iter(
-            flow, who,
-            {"results": f"{c.desc} | pass | 모델 주장문", "receipt": rid},
-        )
-        assert "전 조건 충족" in note or "wrapup" in note
-        return "검증 제출 완료"
+    async def capture_run(workspace, command, timeout=60):
+        calls.append((workspace, command, timeout))
+        return True, 0, "title=Home console_errors=0\n", "", ""
 
-    s.run_turn = verifier
+    monkeypatch.setattr("system.sys_core.run_workspace_command", capture_run)
+
+    async def worker_must_not_run(*_args, **_kwargs):
+        raise AssertionError("비준된 자연어 release 검증을 worker 도구에 위임하면 안 됨")
+
+    s.run_turn = worker_must_not_run
     assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert calls == [(str(tmp_path), "python3 browser_check.py", 60)]
     assert c.passed and c.evidence_source == "sys_run"
     assert c.verified_command == "python3 browser_check.py"
-    assert c.verified_command_hash and c.verified_spec_hash
+    assert c.verified_command_hash == verifier_command_hash(c.verified_command)
+    assert c.verified_spec_hash == verifier_spec_hash(c.desc, c.verify)
     assert c.ratified_verifier_command == "python3 browser_check.py"
     assert c.ratified_verifier_command_hash and c.ratified_verifier_spec_hash
-    assert c.receipt_id.startswith("run-") and "title=Home" in c.evidence
+    assert c.receipt_id.startswith("auto-lock-") and "title=Home" in c.evidence
+    assert c.verified_write_epoch == write_revision(f)
+    assert c.verified_artifact_stamp == workspace_artifact_stamp(f)
+    assert not getattr(f, "_release_verify_challenge", None)
     assert c.receipt_id not in f._run_receipts
+    assert any(e["event"] == "milestone_auto_verify" and e.get("ratified")
+               for e in s.flow_log)
+
+
+def test_SYS자동검증은_동일비준command의_자연어GOAL둘을_각각_final_stamp로_봉인(
+    tmp_path, monkeypatch,
+):
+    """U-058 회귀: direct 1건+같은 exact command인 자연어 lock 2건도 receipt/spec은 서로 독립이다."""
+    import system.sys_core as sys_core
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import (
+        open_subtask, register_stage, workspace_artifact_stamp, write_revision,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    monkeypatch.delenv("ORGANT_RUN_USER", raising=False)
+    f = _flow(FakeGuide())
+    f.workspace = str(tmp_path)
+    (tmp_path / "artifact.txt").write_text("ready\n", encoding="utf-8")
+    (tmp_path / "release_check.py").write_text(
+        "from pathlib import Path\n"
+        "assert Path('artifact.txt').read_text().strip() == 'ready'\n"
+        "print('RELEASE_OK')\n",
+        encoding="utf-8",
+    )
+    asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
+    assert register_stage(
+        f, "goal",
+        "목표: 두 계약을 함께 인수\n"
+        "- 공개 API가 요구 형태다 | 실증: 산출물에서 공개 API 계약을 확인한다\n"
+        "- 상태 전이가 요구 규칙이다 | 실증: 상태 4개·허용 전이 3개·금지 전이 13개를 대조한다",
+        "two-natural",
+    )[0]
+    assert register_stage(
+        f, "milestone",
+        "이번 주기: 단일 산출물 완성\n"
+        "- 산출물 파일 존재 | 실증: test -f artifact.txt\n"
+        "- 공개 API가 요구 형태다 | 실증: python3 release_check.py\n"
+        "- 상태 전이가 요구 규칙이다 | 실증: python3 release_check.py",
+        "two-natural-ms",
+    )[0]
+    ms = f.milestones[-1]
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "산출물 구현", 12, status="done", assignee=12)
+    calls = []
+
+    async def capture_run(workspace, command, timeout=60):
+        calls.append(command)
+        return True, 0, f"PASS {command}\n", "", ""
+
+    monkeypatch.setattr(sys_core, "run_workspace_command", capture_run)
+    s = Sys(f.guide, 1, lambda *_: None, bot_info={11: "L", 12: "M"})
+
+    async def worker_must_not_run(*_args, **_kwargs):
+        raise AssertionError("비준된 자연어 release 검증은 SYS batch에서 끝나야 함")
+
+    s.run_turn = worker_must_not_run
+    assert asyncio.run(s._verify_exhausted_milestone(f)) is True
+    assert calls == [
+        "test -f artifact.txt",
+        "python3 release_check.py",
+        "python3 release_check.py",
+    ]
+    locks = [c for c in ms.criteria if c.release_lock]
+    assert len(locks) == 2 and all(c.passed for c in locks)
+    assert len({c.receipt_id for c in locks}) == 2
+    assert all(c.receipt_id.startswith("auto-lock-") for c in locks)
+    final_stamp, final_epoch = workspace_artifact_stamp(f), write_revision(f)
+    for c in locks:
+        assert c.verified_command == "python3 release_check.py"
+        assert c.verified_command_hash == verifier_command_hash(c.verified_command)
+        assert c.verified_spec_hash == verifier_spec_hash(c.desc, c.verify)
+        assert c.verified_artifact_stamp == final_stamp
+        assert c.verified_write_epoch == final_epoch
 
 
 def test_release_verifier명령은_성공마스킹_inline_외부경로를_영수증으로인정하지않음(

@@ -1889,11 +1889,11 @@ class Sys:
         통과시키며, 재시도 상한 뒤에도 실패하면 거짓 완료 대신 사람 확인 대기로 파킹한다.
         """
         from .rule.milestone import (claim_kick_target, iter_verify, next_milestone,
-                                     promote_final_locked_criteria, renegotiate_criterion,
+                                     promote_final_locked_criteria,
+                                     ratified_goal_verifier_command, renegotiate_criterion,
                                      workspace_artifact_stamp, write_revision, wrapup_done)
         from .rule.evidence import (
-            direct_verifier_command, normalize_verifier_command,
-            verifier_command_hash, verifier_spec_hash,
+            direct_verifier_command, verifier_command_hash, verifier_spec_hash,
         )
         # 최종 로드맵 주기(단일 주기 포함)에는 GOAL 잠금 조건이 active 분모로 승격된다. 복원된
         # 이미-done 최종 주기도 여기서 다시 열리므로 아래 기존 direct/bot 검증기를 그대로 탄다.
@@ -1935,35 +1935,62 @@ class Sys:
             if passed:
                 wrapup_done(flow, ms)
             return True
-        # verify는 역사적으로 "curl로 200 확인" 같은 자연어 절차도 허용한다. 순수 셸인 경우만 SYS가
-        # 직접 실행(A), 자연어는 작업 봇을 구조적으로 깨워 기존 run+report_iter 경로를 밟게 한다(B).
-        # 실패는 재검증 루프가 아니라 단계기계의 보충 SubTask 회의로 넘긴다.
+        # verify는 역사적으로 "curl로 200 확인" 같은 자연어 절차도 허용한다. 순수 셸과, 최종
+        # 마일스톤 회의가 canonical GOAL@ marker에 1:1 비준한 자연어 GOAL의 exact command만 SYS가
+        # 직접 실행한다. 그 외 자연어는 아래 작업 봇 검증 경로를 탄다. 실패는 재검증 루프가 아니라
+        # 단계기계의 보충 SubTask 회의로 넘긴다.
+        workspace = getattr(flow, "workspace", None)
         direct = [
             c for c in pending
-            if direct_verifier_command(c.verify, getattr(flow, "workspace", None))
+            if direct_verifier_command(c.verify, workspace)
         ]
+        natural_release = [
+            c for c in ms.criteria
+            if not c.passed and c.status == "active"
+            and getattr(c, "release_lock", False) and c not in direct
+        ]
+        ratified_release = []
+        unratified_release = []
+        for c in natural_release:
+            command = ratified_goal_verifier_command(
+                c, workspace, require_existing=True)
+            if command:
+                ratified_release.append((c, command))
+            else:
+                unratified_release.append(c)
+
+        # 모든 SYS 검사를 먼저 끝낸 뒤 한 번만 final stamp/epoch를 읽는다. 뒤 조건의 검사 출력이
+        # 산출물을 바꿔도 앞 조건 receipt가 중간 버전에 묶이지 않으며, 각 조건은 고유 receipt를 가진다.
         results = []
-        for c in direct:
+        system_runs = (
+            [(c, c.verify, False) for c in direct]
+            + [(c, command, True) for c, command in ratified_release]
+        )
+        for c, command, structurally_ratified in system_runs:
             c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
             ok, rc, out, err, reason = await run_workspace_command(
-                getattr(flow, "workspace", None), c.verify, timeout=60)
+                workspace, command, timeout=60)
             tail = ((out or "") + (("\n[stderr] " + err) if (err or "").strip() else ""))[-400:].strip()
-            evidence = f"exit={rc} `{c.verify[:80]}`" + (f"\n{tail}" if tail else "")
+            evidence = f"exit={rc} `{command[:80]}`" + (f"\n{tail}" if tail else "")
             result = {"desc": c.desc, "passed": bool(ok),
                       "evidence": evidence if ok else ""}
             if ok:
                 result.update({
                     "_sys_run_receipt": evidence,
-                    "_sys_run_receipt_id": "auto-" + secrets.token_hex(10),
-                    "_verified_command": c.verify,
-                    "_verified_command_hash": verifier_command_hash(c.verify),
+                    "_sys_run_receipt_id": (
+                        ("auto-lock-" if getattr(c, "release_lock", False) else "auto-")
+                        + secrets.token_hex(10)
+                    ),
+                    "_verified_command": command,
+                    "_verified_command_hash": verifier_command_hash(command),
                     "_verified_spec_hash": verifier_spec_hash(c.desc, c.verify),
                 })
             results.append(result)
             self._log("milestone_auto_verify", ms=ms.ms_id, desc=c.desc[:60],
-                      attempt=c.verify_attempts, passed=bool(ok), rc=rc, reason=reason[:100])
+                      attempt=c.verify_attempts, passed=bool(ok), rc=rc,
+                      ratified=structurally_ratified, reason=str(reason or "")[:100])
         if results:
-            # 여러 direct 검사가 build 산출물 등을 만들 수 있으므로 전부 끝난 한 최종 workspace 버전에
+            # 여러 검사가 build 산출물 등을 만들 수 있으므로 전부 끝난 한 최종 workspace 버전에
             # 성공 receipt를 함께 봉인한다. 조건마다 중간 stamp를 쓰면 뒤 검사 출력 때문에 앞 영수증이
             # 즉시 stale이 되는 순서 의존이 생긴다.
             final_epoch, final_stamp = write_revision(flow), workspace_artifact_stamp(flow)
@@ -1976,75 +2003,8 @@ class Sys:
                 wrapup_done(flow, ms)
                 return True
 
-        # canonical 자연어 GOAL은 최종 마일스톤 회의가 GOAL@ 정본 marker로 비준한 별도 exact
-        # command가 있을 때만 challenge를 연다. 같은 actor가 release 시점에 임의 command를 제안해 문자열
-        # category만 맞추는 경로는 release 증거로 승격하지 않는다.
-        def _ratified(c):
-            command = normalize_verifier_command(
-                getattr(c, "ratified_verifier_command", ""))
-            if (not command
-                    or getattr(c, "ratified_verifier_command_hash", "")
-                    != verifier_command_hash(command)
-                    or getattr(c, "ratified_verifier_spec_hash", "")
-                    != verifier_spec_hash(c.desc, c.verify)
-                    or not direct_verifier_command(
-                        command, getattr(flow, "workspace", ""))):
-                return ""
-            return command
-
-        natural_release = [
-            c for c in ms.criteria
-            if not c.passed and c.status == "active"
-            and getattr(c, "release_lock", False) and c not in direct
-        ]
-        bot_release = [(c, _ratified(c)) for c in natural_release if _ratified(c)]
-        unratified_release = [c for c in natural_release if not _ratified(c)]
         who = (int(getattr(getattr(flow, "current", None), "owner", 0) or 0)
                or int(getattr(flow, "anchor", 0) or 0))
-        for c, ratified_command in bot_release:
-            c.verify_attempts += 1
-            iter_before = ms.iter_n
-            stamp = workspace_artifact_stamp(flow)
-            challenge = {
-                "token": secrets.token_hex(16),
-                "ms_id": ms.ms_id,
-                "desc": c.desc,
-                "verify": c.verify,
-                "verifier_command": ratified_command,
-                "verifier_command_hash": verifier_command_hash(ratified_command),
-                "verifier_spec_hash": verifier_spec_hash(c.desc, c.verify),
-                "verifier_seal": secrets.token_hex(16),
-                "verifier_actor": 0,
-                "verifier_epoch": write_revision(flow),
-                "verifier_stamp": stamp,
-                "verifier_used": False,
-                "verifier_fixed": True,
-                "verifier_structurally_ratified": True,
-            }
-            flow._release_verify_challenge = challenge
-            try:
-                await self.run_turn(
-                    flow, who,
-                    "[GOAL 최종 잠금 구조 검증 — 단일 조건] 아래 command는 최종 마일스톤 회의가 "
-                    "canonical 자연어 GOAL 조건의 1:1 정본 marker에서 이미 비준해 SYS가 고정했습니다. "
-                    "새 명령을 제안하거나 바꾸지 말고 run(command=<아래 exact command>, "
-                    "evidence_for=<desc 원문>)으로 **한 글자도 바꾸지 않고 1회 실행**하세요. 응답의 "
-                    "`[SYS run receipt]` id를 report_iter(results='조건 | pass/fail | 관측 요지', "
-                    "receipt='run-...')로 같은 턴에 제출해야 합니다. 다른 명령·이전 영수증은 "
-                    "거부됩니다. 파일 수정은 하지 마세요."
-                    f"\n- desc(그대로 복사): {c.desc}\n"
-                    f"  canonical spec: {c.verify}\n"
-                    f"  exact ratified command: {ratified_command}",
-                    Kind.INFO, "worker")
-            finally:
-                if getattr(flow, "_release_verify_challenge", None) is challenge:
-                    flow._release_verify_challenge = None
-            if ms.status == "wrapup":
-                wrapup_done(flow, ms)
-                return True
-            if ms.iter_n == iter_before:
-                iter_verify(flow, ms, [{"desc": c.desc, "passed": False, "evidence": ""}])
-
         if unratified_release:
             for c in unratified_release:
                 c.verify_attempts += 1
