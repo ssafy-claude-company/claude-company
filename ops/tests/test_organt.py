@@ -362,6 +362,118 @@ def test_Codex_무도구micro는_MCP와_portlease를_건너뜀(monkeypatch, tmp_
     assert result == ("micro-ok", "sid-micro")
 
 
+def test_Codex_bridge는_완전JSONschema와_receipt_run을_보존(monkeypatch, tmp_path):
+    """한 full-schema 도구가 tools/list 전체를 죽이지 않고, e2e receipt 발급용 run도 숨기지 않는다."""
+    import asyncio
+    from types import SimpleNamespace
+    from organt import codex_mcp_bridge as bridge_mod
+
+    full_schema = {
+        "type": "object",
+        "properties": {
+            "op": {"type": "string", "enum": ["status", "register"]},
+            "payload": {"type": "object", "additionalProperties": True},
+        },
+        "required": ["op"],
+    }
+    converted = bridge_mod._json_schema(full_schema)
+    assert converted == full_schema
+    assert converted["required"] == ["op"]
+    assert converted["properties"]["op"]["enum"] == ["status", "register"]
+    assert bridge_mod._json_schema({
+        "properties": {"value": {"type": "integer"}},
+    }) == {"properties": {"value": {"type": "integer"}}}
+    assert bridge_mod._json_schema({
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+    }) == {"anyOf": [{"type": "string"}, {"type": "null"}]}
+    assert bridge_mod._json_schema({
+        "type": "object", "additionalProperties": False,
+    }) == {"type": "object", "additionalProperties": False}
+    assert bridge_mod._json_schema({"command": str}) == {
+        "type": "object",
+        "properties": {"command": {"type": "string"}},
+        "required": [],
+    }
+
+    class _Bridge:
+        def __init__(self, _port):
+            self.url = "http://127.0.0.1:23210/mcp"
+            self.tools = []
+
+        def set_tools(self, tools):
+            self.tools = list(tools or [])
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+    bridge_box = {}
+
+    def new_bridge(port):
+        bridge_box["value"] = _Bridge(port)
+        return bridge_box["value"]
+
+    expected_names = {"value": ["atelier", "run", "e2e_open"]}
+
+    async def fake_process(**_kwargs):
+        names = [tool.name for tool in bridge_box["value"].tools]
+        assert names == expected_names["value"]
+        return "ok", "sid"
+
+    pool = bridge_mod.CodexBridgePortPool(base_port=23210, size=1)
+    monkeypatch.setattr(bridge_mod, "get_port_pool", lambda: pool)
+    monkeypatch.setattr(bridge_mod, "_new_bridge", new_bridge)
+    monkeypatch.setattr(bridge_mod, "_run_codex_process", fake_process)
+    tools = [
+        SimpleNamespace(name="atelier", input_schema=full_schema),
+        SimpleNamespace(name="run", input_schema={"command": str}),
+        SimpleNamespace(name="e2e_open", input_schema={}),
+    ]
+    assert asyncio.run(bridge_mod.run_codex_turn(
+        prompt="e2e", cwd=str(tmp_path), session_id=None, tools=tools,
+        model="gpt-test",
+    )) == ("ok", "sid")
+    assert pool.available == 1
+
+    # milestone capability가 없는 일반 협업 도구셋에서는 native shell과 겹치는 Guide run을 숨긴다.
+    expected_names["value"] = ["atelier"]
+    assert asyncio.run(bridge_mod.run_codex_turn(
+        prompt="collab", cwd=str(tmp_path), session_id=None,
+        tools=[
+            SimpleNamespace(name="atelier", input_schema=full_schema),
+            SimpleNamespace(name="run", input_schema={"command": str}),
+        ],
+        model="gpt-test",
+    )) == ("ok", "sid")
+    assert pool.available == 1
+
+    # e2e_result도 같은 milestone capability 표식이다.
+    expected_names["value"] = ["run", "e2e_result"]
+    assert asyncio.run(bridge_mod.run_codex_turn(
+        prompt="result", cwd=str(tmp_path), session_id=None,
+        tools=[
+            SimpleNamespace(name="run", input_schema={"command": str}),
+            SimpleNamespace(name="e2e_result", input_schema={"item": str}),
+        ],
+        model="gpt-test",
+    )) == ("ok", "sid")
+    assert pool.available == 1
+
+    async def fake_native_process(**kwargs):
+        assert kwargs["mcp_url"] is None
+        return "native", "sid-native"
+
+    monkeypatch.setattr(bridge_mod, "_run_codex_process", fake_native_process)
+    assert asyncio.run(bridge_mod.run_codex_turn(
+        prompt="casual", cwd=str(tmp_path), session_id=None,
+        tools=[SimpleNamespace(name="run", input_schema={"command": str})],
+        model="gpt-test",
+    )) == ("native", "sid-native")
+    assert pool.available == 1
+
+
 def test_Codex_substantive비정상도_bridge정지_clear_port반환(monkeypatch, tmp_path):
     import asyncio
     from types import SimpleNamespace

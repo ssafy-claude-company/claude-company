@@ -21,12 +21,23 @@ from typing import List, Optional
 import mcp.types as _mt
 from mcp.server.fastmcp import FastMCP
 
-# SdkMcpTool.input_schema는 {인자명: 파이썬타입} — JSON schema로 변환(대부분 str).
+# SdkMcpTool.input_schema는 compact {인자명: 파이썬타입}뿐 아니라 완전한 JSON Schema도
+# 정식 입력이다. 완전 schema를 compact로 다시 해석하면 nested dict가 hash 불가라 tools/list
+# 전체가 죽고, Codex가 guide 도구를 하나도 보지 못한다.
 _TYMAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 
 def _json_schema(sch) -> dict:
-    props = {k: {"type": _TYMAP.get(v, "string")} for k, v in (sch or {}).items()}
+    if isinstance(sch, dict) and sch and not all(
+            isinstance(value, type) for value in sch.values()):
+        # JSON Schema는 ``type``/``properties``가 생략될 수도 있고 anyOf만 있을 수도 있다.
+        # compact schema는 값이 Python type인 dict라는 SDK 계약으로 구분해, 합법적인 JSON
+        # Schema 모양을 임의로 재해석하지 않는다(required/enum/additionalProperties도 보존).
+        return dict(sch)
+    props = {
+        k: {"type": _TYMAP.get(v, "string")}
+        for k, v in (sch or {}).items()
+    }
     # required는 비워둔다(핸들러가 누락 인자를 기본값으로 처리 — codex가 부분 인자로 불러도 안전).
     return {"type": "object", "properties": props, "required": []}
 
@@ -157,9 +168,14 @@ import json  # noqa: E402
 
 _PORT_POOL = None
 
-# codex 실행부에서 러너 컨텍스트(격리 밖)에 도는 도구는 codex에 주지 않는다 — codex의 파일·셸 조작은
-# 네이티브 도구(bwrap 격리)로 하게 하고, guide 도구는 협업(회의·표결·백로그·위임)만 브리지로 노출.
+# codex 실행부에서 러너 컨텍스트에 도는 guide run은 평소 숨기고 네이티브 셸(bwrap 격리)을 쓴다.
+# 단, milestone 도구 표면에서는 run만 release/e2e SYS receipt를 발급할 수 있으므로 아래 필터가
+# 예외로 노출한다. 네이티브 셸은 같은 검사를 실행해도 receipt를 만들 수 없다.
 _CODEX_TOOL_DENY = {"run"}
+# 이 표식들은 milestone의 모든 실질 턴 도구 표면에 있다. 따라서 run은 e2e 직전뿐 아니라
+# 자동 release 검증이 백로그 소진 경계에서 시작될 수 있는 milestone 실질 턴 전체에 노출된다.
+# 실제 실행 권한은 run 핸들러의 workspace/단일활성/봉인/receipt/권한강등 게이트가 결정한다.
+_CODEX_RECEIPT_TOOL_MARKERS = frozenset({"e2e_open", "e2e_result"})
 
 # 포트는 재사용하지만 FastMCP 인스턴스는 턴마다 새로 만든다. pool 크기는 프로세스 시작 뒤 첫 사용 때
 # ORGANT_MAX_SUBPROCS를 한 번 snapshot한다(운영 env 변경은 서비스 재시작 경계에서 반영).
@@ -469,9 +485,15 @@ async def _run_codex_process(
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None):
     """GPT 봇 한 턴. guide 도구가 있을 때만 전용 port/bridge를 턴 수명 동안 임대한다."""
+    tool_names = {
+        getattr(tool, "name", None)
+        for tool in (tools or [])
+    }
+    receipt_run_required = bool(tool_names & _CODEX_RECEIPT_TOOL_MARKERS)
     turn_tools = [
         tool for tool in (tools or [])
-        if getattr(tool, "name", None) not in _CODEX_TOOL_DENY
+        if (getattr(tool, "name", None) not in _CODEX_TOOL_DENY
+            or (getattr(tool, "name", None) == "run" and receipt_run_required))
     ]
     process_args = {
         "prompt": prompt,
