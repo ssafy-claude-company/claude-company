@@ -1976,8 +1976,8 @@ class Sys:
                 wrapup_done(flow, ms)
                 return True
 
-        # canonical 자연어 GOAL은 최종 마일스톤 회의가 같은 desc로 비준한 별도 exact command가
-        # 있을 때만 challenge를 연다. 같은 actor가 release 시점에 임의 command를 제안해 문자열
+        # canonical 자연어 GOAL은 최종 마일스톤 회의가 GOAL@ 정본 marker로 비준한 별도 exact
+        # command가 있을 때만 challenge를 연다. 같은 actor가 release 시점에 임의 command를 제안해 문자열
         # category만 맞추는 경로는 release 증거로 승격하지 않는다.
         def _ratified(c):
             command = normalize_verifier_command(
@@ -2026,7 +2026,7 @@ class Sys:
                 await self.run_turn(
                     flow, who,
                     "[GOAL 최종 잠금 구조 검증 — 단일 조건] 아래 command는 최종 마일스톤 회의가 "
-                    "canonical 자연어 GOAL 조건과 같은 desc로 이미 비준해 SYS가 고정했습니다. "
+                    "canonical 자연어 GOAL 조건의 1:1 정본 marker에서 이미 비준해 SYS가 고정했습니다. "
                     "새 명령을 제안하거나 바꾸지 말고 run(command=<아래 exact command>, "
                     "evidence_for=<desc 원문>)으로 **한 글자도 바꾸지 않고 1회 실행**하세요. 응답의 "
                     "`[SYS run receipt]` id를 report_iter(results='조건 | pass/fail | 관측 요지', "
@@ -2052,8 +2052,8 @@ class Sys:
             if callable(_pnote):
                 try:
                     _pnote(
-                        "[GOAL verifier 비준 필요] canonical 자연어 조건과 같은 desc에 exact executable "
-                        "verifier command를 둔 최종 마일스톤 수렴안이 필요합니다: "
+                        "[GOAL verifier 비준 필요] 최종 마일스톤 수렴안에서 SYS가 붙인 각 GOAL@ "
+                        "정본 marker에 exact executable verifier command를 비준해야 합니다: "
                         + " · ".join(c.desc[:60] for c in unratified_release[:6]))
                 except Exception:
                     pass

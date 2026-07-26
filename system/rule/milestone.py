@@ -34,8 +34,10 @@ __all__ = [
     "renegotiate_criterion", "approve_waiver", "rule_renegotiate",
     "extract_consensus", "flush_state_db", "canonical_parent_contract",
     "promote_final_locked_criteria", "goal_locked_release_error",
+    "ratified_goal_verifier_command",
     "workspace_artifact_stamp", "write_revision", "invalidate_e2e_state",
-    "work_ledger_release_error",
+    "work_ledger_release_error", "ensure_goal_ratification_scaffold",
+    "clear_resolved_goal_ratification_objection",
 ]
 
 
@@ -78,8 +80,8 @@ class Criterion:
     verified_command: str = ""
     verified_command_hash: str = ""
     verified_spec_hash: str = ""
-    # canonical GOAL verify가 자연어여도 최종 마일스톤 회의가 같은 desc에 별도 exact command를
-    # 비준할 수 있다. canonical spec을 덮지 않고 이 immutable 결속을 별도 정본으로 보존한다.
+    # canonical GOAL verify가 자연어여도 최종 마일스톤 회의가 GOAL@ 정본 marker에 별도 exact
+    # command를 비준할 수 있다. canonical spec을 덮지 않고 이 immutable 결속을 별도 보존한다.
     ratified_verifier_command: str = ""
     ratified_verifier_command_hash: str = ""
     ratified_verifier_spec_hash: str = ""
@@ -972,6 +974,20 @@ def _goal_locked_refs(flow):
     return out
 
 
+def ratified_goal_verifier_command(criterion, workspace="", require_existing=True) -> str:
+    """자연어 GOAL에 회의가 봉인한 exact command가 현재 canonical spec과 정확히 결속되면 반환."""
+    command = normalize_verifier_command(
+        getattr(criterion, "ratified_verifier_command", ""))
+    if (not command
+            or getattr(criterion, "ratified_verifier_command_hash", "")
+            != verifier_command_hash(command)
+            or getattr(criterion, "ratified_verifier_spec_hash", "")
+            != verifier_spec_hash(criterion.desc, criterion.verify)):
+        return ""
+    return direct_verifier_command(
+        command, workspace, require_existing=require_existing)
+
+
 def _final_release_milestone(flow):
     """현재 상태에서 최종 GOAL 인수 분모를 맡을 마일스톤. 중간 로드맵이면 None."""
     live = [m for m in (getattr(flow, "milestones", None) or [])
@@ -1114,6 +1130,13 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
             exact.release_lock = True
             changed += 1
         # 상위 잠금은 waived/blocked·임의 evidence·옛 산출물 영수증으로 우회할 수 없다.
+        natural_lock = not direct_verifier_command(
+            exact.verify, getattr(flow, "workspace", ""), require_existing=False)
+        ratified_command = (
+            ratified_goal_verifier_command(
+                exact, getattr(flow, "workspace", ""), require_existing=True)
+            if natural_lock else ""
+        )
         valid_receipt = (
             exact.passed
             and str(exact.evidence or "").strip()
@@ -1127,6 +1150,14 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
             == verifier_command_hash(getattr(exact, "verified_command", ""))
             and getattr(exact, "verified_spec_hash", "")
             == verifier_spec_hash(exact.desc, exact.verify)
+            and (
+                not natural_lock
+                or (
+                    bool(ratified_command)
+                    and normalize_verifier_command(
+                        getattr(exact, "verified_command", "")) == ratified_command
+                )
+            )
         )
         if not valid_receipt:
             if exact.passed or exact.evidence or exact.status != "active" or exact.block_reason:
@@ -1171,6 +1202,13 @@ def goal_locked_release_error(flow):
     missing = []
     for ref in refs:
         c = active.get((ref.desc.strip(), ref.verify.strip()))
+        natural_lock = bool(c) and not direct_verifier_command(
+            c.verify, getattr(flow, "workspace", ""), require_existing=False)
+        ratified_command = (
+            ratified_goal_verifier_command(
+                c, getattr(flow, "workspace", ""), require_existing=True)
+            if natural_lock else ""
+        )
         if (c is None or not c.passed or not str(c.evidence or "").strip()
                 or getattr(c, "evidence_source", "") != "sys_run"
                 or not getattr(c, "receipt_id", "")
@@ -1181,7 +1219,15 @@ def goal_locked_release_error(flow):
                 or getattr(c, "verified_command_hash", "")
                 != verifier_command_hash(getattr(c, "verified_command", ""))
                 or getattr(c, "verified_spec_hash", "")
-                != verifier_spec_hash(c.desc, c.verify)):
+                != verifier_spec_hash(c.desc, c.verify)
+                or (
+                    natural_lock
+                    and (
+                        not ratified_command
+                        or normalize_verifier_command(
+                            getattr(c, "verified_command", "")) != ratified_command
+                    )
+                )):
             missing.append(ref)
     if not missing:
         _sync_goal_locked_evidence(flow, target)
@@ -1485,7 +1531,7 @@ def parse_criteria_lines(text: str):
     """봇이 쓴 조건 텍스트(한 줄 = '조건 | 실증: 절차')를 게이트 입력으로. 형식 오류는 게이트가 잡는다."""
     out = []
     for ln in str(text or "").splitlines():
-        ln = ln.strip().lstrip("-•* ").strip()
+        ln = re.sub(r"^(?:[-•]\s*|\*\s+)", "", ln.strip(), count=1).strip()
         if not ln:
             continue
         m = _crit_delim().search(ln)
@@ -1495,7 +1541,12 @@ def parse_criteria_lines(text: str):
             d, _, v = ln.partition("|")
         import re as _re
         v = _re.sub(r"^(?:[\w가-힣]{0,4}\s*)?(?:실증|검증|측정)\s*[:：]\s*", "", v.strip())
-        out.append({"desc": d.strip(), "verify": v.strip()})
+        desc = d.strip()
+        # 조건 전체를 강조한 ``**desc**``는 표시 장식이고, desc 안쪽의 ``**API**``는
+        # canonical identity 일부일 수 있다. 바깥 한 쌍만 정확히 벗긴다.
+        if len(desc) >= 4 and desc.startswith("**") and desc.endswith("**"):
+            desc = desc[2:-2].strip()
+        out.append({"desc": desc, "verify": v.strip()})
     return out
 
 
@@ -2011,7 +2062,8 @@ def stage_draft_template(stage, agenda=""):
                       "사양)을 넣으면 이번 주기가 영영 안 끝납니다. 그건 그 단계 주기에서.)\n"
                       f"(주기 수 계약: {_MILESTONE_COUNT_COACHING})\n"
                       "(실증은 자연어 절차가 아니라 실제 실행할 **exact command**. 최종 주기에서는 자연어 "
-                      "GOAL 조건을 **같은 desc**로 적고 그 command를 비준.)\n"
+                      "GOAL 조건을 SYS가 `GOAL@spec-hash` 정본 키로 붙입니다. 조건 문장을 다시 쓰지 말고 "
+                      "각 정본 키의 `실증:` command만 비준하세요.)\n"
                       "- ⟦조건⟧ | 실증: ⟦exact command⟧\n"),
         "subtask": ("단위: ⟦작업 영역/구성요소⟧\n단위: ⟦작업 영역/구성요소⟧\n\n"
                     "백로그: [영역명] ⟦구체 작업 1⟧\n백로그: [영역명] ⟦구체 작업 2⟧\n"
@@ -2136,6 +2188,22 @@ def draft_to_proposal(stage, text):
     return "\n".join(out)
 
 
+def _unbold_draft_key(line):
+    """파서 키의 Markdown 강조만 제거하고 조건 desc 안의 ``**`` identity는 보존한다."""
+    value = str(line or "")
+    labels = r"(?:목표|구성\s*점검|단계|이번\s*주기|단위|백로그)"
+    value = re.sub(
+        rf"^(\s*)\*\*({labels})\s*:\*\*",
+        lambda m: f"{m.group(1)}{m.group(2)}:",
+        value,
+    )
+    return re.sub(
+        rf"^(\s*)\*\*({labels})\*\*\s*:",
+        lambda m: f"{m.group(1)}{m.group(2)}:",
+        value,
+    )
+
+
 def parse_units(lines):
     """'단위:' 항목 수집 — 등록·preflight 공용(같은 파싱 = 같은 판정).
     한 줄 정식(단위: ⟦목표⟧ | 실증: ⟦절차⟧)에 더해, 제목만 쓴 '단위:' 줄의 본문이 **바로 다음
@@ -2165,6 +2233,275 @@ def _proposal_roadmap_phases(lines):
            if l.strip().startswith("단계:") and ":" in l]
     return [phase.strip() for value in raw
             for phase in re.split(r"\s+→\s+", value) if phase.strip()]
+
+
+_GOAL_RATIFY_START = "<!-- SYS:GOAL-RATIFICATION:START -->"
+_GOAL_RATIFY_END = "<!-- SYS:GOAL-RATIFICATION:END -->"
+_GOAL_MARKER_RE = re.compile(r"^GOAL@([0-9a-fA-F]{64})$")
+
+
+def _goal_ratification_blocks(text):
+    """SYS block 구간을 중첩 없이 해석한다. malformed delimiter는 내용을 건드리지 않고 오류."""
+    raw = str(text or "")
+    token_re = re.compile(
+        re.escape(_GOAL_RATIFY_START) + "|" + re.escape(_GOAL_RATIFY_END))
+    opened = None
+    spans = []
+    errors = []
+    for match in token_re.finditer(raw):
+        token = match.group(0)
+        if token == _GOAL_RATIFY_START:
+            if opened is not None:
+                errors.append("SYS GOAL 비준 block의 START가 닫히기 전에 중복됐습니다.")
+            else:
+                opened = match.start()
+        elif opened is None:
+            errors.append("SYS GOAL 비준 block의 END에 대응하는 START가 없습니다.")
+        else:
+            spans.append((opened, match.end()))
+            opened = None
+    if opened is not None:
+        errors.append("SYS GOAL 비준 block의 START에 대응하는 END가 없습니다.")
+    if errors:
+        return [], [], errors
+    return [raw[start:end] for start, end in spans], spans, []
+
+
+def _goal_ratification_marker(ref) -> str:
+    """DRAFT에서만 쓰는 안정 키. 저장 Criterion identity는 계속 canonical desc/spec다."""
+    return "GOAL@" + verifier_spec_hash(ref.desc, ref.verify)
+
+
+def _natural_goal_refs(flow):
+    """별도 final-meeting exact command 비준이 필요한 GOAL 조건만."""
+    workspace = getattr(flow, "workspace", "") if flow is not None else ""
+    return [
+        ref for ref in _goal_locked_refs(flow)
+        if not direct_verifier_command(
+            ref.verify, workspace, require_existing=False)
+    ]
+
+
+def _unique_inline_verifier(spec, workspace="") -> str:
+    """자연어 GOAL spec 안 Markdown code span 중 안전한 exact verifier가 딱 하나일 때만 추출.
+
+    산문/substring을 명령으로 추측하지 않는다. 여러 서로 다른 명령·shell meta·실행형이 아닌 code는
+    빈 값이라 회의가 marker placeholder에 명령을 명시해야 한다.
+    """
+    commands = []
+    for code in re.findall(r"(?<!`)`([^`\n]+)`(?!`)", str(spec or "")):
+        command = direct_verifier_command(
+            code, workspace, require_existing=False)
+        if command and command not in commands:
+            commands.append(command)
+    return commands[0] if len(commands) == 1 else ""
+
+
+def _final_milestone_proposal(flow, proposed_phases=None) -> bool:
+    phases = list(proposed_phases or roadmap_phases(flow))
+    done_n = sum(
+        1 for m in (getattr(flow, "milestones", None) or [])
+        if getattr(m, "status", "") == "done"
+    )
+    return not phases or done_n + 1 >= len(phases)
+
+
+def _resolve_goal_ratification_entries(flow, entries, proposed_phases=None):
+    """GOAL markers를 canonical desc 행으로 결정적으로 확장한다.
+
+    marker는 DRAFT 편집 편의일 뿐 Milestone/receipt/checkpoint에는 남지 않는다. 따라서 기존
+    ``(canonical desc, canonical GOAL verify)`` spec hash와 exact-desc one-to-one 계약은 그대로다.
+    """
+    rows = [dict(row) for row in (entries or [])]
+    marked, ordinary = [], []
+    for row in rows:
+        desc = str(row.get("desc") or "").strip()
+        match = _GOAL_MARKER_RE.fullmatch(desc)
+        if match:
+            marked.append((match.group(1).lower(), row, desc))
+        elif desc.startswith("GOAL@"):
+            # marker처럼 보이는 자유 문자열을 일반 criterion으로 흘려보내지 않는다. 특히 폐기된
+            # 집합 shorthand나 잘린 hash가 canonical 조건인 것처럼 등록되는 우회를 fail-closed.
+            marked.append(("", row, desc))
+        else:
+            ordinary.append(row)
+    if not marked:
+        return rows, []
+    if flow is None:
+        return ordinary, ["GOAL@ marker는 canonical GOAL 정본이 있는 실제 Task 회의에서만 쓸 수 있습니다."]
+    if not _final_milestone_proposal(flow, proposed_phases):
+        return ordinary, ["GOAL@ marker는 로드맵의 최종 마일스톤에서만 비준할 수 있습니다."]
+
+    refs = _natural_goal_refs(flow)
+    by_key = {
+        _goal_ratification_marker(ref).split("@", 1)[1]: ref
+        for ref in refs
+    }
+    errors = []
+    if not refs:
+        errors.append("별도 exact command 비준이 필요한 자연어 GOAL 조건이 없어 GOAL@ marker를 쓸 수 없습니다.")
+    seen = set()
+    for key, _row, marker in marked:
+        if not key:
+            errors.append(
+                f"유효하지 않은 GOAL marker `{marker[:80]}`입니다 — "
+                "SYS가 붙인 full `GOAL@spec-hash` 키만 사용하세요."
+            )
+        elif key not in by_key:
+            errors.append(f"알 수 없거나 낡은 GOAL@{key} 키입니다 — SYS 정본 블록의 키를 사용하세요.")
+        elif key in seen:
+            errors.append(f"GOAL@{key} 비준 행이 중복됐습니다.")
+        seen.add(key)
+    if errors:
+        return ordinary, errors
+
+    # 재개된 옛 DRAFT가 canonical desc를 직접 복사한 행을 이미 갖고 있어도 marker가 같은 ref를
+    # 명시했다면 marker 쪽을 정본으로 삼는다. 파일 내용은 additive 보존하되 등록 입력에서만 정확한
+    # desc 중복을 걷어, 복사 문자열의 identity에 더는 의존하지 않는다(부분/유사 일치는 절대 안 함).
+    selected_desc = {by_key[key].desc.strip() for key, _row, _marker in marked}
+    expanded = [
+        row for row in ordinary
+        if str(row.get("desc") or "").strip() not in selected_desc
+    ]
+    for key, row, _marker in marked:
+        ref = by_key[key]
+        expanded.append({"desc": ref.desc, "verify": row.get("verify")})
+    return expanded, []
+
+
+def _without_goal_ratification_block(text):
+    """기존 SYS block 하나 이상을 제거하고 나머지 DRAFT를 보존."""
+    raw = str(text or "")
+    _blocks, spans, errors = _goal_ratification_blocks(raw)
+    if errors:
+        return raw
+    out = raw
+    for start, end in reversed(spans):
+        out = out[:start].rstrip("\n") + "\n" + out[end:].lstrip("\n")
+    return out
+
+
+def ensure_goal_ratification_scaffold(flow, text):
+    """채워진 milestone DRAFT가 최종주기로 확정된 뒤 canonical marker block을 additive 주입한다.
+
+    첫 마일스톤 개시 때는 ``단계:``가 아직 빈칸이라 final 여부를 모른다. 그때 GOAL 조건을 일반
+    criterion으로 미리 넣지 않고, 단계값이 채워진 뒤에만 이 함수가 block을 붙인다. 같은 stage의
+    진행 DRAFT에도 additive라 재시작 보존 불변식과 공존한다.
+    """
+    raw = str(text or "")
+    old_blocks, _old_spans, delimiter_errors = _goal_ratification_blocks(raw)
+    if delimiter_errors:
+        return raw
+    old_block = "\n".join(old_blocks)
+    base = _without_goal_ratification_block(raw)
+    if flow is None or "[stage:milestone]" not in raw:
+        return raw
+
+    proposal = draft_to_proposal("milestone", base)
+    lines = [_unbold_draft_key(line) for line in proposal.splitlines()]
+    phase_values = [
+        line.split(":", 1)[1].strip()
+        for line in lines
+        if line.strip().startswith("단계:") and ":" in line
+    ]
+    known_phases = roadmap_phases(flow)
+    # 새 첫 회의의 단계 placeholder는 final/non-final을 아직 말하지 않는다. 복원된 후속 회의는
+    # 이미 영속 roadmap이 있으므로 그 정본으로 판정할 수 있다.
+    if any("⟦" in value or "⟧" in value for value in phase_values):
+        if not known_phases:
+            return raw
+        proposed_phases = known_phases
+    else:
+        proposed_phases = _proposal_roadmap_phases(lines) or known_phases
+    if not _final_milestone_proposal(flow, proposed_phases):
+        # 명시적으로 후속 주기가 생긴 경우 final 전용 SYS scaffold는 분모 밖이므로 회수한다.
+        # acceptance/flow 일시 부재와 달리 판정 가능한 정상 전이이며, 남기면 preflight가 영구 거부한다.
+        return base
+
+    refs = _natural_goal_refs(flow)
+    if not refs:
+        return raw
+    workspace = getattr(flow, "workspace", "")
+
+    def _entries(source):
+        return parse_criteria_lines("\n".join(
+            line for line in str(source or "").splitlines()
+            if _crit_delim().search(line)
+        ))
+
+    # 참고 구획의 marker/legacy 문장은 결정이 아니므로 존재·command 상속 근거로 쓰지 않는다.
+    outside_entries = _entries(draft_decision_region(base))
+    old_marker_entries = [
+        row for row in _entries(old_block)
+        if str(row.get("desc") or "").strip().startswith("GOAL@")
+    ]
+    outside_markers = [
+        row for row in outside_entries
+        if _GOAL_MARKER_RE.fullmatch(str(row.get("desc") or "").strip())
+    ]
+    manual_by_desc = {}
+    for row in outside_entries:
+        desc = str(row.get("desc") or "").strip()
+        if not _GOAL_MARKER_RE.fullmatch(desc):
+            manual_by_desc.setdefault(desc, []).append(row)
+    marker_rows = list(old_marker_entries)
+
+    def _marker_key(row):
+        match = _GOAL_MARKER_RE.fullmatch(
+            str(row.get("desc") or "").strip())
+        return match.group(1).lower() if match else ""
+
+    marker_keys = {
+        key for key in (
+            _marker_key(row) for row in marker_rows + outside_markers
+        ) if key
+    }
+    missing = [
+        ref for ref in refs
+        if _goal_ratification_marker(ref).split("@", 1)[1] not in marker_keys
+    ]
+    for ref in missing:
+        # 구 판의 exact same-desc 행은 그 회의가 이미 고른 command이므로 1:1 marker로 안전하게
+        # 이관한다. 그 외에는 **이 ref 자체**의 자연 spec 안 유일한 validated inline command만
+        # prefill한다. 다른 GOAL 행의 command 공유·산문 추측·부분 desc 매칭은 없다.
+        legacy = manual_by_desc.get(ref.desc.strip(), [])
+        inherited = (
+            direct_verifier_command(
+                legacy[0].get("verify"), workspace, require_existing=False)
+            if len(legacy) == 1 else ""
+        )
+        marker_rows.append({
+            "desc": _goal_ratification_marker(ref),
+            "verify": inherited or _unique_inline_verifier(
+                ref.verify, workspace) or "⟦exact command⟧",
+        })
+
+    marker_lines = [
+        f"- {row['desc']} | 실증: {row.get('verify') or '⟦exact command⟧'}"
+        for row in marker_rows
+    ]
+    ref_lines = []
+    for ref in refs:
+        display = " ".join(str(ref.desc or "").split()).replace("⟦", "[").replace("⟧", "]")
+        ref_lines.append(f"  - {_goal_ratification_marker(ref)} — {display}")
+    block = "\n".join([
+        _GOAL_RATIFY_START,
+        "(SYS 정본 GOAL 비준: 아래 각 full `GOAL@spec-hash` 행은 정확히 한 canonical 조건에 "
+        "1:1 결속됩니다. marker 오른쪽 `실증:` 명령만 회의가 선택하며, 조건 desc는 SYS가 "
+        "canonical 정본으로 복원합니다.)",
+        *marker_lines,
+        "(canonical marker reference — 표시 desc를 조건 identity로 파싱하지 않음)",
+        *ref_lines,
+        _GOAL_RATIFY_END,
+    ])
+    decision = re.search(r"^## 결정\s*$", base, re.M)
+    ref_at = (
+        base.find("\n## ", decision.end())
+        if decision is not None else base.find("\n## 참고")
+    )
+    if ref_at >= 0:
+        return base[:ref_at].rstrip("\n") + "\n\n" + block + "\n" + base[ref_at:]
+    return base.rstrip("\n") + "\n\n" + block + "\n"
 
 
 def _milestone_verifier_errors(flow, entries, proposed_phases=None):
@@ -2214,9 +2551,10 @@ def _milestone_verifier_errors(flow, entries, proposed_phases=None):
         ]
         if missing_ratification:
             errors.append(
-                "최종 마일스톤은 자연어 GOAL 조건과 **같은 desc**에 그 조건을 검증할 exact "
-                "command를 별도 비준해야 합니다(canonical 자연 spec은 보존되고 command만 "
-                "immutable ratification으로 결속됨). 누락: "
+                "최종 마일스톤의 자연어 GOAL 조건은 SYS가 DRAFT에 붙인 `GOAL@spec-hash` "
+                "1:1 행에서 exact command를 비준해야 합니다. 조건 desc를 다시 쓰지 마세요 — "
+                "marker가 canonical 자연 spec에 command만 "
+                "immutable ratification으로 결속합니다. 누락: "
                 + " · ".join(x[:60] for x in missing_ratification[:6])
             )
     return errors
@@ -2228,8 +2566,10 @@ def stage_preflight(stage, text, flow=None):
     반환: 에러 목록(list[str]) — 비면 통과. 표결·등록의 이중 발견을 게이트 시점 단일 발견으로."""
     import re as _re
     prop = draft_to_proposal(stage, text)
-    lines = [l.replace("**", "") for l in str(prop or "").splitlines()]
+    lines = [_unbold_draft_key(l) for l in str(prop or "").splitlines()]
     errs = []
+    if stage == "milestone":
+        errs.extend(_goal_ratification_blocks(text)[2])
 
     def _val(prefix):
         return next((l.split(":", 1)[1].strip() for l in lines
@@ -2248,12 +2588,17 @@ def stage_preflight(stage, text, flow=None):
         _ct = "\n".join(l for l in lines if _crit_delim().search(l)
                         and not l.strip().startswith(("단위:", "단계:", "백로그:")))
         _entries = parse_criteria_lines(_ct)
+        _proposed_phases = _proposal_roadmap_phases(lines) if stage == "milestone" else []
+        if stage == "milestone":
+            _entries, _marker_errs = _resolve_goal_ratification_entries(
+                flow, _entries, _proposed_phases)
+            errs.extend(_marker_errs)
         _e = gate_criteria(_entries)
         if _e:
             errs.extend(ln for ln in _e.splitlines() if ln.strip())
         if stage == "milestone":
             errs.extend(_milestone_verifier_errors(
-                flow, _entries, _proposal_roadmap_phases(lines)))
+                flow, _entries, _proposed_phases))
     if stage == "subtask":
         _units = parse_units(lines)
         if not _units:
@@ -2290,6 +2635,30 @@ def stage_preflight(stage, text, flow=None):
     return errs
 
 
+def clear_resolved_goal_ratification_objection(flow, text, stage="milestone"):
+    """구 exact-desc 복사 요구 이의가 1:1 marker로 실제 해소됐을 때만 그 시스템 행을 제거.
+
+    재개 DRAFT의 사람 이의·다른 형식 이의는 보존한다. marker가 낡았거나 명령 placeholder라면
+    preflight의 GOAL marker 오류가 남으므로 구 이의도 유지해 미완 초안이 표결로 새지 않는다.
+    """
+    raw = str(text or "")
+    candidate = re.sub(
+        r"(?m)^>\s*\[이의 @형식\]\s*최종 마일스톤은 자연어 GOAL 조건과.*(?:\n|$)",
+        "",
+        raw,
+    )
+    if candidate == raw:
+        return raw, False
+    try:
+        unresolved = any(
+            "GOAL@" in str(error) or "자연어 GOAL 조건" in str(error)
+            for error in stage_preflight(stage, candidate, flow)
+        )
+    except Exception:
+        unresolved = True
+    return (raw, False) if unresolved else (candidate, True)
+
+
 def stage_context(flow, stage):
     """[안건 타깃 명시(2026-07-16, 정합 감사 A)] 이 단계 회의가 딛고 선 이전 결론을 안건에 못박는다 —
     특히 백로그 회의는 단위마다 열리는데 '어느 단위' 회의인지 없으면 논의와 등록(첫 미충원 단위)이
@@ -2313,8 +2682,12 @@ def stage_context(flow, stage):
                 final_now = not phases or done_n + 1 >= len(phases)
                 when = "이번 최종 주기에서" if final_now else "최종 주기에서"
                 base += (
-                    f" [{when} 자연어 GOAL 조건과 같은 desc의 exact command 비준 필수: "
-                    + " · ".join(x[:48] for x in natural[:5]) + "]"
+                    f" [{when} SYS가 DRAFT에 canonical `GOAL@spec-hash` 키를 붙입니다. "
+                    "조건 desc를 다시 쓰지 말고 각 1:1 marker의 exact command만 비준하세요: "
+                    + " · ".join(
+                        f"{_goal_ratification_marker(ref)}={ref.desc[:36]}"
+                        for ref in _natural_goal_refs(flow)[:5]
+                    ) + "]"
                 )
             return base
         _open = next((m for m in (getattr(flow, "milestones", None) or [])
@@ -2359,8 +2732,8 @@ _STAGE_FRAME = {
     "milestone": "지금은 **이번에 완성해서 사용자에게 보여줄 딱 하나**를 정하는 단계입니다. 전체를 한 번에 "
             "만들려 하지 말고(달구지부터), **'이번에 완성해 보여줄 하나는?'** 에만 답하세요. 작업 분해·"
             "담당자·일정은 다음 회의. 모든 완수조건의 `실증:`에는 실제 실행할 **exact command**를 "
-            "쓰고, 최종 주기라면 자연어 GOAL 조건도 **같은 desc**로 다시 적어 그 exact command를 "
-            "비준하세요. " + _MILESTONE_COUNT_COACHING,
+            "쓰세요. 최종 주기라면 SYS가 붙인 각 `GOAL@spec-hash` 행에서 조건 문장은 건드리지 말고 "
+            "`실증:`의 exact command만 비준하세요. " + _MILESTONE_COUNT_COACHING,
     "subtask": "지금은 이번 것을 **어떤 작업 영역(덩어리)으로 나눌지 + 각 영역의 다음 일감 전부**를 정하는 "
             "단계입니다(한 회의 — 별도 백로그 회의 없음). 영역은 개인 배정이 아니라 순수 작업 분리(예: 저장 "
             "계층·게임 로직·화면 UI), 일감은 '백로그: [영역명] ⟦작업⟧' 줄로 열거하세요. 담당은 회의가 아니라 "
@@ -2402,8 +2775,9 @@ def register_stage(flow, stage, prop, origin=""):
     # 실값 없는 껍데기 등록 차단(비준 낭비 전에 여기서도 방어). 표식은 봇이 참조·값으로 안 쓰는 ⟦ ⟧(2026-07-22).
     if _re.search(r"⟦[^⟧\n]{1,150}⟧", str(prop or "")):
         return False, "수렴안에 템플릿 빈칸(⟦…⟧)이 남아 있습니다 — 실제 값으로 채워 다시 제출하세요."
-    # [마크다운 장식 무력화(2026-07-17, ch78 실측: '**이번 주기:**' 볼드로 키 매칭 실패 → 폴백 제목 오등록)]
-    lines = [l.replace("**", "") for l in str(prop or "").splitlines()]
+    # [마크다운 키 장식 무력화] '**이번 주기:**' 같은 키만 벗긴다. 조건 desc 안의 **는 GOAL
+    # canonical identity/hash 일부일 수 있으므로 전역 제거하지 않는다.
+    lines = [_unbold_draft_key(l) for l in str(prop or "").splitlines()]
 
     def _val(prefix):
         return next((l.split(":", 1)[1].strip() for l in lines
@@ -2471,6 +2845,9 @@ def register_stage(flow, stage, prop, origin=""):
                       "다음: 마일스톤 회의를 시스템이 엽니다.")
 
     if stage == "milestone":
+        delimiter_errors = _goal_ratification_blocks(prop)[2]
+        if delimiter_errors:
+            return False, "\n".join(delimiter_errors)
         # [대체 방지 게이트(2026-07-16, 정합 감사 B)] open_milestone 직행은 열린 주기를 조용히 대체
         # (supersede)할 수 있다 — meeting_stage가 평시엔 막지만, 방어선(gate_new_cycle: 목표 선행·
         # 미완 주기 보호·내용 주기 보호)을 표결 경로와 동일하게 지난다(U-019 판 파기 재발 방지).
@@ -2494,6 +2871,10 @@ def register_stage(flow, stage, prop, origin=""):
         stages = _proposal_roadmap_phases(lines)
         _road = ""
         milestone_entries = parse_criteria_lines(_crit_txt)
+        milestone_entries, marker_errors = _resolve_goal_ratification_entries(
+            flow, milestone_entries, stages)
+        if marker_errors:
+            return False, "\n".join(marker_errors)
         verifier_errors = _milestone_verifier_errors(flow, milestone_entries, stages)
         if verifier_errors:
             return False, "\n".join(verifier_errors)

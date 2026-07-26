@@ -866,6 +866,14 @@ def test_조건구분자는_라벨_본문파이프는_조건아님():
     # 조건 본문의 붙은 파이프(JSON enum)는 구분자가 아니다 — desc에 그대로 남고, 분리는 라벨/띄어쓴 파이프에서
     c = parse_criteria_lines("스키마 enum(buy|pass|claim) 유지 | 실증: python check.py --strict")[0]
     assert c["desc"] == "스키마 enum(buy|pass|claim) 유지" and "python check.py" in c["verify"]
+    wrapped = parse_criteria_lines(
+        "- **홈 화면이 실제로 열린다** | 실증: python3 browser_check.py"
+    )[0]
+    assert wrapped["desc"] == "홈 화면이 실제로 열린다"
+    internal = parse_criteria_lines(
+        "- API는 **transition(nextState)**만 노출한다 | 실증: node test.js"
+    )[0]
+    assert internal["desc"] == "API는 **transition(nextState)**만 노출한다"
 
 
 def test_마크다운_inline_exact_verifier는_프리플라이트통과_내부backtick은_거부():
@@ -895,6 +903,397 @@ def test_마크다운_inline_exact_verifier는_프리플라이트통과_내부ba
     assert direct_verifier_command(
         "`node test_state_machine.js `whoami``", require_existing=False
     ) == ""
+
+
+def test_U057_장문_GOAL_3건은_정본marker로_최종비준되고_등록후_identity가복원된다(
+    monkeypatch, tmp_path,
+):
+    """LLM이 장문 desc를 복사하지 않아도 final DRAFT의 1:1 marker가 canonical 잠금/receipt key가 된다."""
+    import types
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import (
+        draft_to_proposal, ensure_goal_ratification_scaffold, register_stage,
+        stage_preflight,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    command = "node test_state_machine.js"
+    descs = [
+        (
+            "프로젝트 루트의 사용자 산출물은 CommonJS state_machine.js와 "
+            "test_state_machine.js 정확히 두 파일이며 시스템 내부 기록 외 추가 파일은 없어야 한다"
+        ),
+        (
+            "createStateMachine이 반환한 객체의 공개 API는 인자 없는 getState()와 "
+            "**transition(nextState)**뿐이고 초기 상태 idle 및 세 허용 전이 계약을 보존한다"
+        ),
+        (
+            "네 상태의 16개 순서쌍 중 허용 전이 세 개 외 나머지 13개는 모두 Error를 throw하고 "
+            "현재 상태를 바꾸지 않으며 성공 시 PASS와 exit 0을 남긴다"
+        ),
+    ]
+    specs = [
+        f"프로젝트 루트에서 `{command}`를 실행하고 파일 수와 프로세스 종료코드를 함께 확인한다",
+        f"외부 의존성 없는 `{command}`를 실행해 공개 API와 초기·허용 전이 assertion을 확인한다",
+        f"각 순서쌍을 독립 실행하는 `{command}`의 PASS 출력과 exit 0으로 금지 전이 불변을 확인한다",
+    ]
+    f = _flow()
+    f.workspace = str(tmp_path)
+    f.current = types.SimpleNamespace(
+        task_id="T-U057", team=[11, 12],
+        status=types.SimpleNamespace(goal="CommonJS 상태 머신", purpose="최종 인수"),
+        acceptance="\n".join(
+            f"- {desc} | 실증: {spec}" for desc, spec in zip(descs, specs)
+        ),
+        standard="", interfaces="",
+    )
+    draft = (
+        "# DRAFT [stage:milestone] — 상태 머신 최종 인수\n"
+        "## 결정\n"
+        "단계: 완성\n"
+        "이번 주기: 네 상태의 공개 API와 16개 전이 계약 완성\n\n"
+        "## 참고 (자유 — 판정 대상 아님)\n"
+    )
+
+    scaffolded = ensure_goal_ratification_scaffold(f, draft)
+    markers = [
+        "GOAL@" + verifier_spec_hash(desc, spec)
+        for desc, spec in zip(descs, specs)
+    ]
+    for marker, desc in zip(markers, descs):
+        assert f"- {marker} | 실증: {command}" in scaffolded
+        assert f"  - {marker} — {desc}" in scaffolded
+    assert scaffolded.count("| 실증: " + command) == 3       # 동일 명령이어도 조건별 1:1 명시 결속
+    assert "⟦exact command⟧" not in scaffolded
+    assert ensure_goal_ratification_scaffold(f, scaffolded) == scaffolded
+    assert stage_preflight("milestone", scaffolded, f) == []
+
+    proposal = draft_to_proposal("milestone", scaffolded)
+    ok, note = register_stage(f, "milestone", proposal, "U-057")
+    assert ok, note
+    ms = f.milestones[-1]
+    assert [(c.desc, c.verify) for c in ms.locked_criteria] == list(zip(descs, specs))
+    assert [(c.desc, c.verify) for c in ms.criteria] == list(zip(descs, specs))
+    assert all(c.release_lock for c in ms.criteria)
+    assert all(not c.desc.startswith("GOAL@") for c in ms.criteria + ms.locked_criteria)
+    for criterion, locked, desc, spec in zip(
+        ms.criteria, ms.locked_criteria, descs, specs
+    ):
+        expected_spec_hash = verifier_spec_hash(desc, spec)
+        assert criterion.ratified_verifier_command == command
+        assert criterion.ratified_verifier_command_hash == verifier_command_hash(command)
+        assert criterion.ratified_verifier_spec_hash == expected_spec_hash
+        assert locked.ratified_verifier_command == command
+        assert locked.ratified_verifier_spec_hash == expected_spec_hash
+        assert criterion.receipt_id == locked.receipt_id == ""  # 실행 전 receipt 참칭 없음
+        assert criterion.verified_spec_hash == locked.verified_spec_hash == ""
+
+    from system.rule.milestone import ms_from_dict, ms_to_dict
+    restored = ms_from_dict(ms_to_dict(ms))
+    assert [
+        (
+            c.desc, c.verify, c.release_lock,
+            c.ratified_verifier_command,
+            c.ratified_verifier_command_hash,
+            c.ratified_verifier_spec_hash,
+        )
+        for c in restored.criteria
+    ] == [
+        (
+            c.desc, c.verify, c.release_lock,
+            c.ratified_verifier_command,
+            c.ratified_verifier_command_hash,
+            c.ratified_verifier_spec_hash,
+        )
+        for c in ms.criteria
+    ]
+
+
+def test_GOAL_marker_변조와_모호한_inline명령은_fail_closed(monkeypatch, tmp_path):
+    import types
+    from system.rule.evidence import verifier_spec_hash
+    from system.rule.milestone import (
+        draft_decision_region, ensure_goal_ratification_scaffold, stage_preflight,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    desc = "정본 조건은 유사하거나 합성한 설명으로 대체되지 않고 정확한 상태 전이 계약을 보존한다"
+    natural = "완성 뒤 실제 상태 전이를 독립적으로 실행해 결과와 종료코드를 확인한다"
+    command = "node test_state_machine.js"
+    f = _flow()
+    f.workspace = str(tmp_path)
+    f.current = types.SimpleNamespace(
+        task_id="T-marker-tamper", team=[11, 12],
+        status=types.SimpleNamespace(goal="상태 머신", purpose=""),
+        acceptance=f"- {desc} | 실증: {natural}",
+        standard="", interfaces="",
+    )
+    draft = (
+        "# DRAFT [stage:milestone] — 최종 인수\n"
+        "## 결정\n"
+        "단계: 완성\n"
+        "이번 주기: 상태 머신 완성\n\n"
+        "## 참고 (자유 — 판정 대상 아님)\n"
+    )
+    scaffolded = ensure_goal_ratification_scaffold(f, draft)
+    marker = "GOAL@" + verifier_spec_hash(desc, natural)
+    valid = scaffolded.replace("⟦exact command⟧", command)
+    assert stage_preflight("milestone", valid, f) == []
+
+    uppercase = ensure_goal_ratification_scaffold(
+        f, valid.replace(marker, marker.upper(), 1)
+    )
+    assert uppercase.count("| 실증: " + command) == 1
+    assert stage_preflight("milestone", uppercase, f) == []
+
+    invalid = valid.replace(marker, "GOAL@ALL", 1)
+    # 실제 meet 순서가 ensure→preflight이므로 변조를 자동치유해 숨기면 안 된다.
+    invalid = ensure_goal_ratification_scaffold(f, invalid)
+    assert "유효하지 않은 GOAL marker" in "\n".join(
+        stage_preflight("milestone", invalid, f)
+    )
+
+    truncated = valid.replace(marker, "GOAL@" + marker[5:21], 1)
+    truncated = ensure_goal_ratification_scaffold(f, truncated)
+    assert "유효하지 않은 GOAL marker" in "\n".join(
+        stage_preflight("milestone", truncated, f)
+    )
+
+    unknown = valid.replace(marker, "GOAL@" + "0" * 64, 1)
+    assert "알 수 없거나 낡은" in "\n".join(
+        stage_preflight("milestone", unknown, f)
+    )
+
+    marker_line = f"- {marker} | 실증: {command}"
+    moved_to_reference = valid.replace(marker_line + "\n", "", 1).replace(
+        "## 참고 (자유 — 판정 대상 아님)\n",
+        "## 참고 (자유 — 판정 대상 아님)\n" + marker_line + "\n",
+        1,
+    )
+    moved_to_reference = ensure_goal_ratification_scaffold(f, moved_to_reference)
+    assert (
+        f"- {marker} | 실증: ⟦exact command⟧"
+        in draft_decision_region(moved_to_reference)
+    )
+    moved_filled = moved_to_reference.replace("⟦exact command⟧", command, 1)
+    assert stage_preflight("milestone", moved_filled, f) == []
+
+    duplicate = valid.replace(marker_line, marker_line + "\n" + marker_line)
+    assert "중복됐습니다" in "\n".join(
+        stage_preflight("milestone", duplicate, f)
+    )
+    block_start = valid.index("<!-- SYS:GOAL-RATIFICATION:START -->")
+    block_end = (
+        valid.index("<!-- SYS:GOAL-RATIFICATION:END -->", block_start)
+        + len("<!-- SYS:GOAL-RATIFICATION:END -->")
+    )
+    block = valid[block_start:block_end]
+    duplicate_blocks = ensure_goal_ratification_scaffold(
+        f, valid.replace(block, block + "\n" + block)
+    )
+    assert "중복됐습니다" in "\n".join(
+        stage_preflight("milestone", duplicate_blocks, f)
+    )
+    malformed = valid.replace(
+        "## 결정\n",
+        "## 결정\n<!-- SYS:GOAL-RATIFICATION:START -->\n"
+        "- 일반 완수조건 보존 | 실증: node test_state_machine.js\n",
+        1,
+    )
+    assert ensure_goal_ratification_scaffold(f, malformed) == malformed
+    assert "- 일반 완수조건 보존 | 실증: node test_state_machine.js" in malformed
+    assert "START가 닫히기 전에 중복" in "\n".join(
+        stage_preflight("milestone", malformed, f)
+    )
+
+    injected = valid.replace(command, command + " `whoami`", 1)
+    injected_errors = "\n".join(stage_preflight("milestone", injected, f))
+    assert "exact executable verifier command" in injected_errors
+
+    f.current.acceptance = (
+        f"- {desc} 변경 | 실증: {natural}"
+    )
+    assert "알 수 없거나 낡은" in "\n".join(
+        stage_preflight("milestone", valid, f)
+    )
+
+    f.current.acceptance = (
+        f"- {desc} | 실증: `{command}`와 `npm test`를 각각 실행해 비교한다"
+    )
+    ambiguous = ensure_goal_ratification_scaffold(f, draft)
+    assert "⟦exact command⟧" in ambiguous
+
+    f.current.acceptance = ""
+    alternate = valid.replace(command, "npm test", 1)
+    assert ensure_goal_ratification_scaffold(f, alternate) == alternate
+
+
+def test_GOAL_marker는_결정구획의_첫_후속heading보다_앞에_들어간다(monkeypatch, tmp_path):
+    import types
+    from system.rule.milestone import (
+        draft_decision_region, ensure_goal_ratification_scaffold, stage_preflight,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _flow()
+    f.workspace = str(tmp_path)
+    f.current = types.SimpleNamespace(
+        task_id="T-heading", team=[11, 12],
+        status=types.SimpleNamespace(goal="상태 머신", purpose=""),
+        acceptance=(
+            "- 공개 API 계약을 보존한다 | 실증: "
+            "루트에서 `node test_state_machine.js`를 실행한다"
+        ),
+        standard="", interfaces="",
+    )
+    draft = (
+        "# DRAFT [stage:milestone] — 최종 인수\n"
+        "## 결정\n"
+        "단계: 완성\n"
+        "이번 주기: 상태 머신 완성\n\n"
+        "## 검토\n"
+        "참여자 검토 근거\n\n"
+        "## 참고 (자유 — 판정 대상 아님)\n"
+    )
+    scaffolded = ensure_goal_ratification_scaffold(f, draft)
+    assert "GOAL@" in draft_decision_region(scaffolded)
+    assert scaffolded.index("GOAL@") < scaffolded.index("## 검토")
+    assert stage_preflight("milestone", scaffolded, f) == []
+
+
+def test_GOAL_marker는_final확정전에_주입되지않고_해소된_구시스템이의만정리한다(
+    monkeypatch, tmp_path,
+):
+    import types
+    from system.rule.milestone import (
+        clear_resolved_goal_ratification_objection,
+        ensure_goal_ratification_scaffold, stage_preflight,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    command = "node test_state_machine.js"
+    desc = "네 상태의 공개 API와 16개 전이 계약을 장문 정본 그대로 보존하고 금지 전이 상태 불변을 보장한다"
+    f = _flow()
+    f.workspace = str(tmp_path)
+    f.current = types.SimpleNamespace(
+        task_id="T-U057-resume", team=[11, 12],
+        status=types.SimpleNamespace(goal="상태 머신", purpose=""),
+        acceptance=(
+            f"- {desc} | 실증: 루트에서 `{command}`를 실행해 모든 전이를 확인한다"
+        ),
+        standard="", interfaces="",
+    )
+    first_cycle = (
+        "# DRAFT [stage:milestone] — 로드맵\n"
+        "## 결정\n"
+        "단계: 구현 → 완성\n"
+        "이번 주기: 상태 머신 구현\n"
+        "- 최소 구현 로드 | 실증: node test_state_machine.js\n\n"
+        "## 참고 (자유 — 판정 대상 아님)\n"
+    )
+    assert ensure_goal_ratification_scaffold(f, first_cycle) == first_cycle
+    assert stage_preflight("milestone", first_cycle, f) == []
+
+    unresolved = first_cycle.replace("단계: 구현 → 완성", "단계: ⟦최대 3단계⟧")
+    assert ensure_goal_ratification_scaffold(f, unresolved) == unresolved
+
+    final_cycle = first_cycle.replace(
+        "단계: 구현 → 완성\n이번 주기: 상태 머신 구현\n"
+        "- 최소 구현 로드 | 실증: node test_state_machine.js",
+        "단계: 완성\n이번 주기: 상태 머신 최종 인수",
+    )
+    resolved = ensure_goal_ratification_scaffold(f, final_cycle)
+    expanded_nonfinal = resolved.replace(
+        "단계: 완성\n이번 주기: 상태 머신 최종 인수",
+        "단계: 구현 → 완성\n이번 주기: 상태 머신 구현\n"
+        "- 최소 구현 로드 | 실증: node test_state_machine.js",
+    )
+    expanded_nonfinal = ensure_goal_ratification_scaffold(f, expanded_nonfinal)
+    assert "SYS:GOAL-RATIFICATION" not in expanded_nonfinal
+    assert stage_preflight("milestone", expanded_nonfinal, f) == []
+
+    old_system = (
+        "> [이의 @형식] 최종 마일스톤은 자연어 GOAL 조건과 같은 desc의 exact command 비준이 필요합니다.\n"
+    )
+    resumed = resolved.replace(
+        "\n## 참고",
+        "\n" + old_system + "> [이의 @사람] 공개 API 설명을 다시 확인하세요.\n\n## 참고",
+    )
+    cleaned, changed = clear_resolved_goal_ratification_objection(
+        f, resumed, "milestone"
+    )
+    assert changed is True
+    assert old_system.strip() not in cleaned
+    assert "> [이의 @사람] 공개 API 설명을 다시 확인하세요." in cleaned
+
+    no_inline = types.SimpleNamespace(**vars(f.current))
+    no_inline.acceptance = f"- {desc} | 실증: 완성 뒤 수동으로 모든 전이를 확인한다"
+    f.current = no_inline
+    placeholder = ensure_goal_ratification_scaffold(f, final_cycle)
+    assert "⟦exact command⟧" in placeholder
+    still_open = placeholder.replace("\n## 참고", "\n" + old_system + "\n## 참고")
+    unchanged, changed = clear_resolved_goal_ratification_objection(
+        f, still_open, "milestone"
+    )
+    assert changed is False and unchanged == still_open
+
+
+def test_GOAL_marker는_legacy_bold_desc를_중복조건으로_만들지않는다(monkeypatch, tmp_path):
+    import types
+    from system.rule.milestone import (
+        draft_to_proposal, ensure_goal_ratification_scaffold, register_stage,
+        stage_preflight,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    desc = "공개 API는 **transition(nextState)**만 노출하고 호출 전후 상태를 정확히 보존한다"
+    natural = "공개 API와 상태 보존을 실행 결과로 확인한다"
+    command = "node test_state_machine.js"
+    f = _flow()
+    f.workspace = str(tmp_path)
+    (tmp_path / "test_state_machine.js").write_text(
+        "console.log('PASS')\n", encoding="utf-8")
+    f.current = types.SimpleNamespace(
+        task_id="T-bold-legacy", team=[11, 12],
+        status=types.SimpleNamespace(goal="상태 머신", purpose=""),
+        acceptance=f"- {desc} | 실증: {natural}",
+        standard="", interfaces="",
+    )
+    legacy = (
+        "# DRAFT [stage:milestone] — 재개\n"
+        "## 결정\n"
+        "**단계:** 완성\n"
+        "**이번 주기:** 상태 머신 완성\n"
+        f"- {desc} | 실증: {command}\n\n"
+        "## 참고 (자유 — 판정 대상 아님)\n"
+    )
+    scaffolded = ensure_goal_ratification_scaffold(f, legacy)
+    assert stage_preflight("milestone", scaffolded, f) == []
+    ok, note = register_stage(
+        f, "milestone", draft_to_proposal("milestone", scaffolded), "bold-legacy"
+    )
+    assert ok, note
+    ms = f.milestones[-1]
+    assert [(c.desc, c.verify) for c in ms.criteria] == [(desc, natural)]
+    assert ms.criteria[0].ratified_verifier_command == command
+
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import (
+        goal_locked_release_error, workspace_artifact_stamp, write_revision,
+    )
+    c = ms.criteria[0]
+    c.passed, c.evidence = True, "PASS"
+    c.evidence_source, c.receipt_id = "sys_run", "run-marker"
+    c.verified_write_epoch = write_revision(f)
+    c.verified_artifact_stamp = workspace_artifact_stamp(f)
+    c.verified_command = command
+    c.verified_command_hash = verifier_command_hash(command)
+    c.verified_spec_hash = verifier_spec_hash(c.desc, c.verify)
+    assert goal_locked_release_error(f) is None
+
+    c.ratified_verifier_command_hash = "tampered"
+    assert "GOAL 잠금 조건 실증 미완" in goal_locked_release_error(f)
+    assert not c.passed and c.receipt_id == ""
 
 
 def test_게이트는_불량을_일괄보고():

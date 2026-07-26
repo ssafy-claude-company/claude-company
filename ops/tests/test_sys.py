@@ -395,10 +395,11 @@ def test_자연어GOAL잠금은_SYS봉인한_exact_command_1회영수증만_결�
         "- 다른 조건 | 실증: python3 browser_check.py\n",
         f,
     )
-    assert any("같은 desc" in err and c_desc in err
+    assert any("GOAL@spec-hash" in err and c_desc in err
                for err in preflight_missing for c_desc in ("홈 화면이 실제로 열린다",))
     assert getattr(f, "roadmap", []) == []          # 사전검사·거부는 부분 상태를 남기지 않는다
-    assert "같은 desc" in stage_context(f, "milestone")
+    assert "GOAL@spec-hash" in stage_context(f, "milestone")
+    assert "GOAL@spec-hash" in stage_frame("milestone")
     assert "exact command" in stage_frame("milestone")
     assert stage_preflight(
         "milestone",
@@ -412,7 +413,7 @@ def test_자연어GOAL잠금은_SYS봉인한_exact_command_1회영수증만_결�
         "- 홈 화면이 실제로 열린다 | 실증: 브라우저에서 홈을 열어 제목과 콘솔 오류 0건 확인",
         "natural-ms-unratified",
     )
-    assert not rejected[0] and "exact executable verifier" in rejected[1]
+    assert not rejected[0] and "GOAL@spec-hash" in rejected[1]
     assert register_stage(
         f, "milestone",
         "이번 주기: 홈 완성\n"

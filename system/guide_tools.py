@@ -347,8 +347,8 @@ def _seal_verifier_command(flow, actor, evidence_for, command) -> str:
             and not record.get("verifier_structurally_ratified")):
         return (
             "verifier 봉인 불가 — 자연어 GOAL은 실행 시점의 임의 command 제안으로 비준할 수 "
-            "없습니다. 최종 마일스톤 회의가 같은 desc에 exact executable verifier를 별도 "
-            "비준해야 합니다.")
+            "없습니다. 최종 마일스톤 회의에서 SYS가 붙인 해당 GOAL@ 정본 marker의 exact "
+            "executable verifier를 먼저 비준해야 합니다.")
     if fixed and existing and cmd != existing:
         return (f"verifier 봉인 불가 — {target}은 SYS가 정한 exact 명령만 허용합니다: "
                 f"`{existing[:180]}`")

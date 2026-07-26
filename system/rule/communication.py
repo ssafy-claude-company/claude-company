@@ -418,6 +418,10 @@ async def meet(flow, me_id, args):
         if _no_r1 and tt and _stage and flow.current is not None:
             from .milestone import stage_draft_template as _ms_dtmpl, draft_status as _ms_dstat
             from .milestone import draft_to_proposal as _ms_dprop
+            from .milestone import ensure_goal_ratification_scaffold as _ms_goal_scaffold
+            from .milestone import (
+                clear_resolved_goal_ratification_objection as _ms_clear_goal_objection,
+            )
             from .._util import dossier_read as _dread, dossier_write as _dwrite
             _tmpl = _ms_dtmpl(_stage, (_agenda or topic)[:120])
             if _tmpl:
@@ -425,6 +429,10 @@ async def meet(flow, me_id, args):
                 _ex = _dread(flow, "DRAFT.md")
                 if _dsr(_stage, _ex):                       # [재시작-안전 불변식] 같은 단계 재회의면 진행분 보존
                     _dwrite(flow, "DRAFT.md", _tmpl)        # 새 단계·초안 부재만 새 골격
+                _cur_draft = str(_dread(flow, "DRAFT.md") or "")
+                _scaffolded = _ms_goal_scaffold(flow, _cur_draft)
+                if _scaffolded != _cur_draft:
+                    _dwrite(flow, "DRAFT.md", _scaffolded)  # 기존 진행분 additive 보존 + final일 때만 정본 행
                 if _dread(flow, "DRAFT.md") is not None:    # 쓰기 실패(워크스페이스 없음)면 폴백 유지
                     _draft_path = f"{dossier_rel(flow.current.task_id)}/DRAFT.md"
                     _stlbl = {"goal": "① GOAL", "milestone": "② 마일스톤", "subtask": "③ 서브태스크",
@@ -602,6 +610,10 @@ async def meet(flow, me_id, args):
                 import hashlib as _hl
                 from .milestone import draft_decision_region as _dregion
                 _dtxt = str(_dread(flow, "DRAFT.md") or "")
+                _scaffolded = _ms_goal_scaffold(flow, _dtxt)
+                if _scaffolded != _dtxt:
+                    _dwrite(flow, "DRAFT.md", _scaffolded)
+                    _dtxt = _scaffolded
                 _h = _hl.md5(_dregion(_dtxt).encode()).hexdigest()   # 안정 판정 = 결정 구획만
                 # [발제 귀속 — 턴별 diff(2026-07-16, 사용자: '발제한 애가 주인, 누가 발제했는지 남아야')]
                 # 이 턴에 새로 나타난(또는 고쳐 쓴) '백로그:' 줄은 이 화자의 발제 — 봇 규약(태그) 없이
@@ -1128,6 +1140,23 @@ async def meet(flow, me_id, args):
                     _dwrite(flow, "DRAFT.md", _dtxt)
                     if flow.log:
                         flow.log("stale_backlog_ownership_objection_cleared")
+                # [U-057 canonical GOAL 비준] 단계값이 채워져 final임이 확정된 뒤에만 SYS marker block을
+                # additive 주입한다. 첫 마일스톤 빈 골격에 미리 넣어 중간주기 분모를 오염시키지 않는다.
+                _scaffolded = _ms_goal_scaffold(flow, _dtxt)
+                if _scaffolded != _dtxt:
+                    _dtxt = _scaffolded
+                    _dwrite(flow, "DRAFT.md", _dtxt)
+                # marker resolver가 old exact-desc 요구를 구조적으로 해소한 재개 DRAFT는 그 옛 시스템
+                # 형식 이의만 걷는다. 사람/표결/다른 형식 이의는 건드리지 않으며, 아직 marker 명령이
+                # 미완이면 preflight가 같은 요구를 반환하므로 옛 이의도 유지된다.
+                _without_old_goal_error, _goal_error_cleared = (
+                    _ms_clear_goal_objection(flow, _dtxt, _stage)
+                )
+                if _goal_error_cleared:
+                    _dtxt = _without_old_goal_error
+                    _dwrite(flow, "DRAFT.md", _dtxt)
+                    if flow.log:
+                        flow.log("stale_goal_ratification_objection_cleared")
                 _ph, _obj = _ms_dstat(_dtxt)
                 # [등록 프리플라이트(2026-07-17, ch78 실측: 가결→등록거부 사이클에 $3~5×N)] 파일이
                 # 완성돼도 등록 파서가 거부할 형식이면 표결이 낭비 — register_stage와 같은 검사를 표결

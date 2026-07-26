@@ -262,7 +262,9 @@ def assemble_base_checklist(flow) -> list:
     무관한 criterion suite를 붙여 별도 pass로 가장하지 않는다. 표면·관통 축은 QA의 e2e_scope
     제출로 확장된다(분모는 구조가 들되, 표면의 발견은 봇의 판단).
     """
-    from .milestone import workspace_artifact_stamp, write_revision
+    from .milestone import (
+        ratified_goal_verifier_command, workspace_artifact_stamp, write_revision,
+    )
 
     conds, tags, commands, verifier_specs, structural = [], [], [], [], []
     production = hasattr(flow, "_run_receipts")
@@ -287,16 +289,21 @@ def assemble_base_checklist(flow) -> list:
             and getattr(c, "verified_artifact_stamp", "") == current_stamp
         )
         direct = direct_verifier_command(c.verify, workspace)
-        command = verified if trusted else direct
-        ratified = normalize_verifier_command(
-            getattr(c, "ratified_verifier_command", ""))
+        natural_lock = bool(
+            getattr(c, "release_lock", False)
+            and not direct_verifier_command(
+                c.verify, workspace, require_existing=False)
+        )
+        ratified = (
+            ratified_goal_verifier_command(c, workspace, require_existing=True)
+            if natural_lock else ""
+        )
         is_structural = bool(
             trusted and ratified == verified
-            and getattr(c, "ratified_verifier_command_hash", "")
-            == verifier_command_hash(ratified)
-            and getattr(c, "ratified_verifier_spec_hash", "")
-            == verifier_spec_hash(c.desc, c.verify)
         )
+        command = (
+            verified if is_structural else ""
+        ) if natural_lock else (verified if trusted else direct)
         score = (2 if trusted else 1 if command else 0, order)
         old = candidates.get(key)
         if old is None or score >= old["score"]:

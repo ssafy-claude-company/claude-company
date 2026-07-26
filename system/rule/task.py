@@ -29,9 +29,11 @@ async def _final_release_recheck(flow):
         command_matches_spec, direct_verifier_command,
         normalize_verifier_command, verifier_command_hash, verifier_spec_hash,
     )
-    from .milestone import (_ckpt as _ms_ckpt, _final_release_milestone,
-                            _sync_goal_locked_evidence, invalidate_e2e_state,
-                            workspace_artifact_stamp, write_revision)
+    from .milestone import (
+        _ckpt as _ms_ckpt, _final_release_milestone,
+        _sync_goal_locked_evidence, invalidate_e2e_state,
+        ratified_goal_verifier_command, workspace_artifact_stamp, write_revision,
+    )
 
     target = _final_release_milestone(flow)
     if target is None:
@@ -44,14 +46,13 @@ async def _final_release_recheck(flow):
         if not getattr(c, "release_lock", False):
             continue
         stored = normalize_verifier_command(getattr(c, "verified_command", ""))
-        structurally_ratified = bool(
-            stored
-            and getattr(c, "ratified_verifier_command", "") == stored
-            and getattr(c, "ratified_verifier_command_hash", "")
-            == verifier_command_hash(stored)
-            and getattr(c, "ratified_verifier_spec_hash", "")
-            == verifier_spec_hash(c.desc, c.verify)
+        natural_lock = not direct_verifier_command(
+            c.verify, workspace, require_existing=False)
+        ratified = (
+            ratified_goal_verifier_command(c, workspace, require_existing=True)
+            if natural_lock else ""
         )
+        structurally_ratified = bool(stored and ratified == stored)
         trusted_stored = bool(
             stored
             and getattr(c, "evidence_source", "") == "sys_run"
@@ -60,12 +61,16 @@ async def _final_release_recheck(flow):
             and int(getattr(c, "verified_write_epoch", -2)) == initial_epoch
             and getattr(c, "verified_artifact_stamp", "") == initial_stamp
             and (
-                bool(direct_verifier_command(stored, workspace))
-                if structurally_ratified
+                structurally_ratified
+                if natural_lock
                 else command_matches_spec(stored, c.verify, workspace)
             )
         )
-        command = stored if trusted_stored else direct_verifier_command(c.verify, workspace)
+        command = (
+            stored if trusted_stored else ""
+        ) if natural_lock else (
+            stored if trusted_stored else direct_verifier_command(c.verify, workspace)
+        )
         if command:
             direct.append((c, command))
     changed = False
