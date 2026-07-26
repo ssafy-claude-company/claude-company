@@ -3411,6 +3411,35 @@ def test_create_project는_id기반_작업공간과_배포슬롯(tmp_path):
     assert deploy_service_name(f, "내맘대로이름") == f"organt-{f.project_id.lower()}"  # 슬롯 신원=번호(작명 무시)
 
 
+def test_새_산출물repo는_시스템협의기록을_숨기되_gitignore를_산출물로_만들지않음(tmp_path):
+    """U-059 회귀: repo 메타규칙 때문에 '사용자 산출물 정확히 두 파일' 계약이 세 파일이 되면 안 된다."""
+    import subprocess
+    from system.sys_store import _init_artifact_repo
+
+    _init_artifact_repo(tmp_path)
+    assert (tmp_path / ".git").is_dir()
+    assert not (tmp_path / ".gitignore").exists()
+    exclude = (tmp_path / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    for pattern in ("node_modules/", "*.log", ".env", "__pycache__/", ".DS_Store", ".collab/"):
+        assert pattern in exclude
+
+    (tmp_path / ".collab").mkdir()
+    (tmp_path / ".collab" / "GOAL.md").write_text("system dossier\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "dependency.js").write_text("generated\n", encoding="utf-8")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "module.pyc").write_bytes(b"generated")
+    (tmp_path / ".env").write_text("SECRET=do-not-stage\n", encoding="utf-8")
+    (tmp_path / "build.log").write_text("generated\n", encoding="utf-8")
+    (tmp_path / ".DS_Store").write_bytes(b"generated")
+    (tmp_path / "state_machine.js").write_text("module.exports = {};\n", encoding="utf-8")
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=tmp_path, check=True,
+        capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert status == ["?? state_machine.js"]
+
+
 def test_프로젝트_등록은_원요청링크를_영속(tmp_path):
     """[졸업 라우팅의 전제] 등록은 '프로젝트를 탄생시킨 원요청 메시지 id'(origin_msg)를 영속한다 —
     부팅 복구가 졸업한 원요청을 재발사하지 않고 프로젝트 채널 개입으로 잇는 연결 고리.

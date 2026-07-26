@@ -18,21 +18,40 @@ from typing import Optional
 def _init_artifact_repo(workspace):
     """[산출물 레포화] 프로젝트 작업공간을 *지속* git 레포로 만든다 — Organt이 그 안에서 작업하며
     커밋하고, deploy가 매번 fresh-init이 아니라 '그 레포'를 push한다(산출물=독립 레포 관리, 사용자 설계).
+    시스템 협의 원본은 repo-local exclude로 숨겨 사용자 산출물 루트에 메타파일을 만들지 않는다.
+    배포 시점의 공개 ``.gitignore`` 규율은 deploy가 별도로 보장한다.
     이미 레포면 무해(멱등). git 없거나 실패해도 프로젝트 등록은 계속(best-effort)."""
     try:
         ws = str(workspace or "")
         if not ws or not os.path.isdir(ws) or os.path.isdir(os.path.join(ws, ".git")):
             return
-        gi = os.path.join(ws, ".gitignore")
-        if not os.path.exists(gi):
-            with open(gi, "w", encoding="utf-8") as f:
-                # [B-07] .collab/(Task Dossier 협의 원본)은 배포 레포에 실리면 안 됨 — 생성 시점부터 제외.
-                f.write("node_modules/\n*.log\n.env\n__pycache__/\n.DS_Store\n.collab/\n")
         env = {**os.environ,
                "GIT_AUTHOR_NAME": "Organt", "GIT_AUTHOR_EMAIL": "organt@local",
                "GIT_COMMITTER_NAME": "Organt", "GIT_COMMITTER_EMAIL": "organt@local"}
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=ws, env=env,
                        timeout=15, capture_output=True)
+        # [B-07] Task Dossier와 비밀·생성물 기본 패턴은 생성 즉시 git에서 제외하되, 그 구현
+        # 세부를 사용자 산출물 ``.gitignore``로 노출하지 않는다. deploy는 push 직전 공개 ignore를
+        # 생성·보강하므로 유출 차단은 그대로 이중 보장된다.
+        exclude = os.path.join(ws, ".git", "info", "exclude")
+        if os.path.isfile(exclude):
+            with open(exclude, encoding="utf-8") as f:
+                current = f.read()
+            default_excludes = (
+                "node_modules/",
+                "*.log",
+                ".env",
+                "__pycache__/",
+                ".DS_Store",
+                ".collab/",
+            )
+            present = set(current.splitlines())
+            missing = [pattern for pattern in default_excludes if pattern not in present]
+            if missing:
+                with open(exclude, "a", encoding="utf-8") as f:
+                    if current and not current.endswith("\n"):
+                        f.write("\n")
+                    f.write("".join(f"{pattern}\n" for pattern in missing))
     except Exception:
         pass
 
