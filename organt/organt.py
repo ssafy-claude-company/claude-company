@@ -168,12 +168,25 @@ class Organt:
             pass
 
     def _session_in_store(self) -> bool:
-        """resume 대상 세션이 '현재 cwd의' CLI 세션 저장소에 실재하는가 — 저장소는 cwd 기준 슬러그
-        (~/.claude/projects/<cwd의 '/'→'-'>/<sid>.jsonl). 에러 텍스트에 기대지 않는 결정론 판정
-        (라이브 관측: SDK 예외에는 CLI의 'No conversation found'가 안 실려 마커 감지가 불발했다).
-        레이아웃이 바뀌어 오판해도 결과는 '새 세션 시작'(안전한 저하)일 뿐 — 영구 헛돌이는 없다."""
+        """resume 대상이 실제 CLI 저장소에 있는가.
+
+        Claude는 cwd 슬러그 아래, Codex는 날짜별 rollout 아래에 저장한다. GPT 세션을 Claude
+        경로에서 검사하면 매 턴 정상 sid를 지워 같은 작업을 fresh rollout으로 반복하므로 런타임
+        종류에 맞는 저장소를 본다.
+        """
         if not self.session_id:
             return False
+        if getattr(self, "_codex_model", None):
+            sid = str(self.session_id)
+            # Codex session id는 UUID 계열이다. glob 메타문자를 받지 않아 저장소 밖 탐색이나
+            # 패턴 확장을 만들지 않으며, 현재 정식 레이아웃(year/month/day)을 정확히 좁힌다.
+            if not sid or any(ch not in "0123456789abcdefABCDEF-" for ch in sid):
+                return False
+            root = Path.home() / ".codex" / "sessions"
+            try:
+                return next(root.glob(f"*/*/*/rollout-*{sid}.jsonl"), None) is not None
+            except OSError:
+                return False
         cwd = str(self.options.cwd or os.getcwd())
         p = (Path.home() / ".claude" / "projects" / cwd.replace("/", "-")
              / f"{self.session_id}.jsonl")
@@ -223,6 +236,7 @@ class Organt:
                 tools=([] if micro else (getattr(self, "_codex_tools", None) or [])),
                 model=getattr(self, "_codex_model", None),
                 effort=getattr(self, "_codex_effort", None),
+                read_only=bool(getattr(self, "_codex_read_only", False)),
                 on_activity=self.on_activity, on_narrate=self.narrate)
 
     async def _run_once(self, prompt: str, micro: bool = False):

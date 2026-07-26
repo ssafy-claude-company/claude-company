@@ -15,6 +15,7 @@ Organt 생성(모델·권한·State)은 organt_builder로 주입받는다.
 오케스트레이션(run·run_turn·handle_user_input·route_channel_request·이어가기/증류 엔진)은 여기 남는다.
 """
 import asyncio
+import dataclasses
 import glob
 import hashlib
 import json
@@ -1844,12 +1845,12 @@ class Sys:
                     f"아니라 상태 전이 선언이며 품질은 마일스톤 검증이 맡습니다. 못 끝냈으면 표식을 "
                     f"쓰지 마세요. 회의·의견이 아니라 작업입니다.",
                     Kind.INFO, "worker")
-                await self._finish_backlog_turn(flow, who, b, st_id, result)
-                return
+                return bool(await self._finish_backlog_turn(
+                    flow, who, b, st_id, result))
             # ③ 진행 중 없음 → 다음 open을 구조적으로 착수(즉시 in_progress로 세워 화면에 띄운다)
             t = claim_kick_target(flow)
             if not t:
-                return
+                return False
             who, b, st_id = t
             kicked = getattr(flow, "_claim_kicked", None)
             if kicked is None:
@@ -1860,7 +1861,7 @@ class Sys:
             # 첫 착수도 후속 핸드오프와 같은 정식 pick 변이를 써 상태 영속·화면 갱신을 즉시 발생시킨다.
             r = self._backlog_relay(flow, st_id)
             if r is None:
-                return
+                return False
             r.pick(int(who), b.backlog_id, int(who))
             from .rule.milestone import _ckpt
             _ckpt(flow)                            # worker가 도는 동안에도 ▶ 상태가 크래시 내구
@@ -1880,9 +1881,11 @@ class Sys:
                 f"`[백로그 완료]`**를 쓰세요. 이 표식은 품질 증거가 아니라 상태 전이 선언이며 품질은 "
                 f"마일스톤 검증이 맡습니다. 못 끝냈으면 표식을 쓰지 마세요. 발언·회의가 아니라 작업입니다.",
                 Kind.INFO, "worker")
-            await self._finish_backlog_turn(flow, who, b, st_id, result)
+            return bool(await self._finish_backlog_turn(
+                flow, who, b, st_id, result))
         except Exception as e:
             self._log("claim_kick_error", err=str(e)[:80])
+            return False
 
     async def _verify_exhausted_milestone(self, flow):
         """백로그 소진 뒤 Criterion.verify를 실제 실행하고 기존 iter_verify로 마일스톤을 닫는다.
@@ -2064,7 +2067,164 @@ class Sys:
                     f"{c.verify[:120]}")
         return False
 
-    async def run_turn(self, flow: Flow, organt_id, body, kind, role, micro=False) -> str:
+    async def _drive_task_boundary_e2e(self, flow):
+        """Task 경계 e2e를 일반 이어가기 턴과 분리해 bounded하게 구동한다.
+
+        분모 개시는 SYS의 결정론적 전이이고, 표면 발견·실제 관측·판정은 검증 담당 봇의 몫이다.
+        모델이 도구를 무시해도 일반 작업 턴으로 새지 않고 세 번의 연속 무진행 뒤 중지로 파킹한다.
+        """
+        from .rule.task_gates import _is_verifier
+        from .rule.wrapup import E2E_FAIL, render_checklist, rule_e2e_open
+
+        existing_verdict = (
+            getattr(flow, "wrapup_state", None) or {}).get("verdict")
+        if existing_verdict:
+            if existing_verdict == E2E_FAIL:
+                # finish 체크포인트 직후 러너가 재시작돼도 terminal fail이 일반 협업 턴으로 새지 않는다.
+                flow._stage_stuck = "e2e-fail"
+                self._log(
+                    "e2e_boundary_failed",
+                    verdict=str(existing_verdict),
+                    by=int(getattr(flow, "_e2e_actor", 0) or 0),
+                    restored=True,
+                )
+                return True
+            return False
+
+        if getattr(flow, "e2e_checklist", None) is None:
+            opened = rule_e2e_open(flow)
+            if not str(opened).startswith("e2e 개시"):
+                flow._stage_stuck = "e2e-open"
+                self._log("e2e_boundary_open_failed", reason=str(opened)[:180])
+                return True
+            flow._e2e_no_progress = 0
+            flow._e2e_turns = 0
+            self._log(
+                "e2e_boundary_opened",
+                items=len(getattr(flow, "e2e_checklist", None) or []),
+            )
+
+        team = [
+            int(member) for member in (
+                getattr(getattr(flow, "current", None), "team", None) or [])
+        ]
+        labels = getattr(flow, "bot_info", None) or self.bot_info
+        actor = int(getattr(flow, "_e2e_actor", 0) or 0)
+        if actor not in team:
+            actor = next(
+                (member for member in team if _is_verifier(labels.get(member))),
+                int(getattr(flow, "anchor", 0) or 0),
+            )
+        if not actor:
+            actor = int(getattr(flow, "leader", 0) or 0)
+        flow._e2e_actor = actor
+
+        # 독립 QA가 있으면 Task 경계 베턴을 그 담당에게 원자 회전한다. 회전할 수 없는 깊은
+        # 프레임이면 현재 활성자를 써 단일활성을 보존한다.
+        if actor != int(getattr(flow, "anchor", 0) or 0):
+            try:
+                if flow.comm.rotate_origin_holder(actor):
+                    flow.anchor = actor
+                    self._log("anchor_rotated", to=actor, reason="e2e")
+                elif int(getattr(flow.comm, "alive", 0) or 0):
+                    actor = int(flow.comm.alive)
+                    flow._e2e_actor = actor
+            except Exception:
+                if int(getattr(flow.comm, "alive", 0) or 0):
+                    actor = int(flow.comm.alive)
+                    flow._e2e_actor = actor
+
+        def _progress_signature():
+            checklist = getattr(flow, "e2e_checklist", None) or []
+            results = getattr(flow, "e2e_results", None) or {}
+            verdict = (getattr(flow, "wrapup_state", None) or {}).get("verdict")
+            result_rows = tuple(sorted(
+                (str(key), bool((value or {}).get("ok")),
+                 str((value or {}).get("receipt_id") or ""))
+                for key, value in results.items()
+            ))
+            return (
+                tuple(str(item.get("id") or "") for item in checklist),
+                result_rows,
+                str(verdict or ""),
+            )
+
+        before = _progress_signature()
+        turn_no = int(getattr(flow, "_e2e_turns", 0) or 0) + 1
+        flow._e2e_turns = turn_no
+        await self.run_turn(
+            flow,
+            actor,
+            "[SYS — Task 경계 전수 검증 전용 턴] e2e 장부는 이미 구조적으로 열렸습니다. "
+            "구현·파일 수정·백로그 재검토를 하지 마세요. 제공된 전용 도구만 사용해 ①필요한 노출 "
+            "표면·주 사용 경로를 e2e_scope에 exact verifier와 등록하고 ②각 분모 항목의 exact "
+            "command를 반드시 guide run(evidence_for=항목 id)으로 실행해 SYS receipt를 받은 뒤 "
+            "e2e_result로 제출하고 ③전 항목 제출 후 e2e_finish까지 이 턴에서 진행하세요. native "
+            "shell 출력은 receipt가 아니어서 인정되지 않습니다. 결함은 숨기지 말고 fail로 제출하세요.\n\n"
+            + render_checklist(flow),
+            Kind.INFO,
+            "worker",
+            tool_mode="e2e",
+        )
+        after = _progress_signature()
+        verdict = (getattr(flow, "wrapup_state", None) or {}).get("verdict")
+        progressed = after != before
+        if verdict:
+            flow._e2e_no_progress = 0
+            if verdict == E2E_FAIL:
+                # ms_replan이 열린 정상 fail은 open_milestone이 판정/장부를 무효화하므로 여기까지
+                # 남지 않는다. 판정이 남은 fail은 복기 진전 게이트가 새 주기를 거부한 정체 상태다.
+                flow._stage_stuck = "e2e-fail"
+                self._log("e2e_boundary_failed", verdict=str(verdict), by=actor)
+            else:
+                self._log("e2e_boundary_complete", verdict=str(verdict), by=actor)
+            return True
+        # e2e_fail이 정상적으로 복기 마일스톤을 열면 open_milestone이 이전 장부/판정을 원자
+        # 무효화한다. 이건 정체가 아니라 다음 주기로의 terminal transition이므로 총 턴 cap보다 먼저
+        # 빠져나간다(마침 여섯 번째 턴이었다는 이유로 열린 복기를 즉시 stopped로 덮지 않는다).
+        open_milestones = [
+            milestone for milestone in (getattr(flow, "milestones", None) or [])
+            if getattr(milestone, "status", "") != "done"
+        ]
+        if getattr(flow, "e2e_checklist", None) is None and open_milestones:
+            flow._e2e_no_progress = 0
+            self._log(
+                "e2e_boundary_replan",
+                by=actor,
+                milestone=str(getattr(open_milestones[-1], "ms_id", "")),
+                turn=turn_no,
+            )
+            return True
+        if progressed:
+            flow._e2e_no_progress = 0
+        else:
+            flow._e2e_no_progress = int(
+                getattr(flow, "_e2e_no_progress", 0) or 0) + 1
+        self._log(
+            "e2e_boundary_turn",
+            by=actor,
+            progressed=progressed,
+            turn=turn_no,
+            no_progress=int(getattr(flow, "_e2e_no_progress", 0) or 0),
+        )
+        # receipt만 새로 만들거나 고유 scope를 계속 보태는 것도 전체 상한을 피하지 못한다.
+        # 정상 전용 턴은 한 번에 끝나고, 도구 왕복이 길어 잘린 경우를 위해 여섯 번까지 허용한다.
+        if (int(getattr(flow, "_e2e_no_progress", 0) or 0) >= 3
+                or turn_no >= 6):
+            flow._stage_stuck = "e2e"
+            self._log(
+                "e2e_boundary_stalled",
+                by=actor,
+                attempts=turn_no,
+                reason=("no-progress"
+                        if int(getattr(flow, "_e2e_no_progress", 0) or 0) >= 3
+                        else "turn-cap"),
+            )
+        return True
+
+    async def run_turn(
+        self, flow: Flow, organt_id, body, kind, role, micro=False, tool_mode=None,
+    ) -> str:
         # [크레딧 한도 — 봇 wake 단일 관문 게이트(2026-07-21, U-036 실측: 1500 캡에서 1852까지 누수.
         # 재작업 #1로 '리더' 서술 교정 — 위임 보스로서의 리더는 07-13 폐지, 코드의 leader는 앵커
         # (턴 앵커 = 이어가기 루프 재시작 지점, 참여 공고 최고 응찰)의 하위호환 별칭이다: flow.py)]
@@ -2134,7 +2294,8 @@ class Sys:
         # [G3 — 캐주얼 도구 미장착(B-06)] 좁은 캐주얼 판정(캐주얼 신호+빌드동사 없음, 리더 턴)이면 협업·제작
         # 도구를 아예 장착하지 않는다(mode="casual": run만) — "도구 쓰지 마세요" 프롬프트 의존(재발점 ③)을
         # 구조로 대체. Info 단독은 전체 장착 유지(팀 토론 진행 경로 보존). 기본값 collab = 현행 동일(하위호환).
-        _mode = "casual" if _casual_turn(body, role) else "collab"
+        _mode = str(tool_mode or "").strip() or (
+            "casual" if _casual_turn(body, role) else "collab")
         for attempt in range(3):
             # 이 attempt의 실제 non-micro 프롬프트에 실린 사람 개입만 성공 뒤 ack/소비한다.
             # 턴 도중 새로 append된 개입과 micro 프롬프트(개입 노트를 싣지 않음)는 이 snapshot에
@@ -2142,6 +2303,32 @@ class Sys:
             _prompt_info = ()
             server = build_guide_server(flow, organt_id, role, mode=_mode)
             organt = self.organt_builder(organt_id, server, role, flow)
+            # GPT 경로는 builder가 SDK server 대신 guide 도구 리스트를 직접 브리지에 싣는다.
+            # 전용 모드를 여기서 같은 원천으로 덮어 Claude/Codex의 실제 능력 표면을 일치시킨다.
+            if _mode != "collab" and hasattr(organt, "_codex_tools"):
+                from .guide_tools import make_guide_tools
+                organt._codex_tools = make_guide_tools(
+                    flow, organt_id, role, mode=_mode)
+            if _mode == "e2e":
+                # Claude의 네이티브 수정 표면을 제거한다. Codex는 allowed_tools를 쓰지 않으므로
+                # 별도 read-only bwrap 신호를 내려 네이티브 셸 쓰기를 막고, exact verifier는
+                # 부모 러너의 봉인된 guide run만 실행한다.
+                organt._codex_read_only = True
+                _opts = getattr(organt, "options", None)
+                if _opts is not None:
+                    try:
+                        organt.options = dataclasses.replace(
+                            _opts,
+                            allowed_tools=[
+                                "Read", "Glob", "Grep",
+                                "mcp__guide__run",
+                                "mcp__guide__e2e_scope",
+                                "mcp__guide__e2e_result",
+                                "mcp__guide__e2e_finish",
+                            ],
+                        )
+                    except (TypeError, ValueError):
+                        pass
             # [적당히 — wake-aware 규칙 주입(막힘↔성능)] resume(직전 대화 기억)이 보존되면 델타(핵심 규칙만),
             # fresh 세션이면 전체(봇이 처음 배움). 세션 존재는 organt._session_in_store 결정론이라 추측 없이
             # 정확 — resume 신뢰성은 라이브 로그로 확인됨('No conversation found'=0, 사전점검이 헛돌이 제거).
@@ -2942,18 +3129,16 @@ class Sys:
             except Exception:
                 flow._ledger_sig0 = None
             _kickoff_cap, _kicks = 3, 0
-            _e2e_kicks = [0]
 
             def _needs_e2e():
                 # [e2e 관문화(2026-07-21, 전수 감사 — 사용자: '안정성·실효성이 보장된 상태에서 e2e를
                 # 돌려야지')] 종전 e2e는 권고 문구뿐이라 전 주기 완료 후 전수 검증 없이 표류·마감이
-                # 가능했다(실효성 구멍). 전 주기 done + 로드맵 소진 + 판정 없음 = Task 경계인데 전수
-                # 미개시 — 앵커 턴에 개시 지시를 동봉한다(상한 3 — 최종 방어선은 complete_task 게이트).
+                # 가능했다(실효성 구멍). 전 주기 done + 로드맵 소진 + 판정 없음 = Task 경계다.
+                # 실제 개시·bounded 검증 턴은 _drive_task_boundary_e2e가 맡고 일반 앵커 턴으로 새지 않는다.
                 _mss = getattr(flow, "milestones", None) or []
                 if not (flow.current is not None and _mss
                         and all(m.status == "done" for m in _mss)
-                        and not (getattr(flow, "wrapup_state", None) or {}).get("verdict")
-                        and _e2e_kicks[0] < 3):
+                        and not (getattr(flow, "wrapup_state", None) or {}).get("verdict")):
                     return False
                 try:
                     from .rule.milestone import roadmap_phases as _rp0
@@ -3133,11 +3318,19 @@ class Sys:
                     else:
                         _stage_stall = 0
                     continue
+                # [Task 경계 전용 드라이버] SYS가 분모를 한 번만 열고 검증 담당에게 e2e 도구만 준다.
+                # 불응은 세 번 뒤 stopped로 파킹되며 일반 continue 프롬프트로 돌아가 토큰을 태우지 않는다.
+                if _needs_e2e() and not flow.cancelled:
+                    await self._drive_task_boundary_e2e(flow)
+                    continue
                 # [첫 선점 킥(2026-07-19, ch79 실측)] 계획 단계가 끝난 작업 단계 — 대기 백로그가 있는데
                 # 아무도 안 집었으면 제출자를 깨워 선점을 강제(백로그당 1회, 자가 가드라 매 세그 호출 무해).
                 # 회의 직후 전이와 중단→재개(복원) 양쪽이 이 한 자리로 덮인다.
                 if _ms_on() and not flow.cancelled:
-                    await self._claim_kick(flow)
+                    if await self._claim_kick(flow):
+                        # 한 백로그의 실제 완료/인계가 끝났으면 다음 장부나 마일스톤 검증을 즉시
+                        # 재평가한다. 그 사이 일반 앵커 재감사·floor 턴을 끼우지 않는다.
+                        continue
                 # [단일활성 복원] 리더 턴이 끝났는데 위임이 아직 '완주 중'이면(CLI가 도구 호출을 포기해
                 # detach됐거나, 턴 한도로 끊겼지만 deliver 태스크는 살아 있음) — 그 위임을 죽이지 않고
                 # **끝까지 기다린다**. 일하는 owner를 드레인으로 자르던 것(작업 유실·재위임 churn·'오유진
@@ -3244,16 +3437,7 @@ class Sys:
                     self._log("anchor_rotated", to=int(_nr))
                 # [킥오프 강제] 앵커가 Task도 안 열고 평문으로 회의를 흉내냈으면 — 실제 meet 호출을 강제.
                 _kick_note = ""
-                if _needs_e2e():
-                    _e2e_kicks[0] += 1
-                    self._log("e2e_boundary_kick", ch=int(flow.user_channel or 0), n=_e2e_kicks[0])
-                    _kick_note = ("\n\n[Task 경계 — 전수 검증] 모든 주기가 닫혔습니다. 마감 전에 **e2e_open을 "
-                                  "실제로 호출**해 전수 검증을 개시하세요: ①산출물의 노출 표면·주 사용 경로를 "
-                                  "e2e_scope로 등록 ②각 항목을 실제 실행(run·브라우저)하되 run의 "
-                                  "evidence_for에 항목 id를 넣고, 그 receipt로 e2e_result 제출 "
-                                  "③전 항목 제출 후 e2e_finish. **판정 없이는 complete_task가 "
-                                  "거부됩니다** — 결함이 나오면 복기 주기가 열리고, 그게 정상 경로입니다.")
-                elif _needs_kickoff():
+                if _needs_kickoff():
                     _kicks += 1
                     self._log("kickoff_forced", ch=int(flow.user_channel or 0), n=_kicks)
                     _kick_note = ("\n\n[SYS — 회의를 '평문으로 흉내내지' 마세요] 방금 당신은 회의를 텍스트로만 "

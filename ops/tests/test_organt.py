@@ -46,6 +46,47 @@ def test_organt_기본옵션_인격_CLAUDEmd():
     assert isinstance(sp, str) and "Organt" in sp
 
 
+def test_Codex세션은_rollout저장소에서_재개판정(monkeypatch, tmp_path):
+    """GPT sid를 Claude 저장소에서 찾다 매 턴 폐기하지 않고 Codex 날짜별 rollout을 인식한다."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    sid = "019f9e5d-40f6-7380-bc64-c71b628d69a4"
+    rollout = (
+        tmp_path / ".codex" / "sessions" / "2026" / "07" / "26"
+        / f"rollout-2026-07-26T12-00-00-{sid}.jsonl"
+    )
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text("{}\n", encoding="utf-8")
+    o = Organt(_cfg())
+    o._codex_model = "gpt-test"
+    o.session_id = sid
+
+    assert o._session_in_store() is True
+    assert o.will_resume() is True
+
+
+def test_Codex_e2e는_작업공간을_readonly로_격리(monkeypatch, tmp_path):
+    """전용 E2E 턴의 native shell은 ro-bind이고, 쓰기는 부모 guide run에만 남는다."""
+    import asyncio
+    from organt import codex_mcp_bridge as bridge_mod
+
+    captured = {}
+
+    async def fake_process(**kwargs):
+        captured.update(kwargs)
+        return "ok", "sid"
+
+    monkeypatch.setattr(bridge_mod, "_run_codex_process", fake_process)
+    assert asyncio.run(bridge_mod.run_codex_turn(
+        prompt="e2e", cwd=str(tmp_path), session_id=None, tools=[],
+        model="gpt-test", read_only=True,
+    )) == ("ok", "sid")
+    assert captured["read_only"] is True
+
+    args = bridge_mod._bwrap_args(str(tmp_path), read_only=True)
+    mount = args.index(str(tmp_path))
+    assert args[mount - 1] == "--ro-bind" and args[mount + 1] == str(tmp_path)
+
+
 def test_일시적_API오류_판별():
     assert _is_transient_api_error("API Error: 529 Overloaded. ...") is True
     assert _is_transient_api_error("API Error: 429 rate_limit") is True

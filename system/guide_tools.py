@@ -626,7 +626,8 @@ def _active_scoped_backlog(flow, subtasks):
 def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     # [G3 — 캐주얼 도구 미장착(B-06)] mode="casual"이면 협업·제작 도구(request·recruit·리더도구)를 아예
     # 장착하지 않고 run만 준다(일상 대화 턴의 오발 프로젝트를 프롬프트가 아니라 구조로 차단 — 스키마 토큰도
-    # 절약). 기본값 "collab"은 현행과 동일(하위호환 — 기존 호출부 무변경).
+    # 절약). mode="e2e"는 Task 경계 전용 표면(run·scope·result·finish)만 준다. 기본값 "collab"은
+    # 현행과 동일(하위호환 — 기존 호출부 무변경).
     g = flow.guide
     tools = []
 
@@ -1343,6 +1344,13 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         async def e2e_finish(args):
             return _ok(rule_e2e_finish(flow))
         tools.append(e2e_finish)
+
+    if mode == "e2e":
+        # [Task 경계 전용 표면] 저비용 모델이 완료된 백로그를 다시 읽고 수정하거나 협업 도구로
+        # 새 일을 벌이지 못하게, 이미 SYS가 연 e2e 장부를 판정하는 네 도구만 장착한다. Codex
+        # 브리지도 e2e_result 표식 때문에 receipt용 run을 보존한다.
+        allowed = {"run", "e2e_scope", "e2e_result", "e2e_finish"}
+        return [candidate for candidate in tools if candidate.name in allowed]
 
     # [완료 권한 = 검수 역할(사용자 2026-07)] acceptance/'done' 판정은 QA의 일 — 종전엔 리더가 독점(complete_task
     # 리더 전용)했다. 리더의 역할은 기획·위임·조율이지 검수가 아니라, QA/PM이 '인수 PASS'로 판정해도 닫을 권한이

@@ -85,6 +85,11 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag, tmp_path):
     out = _drive(qa, "e2e_open")
     assert "e2e 개시" in out and "condition:1" in out
     assert "origin:1" not in out and "사용자 원문 컨텍스트" in out
+    nonce = f._e2e_receipt_nonce
+    checklist = list(f.e2e_checklist)
+    reopened = _drive(qa, "e2e_open")
+    assert "e2e 진행 중" in reopened
+    assert f._e2e_receipt_nonce == nonce and f.e2e_checklist == checklist
     assert "surface:1" in _drive(qa, "e2e_scope",
                                  {"surfaces":
                                       "GET / || python3 http_get_check.py\n"
@@ -94,7 +99,7 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag, tmp_path):
                                       "python3 browser_arc_check.py"})
 
     # ④ 전 항목 제출 — surface:2 하나만 실패(관측·증거 동봉)
-    for it in f.e2e_checklist:
+    for index, it in enumerate(f.e2e_checklist):
         fail = it["id"] == "surface:2"
         args = {"item": it["id"], "ok": "fail" if fail else "pass",
                 "observed": "POST가 500 응답" if fail else "OK",
@@ -102,6 +107,11 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag, tmp_path):
         if not fail:
             args["receipt"] = _run_receipt(qa, it)
         _drive(qa, "e2e_result", args)
+        if index == 0:
+            partial_results = dict(f.e2e_results)
+            assert "e2e 진행 중" in _drive(qa, "e2e_open")
+            assert f._e2e_receipt_nonce == nonce
+            assert f.e2e_results == partial_results
 
     # ⑤ 판정 → e2e_fail + 복기 마일스톤 자동 개설(§6 복기 재진입)
     fin = _drive(qa, "e2e_finish")
@@ -134,6 +144,14 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag, tmp_path):
                                   "receipt": _run_receipt(qa, it)})
     assert "e2e_pass" in _drive(qa, "e2e_finish")
     assert [e for e, _ in events].count(E2E_PASS) == 1
+    final_checklist = list(f.e2e_checklist)
+    final_results = dict(f.e2e_results)
+    final_nonce = f._e2e_receipt_nonce
+    assert "e2e 이미 판정됨 — e2e_pass" in _drive(qa, "e2e_open")
+    assert f.e2e_checklist == final_checklist
+    assert f.e2e_results == final_results
+    assert f._e2e_receipt_nonce == final_nonce
+    assert f.wrapup_state["verdict"] == E2E_PASS
 
 
 def test_claim_kick_target_작업단계_선점킥_규칙(onflag):

@@ -540,6 +540,16 @@ def rule_e2e_open(flow) -> str:
     gap = _boundary_gap(flow)
     if gap:
         return f"e2e 개시 불가 — 아직 Task 경계가 아닙니다({gap}). 모든 마일스톤이 닫힌 뒤 개시하세요."
+    verdict = (getattr(flow, "wrapup_state", None) or {}).get("verdict")
+    if verdict:
+        # 확정 장부를 다시 조립하면 새 빈 checklist/results와 옛 verdict가 섞인다. 새 산출물이나
+        # 복기 마일스톤은 invalidate_e2e_state를 거쳐 fresh 경계를 만들고, 그 전 재호출은 no-op이다.
+        return (f"e2e 이미 판정됨 — {verdict}. 산출물 변경/복기 주기 없이 다시 개시하지 않습니다.\n"
+                + render_checklist(flow))
+    # Task 경계 드라이버가 이미 연 장부를 모델이 다시 열어도 분모·부분 결과·nonce를 초기화하지
+    # 않는다. 재개/저비용 모델의 중복 호출이 fresh receipt를 무효화하던 경계 구멍을 멱등으로 닫는다.
+    if getattr(flow, "e2e_checklist", None) is not None:
+        return "e2e 진행 중 — 기존 분모·제출 결과를 그대로 이어갑니다.\n" + render_checklist(flow)
     try:
         cl = assemble_base_checklist(flow)
     except WrapupError as e:

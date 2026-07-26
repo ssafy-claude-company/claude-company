@@ -140,7 +140,8 @@ def test_SYS_정상작업턴완료뒤_보유자응찰을_최근작업자가_선�
         return ""
     s.run_turn = scripted
 
-    asyncio.run(s._claim_kick(f))
+    progressed = asyncio.run(s._claim_kick(f))
+    assert progressed is True
     assert b1.status == "done" and r.turn_holder == 11
     assert b2.status == "open"
     assert b3.status == "in_progress" and b3.assignee == 13
@@ -169,10 +170,244 @@ def test_SYS_첫백로그는_작업중미러뒤_정상턴완료가_원장에남�
         return "첫 화면 구현과 빌드 검증 완료\n[백로그 완료]"
     s.run_turn = scripted
 
-    asyncio.run(s._claim_kick(f))
+    assert asyncio.run(s._claim_kick(f)) is True
     assert b.status == "done" and b.assignee == 12
     assert "in_progress" in changed and changed[-1] == "done"  # worker가 도는 동안 ▶, 종료 뒤 ✓
     assert "in_progress" in checkpoints and checkpoints[-1] == "done"
+
+
+def test_e2e_전용모드는_판정도구만_Codex에도_장착(monkeypatch):
+    """Task 경계 턴은 일반 협업·수정 도구 없이 receipt 검증 표면만 실제 GPT backend에 전달한다."""
+    from dataclasses import dataclass
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow(g)
+    captured = {}
+
+    @dataclass(frozen=True)
+    class FakeOptions:
+        allowed_tools: list
+
+    class FakeOrgant:
+        def __init__(self):
+            self._codex_tools = []
+            self.options = FakeOptions(
+                ["Read", "Write", "Edit", "mcp__guide__request"])
+
+        def will_resume(self):
+            return True
+
+        async def handle(self, _prompt):
+            captured["names"] = [tool.name for tool in self._codex_tools]
+            captured["native"] = list(self.options.allowed_tools)
+            captured["read_only"] = bool(self._codex_read_only)
+            return "검증 턴"
+
+    def builder(*_args):
+        bot = FakeOrgant()
+        bot._codex_tools = make_guide_tools(f, 11, "worker")
+        return bot
+
+    s = Sys(g, 1, builder, bot_info={11: "QA"})
+    s.onboarded.add(11)
+    s.bot_profiles[11] = "검증 기준"
+    asyncio.run(s.run_turn(
+        f, 11, "Task 경계 검증", Kind.INFO, "worker", tool_mode="e2e"))
+
+    assert captured["names"] == ["run", "e2e_scope", "e2e_result", "e2e_finish"]
+    assert captured["read_only"] is True
+    assert "Write" not in captured["native"] and "Edit" not in captured["native"]
+    assert set(captured["native"]) == {
+        "Read", "Glob", "Grep", "mcp__guide__run",
+        "mcp__guide__e2e_scope", "mcp__guide__e2e_result",
+        "mcp__guide__e2e_finish",
+    }
+
+
+def test_e2e_경계는_SYS가_한번열고_3회무진행뒤_중지(monkeypatch, tmp_path):
+    """저비용 모델이 전용 도구를 무시해도 generic continue로 새지 않고 bounded stop 신호를 낸다."""
+    from types import SimpleNamespace
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import (
+        iter_verify, open_milestone, open_subtask, wrapup_done,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    (tmp_path / "check.py").write_text("print('PASS')\n", encoding="utf-8")
+    ms = open_milestone(
+        f, "완료 경계", [{"desc": "산출물 통과", "verify": "python3 check.py"}])
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "구현", 11, status="done", assignee=11)
+    st.status = "done"
+    passed, _ = iter_verify(
+        f, ms, [{"desc": "산출물 통과", "passed": True, "evidence": "PASS"}])
+    assert passed and wrapup_done(f, ms) == "done"
+    f.current = SimpleNamespace(team=[11], task_id="T1")
+
+    s = Sys(g, 1, None, bot_info={11: "QA"})
+    calls = []
+
+    async def ignores_tools(_flow, _who, _body, _kind, _role, **kwargs):
+        calls.append(kwargs.get("tool_mode"))
+        # 실행만 반복해 새 receipt id가 생겨도 결과 제출이 아니므로 진전으로 세면 안 된다.
+        f._run_receipts[f"R{len(calls)}"] = {"rc": 0}
+        return "일반 설명만 반환"
+
+    s.run_turn = ignores_tools
+    for _ in range(3):
+        assert asyncio.run(s._drive_task_boundary_e2e(f)) is True
+
+    assert calls == ["e2e", "e2e", "e2e"]
+    assert f.e2e_checklist is not None
+    assert f._stage_stuck == "e2e"
+    assert any(event["event"] == "e2e_boundary_opened" for event in s.flow_log)
+    assert any(event["event"] == "e2e_boundary_stalled" for event in s.flow_log)
+
+
+def test_e2e_경계는_scope만_늘려도_6회_총상한에서_중지(monkeypatch, tmp_path):
+    """고유 scope를 매번 추가해 형식상 진전해도 전용 경계의 총 턴 수는 유한하다."""
+    from types import SimpleNamespace
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import (
+        iter_verify, open_milestone, open_subtask, wrapup_done,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    (tmp_path / "check.py").write_text("print('PASS')\n", encoding="utf-8")
+    ms = open_milestone(
+        f, "완료 경계", [{"desc": "산출물 통과", "verify": "python3 check.py"}])
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "구현", 11, status="done", assignee=11)
+    st.status = "done"
+    passed, _ = iter_verify(
+        f, ms, [{"desc": "산출물 통과", "passed": True, "evidence": "PASS"}])
+    assert passed and wrapup_done(f, ms) == "done"
+    f.current = SimpleNamespace(team=[11], task_id="T1")
+
+    s = Sys(g, 1, None, bot_info={11: "QA"})
+    turns = []
+
+    async def scope_churn(_flow, _who, _body, _kind, _role, **_kwargs):
+        turns.append(len(turns) + 1)
+        f.e2e_checklist.append({
+            "id": f"surface:{len(turns)}",
+            "kind": "surface",
+            "spec": f"가짜 표면 {len(turns)}",
+        })
+        return "scope만 추가"
+
+    s.run_turn = scope_churn
+    for _ in range(6):
+        assert asyncio.run(s._drive_task_boundary_e2e(f)) is True
+
+    assert turns == [1, 2, 3, 4, 5, 6]
+    assert f._stage_stuck == "e2e"
+    stalled = [event for event in s.flow_log
+               if event["event"] == "e2e_boundary_stalled"]
+    assert stalled[-1]["reason"] == "turn-cap" and stalled[-1]["attempts"] == 6
+
+
+def test_e2e_복기없는_fail은_완료가_아니라_중지(monkeypatch, tmp_path):
+    """복기 진전 게이트가 새 마일스톤을 못 열어 fail 판정이 남으면 generic 마감으로 새지 않는다."""
+    from types import SimpleNamespace
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import (
+        iter_verify, open_milestone, open_subtask, wrapup_done,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    (tmp_path / "check.py").write_text("print('PASS')\n", encoding="utf-8")
+    ms = open_milestone(
+        f, "완료 경계", [{"desc": "산출물 통과", "verify": "python3 check.py"}])
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "구현", 11, status="done", assignee=11)
+    st.status = "done"
+    passed, _ = iter_verify(
+        f, ms, [{"desc": "산출물 통과", "passed": True, "evidence": "PASS"}])
+    assert passed and wrapup_done(f, ms) == "done"
+    f.current = SimpleNamespace(team=[11], task_id="T1")
+
+    s = Sys(g, 1, None, bot_info={11: "QA"})
+
+    async def terminal_fail(_flow, _who, _body, _kind, _role, **_kwargs):
+        f.wrapup_state = {"verdict": "e2e_fail", "defects": ["반복 결함"]}
+        return "e2e_fail"
+
+    s.run_turn = terminal_fail
+    assert asyncio.run(s._drive_task_boundary_e2e(f)) is True
+    assert f._stage_stuck == "e2e-fail"
+    assert any(event["event"] == "e2e_boundary_failed" for event in s.flow_log)
+
+    # e2e_finish 체크포인트 직후 재시작된 판도 모델 턴 없이 같은 terminal stop을 복원한다.
+    f._stage_stuck = None
+
+    async def must_not_run(*_args, **_kwargs):
+        raise AssertionError("복원된 terminal fail에서 모델을 다시 깨우면 안 됩니다.")
+
+    s.run_turn = must_not_run
+    assert asyncio.run(s._drive_task_boundary_e2e(f)) is True
+    assert f._stage_stuck == "e2e-fail"
+    restored = [event for event in s.flow_log
+                if event["event"] == "e2e_boundary_failed"]
+    assert restored[-1]["restored"] is True
+
+
+def test_e2e_6번째턴의_정상복기전이는_총상한으로_중지하지않음(monkeypatch, tmp_path):
+    """마지막 허용 턴에서 fail이 새 복기 주기를 열었으면 그 terminal transition을 먼저 존중한다."""
+    from types import SimpleNamespace
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import (
+        iter_verify, open_milestone, open_subtask, wrapup_done,
+    )
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    (tmp_path / "check.py").write_text("print('PASS')\n", encoding="utf-8")
+    ms = open_milestone(
+        f, "완료 경계", [{"desc": "산출물 통과", "verify": "python3 check.py"}])
+    st = open_subtask(f, ms, "구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog(
+        "B1", "구현", 11, status="done", assignee=11)
+    st.status = "done"
+    passed, _ = iter_verify(
+        f, ms, [{"desc": "산출물 통과", "passed": True, "evidence": "PASS"}])
+    assert passed and wrapup_done(f, ms) == "done"
+    f.current = SimpleNamespace(team=[11], task_id="T1")
+
+    s = Sys(g, 1, None, bot_info={11: "QA"})
+
+    async def opens_repair(_flow, _who, _body, _kind, _role, **_kwargs):
+        repair = open_milestone(
+            f, "e2e 복기", [{"desc": "결함 해소", "verify": "python3 check.py"}],
+            origin="e2e:결함")
+        assert not isinstance(repair, str)
+        return "e2e_fail — 복기 개설"
+
+    s.run_turn = opens_repair
+    # 장부를 연 뒤 이번 호출이 정확히 여섯 번째가 되게 한다.
+    from system.rule.wrapup import rule_e2e_open
+    assert "e2e 개시" in rule_e2e_open(f)
+    f._e2e_turns = 5
+    assert asyncio.run(s._drive_task_boundary_e2e(f)) is True
+
+    assert getattr(f, "_stage_stuck", None) is None
+    assert f.e2e_checklist is None and f.wrapup_state is None
+    assert any(event["event"] == "e2e_boundary_replan" for event in s.flow_log)
 
 
 def test_SYS가_백로그소진후_마일스톤_verify를_실행해_완료(tmp_path, monkeypatch):

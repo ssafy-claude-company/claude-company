@@ -276,15 +276,20 @@ _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high",
                "xhigh": "xhigh", "max": "max", "minimal": "minimal"}
 
 
-def _bwrap_args(ws: str) -> list:
-    """작업공간만 rw, 시스템·DB·크레덴셜은 차단(검증된 프로파일). --clearenv로 env 비밀까지 제거."""
+def _bwrap_args(ws: str, read_only: bool = False) -> list:
+    """작업공간만 제한적으로 노출하고 시스템·DB·크레덴셜은 차단한다.
+
+    Task 경계 e2e는 native shell에서 산출물을 바꾸지 못하게 ro-bind한다. 봉인된 exact verifier는
+    부모 러너의 guide run에서 실행되므로 빌드 캐시처럼 검사 명령에 필요한 쓰기는 그 경로에만 남는다.
+    """
+    workspace_bind = "--ro-bind" if read_only else "--bind"
     return ["/usr/bin/bwrap", "--clearenv",
             "--ro-bind", "/usr", "/usr",
             "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
             "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/sbin", "/sbin",
             "--ro-bind", "/etc/ssl", "/etc/ssl", "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
             "--ro-bind", "/root/.local", "/root/.local", "--bind", "/root/.codex", "/root/.codex",
-            "--bind", ws, ws, "--chdir", ws,
+            workspace_bind, ws, ws, "--chdir", ws,
             "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
             "--unshare-pid", "--die-with-parent",
             "--setenv", "PATH", "/usr/bin:/bin:/root/.local/bin",
@@ -382,6 +387,7 @@ async def _run_codex_process(
     on_narrate=None,
     stderr=None,
     mcp_url: str | None,
+    read_only: bool = False,
 ):
     """Codex subprocess 하나를 실행하고 stdout/stderr/프로세스 그룹을 전부 회수한다."""
     ws = str(cwd)
@@ -400,7 +406,7 @@ async def _run_codex_process(
     _ce = _EFFORT_MAP.get(str(effort or "").strip().lower())
     if _ce:   # 추론 강도를 codex에 실제 반영(종전엔 안 넘겨 무시됐음 — 사용자 지적)
         codex += ["-c", 'model_reasoning_effort="%s"' % _ce]
-    args = _bwrap_args(ws) + ["--"] + codex
+    args = _bwrap_args(ws, read_only=read_only) + ["--"] + codex
 
     stream_limit = _codex_stream_limit()
     proc = await asyncio.create_subprocess_exec(
@@ -483,7 +489,8 @@ async def _run_codex_process(
 
 
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
-                         on_activity=None, on_narrate=None, stderr=None):
+                         on_activity=None, on_narrate=None, stderr=None,
+                         read_only=False):
     """GPT 봇 한 턴. guide 도구가 있을 때만 전용 port/bridge를 턴 수명 동안 임대한다."""
     tool_names = {
         getattr(tool, "name", None)
@@ -504,6 +511,7 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
         "on_activity": on_activity,
         "on_narrate": on_narrate,
         "stderr": stderr,
+        "read_only": bool(read_only),
     }
     if not turn_tools:
         return await _run_codex_process(**process_args, mcp_url=None)
