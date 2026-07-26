@@ -1258,6 +1258,35 @@ def test_독립QA줄이_구현보다_먼저와도_제작자를_피함(monkeypatc
     assert [row.submitter for row in rows] == [13, 11]
 
 
+def test_독립QA_전용단위는_본문마다_QA표식을_반복하지않아도_제작자를피함(
+        monkeypatch, tmp_path):
+    """U-060: SubTask 범위가 독립 QA면 실제 테스트 행은 그 역할 문구를 매번 반복하지 않는다."""
+    from system.rule.milestone import register_stage
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    f = _독립검증_귀속판(
+        tmp_path, {11: "기획", 12: "백엔드", 13: "QA"}, "12,13")
+    f._r1_attr = [
+        (11, "CommonJS 상태 머신 구현"),
+        (11, "네 상태의 16개 순서쌍을 모두 새 인스턴스로 검증"),
+        (11, "금지 전이 13개의 Error와 호출 전후 상태 동일 확인"),
+    ]
+    ok, note = register_stage(
+        f,
+        "subtask",
+        "단위: 구현\n"
+        "단위: 독립 QA\n"
+        "백로그: [구현] CommonJS 상태 머신 구현\n"
+        "백로그: [독립 QA] 네 상태의 16개 순서쌍을 모두 새 인스턴스로 검증\n"
+        "백로그: [독립 QA] 금지 전이 13개의 Error와 호출 전후 상태 동일 확인",
+        "상태 머신",
+    )
+    assert ok, note
+    implementation, qa = f.milestones[-1].subtasks
+    assert [b.submitter for b in f.backlog_relays[implementation.st_id].backlogs] == [11]
+    assert [b.submitter for b in f.backlog_relays[qa.st_id].backlogs] == [13, 13]
+
+
 def test_독립검증_비제작후보가_없으면_등록을_닫고_충원을_안내(monkeypatch, tmp_path):
     """명시 계약을 같은 사람 소유로 조용히 등록하지 않는다."""
     from system.rule.milestone import register_stage

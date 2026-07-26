@@ -3098,16 +3098,39 @@ def register_stage(flow, stage, prop, origin=""):
                 _t_i,
             ))
 
+        def _production_signal(_text_i):
+            _t_i = str(_text_i or "").lower()
+            return bool(_re3.search(
+                r"(^|[^a-z])(implement|implementation|developer|production)([^a-z]|$)|"
+                r"(구현|개발|제작|생산)",
+                _t_i,
+            ))
+
         _contract_separates_review = (
             _assignee_separation_signal(_origin_o) and _review_signal(_origin_o)
         )
 
-        def _independent_review(_body_i):
+        def _independent_review(_body_i, _scope_i=""):
+            _body_text_i = str(_body_i or "")
+            _scope_text_i = str(_scope_i or "")
+            # U-060: 전용 SubTask 제목이 ``독립 QA``인데 그 아래 실제 검증 행마다 'QA 담당자'를
+            # 반복하지는 않는다. 명시 분리 계약 아래의 *전용 검증 단위*는 범위를 상속하되,
+            # ``구현과 독립 QA``처럼 제작까지 섞인 단위는 본문 신호 없이 통째 검증으로 오인하지 않는다.
+            _dedicated_review_scope_i = (
+                _review_role_signal(_scope_text_i)
+                and not _production_signal(_scope_text_i)
+            )
             return (
-                _review_signal(_body_i)
+                _review_signal(f"{_scope_text_i} {_body_text_i}")
                 and (
-                    _assignee_separation_signal(_body_i)
-                    or (_contract_separates_review and _review_role_signal(_body_i))
+                    _assignee_separation_signal(_body_text_i)
+                    or (
+                        _contract_separates_review
+                        and (
+                            _review_role_signal(_body_text_i)
+                            or _dedicated_review_scope_i
+                        )
+                    )
                 )
             )
 
@@ -3130,9 +3153,9 @@ def register_stage(flow, stage, prop, origin=""):
                 "검증 항목을 맡도록 수렴안/R1 귀속을 다시 작성하세요."
             )
 
-        def _independent_owner(_body_i, _base_i, _producer_owners_i):
+        def _independent_owner(_body_i, _scope_i, _base_i, _producer_owners_i):
             _base_i = int(_base_i or 0)
-            if (not _independent_review(_body_i)
+            if (not _independent_review(_body_i, _scope_i)
                     or _base_i not in _producer_owners_i):
                 return _base_i, ""
             _cands_i = [
@@ -3145,12 +3168,13 @@ def register_stage(flow, stage, prop, origin=""):
                     "제작자가 아닌 Task 팀 후보가 없습니다",
                 )
             from ..role_fit import role_fit as _rf_independent
+            _fit_query_i = f"{str(_scope_i or '')} {str(_body_i or '')}".strip()
             # stable max: 동점이면 Task 팀의 기존 순서를 보존한다.
             _winner_i = max(
                 _cands_i,
-                key=lambda mid: _rf_independent(_body_i, _bots_o[mid]),
+                key=lambda mid: _rf_independent(_fit_query_i, _bots_o[mid]),
             )
-            if _rf_independent(_body_i, _bots_o[_winner_i]) <= 0:
+            if _rf_independent(_fit_query_i, _bots_o[_winner_i]) <= 0:
                 return _base_i, _independence_unavailable(
                     _body_i, _producer_owners_i,
                     "검증 역할 적합도가 0보다 큰 후보가 없습니다",
@@ -3258,7 +3282,9 @@ def register_stage(flow, stage, prop, origin=""):
             _relay_existing = store.get(_st_existing.st_id)
             for _backlog_existing in (
                     getattr(_relay_existing, "backlogs", None) or []):
-                if _independent_review(getattr(_backlog_existing, "body", "")):
+                if _independent_review(
+                        getattr(_backlog_existing, "body", ""),
+                        getattr(_st_existing, "goal", "")):
                     continue
                 for _owner_existing in (
                         getattr(_backlog_existing, "submitter", 0),
@@ -3269,12 +3295,14 @@ def register_stage(flow, stage, prop, origin=""):
         _producer_owners = _existing_producer_owners | {
             int(row[4])
             for row in _planned
-            if int(row[4] or 0) and not _independent_review(row[2])
+            if int(row[4] or 0)
+            and not _independent_review(row[2], getattr(row[1], "goal", ""))
         }
         for row in _planned:
             _base_owner = int(row[4] or 0)
             _new_owner, _independence_error = _independent_owner(
-                row[2], _base_owner, _producer_owners)
+                row[2], getattr(row[1], "goal", ""),
+                _base_owner, _producer_owners)
             if _independence_error:
                 return False, _independence_error
             row[4] = _new_owner
