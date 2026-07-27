@@ -2430,7 +2430,21 @@ class Sys:
                 if flow.current is None:
                     self._log("task_close_complete", by=0, turn=turn_no, via="structure")
                     return True
-                self._log("task_close_structure_refused", why=(_txt[0][:180] if _txt else ""))
+                _why = (_txt[0] if _txt else "")
+                self._log("task_close_structure_refused", why=_why[:180])
+                # [판단이 필요한 관문은 봇에게(2026-07-27, 사용자: '봇에게 QA 시키는 게 좋지 않아?')]
+                # 구조가 답할 수 있는 것은 **사실로 확정되는 것**뿐이다(지각 차원 유무·시각 검증 여부).
+                # '합의한 좋음 기준이 코드에 도달했나' 같은 관문은 산출물을 하나씩 대조하는 실제 QA다 —
+                # 구조가 통과시키면 이 관문이 막으려던 바로 그 일(검증 없는 완성)을 구조가 하게 된다.
+                # 그러니 관문의 요구를 **그대로 봇에게 넘겨** 대조를 시킨다(설명 말고 수행).
+                if _why:
+                    await self.run_turn(
+                        flow, actor,
+                        "[SYS — 마감 관문이 요구하는 검증 턴] 마감을 시도했더니 관문이 아래 사유로 "
+                        "보류했습니다. 설명하지 말고 **요구된 검증을 실제로 수행**한 뒤 그 결과를 "
+                        "result에 담아 complete_task를 다시 호출하세요. 대조 없이 형식만 채우지 마세요"
+                        "(관문은 반사적 재호출을 걸러냅니다).\n\n— 관문 사유 —\n" + _why,
+                        Kind.INFO, "leader")
             except Exception as _e_ct:
                 self._log("task_close_structure_error", why=str(_e_ct)[:120])
         if turn_no >= 3:
