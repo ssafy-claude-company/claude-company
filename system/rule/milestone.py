@@ -1577,6 +1577,17 @@ def wrapup_done(flow, obj) -> str:
                     f"{len(_open_sts)}건이 아직 미완입니다 — 최대 구현으로 연 하위 단위는 전부 끝나야 "
                     f"주기가 닫힙니다. 미완: {_names}. 각 SubTask를 iter_verify→wrapup_done으로 닫거나, "
                     "환경상 불가하면 renegotiate_criterion으로 그 SubTask를 정리한 뒤 다시 선언하세요.")
+    # [정상 사다리는 상한에 안 걸린다(2026-07-27, 전수감사)] 단계 재개설 상한은 '같은 단계가
+    # 반복되는데 아무것도 완주하지 않는' 폭주를 잡는 장치다. 성공 착지까지 세면 다단계 로드맵
+    # (주기마다 계획·분해 회의)이 정상 진행 중에 컷된다. **주기가 실제로 완주한 이 자리에서만**
+    # 턴다 — 진전이 있었다는 뜻이므로 반복이 아니다.
+    if isinstance(obj, Milestone):
+        for _k in ("_stage_open_n", "_pf_repeat"):
+            try:
+                if getattr(flow, _k, None):
+                    setattr(flow, _k, {})
+            except Exception:
+                pass
     obj.status = "done"
     _ckpt(flow)
     if flow.log:

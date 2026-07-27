@@ -2135,7 +2135,10 @@ class Sys:
 
         if getattr(flow, "e2e_checklist", None) is None:
             opened = rule_e2e_open(flow)
-            if not str(opened).startswith("e2e 개시"):
+            # [문자열 대신 사실로 판정(2026-07-27, 전수감사)] 실패 문자열도 "e2e 개시 불가…"로
+            # 시작해 접두사 검사가 **실패를 성공으로 읽었다** — 빈 분모로 6턴을 태우고 파킹하는데
+            # 로그에는 실패가 안 남았다. 분모가 실제로 섰는지(증거)를 본다.
+            if getattr(flow, "e2e_checklist", None) is None:
                 flow._stage_stuck = "e2e-open"
                 self._log("e2e_boundary_open_failed", reason=str(opened)[:180])
                 return True
@@ -3671,9 +3674,15 @@ class Sys:
                         _stage_stall = 0
                     if (_stage_stall >= _stage_stall_cap
                             or _seen_st[str(_stg)] >= _stage_reopen_cap):
+                        # [안내 없이 닫지 않는다(2026-07-27, 전수감사)] 종전엔 그냥 break라 사용자에게
+                        # 아무 말 없이 판이 '중단'으로 닫혔다 — 왜 멈췄는지 알 길이 없었다.
+                        # 파킹 신호로 넘겨 루프 상단이 사유와 함께 정지·게시하게 한다.
                         self._log("stage_stall_break", stage=str(_stg), n=_stage_stall,
                                   opened=_seen_st[str(_stg)])
-                        break                           # 끝내 안 착지하거나 같은 단계 반복 개설 — 차단
+                        flow._stage_stuck = (
+                            f"'{_stg}' 단계 회의가 {_seen_st[str(_stg)]}회 열렸는데 주기가 한 번도 "
+                            f"완주하지 못했습니다 — 같은 자리를 반복하고 있습니다.")
+                        continue
                     continue
                 # [Task 경계 전용 드라이버] SYS가 분모를 한 번만 열고 검증 담당에게 e2e 도구만 준다.
                 # 불응은 세 번 뒤 stopped로 파킹되며 일반 continue 프롬프트로 돌아가 토큰을 태우지 않는다.

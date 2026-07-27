@@ -256,6 +256,17 @@ def checkpoint_open_task(sys, flow) -> None:
     # [실행 산출 목록(2026-07-27)] 검증기가 남기는 리포트 경로들 — 재시작 후에도 스탬프가 같은 눈을
     # 유지해야 복원된 영수증이 '검증기 리포트가 바뀌었다'는 이유로 무효화되지 않는다.
     p["run_outputs"] = sorted(getattr(flow, "run_outputs", None) or ())
+    # [상한은 재개를 넘어야 상한이다(2026-07-27, 전수감사)] 아래 카운터들이 체크포인트에 없어
+    # **재픽·재개·러너 재시작마다 0**이 됐다 — 상한에 닿기 전에 흐름이 끝나면 같은 벽을 처음부터
+    # 다시 4번 도는 식이라, 무한 반복을 막으려고 둔 장치가 실질적으로 없는 것과 같았다.
+    p["stage_open_n"] = {str(k): int(v) for k, v in
+                         (getattr(flow, "_stage_open_n", None) or {}).items()}
+    p["pf_repeat"] = {str(k): int(v) for k, v in
+                      (getattr(flow, "_pf_repeat", None) or {}).items()}
+    try:
+        p["goal_lock_reopens"] = int(getattr(flow, "_goal_lock_reopens", 0) or 0)
+    except (TypeError, ValueError):
+        p["goal_lock_reopens"] = 0
     # [로드맵 §9(2026-07-14)] 전체 구조 회의가 확정한 다단계 로드맵(달구지→자동차→스포츠카) —
     # 주기 완수마다 다음 단계 회의를 코칭하는 근거라 재시작을 넘어 살아야 한다.
     p["roadmap"] = list(getattr(flow, "roadmap", None) or [])
@@ -286,6 +297,12 @@ def _restore_e2e_state(flow, proj) -> bool:
     # [실행 산출 목록(2026-07-27)] 스탬프를 계산하기 **전에** 세운다 — 재시작 후 검증기 리포트가
     # 다시 manifest에 섞이면 복원된 영수증이 통째로 stale 처리된다(무한 재개방의 재발 경로).
     flow.run_outputs = set(proj.get("run_outputs") or ())
+    flow._stage_open_n = {str(k): int(v) for k, v in (proj.get("stage_open_n") or {}).items()}
+    flow._pf_repeat = {str(k): int(v) for k, v in (proj.get("pf_repeat") or {}).items()}
+    try:
+        flow._goal_lock_reopens = int(proj.get("goal_lock_reopens") or 0)
+    except (TypeError, ValueError):
+        flow._goal_lock_reopens = 0
     if checklist is None:
         flow.e2e_checklist = flow.e2e_results = flow.wrapup_state = None
         flow._e2e_receipt_nonce = None
@@ -598,6 +615,13 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         ref.owner_incomplete = False
         if int(snap.get("owner") or 0):
             ref.owner_delivered = True
+        # [실행 사실도 여기서(2026-07-27, 전수감사)] `_restore_e2e_state`가 `flow.current.verified`를
+        # 세우지만 그 시점 current는 아직 None이라 **아무 일도 안 했다**(복원 순서 결함). 전 항목이
+        # 증거를 가진 e2e_pass일 때만 — 사실을 만들지 않고 이미 검증된 실행을 장부로 옮긴다.
+        _res_r = (proj or {}).get("e2e_results") or {}
+        if _res_r and all(bool(r.get("ok")) and str(r.get("evidence") or "").strip()
+                          for r in _res_r.values()):
+            ref.verified = True
     # [정밀 복구 — 가장 깊은 워커 재개(#7)] 전체 체인(active_chain)이 있으면, 재개 owner를 *가장 깊은 활성
     # 워커*로 덮어쓴다 — 레벨1 owner가 아니라 끊긴 그 깊이(예: 8단 체인 끝의 디자이너)에서 재개해 깊은
     # 전문가 작업이 리더로 튀지 않게. last_work_body에 그 깊이 원문 + 체인 경로를 실어, #3의 _auto_continue_
@@ -616,7 +640,10 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
                 f"[끊긴 깊은 전문가 체인: {path}]\n[가장 깊은 이 작업을 당신({flow._info(wk)})이 받아 진행 중 "
                 f"끊겼습니다 — 작업공간에 이미 된 부분은 보존됨. 처음부터 다시 하지 말고 이어서 완성하세요]\n"
                 f"{(deepest.get('body') or '')[:1200]}")
-            ref.owner_incomplete = True
+            # [검증이 선 판은 여기서도 미완으로 되돌리지 않는다(2026-07-27, 전수감사)] 위 594-600이
+            # e2e_pass면 표식을 풀어 두는데, 이 체인 분기가 **무조건 다시 세워** 같은 교착이 되살아났다
+            # (마감 직전 구조가 보낸 독립 검증 위임 하나만 열려 있어도 발동). 같은 원칙을 여기에도.
+            ref.owner_incomplete = not _e2e_ok
             if wk not in ref.team:
                 ref.team.append(wk)
             # [복구 인플라이트 보존(2026-06-23, 사용자)] 죽기 전 진행 중이던 깊은 위임(→wk)을 복원했으니,

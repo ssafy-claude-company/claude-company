@@ -524,7 +524,11 @@ def _boundary_gap(flow) -> str:
     ms = getattr(flow, "milestones", None) or []
     if not ms:
         return "마일스톤이 없습니다(마일스톤 파이프라인 Task가 아님)"
-    open_ms = [m.ms_id for m in ms if m.status != "done"]
+    # [술어 통일(2026-07-27, 전수감사)] 여기만 superseded를 '미완'으로 셌다. 새 주기가 열리면
+    # 이전 미완 주기는 superseded로 닫히는데(open_milestone), 그러면 e2e가 영영 안 열리고
+    # 마감은 'e2e가 아직'으로 막혀 **양쪽 어디로도 못 가는 교착**이 된다. 다른 세 곳
+    # (task.py·sys_core·next_milestone)은 이미 교정돼 있었다.
+    open_ms = [m.ms_id for m in ms if m.status not in ("done", "superseded")]
     if open_ms:
         return f"미완 마일스톤: {', '.join(open_ms)}"
     ledger_error = work_ledger_release_error(flow, repair=True)

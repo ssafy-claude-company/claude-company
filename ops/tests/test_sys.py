@@ -8220,3 +8220,53 @@ def test_기여_판정은_흐름_카운터가_비어도_장부를_본다():
     src = inspect.getsource(task_gates._gate_contrib)
     assert "_ledger_workers(flow)" in src, "관문이 장부를 보지 않는다"
     assert "flow.act_by.get(m, 0) == 0" in src, "흐름 카운터 판정이 사라졌다"
+
+
+def test_e2e_개시_게이트는_superseded를_미완으로_세지_않는다():
+    """[2026-07-27 전수감사] 새 주기가 열리면 이전 미완 주기는 superseded로 닫힌다. 그런데 e2e 개시
+    게이트만 술어가 `!= "done"`이라 그걸 '미완'으로 세어 **e2e가 영영 안 열리고**, 마감은 'e2e가
+    아직'으로 막혀 양쪽 어디로도 못 가는 교착이 됐다. 다른 세 곳은 이미 교정돼 있었다."""
+    import inspect
+    from system.rule import wrapup
+
+    src = inspect.getsource(wrapup)
+    i = src.index("open_ms = [")
+    assert 'not in ("done", "superseded")' in src[i:i + 160], \
+        "e2e 개시 게이트가 superseded를 미완으로 센다(영구 교착)"
+
+
+def test_e2e_개시_실패를_문자열로_판정하지_않는다():
+    """[2026-07-27 전수감사] 실패 문자열도 "e2e 개시 불가…"로 시작해 접두사 검사가 실패를 성공으로
+    읽었다 — 빈 분모로 6턴을 태우고 파킹하는데 로그에는 실패가 안 남았다. 분모가 실제로 섰는지를 본다."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys._drive_task_boundary_e2e)
+    assert 'startswith("e2e 개시")' not in src, "문자열 접두사로 성패를 가른다"
+    assert "e2e_checklist" in src, "분모가 섰는지(사실)로 판정하지 않는다"
+
+
+def test_상한_카운터는_재개를_넘어_유지된다():
+    """[2026-07-27 전수감사] 반복 방지 카운터들이 체크포인트에 없어 재픽·재개·러너 재시작마다 0이
+    됐다 — 상한에 닿기 전에 흐름이 끝나면 같은 벽을 처음부터 다시 도는 식이라, 무한 반복을 막으려
+    둔 장치가 실질적으로 없는 것과 같았다."""
+    import inspect
+    from system import sys_recovery
+
+    save = inspect.getsource(sys_recovery.checkpoint_open_task)
+    for key in ('"stage_open_n"', '"pf_repeat"', '"goal_lock_reopens"'):
+        assert key in save, f"{key}가 체크포인트에 안 실린다"
+    src = inspect.getsource(sys_recovery)
+    for key in ('proj.get("stage_open_n")', 'proj.get("pf_repeat")', 'proj.get("goal_lock_reopens")'):
+        assert key in src, f"{key}가 복원되지 않는다"
+
+
+def test_깊은체인_복원도_전수검증을_존중한다():
+    """[2026-07-27 전수감사] e2e_pass면 미완 표식을 푸는 분기가 있는데, 깊은 체인 분기가 **무조건
+    다시 세워** 같은 교착이 되살아났다(마감 직전 독립 검증 위임 하나만 열려 있어도 발동)."""
+    import inspect
+    from system import sys_recovery
+
+    src = inspect.getsource(sys_recovery)
+    assert "ref.owner_incomplete = not _e2e_ok" in src, "깊은 체인 복원이 검증을 무시하고 미완으로 되돌린다"
+    assert src.count("ref.owner_incomplete = True") == 1, "무조건 미완으로 세우는 경로가 남아 있다"
