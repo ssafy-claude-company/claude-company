@@ -8030,3 +8030,27 @@ def test_e2e통과판은_소유권_재배정에도_인도사실을_보존(monkey
 
     # e2e_pass면 보존, 아니면 종전대로 초기화 — 분기 조건 자체를 고정한다.
     assert '"e2e_pass"' in src.split("kept_delivered")[0][-600:], "보존 조건이 e2e_pass가 아니다"
+
+
+def test_증류는_범용만_저장소경로는_걸러진다():
+    """[2026-07-27 P-063 실측] 개인 증류 기준에 특정 저장소 경로가 굳어 들어가면, 그 지식이 무관한
+    프로젝트에 주입돼 오작동한다 — 브레인에서 배운 '`ops/verify.sh`로 검증한다'가 게임 판 로스터에
+    실려, 봇들이 게임의 검증 명령으로 존재하지 않는 그 경로를 비준하고 계획이 파킹됐다.
+    증류 프롬프트가 '특정 프로젝트 한정은 버리라'고 말해도 지켜지지 않았다 — 구조로 거른다."""
+    from system.sys_core import Sys
+    s = Sys.__new__(Sys)
+    s.flow_log = []
+    s._log = lambda ev, **kw: s.flow_log.append({"event": ev, **kw})
+
+    body = ("\n".join([
+        "- 검증은 실행으로 확인한다(존재 확인만으로 끝내지 않는다)",
+        "- 프롬프트 변경은 유닛테스트로 끝내지 않는다 — `ops/verify.sh`로 실 system/organt를 검증",
+        "- 회의 결론은 파일에 남긴다",
+        "- 설정은 ./config/app.yml 에 둔다",
+    ]))
+    out = s._strip_project_specifics(body, 11)
+    assert "검증은 실행으로 확인한다" in out          # 범용 원칙은 보존
+    assert "회의 결론은 파일에 남긴다" in out
+    assert "ops/verify.sh" not in out                 # 저장소 경로 줄은 제거
+    assert "config/app.yml" not in out
+    assert any(e["event"] == "distill_project_specific_dropped" for e in s.flow_log)

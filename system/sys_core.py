@@ -301,7 +301,7 @@ class Sys:
             pass
 
     def _write_team_dossier(self, flow) -> None:
-        """[로스터 내구 홈] 현재 팀(동료 id·직군·강점)을 `.collab/TEAM.md`에 미러 — recruit로 바뀌면 갱신.
+        """[로스터 내구 홈] 현재 팀(동료 id·직군)을 `.collab/TEAM.md`에 미러 — recruit로 바뀌면 갱신.
         프롬프트는 로스터 '변경 시에만' 주입하므로, 압축 후 멤버가 동료를 잊어도 디스크에서 복구하게 한다.
         best-effort·변경 시에만 기록(flow 캐시 대조)."""
         try:
@@ -311,10 +311,15 @@ class Sys:
                 return
             info = getattr(flow, "bot_info", None) or self.bot_info or {}
             lines = []
+            # [증류 오염 차단(2026-07-27, 사용자: '증류는 범용적인 좋은 내용을 담는 것')] 종전엔 각
+            # 봇의 **개인 증류 기준**을 '강점'으로 로스터에 실었다. 그 기준은 그 봇이 *다른 프로젝트*
+            # 에서 배운 것이라 구체 경로·명령을 품고, 로스터는 **전원이 읽는 파일**이라 그대로 퍼진다.
+            # 실측(P-063 게임 판): 브레인 저장소에서 배운 "`ops/verify.sh`로 검증한다"가 로스터에
+            # 실려, 봇들이 게임의 검증 명령으로 **존재하지도 않는 그 경로**를 비준하고 계획이 파킹됐다.
+            # 이는 시스템의 '봇별 완전 격리(직군 공용 학습 폐지)' 불변식과도 어긋난다 — 로스터는
+            # **누가 있는가(정체)**만 담는다. 전문성은 그 봇 자신에게만 주입된다.
             for i, lbl in info.items():
-                prof = (self.bot_profiles.get(i) or "").strip()
-                strength = next((ln.lstrip("-•* ").strip() for ln in prof.splitlines() if ln.strip()), "") if prof else ""
-                lines.append(f"- {i}: {lbl}" + (f" — 강점: {strength[:80]}" if strength else ""))
+                lines.append(f"- {i}: {lbl}")
             body = ("# 팀 로스터 — 이 협업의 동료(id·직군). recruit 시 갱신.\n\n"
                     "동료가 누구인지(직군 질문 상대·회의 참여자) 헷갈리면 여기서 확인하세요 — 작업 배분은 백로그 릴레이가 합니다.\n\n" + "\n".join(lines) + "\n")
             if getattr(flow, "_team_written", None) == body:
@@ -555,6 +560,27 @@ class Sys:
     # [B-19] [개인기준] 블록 파서 — distill_role의 [직무기준] 관례 동형(헤더는 봇 라벨, 본문만 소비).
     _BOT_PROFILE_RE = re.compile(r"\[개인기준\]\s*(?P<who>[^\n]*)\n(?P<body>.*?)\n?\[/개인기준\]", re.S)
 
+    _PROJ_PATH_RE = re.compile(
+        r"(?:^|[\s`'\"(\[])(?:\./)?[\w.-]+/[\w./-]*\.(?:sh|py|js|mjs|ts|json|ya?ml|toml|md|html|css)\b")
+
+    def _strip_project_specifics(self, body, mid=0):
+        """[증류는 범용만(2026-07-27, 사용자: '증류는 범용적인 좋은 내용을 담는 것')]
+
+        개인 기준은 그 봇이 **어느 판에서든** 쓸 원칙이어야 한다. 그런데 특정 저장소의 경로·명령이
+        굳어 들어가면, 그 지식이 무관한 프로젝트에 주입돼 오작동한다 — 실측(P-063 게임 판): 브레인
+        저장소에서 배운 "`ops/verify.sh`로 검증한다"가 기준에 남아, 봇들이 게임의 검증 명령으로
+        **존재하지 않는 그 경로**를 비준하고 계획이 파킹됐다. 증류 프롬프트가 이미 '특정 프로젝트
+        한정 사항은 버리라'고 **말하지만** 지켜지지 않았다 — 말이 아니라 구조로 거른다.
+
+        경로가 박힌 줄만 버린다(원칙 줄은 보존). 버릴 원칙이면 다음 증류에서 일반형으로 다시 선다.
+        """
+        lines = [ln for ln in str(body or "").splitlines()]
+        keep = [ln for ln in lines if not self._PROJ_PATH_RE.search(ln)]
+        if len(keep) != len(lines):
+            self._log("distill_project_specific_dropped", bot=int(mid or 0),
+                      dropped=len(lines) - len(keep))
+        return "\n".join(keep).strip()
+
     @staticmethod
     def _hollow_standard(body) -> bool:
         """기준(개인기준·직무기준)이 '없음'류 탈출구 텍스트뿐인가 — 저장하면 빈 기준이 UI·동료 강점줄·
@@ -628,6 +654,7 @@ class Sys:
             # 하드캡은 '줄 단위'로 — 문장 중간 절단 방지(_absorb_role_profiles 관례 동형).
             cut = body[:cap]
             body = cut[:cut.rfind("\n")] if "\n" in cut else cut
+        body = self._strip_project_specifics(body, mid)
         if body and not self._hollow_standard(body) and body != cur:
             self.bot_profiles[mid] = body
             self.bot_experience[mid] = []                 # 증류 완료 — 원석 비움
