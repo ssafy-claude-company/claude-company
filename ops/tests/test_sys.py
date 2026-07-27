@@ -8085,3 +8085,17 @@ def test_마감_시도_상한은_횟수가_아니라_진전_기준이다():
     assert "_close_last_why" in seg, "사유가 바뀌었는지(=진전) 보지 않는다"
     assert "_close_turns = 0" in seg, "앞 관문을 통과해도 시도가 안 돌아온다"
     assert "_close_total" in seg, "총량 하드 상한이 없어 무한 시도가 가능하다"
+
+
+def test_복구도_전수검증이_선_판을_미완으로_되돌리지_않는다():
+    """[2026-07-27 U-067 실측] 복구는 '작업 도중 끊긴 판'을 위해 미완 표식을 다시 세운다. 그런데
+    전수 검증(e2e_pass)이 이미 선 판까지 되돌리면, 재개할 때마다 같은 표식이 다시 서서 0결함으로
+    통과한 판이 영영 못 닫힌다."""
+    import inspect
+    from system import sys_recovery
+
+    src = inspect.getsource(sys_recovery)
+    i = src.index("ref.owner_incomplete = True")
+    seg = src[max(0, i - 900):i + 500]
+    assert "_e2e_ok" in seg, "복구가 전수 검증 통과 여부를 보지 않는다"
+    assert "not _e2e_ok" in seg, "검증이 선 판까지 미완으로 되돌린다"

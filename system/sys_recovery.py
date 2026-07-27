@@ -587,8 +587,17 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     # (2) SYS 자동 이어가기(_auto_continue_owner)가 last_work_body 원문으로 owner를 직접 재개(리더 재작문·드리프트 차단).
     # [완료 화해(2026-06-23, 사용자)] owner가 *이미 인도*했으면(owner_delivered 영속) 복구가 미완으로 잡지
     # 않는다 — 인도 사실이 살아있으니 '이어서 끝내라'를 또 요구하지 않고 마감 가능(인도 핸드셰이크 반복 차단).
-    if int(snap.get("owner") or 0) and not snap.get("owner_delivered"):
+    # [전수 검증이 선 판은 미완으로 되돌리지 않는다(2026-07-27, U-067 실측)] 이 재설정은 '작업
+    # 도중 끊긴 판'을 위한 것이다. 그런데 Task 경계 전수 검증(e2e_pass)이 이미 서 있으면 산출물은
+    # 증거로 완성이 증명된 상태다 — 그때도 미완으로 되돌리면 재개할 때마다 같은 표식이 다시 서서
+    # **0결함으로 통과한 판이 영영 못 닫힌다**(실측: 마감 3회 거부 뒤 파킹). 검증이 대리 신호를 이긴다.
+    _e2e_ok = str(((proj or {}).get("wrapup_state") or {}).get("verdict") or "") == "e2e_pass"
+    if int(snap.get("owner") or 0) and not snap.get("owner_delivered") and not _e2e_ok:
         ref.owner_incomplete = True
+    elif _e2e_ok:
+        ref.owner_incomplete = False
+        if int(snap.get("owner") or 0):
+            ref.owner_delivered = True
     # [정밀 복구 — 가장 깊은 워커 재개(#7)] 전체 체인(active_chain)이 있으면, 재개 owner를 *가장 깊은 활성
     # 워커*로 덮어쓴다 — 레벨1 owner가 아니라 끊긴 그 깊이(예: 8단 체인 끝의 디자이너)에서 재개해 깊은
     # 전문가 작업이 리더로 튀지 않게. last_work_body에 그 깊이 원문 + 체인 경로를 실어, #3의 _auto_continue_
