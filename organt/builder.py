@@ -148,6 +148,16 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         # 세션이 안 깨진다(카빙 폴더는 원 cwd의 하위라 파일 쓰기 범위는 동일, run은 flow.workspace 사용).
         # 라이브 관측: cwd가 바뀐 리더 이어가기가 'No conversation found'로 12회 전부 헛돈 뒤 미완 종료.
         cwd = pinned_cwd(state_path) or cwd
+        # [도구 표면 관측(2026-07-27)] GPT 경로는 도구가 MCP로 붙어 보이지 않아, 봇이 도구를
+        # 안 부를 때 '없어서'인지 '안 해서'인지 구분할 수 없었다(추정으로 판을 태움). 이 층은
+        # system을 참조해도 되므로 여기서 flow.log에 연결한다(system→organt 역참조 금지).
+        try:
+            from .codex_mcp_bridge import set_turn_tools_sink as _tt_sink
+            if getattr(flow, 'log', None):
+                _tt_sink(lambda names, _f=flow: _f.log(
+                    'turn_tools', n=len(names), close=('complete_task' in names)))
+        except Exception:
+            pass
         _bopts = dict(
             cwd=cwd, allowed_tools=allowed, mcp_servers={"guide": server}, max_turns=turns,
             hooks={

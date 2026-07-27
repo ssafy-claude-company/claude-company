@@ -172,6 +172,14 @@ _PORT_POOL = None
 # 단, milestone 도구 표면에서는 run만 release/e2e SYS receipt를 발급할 수 있으므로 아래 필터가
 # 예외로 노출한다. 네이티브 셸은 같은 검사를 실행해도 receipt를 만들 수 없다.
 _CODEX_TOOL_DENY = {"run"}
+# 턴 도구 표면 관측 훅 — sys_core가 flow.log로 연결한다(미연결이면 no-op).
+_TURN_TOOLS_SINK = None
+def set_turn_tools_sink(fn):
+    global _TURN_TOOLS_SINK
+    _TURN_TOOLS_SINK = fn
+def _log_turn_tools(names):
+    if _TURN_TOOLS_SINK:
+        _TURN_TOOLS_SINK(names)
 # 이 표식들은 milestone의 모든 실질 턴 도구 표면에 있다. 따라서 run은 e2e 직전뿐 아니라
 # 자동 release 검증이 백로그 소진 경계에서 시작될 수 있는 milestone 실질 턴 전체에 노출된다.
 # 실제 실행 권한은 run 핸들러의 workspace/단일활성/봉인/receipt/권한강등 게이트가 결정한다.
@@ -519,6 +527,14 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
     async with get_port_pool().lease() as port:
         bridge = _new_bridge(port)
         bridge.set_tools(turn_tools)
+        # [도구 표면 관측(2026-07-27)] GPT 경로는 도구가 MCP로 붙어 눈에 안 보인다 — 봇이 도구를
+        # 안 부를 때 '없어서'인지 '안 해서'인지 구분할 수 없어 추정으로 판을 태웠다. 턴마다 실제
+        # 실린 도구 수·핵심 도구 유무를 남긴다(이름 전체는 소음이라 개수 + 관심 도구만).
+        try:
+            _names = sorted(getattr(t, "name", "") for t in turn_tools)
+            _log_turn_tools(_names)
+        except Exception:
+            pass
         try:
             await bridge.start()
             return await _run_codex_process(
