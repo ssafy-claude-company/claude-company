@@ -99,3 +99,34 @@ def test_미선언_크로스레포_import_없음():
     assert not undeclared, (
         "미선언 크로스레포 import(seam이 계약 없이 넓어짐):\n" + "\n".join(undeclared)
         + "\n→ 정당한 계약이면 tests/test_contracts.py의 CONTRACT에 추가하라.")
+
+
+def test_구조와_가르침은_함께_간다_마감권한():
+    """[지식↔구조 동반 진화(2026-07-27, 사용자: '지식 증류나 구조적 안정성은 같이 발전해야')]
+
+    오늘 실측한 실패 축: 코드에서 '리더 전용 마감'을 없앴는데 **봇이 읽는 문장**은 그대로여서,
+    권한이 열렸는데도 8시간 동안 complete_task 호출이 0회였다(관문 거절조차 0). 구조가 움직이면
+    가르침도 같이 움직여야 하고, 어긋나면 여기서 착지가 막힌다.
+
+    계약: 마감 권한이 자리에 묶여 있지 않다면(_holds_completion이 역할을 안 가림),
+    봇 대면 문구도 '리더가 마감한다'고 가르치면 안 되고, '누구나 호출 가능'을 가르쳐야 한다.
+    """
+    import inspect
+    from system import guide_tools, permissions, sys_prompt
+
+    src = inspect.getsource(guide_tools._holds_completion)
+    role_gated = "role ==" in src and "return True" not in src
+    if role_gated:
+        return   # 자리에 묶는 설계로 되돌렸다면 이 계약은 적용되지 않는다(그때는 문구도 그래야 맞음)
+
+    # ① 도구 안내가 '리더가 마감'이라 가르치면 안 된다
+    # 주석은 설명이라 가르침이 아니다 — 봇에게 실제로 나가는 문자열만 본다.
+    _src = inspect.getsource(permissions)
+    _live = "\n".join(l for l in _src.splitlines() if not l.lstrip().startswith("#"))
+    assert not __import__("re").search(r"리더가[^\n]{0,40}complete_task", _live), \
+        "도구 안내가 아직 '리더가 마감한다'고 가르친다 — 구조(누구나 마감)와 어긋남"
+
+    # ② 전원 프롬프트가 '마감은 누구나'를 가르쳐야 한다
+    keys = {k for k, _p, _t in sys_prompt.PRINCIPLE_SECTIONS}
+    assert "closing_is_everyones" in keys, \
+        "마감 권한이 열렸는데 전원 프롬프트에 그 사실을 가르치는 항목이 없다"
