@@ -913,3 +913,38 @@ def test_마커_안전망_저장소판정을_비껴간_스테일도_새세션(mo
     assert out == "기획 이어서 완료" and calls["n"] == 2          # 1회 마커 → 즉시 새 세션 성공
     assert o.session_id == "sid-new"                              # 죽은 세션 폐기·새 세션 영속
     assert _json.loads(st.read_text(encoding="utf-8"))["session_id"] == "sid-new"
+
+
+def test_봇_샌드박스에서_임시공간과_브라우저검증이_된다(tmp_path):
+    """[2026-07-26 U-063 실측] 봇 샌드박스의 tmpfs가 root 0755로 생겨 권한강등된 봇이 임시 디렉터리를
+    하나도 못 만들었다 — 임시파일을 쓰는 보통 도구가 전부 죽고(브라우저 검증 포함), 봇은 원인을 못 보니
+    검증을 포기하고 '서버만 띄우는' 비검증 명령으로 우회하다 계획 단계에서 교착했다(게임 판 U-063).
+    화면 조건을 스스로 실증할 수 있어야 파이프라인이 '눈으로 보는 목표'를 다룰 수 있다."""
+    import asyncio, os, shutil
+    import pytest
+    if os.geteuid() != 0 or not shutil.which("bwrap"):
+        pytest.skip("격리 실행(bwrap+root) 환경에서만 의미 있는 계약")
+    from system.guide_tools import run_workspace_command
+
+    (tmp_path / "index.html").write_text(
+        '<!doctype html><meta name=viewport content="width=device-width">'
+        '<body style="margin:0"><div id=start style="height:200px">시작</div></body>',
+        encoding="utf-8")
+    (tmp_path / "verify_ui.py").write_text(
+        "from playwright.sync_api import sync_playwright\n"
+        "import sys, pathlib\n"
+        "with sync_playwright() as p:\n"
+        "    b = p.chromium.launch()\n"
+        "    pg = b.new_page(viewport={'width':360,'height':800})\n"
+        "    pg.goto('file://' + str(pathlib.Path('index.html').resolve()))\n"
+        "    ok = pg.is_visible('#start') and not pg.evaluate(\n"
+        "        'document.body.scrollHeight > window.innerHeight')\n"
+        "    b.close()\n"
+        "sys.exit(0 if ok else 1)\n", encoding="utf-8")
+
+    ok_tmp = asyncio.run(run_workspace_command(
+        str(tmp_path), "mkdir -p /tmp/probe.$$ && echo TMP_OK"))
+    assert "TMP_OK" in (ok_tmp[2] or ""), ok_tmp      # 임시공간을 쓸 수 있다
+
+    res = asyncio.run(run_workspace_command(str(tmp_path), "python3 verify_ui.py"))
+    assert res[1] == 0, res                            # 화면 조건을 봇이 스스로 판정한다

@@ -186,14 +186,19 @@ def _prepare_run_exec(workspace, command):
         bwrap,
         "--ro-bind", "/", "/",
         "--tmpfs", "/root",
-        "--tmpfs", "/tmp",
-        "--tmpfs", "/var/tmp",
+        # [봇 임시공간 봉합(2026-07-26, U-063 실측)] 종전 tmpfs는 root 소유 0755로 생겨, 권한강등된
+        # 봇(ORGANT_RUN_USER)이 **임시 디렉터리를 하나도 못 만들었다**. 브라우저 검증뿐 아니라 임시
+        # 파일을 쓰는 보통 도구가 전부 EACCES로 죽었고(실측: playwright `mkdtemp '/tmp/...'` 거부),
+        # 봇은 원인을 못 보니 검증을 포기하고 약한 명령으로 우회했다(U-063 계획 교착의 실질 뿌리).
+        # 이건 샌드박스 전용 tmpfs라 호스트 /tmp와 무관 — 표준 1777로 되돌린다.
+        "--perms", "01777", "--tmpfs", "/tmp",
+        "--perms", "01777", "--tmpfs", "/var/tmp",
         "--tmpfs", "/run",
         "--dev", "/dev",
         "--proc", "/proc",
         "--dir", sandbox_ws,
         "--bind", real_ws, sandbox_ws,
-        "--dir", "/tmp/npm-cache",
+        "--perms", "0777", "--dir", "/tmp/npm-cache",
     ]
     # 라이브 venv의 shebang/interpreter는 /root/ClaudeCompany/.venv를 가리킨다. host /root는
     # 숨기되 이 비밀 없는 실행환경만 읽기 전용으로 다시 노출한다.

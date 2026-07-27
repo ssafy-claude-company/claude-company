@@ -2529,7 +2529,20 @@ def _milestone_verifier_errors(flow, entries, proposed_phases=None):
             "마일스톤 완수조건은 회의가 비준한 exact executable verifier command여야 합니다 "
             "(자연어 절차·나중 QA의 임의 명령 제안은 release 증거가 될 수 없음). "
             "예: `pytest -q tests/test_feature.py`, `python3 verify_feature.py`, "
-            "`curl -fsS https://host/health`. 미달: "
+            "`curl -fsS https://host/health`. "
+            # [화면 조건의 실증 경로 안내(2026-07-26, U-063 실측)] 눈으로 보는 조건(첫 화면 진입·
+            # 스크롤 없음·요소 가시성·뷰포트별 배치)에서 봇들은 '실행 가능한 명령'을 못 떠올려
+            # `http.server`(그냥 띄우기 — 아무것도 판정 안 함) 같은 비검증 명령으로 우회하다 계획
+            # 단계에서 교착했다. 이 판에는 headless 브라우저가 이미 갖춰져 있다 — 설치·다운로드
+            # 없이 스크립트 한 개를 만들어 판정시키면 되고, 그 스크립트는 지금 없어도 된다
+            # (이번 주기 백로그로 만들면 된다 — 명령만 정확히 못 박으면 비준된다).
+            "**화면으로 보는 조건**(진입 속도·스크롤 없음·요소 가시성·모바일/데스크톱 배치)은 "
+            "headless 브라우저로 판정하세요 — 이 작업공간에는 playwright와 브라우저가 이미 설치돼 "
+            "있습니다(설치·네트워크 불필요). 페이지를 열어 조건을 확인하고 통과면 exit 0, 실패면 "
+            "non-zero로 끝나는 스크립트를 하나 만들어 그 실행 명령을 비준하세요"
+            "(예: `python3 verify_ui.py`). 스크립트가 아직 없어도 명령만 정확하면 비준됩니다 — "
+            "만드는 일은 이번 주기 백로그로 넣으세요. 서버를 띄우기만 하는 명령"
+            "(`python3 -m http.server …`)은 아무것도 판정하지 않아 실증이 아닙니다. 미달: "
             + " · ".join(x[:60] for x in non_exact[:6])
         )
 
