@@ -2546,17 +2546,22 @@ def test_마일스톤회의_완수조건_이번주기_스코프(monkeypatch):
     assert "'이번 주기' 범위의 조건만" in draft
 
 
-def test_마일스톤회의_명시개수와_단일주기_검증귀속_코칭():
-    """[U-056] `구현 → 최종 검증`을 두 주기로 오해하지 않게 세 프롬프트 표면의 계약을 고정."""
+def test_마일스톤회의_주기는_써볼수있는_완성물_공정쪼개기_금지():
+    """[U-056 → 계약 정정(2026-07-27, 사용자: 'Task는 최대한으로, 마일스톤은 주기마다 산출 가능한
+    최소 단위로')] 종전 계약은 '쪼개지 마세요'만 고정해, 설계 정본("Milestone = Task를 큰 주기로
+    나눈다")과 반대로 주기가 1개로 수렴했다 — 그러면 그 하나가 Task 전부를 증명해야 해서 마일스톤이
+    최대가 되고, 사용자는 끝날 때까지 아무것도 못 본다. 금지 대상은 **공정 쪼개기**(뒤 항목이 혼자
+    써볼 수 없는 것)이지 사다리가 아니다. 세 표면에 같은 계약이 실린다."""
     from system.rule.milestone import stage_agenda, stage_draft_template, stage_frame
 
     _, agenda = stage_agenda("milestone")
     surfaces = (agenda, stage_draft_template("milestone", "안건"), stage_frame("milestone"))
     for text in surfaces:
-        assert "`→`로 나뉜 각 항목은 각각 별도 마일스톤 주기" in text
-        assert "마일스톤 수를 명시하면 그 수를 그대로 보존" in text
-        assert "1개면 `단계:`에 한 항목만" in text
-        assert "`구현 → 최종 검증`처럼 두 주기로 쪼개지 마세요" in text
+        assert "`→`로 나뉜 각 항목은 각각 별도 주기" in text
+        assert "사용자가 실제로 열어서 써볼 수 있는 완성물" in text   # 주기의 정의
+        assert "나눌수록 좋습니다" in text                            # 사다리 복원
+        assert "한 산출물의 공정" in text                             # 금지 대상은 이것뿐
+        assert "주기 수를 명시하면 그 수를 그대로 보존" in text
 
 
 def test_마일스톤회의_첫주기_산출물형태_불강제(monkeypatch):

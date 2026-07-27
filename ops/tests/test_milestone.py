@@ -1727,3 +1727,25 @@ def test_비준_반려는_거부된_명령을_보여준다():
     joined = "\n".join(errs)
     assert "npm run verify" in joined, "봇이 써넣은 명령을 안 보여준다(같은 명령을 다시 낸다)"
     assert "초행 사용자가" in joined, "어느 조건이 걸렸는지 안 보여준다"
+
+
+def test_목표회의는_요청을_좁히지_말라고_말한다():
+    """[2026-07-27 사용자: 'Task 자체는 할 수 있는 최대한으로 잡고'] 종전 안내는 '구체적으로'만
+    요구해 열린 요청("게임 만들어줘")이 최소 산출물로 수렴했다(실측: "1인용 단일 화면 미니게임 1종").
+    Task는 목적지이고, 작게 가는 것은 마일스톤 주기가 맡는다 — 목표를 줄이는 게 아니라 순서를 나눈다."""
+    from system.rule.milestone import stage_agenda
+
+    _, agenda = stage_agenda("goal")
+    assert "갈 수 있는 곳까지" in agenda, "Task를 최대로 잡으라는 자리가 없다(요청이 좁혀진다)"
+    assert "도달 순서를 나눕니다" in agenda, "작게 가는 책임이 마일스톤이라는 설명이 없다"
+
+
+def test_목표회의는_완수조건이_명령_부채가_됨을_예고한다():
+    """[2026-07-27 U-068 실측] 여기 적은 완수조건은 그대로 GOAL 잠금이 되어 마지막 주기에서
+    **실행 가능한 명령 한 줄**로 실증해야 한다. 그 예고가 없어 회의는 자연어 절차로 통과시키고,
+    계획 단계에서 비준 부채로 두 번 파킹했다."""
+    from system.rule.milestone import stage_agenda
+
+    _, agenda = stage_agenda("goal")
+    assert "명령 한 줄" in agenda, "나중에 돌아올 명령 부채를 예고하지 않는다"
+    assert "다시 쓰세요" in agenda, "지금 고칠 길을 알려주지 않는다"
