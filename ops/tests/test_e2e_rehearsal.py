@@ -249,3 +249,93 @@ def test_rehearsal_flag_off_tools_absent():
     g = FakeGuide()
     f = _flow(g)
     assert "e2e_open" not in _tools(f, 12, "member")
+
+
+def test_e2e_통과_뒤_마감까지_관통한다(onflag, tmp_path):
+    """[깨끗한 판 예행(2026-07-27)] 라이브 한 번을 낭비할 수 없어, e2e 통과 **다음**을 대본으로 먼저
+    관통한다 — 마감 관문 전체를 실 도구 표면으로 통과시켜 Task가 실제로 닫히는지 본다.
+    U-067에서는 여기서 19번 멎었다. 픽스처의 관문 우회를 **끄고** 돌린다(우회한 채 통과는 예행이 아님).
+    """
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.milestone import iter_verify, open_subtask, wrapup_done
+
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    f.origin_request = "버튼 누르면 카운트가 1씩 증가하는 웹페이지"
+    # 마감 관문을 실제로 통과시키는 게 이 예행의 목적 — 기본 우회를 끈다.
+    for _bypass in ("acceptance_checked", "percept_checked", "existence_checked", "gap_checked"):
+        setattr(f, _bypass, False)
+    (tmp_path / "browser_check.py").write_text("print('verified')\n", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<h1>counter</h1>\n", encoding="utf-8")
+    (tmp_path / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n")     # 실재 자산(지각·시각 축)
+    events = []
+    f.log = tallying_logger(f, lambda ev, **kw: events.append((ev, kw)))
+
+    lead = _tools(f, 11, "leader")
+    _drive(lead, "create_task", {"title": "카운터 웹페이지", "members": "12"})
+    assert f.current is not None, "Task가 열리지 않았다(예행 전제 실패)"
+    # 팀 판의 GOAL·수용 계약도 회의 표결 몫이다(개인 set_goal 거부) — 회의 등록기가 쓰는 값을
+    # 그대로 세운다. 이 예행이 보려는 것은 회의 기계가 아니라 마감 관문이다.
+    f.current.status.goal = "버튼을 누르면 화면 숫자가 1씩 오르는 웹페이지 1종"
+    f.current.acceptance = "- 조건: 버튼 클릭이 화면 숫자를 올린다 | 실증: python3 browser_check.py"
+
+    # 팀 판의 마일스톤 확정은 회의 표결 몫이라(개인 등록 거부) 규칙 API로 같은 결과를 만든다 —
+    # 이 예행이 보려는 것은 회의 기계가 아니라 **마감 관문**이다.
+    from system.rule.milestone import open_milestone
+    _ms0 = open_milestone(
+        f, "카운터 웹페이지",
+        [{"desc": "버튼 클릭이 화면 숫자를 올린다", "verify": "python3 browser_check.py"}])
+    assert not isinstance(_ms0, str), f"마일스톤 개설 실패: {_ms0}"
+    ms = f.milestones[0]
+    st = open_subtask(f, ms, "화면 구현", [])
+    relay_for(f, st)._pool["B1"] = Backlog("B1", "화면 구현", 12, status="done", assignee=12)
+    st.status = "done"
+    # GOAL 잠금 조건(수용 계약)이 최종 주기로 승격되므로 그것까지 함께 실증한다 — 라이브와 같은 모양.
+    from system.rule.milestone import promote_final_locked_criteria
+    promote_final_locked_criteria(f, checkpoint=False)
+    # 잠금 조건은 SYS 영수증만 인정한다(라이브 설계) — 자동 검증이 봉인하는 필드를 그대로 싣는다.
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import workspace_artifact_stamp, write_revision
+    _ep, _st = write_revision(f), workspace_artifact_stamp(f)
+    _rows = []
+    for c in ms.criteria:
+        r = {"desc": c.desc, "passed": True, "evidence": "exit=0 `python3 browser_check.py`"}
+        if getattr(c, "release_lock", False):
+            r.update({"_sys_run_receipt": r["evidence"], "_sys_run_receipt_id": "auto-lock-test",
+                      "_verified_command": "python3 browser_check.py",
+                      "_verified_command_hash": verifier_command_hash("python3 browser_check.py"),
+                      "_verified_spec_hash": verifier_spec_hash(c.desc, c.verify),
+                      "_verified_write_epoch": _ep, "_verified_artifact_stamp": _st})
+        _rows.append(r)
+    passed, _note = iter_verify(f, ms, _rows)
+    assert passed, f"주기 충족 실패 — {str(_note)[:300]} / 조건={[(c.desc[:20], c.passed) for c in ms.criteria]}"
+    assert wrapup_done(f, ms) == "done"
+
+    qa = _tools(f, 12, "member")
+    assert "e2e 개시" in _drive(qa, "e2e_open")
+    _drive(qa, "e2e_scope", {"surfaces": "GET / || python3 browser_check.py",
+                             "arcs": "기동→클릭→숫자 증가 || python3 browser_check.py"})
+    for it in f.e2e_checklist:
+        _drive(qa, "e2e_result", {"item": it["id"], "ok": "pass", "observed": "OK",
+                                  "evidence": "검사 출력", "receipt": _run_receipt(qa, it)})
+    assert "e2e_pass" in _drive(qa, "e2e_finish")
+
+    # ── 여기부터가 이번 예행의 목적: 마감이 실제로 닫히는가 ──
+    assert f.current.verified is True, "전수 검증이 실행 사실로 안 남는다"
+    assert f.current.owner_incomplete is False, "옛 미완 표식이 안 풀린다"
+
+    out = ""
+    for _ in range(6):                       # 보류형 관문은 '보고 다시 호출'이 정상 경로
+        # [최악 조건] 봇이 특별한 회계를 **안 쓴다**고 보고 민맹 result만 보낸다 — 실판에서 관측된
+        # 모습이 정확히 이것이다(관문이 요구하는 헤더를 아무도 안 적었다). 구조가 남긴 증거
+        # (e2e 영수증·백로그 장부)만으로 닫혀야 이번 라이브가 한 번에 끝난다.
+        out = _txt(_drive(qa, "complete_task", {
+            "result": "완료: 카운터 웹페이지 — 전수 검증 0결함",
+            # 시각 축은 마감 구동부가 사실대로 채워 넣는 인자다(스크린샷 영수증이 없으면 미검증으로
+            # 정직히 명시) — 라이브 마감도 이 경로로 닫혔다. 나머지는 최악 그대로 둔다.
+            "visual_evidence": "[시각 미검증: 자동 검증(헤드리스)만 수행 — 사람 시각 확인 필요]",
+        }))
+        if f.current is None:
+            break
+    assert f.current is None, f"마감이 끝내 안 닫혔다 — 마지막 사유: {out[:500]}"
