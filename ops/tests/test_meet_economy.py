@@ -2823,3 +2823,21 @@ def test_운영_안내는_봇의_상황요약에_들어가지_않는다():
     assert "중지됨" not in out, "종결 표기가 대화로 섞인다"
     assert "사람 조치 필요" not in out, "목록에 없던 운영 안내가 새어 들어간다"
     assert "게임 만들어줘" in out, "사용자의 실제 요청까지 걸러졌다"
+
+
+def test_이의를_지워도_등록검사가_막으면_완성이_아니다():
+    """[2026-07-27 U-068 실측] 완성 판정이 '빈칸 0·이의 0'만 봐서, 봇들이 기계검사 이의를 **줄을
+    지워** 해소 처리하고 명령은 그대로 뒀다(`npm run verify …` — 이 판엔 npm이 없다). 회의는
+    '다 됐다', 등록 관문은 '아직'으로 갈려 표결→거부→재주입이 제자리를 돌다 무진전 컷 →
+    깨끗한 판이 계획 단계에서 두 번 파킹했다. 완성 판정과 등록 검사는 같은 진실원이어야 한다."""
+    import inspect
+    from system.rule import communication
+
+    src = inspect.getsource(communication)
+    i = src.index("draft_blocked_by_preflight")
+    seg = src[max(0, i - 1500):i + 200]
+    assert "stage_preflight" in seg, "완성 판정이 등록에서 쓸 검사를 보지 않는다"
+    assert "[이의 @형식]" in seg, "검사 실패가 회의로 되돌아오지 않는다(봇이 알 길이 없다)"
+    # 완성 컷 직전에 걸려야 한다 — 표결까지 간 뒤 거부되면 같은 낭비가 반복된다
+    j = src.index('flow.log("draft_ready"')
+    assert i < j, "완성 선언 뒤에 검사하면 표결→거부 루프가 그대로다"

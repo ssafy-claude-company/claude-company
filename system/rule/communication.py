@@ -651,6 +651,28 @@ async def meet(flow, me_id, args):
                     _nd = (_dtxt[:_ref0].rstrip("\n") + "\n" + _line0 + "\n" + _dtxt[_ref0:]) if _ref0 > 0 else (_dtxt.rstrip("\n") + "\n" + _line0 + "\n")
                     _dwrite(flow, "DRAFT.md", _nd)
                     _dtxt = _nd; _ph, _obj = _ms_dstat(_dtxt)
+                # [완성 판정은 실제로 막는 검사를 본다(2026-07-27, U-068 실측)] 종전엔 '빈칸 0·이의 0'
+                # 만 보고 완성으로 판정했다. 그런데 봇들은 기계검사 이의를 **줄을 지워서** 해소 처리하고
+                # 명령은 그대로 뒀다 — 회의는 '다 됐다', 등록 관문은 '아직'으로 갈려 표결→거부→재주입이
+                # 제자리를 돌다 무진전으로 컷됐다(깨끗한 판이 계획 단계에서 두 번 파킹). 등록에서 쓸
+                # 검사를 여기서 같이 봐 하나의 진실원으로 만든다 — 실패면 그 사유를 이의로 되돌려
+                # 회의가 계속 일하게 한다(위 필수 키 부재와 같은 방식).
+                if _ph == 0 and _obj == 0 and _dtxt.strip():
+                    try:
+                        from .milestone import stage_preflight as _spf
+                        _pf_errs = [e for e in (_spf(_stage, _dtxt, flow=flow) or []) if str(e).strip()]
+                    except Exception:
+                        _pf_errs = []
+                    if _pf_errs:
+                        _ref1 = _dtxt.find("\n## 참고")
+                        _lines1 = "\n".join(f"> [이의 @형식] {str(e).strip()}" for e in _pf_errs[:3])
+                        _nd1 = ((_dtxt[:_ref1].rstrip("\n") + "\n" + _lines1 + "\n" + _dtxt[_ref1:])
+                                if _ref1 > 0 else (_dtxt.rstrip("\n") + "\n" + _lines1 + "\n"))
+                        _dwrite(flow, "DRAFT.md", _nd1)
+                        _dtxt = _nd1
+                        _ph, _obj = _ms_dstat(_dtxt)
+                        if flow.log:
+                            flow.log("draft_blocked_by_preflight", stage=str(_stage), n=len(_pf_errs))
                 try:
                     flow.note_activity(0, f"🗳 결론 DRAFT — 빈칸 {_ph} · 이의 {_obj}", force=True)
                 except Exception:
