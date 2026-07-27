@@ -965,7 +965,7 @@ async def meet(flow, me_id, args):
                 return
             try:
                 _dt = str(_dread(flow, "DRAFT.md") or "")
-                _ol = f"> [이의 @등록] {str(note)[:150]}"
+                _ol = f"> [이의 @등록] {str(note)[:900]}"
                 if _ol[:48] in _dt:
                     return
                 _rf = _dt.find("\n## 참고")
@@ -1331,7 +1331,7 @@ async def meet(flow, me_id, args):
                         # 기록만 중복 억제한다.
                         _pre_new = [e for e in _pre_errs if e[:40] not in _dtxt]
                         if _pre_new:
-                            _blk0 = "\n".join(f"> [이의 @형식] {e[:200]}" for e in _pre_new[:6])
+                            _blk0 = "\n".join(f"> [이의 @형식] {e[:900]}" for e in _pre_new[:6])
                             _ref0 = _dtxt.find("\n## 참고")
                             if _ref0 > 0:
                                 _dwrite(flow, "DRAFT.md", _dtxt[:_ref0].rstrip("\n") + "\n" + _blk0 + "\n" + _dtxt[_ref0:])

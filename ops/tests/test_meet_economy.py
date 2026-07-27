@@ -2702,3 +2702,28 @@ def test_팀에_독립검증_적합자가_없으면_구조가_충원한다(monke
     _st = f.milestones[-1].subtasks[-1]
     _bl = f.backlog_relays[_st.st_id].backlogs
     assert _bl[-1].submitter == 14        # 검증 항목은 충원된 QA에게 — 제작자(12)와 분리
+
+
+def test_형식_반려문은_해법까지_잘리지_않고_전달된다():
+    """[2026-07-27 U-063·U-064 실측] 반려 사유는 DRAFT 이의로 걸려 봇의 다음 wake에 실린다 — 그런데
+    150~200자에서 잘려, 봇은 **불평만 받고 '어떻게 고치라'는 해법은 못 받았다**. 화면 조건의 실증
+    경로(headless 브라우저로 판정 스크립트) 안내가 통째로 사라져 봇들이 '서버 띄우기'·'계획서 grep'
+    같은 비검증 명령으로 우회하다 계획 단계에서 두 판 연속 교착했다. 안내는 끝까지 전달돼야 한다."""
+    import inspect
+    from system.rule import communication as C
+    from system.rule.milestone import _verify_is_executable, looks_like_verification_command
+
+    src = inspect.getsource(C)
+    assert '"> [이의 @형식] {e[:900]}"' in src, "형식 반려문 클립이 해법을 자른다"
+    assert '"> [이의 @등록] {str(note)[:900]}"' in src, "등록 반려문 클립이 해법을 자른다"
+
+    # 두 반려문 모두 화면 조건의 실증 경로를 담고, 900자 안에 들어간다.
+    from system.rule.milestone import _milestone_verifier_errors, gate_criteria
+    for fn in (_milestone_verifier_errors, gate_criteria):
+        body = inspect.getsource(fn)
+        assert "headless" in body, f"{fn.__name__}에 화면 조건 실증 경로 안내가 없다"
+
+    # 게이트 자체는 건전해야 한다 — 비검증 명령은 계속 거부(거짓 완료 차단).
+    assert not looks_like_verification_command('rg -n "설계" .collab/T-1/DRAFT.md')
+    assert not looks_like_verification_command("python3 -m http.server 4173 --directory public")
+    assert looks_like_verification_command("python3 verify_ui.py")
