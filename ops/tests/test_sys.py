@@ -8119,3 +8119,22 @@ def test_구조는_못_여는_마감관문에서_손을_뗀다():
     j = src.index("마감 관문 보류")
     assert "complete_task) 호출은 당신이 합니다" in src[j:j + 600], \
         "누가 마감을 불러야 하는지 봇에게 알리지 않는다"
+
+
+def test_마감턴은_전용_표면으로_연다():
+    """[2026-07-27 U-067 실측] 도구 26개가 열린 마감 턴에서 봇 6명이 연속으로 '마감하면 됩니다'만
+    말하고 **아무도 complete_task를 부르지 않았다**(노출은 6턴 내내 True, 호출 0회). 같은 판의 e2e
+    단계는 표면을 그 일에 필요한 것만 남겨 실제로 도구를 쓰게 했다 — 마감도 같은 방식으로 연다.
+    관문이 요구하는 회계·의식적 드롭은 complete_task의 result에 담기므로 표현력은 잃지 않는다."""
+    import inspect
+    from system.guide_tools import make_guide_tools
+    from system.sys_core import Sys
+
+    src = inspect.getsource(make_guide_tools)
+    i = src.index('if mode == "close"')
+    seg = src[i:i + 700]
+    assert '"run", "complete_task"' in seg, "마감 전용 표면이 산출물 확인·마감만 남기지 않는다"
+
+    drive = inspect.getsource(Sys._drive_task_close)
+    assert drive.count('tool_mode="close"') >= 2, \
+        "마감 턴(첫 구동·관문 보류 후)이 전용 표면으로 열리지 않는다"

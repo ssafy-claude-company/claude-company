@@ -1388,6 +1388,15 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         allowed = {"run", "e2e_scope", "e2e_result", "e2e_finish"}
         return [candidate for candidate in tools if candidate.name in allowed]
 
+    if mode == "close":
+        # [마감 전용 표면(2026-07-27, U-067 실측)] 마감 관문 앞에서 봇들이 **할 일을 정확히 말하고
+        # 아무도 부르지 않았다** — 6턴 연속 "마감하면 됩니다"만 남고 호출 0회(도구는 26개 노출돼
+        # 있었다). 같은 판의 e2e 단계는 표면을 그 일에 필요한 것만 남겨 실제로 도구를 쓰게 했다.
+        # 같은 방식: 산출물을 확인하는 run과 마감만 남긴다 — 논의가 선택지로 남아 있지 않게.
+        # (관문이 요구하는 회계·의식적 드롭은 complete_task의 result에 담긴다.)
+        allowed = {"run", "complete_task"}
+        return [candidate for candidate in tools if candidate.name in allowed]
+
     # [완료 권한 = 검수 역할(사용자 2026-07)] acceptance/'done' 판정은 QA의 일 — 종전엔 리더가 독점(complete_task
     # 리더 전용)했다. 리더의 역할은 기획·위임·조율이지 검수가 아니라, QA/PM이 '인수 PASS'로 판정해도 닫을 권한이
     # 없어 계속 검사만 하고 리더는 닫을 권한이 있는데 검증자가 아니라 계속 위임만 하는 무한 루프였다(라이브
