@@ -8162,3 +8162,31 @@ def test_마감턴은_일상대화_분기로_열리지_않는다():
     _sys = SimpleNamespace(bot_info={}, workspace="", projects={}, _info=lambda x: "")
     body = _p(_sys, "오늘 점심 뭐 먹지?", "I", "leader", 11, flow=None)
     assert "도구를 쓰지 마세요" in body, "일상 대화 분기가 사라졌다(잡담에 팀을 소집하게 된다)"
+
+
+def _acc_flow(acc, specs, all_ok=True, verdict="e2e_pass"):
+    from types import SimpleNamespace
+    cl = [{"id": f"c{i}", "spec": sp} for i, sp in enumerate(specs)]
+    res = {f"c{i}": {"ok": all_ok, "evidence": "SYS-RUN exit=0"} for i in range(len(specs))}
+    return SimpleNamespace(
+        wrapup_state={"verdict": verdict}, e2e_checklist=cl, e2e_results=res,
+        log=None, current=SimpleNamespace(acceptance=acc, task_id="T"))
+
+
+def test_수용대조는_e2e가_전부_덮었을_때만_증거로_인정된다():
+    """[2026-07-27 U-067 실측] 수용 관문은 '합의한 좋음 기준이 산출물에 도달했나'를 봇이 하나씩
+    대조하라 요구한다(도장 찍기 방지 — 옳다). 그런데 이 판에선 그 대조를 구조가 이미 했다: 수용
+    기준 두 줄이 각각 e2e 분모 항목이 되어 exact command로 실행되고 SYS receipt로 봉인돼 통과했다.
+    관문이 그걸 못 봐 0결함 판이 마감 앞에서 19번 멎었다. 측정이 대리를 이기되, **한 줄이라도
+    e2e가 안 덮으면 인정하지 않는다** — 그 항목에선 도장 찍기 방지가 온전히 살아 있어야 한다."""
+    from system.rule.task_gates import _acceptance_covered_by_e2e as _cov
+
+    acc = ("- 조건: 처음 온 사용자가 10초 안에 시작한다 | 실증: 브라우저로 확인\n"
+           "- 조건: 모바일 390px에서 잘림 없이 보인다 | 실증: 스크린샷")
+    full = ["조건: 처음 온 사용자가 10초 안에 시작한다",
+            "조건: 모바일 390px에서 잘림 없이 보인다"]
+
+    assert _cov(_acc_flow(acc, full), acc) == 2, "전부 덮였는데도 봇 대조를 또 요구한다"
+    assert _cov(_acc_flow(acc, full[:1]), acc) == 0, "안 덮인 항목이 있는데 통과시킨다"
+    assert _cov(_acc_flow(acc, full, all_ok=False), acc) == 0, "증거 없는 항목으로 통과시킨다"
+    assert _cov(_acc_flow(acc, full, verdict="e2e_fail"), acc) == 0, "판정 없이 통과시킨다"

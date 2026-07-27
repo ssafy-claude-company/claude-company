@@ -273,6 +273,51 @@ def _gate_visual(flow, args):
         _ckpt(flow)
     return None
 
+def _acceptance_covered_by_e2e(flow, acc: str) -> int:
+    """수용 기준의 각 줄이 **Task 경계 e2e 분모에 그대로 들어가 증거와 함께 통과**했으면 그 수를 반환.
+
+    [2026-07-27, U-067 실측] 수용 관문은 '합의한 좋음 기준이 산출물에 도달했나'를 봇이 하나씩
+    대조하라고 요구한다 — 봇이 반사적으로 도장 찍던 것을 막으려고 생긴 옳은 관문이다. 그런데 이
+    판에서는 그 대조를 **구조가 이미 했다**: 수용 기준 두 줄이 각각 e2e 분모 항목이 되어 exact
+    command로 실행되고 SYS receipt로 봉인돼 통과했다(condition:3·4). 그런데도 관문이 그 사실을
+    못 봐, 0결함으로 통과한 판이 마감 앞에서 19번 재개하며 멎었다.
+
+    측정이 대리를 이긴다 — 단, **e2e가 덮지 않은 항목이 하나라도 있으면 0을 반환**해 관문이 그대로
+    봇에게 대조를 요구한다(도장 찍기 방지라는 원래 목적은 그 항목들에서 온전히 살아 있다).
+    """
+    if str(((getattr(flow, "wrapup_state", None) or {}).get("verdict") or "")) != "e2e_pass":
+        return 0
+    checklist = getattr(flow, "e2e_checklist", None) or []
+    results = getattr(flow, "e2e_results", None) or {}
+    if not checklist or not results:
+        return 0
+    import re as _re_a
+
+    def _norm(t):
+        return _re_a.sub(r"\s+", " ", str(t or "")).strip()
+
+    passed_specs = []
+    for item in checklist:
+        if not isinstance(item, dict):
+            return 0
+        row = results.get(str(item.get("id") or ""))
+        if not isinstance(row, dict) or not row.get("ok") or not str(row.get("evidence") or "").strip():
+            continue
+        passed_specs.append(_norm(item.get("verifier_spec") or item.get("spec")))
+    if not passed_specs:
+        return 0
+
+    covered = 0
+    for line in str(acc or "").splitlines():
+        head = _norm(line.lstrip("-· ").split("|")[0])
+        if len(head) < 12:                     # 너무 짧은 줄은 우연 일치 위험 — 대조로 치지 않는다
+            continue
+        if not any(head in spec for spec in passed_specs):
+            return 0                           # 한 줄이라도 안 덮이면 관문은 그대로 봇에게
+        covered += 1
+    return covered
+
+
 def _gate_acceptance(flow, args):
     """[게이트] 수용 계약 마감 바인딩 — 회의 전문성이 '코드'에 도달했는가(2026-06-15 P-015 규명). verified·percept·
     contrib·cross-check는 각각 '실행됨/실재 에셋/잠수 직군 실작업/홀리스틱 좋음'을 보지만, **회의에서
@@ -310,6 +355,12 @@ def _gate_acceptance(flow, args):
             r"\[\s*수용\s*기준\s*(?:N\s*/?\s*A|없음|면제|불필요)\s*[:：]?\s*\]?[ \t]*\S{2,}", _result, re.I))
         _accounted = _acc_hdr or _acc_escape
         acc = (flow.current.acceptance or "").strip()
+        if acc and not _accounted:
+            _cov = _acceptance_covered_by_e2e(flow, acc)
+            if _cov:
+                _accounted = True
+                if flow.log:
+                    flow.log("acceptance_covered_by_e2e", task=flow.current.task_id, items=_cov)
         if not _accounted:
             if flow.log:
                 flow.log("acceptance_gate", task=flow.current.task_id, defined=bool(acc))
