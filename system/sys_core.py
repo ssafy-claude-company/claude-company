@@ -2237,10 +2237,14 @@ class Sys:
         ref = flow.current
         if ref is None:
             return False
-        actor = int(getattr(flow, "_e2e_actor", 0) or 0)
+        # [마감 권한 자리(2026-07-27, U-065 실측)] complete_task는 **리더 자격**으로 열린 턴에만
+        # 장착된다(_holds_completion). 첫 판에서 검증 담당을 '작업자' 자격으로 깨웠더니 도구가 없어
+        # 관문 거절조차 없이 세 턴이 조용히 흘렀다(마감 0). 마감은 베턴 보유자(앵커)=리더 자리에서,
+        # 리더 자격으로 연다 — 아래 run_turn의 role도 "leader"여야 도구가 붙는다.
         team = [int(m) for m in (getattr(ref, "team", None) or [])]
-        if actor not in team:
-            actor = int(getattr(flow, "anchor", 0) or 0) or int(getattr(flow, "leader", 0) or 0)
+        actor = int(getattr(flow, "anchor", 0) or 0) or int(getattr(flow, "leader", 0) or 0)
+        if actor not in team and team:
+            actor = int(getattr(flow, "leader", 0) or 0) or team[0]
         # [교차검증 무기한 대기 봉합(2026-07-26, 대기지점 전수 조사)] 마감 관문은 '다른 멤버의 실제
         # 검증 1회'를 하드 의무로 요구하는데(옳다 — 리더 단독 마감이 사용성 결함을 통과시킨 이력),
         # 그 검증은 누군가 자발적으로 맡아야만 올라간다. 아무도 안 맡으면 마감이 영원히 열리지
@@ -2287,7 +2291,7 @@ class Sys:
             "새 구현·새 백로그·재검증을 시작하지 말고, 이 Task를 complete_task로 마감하세요. "
             "마감 관문이 요구하는 산출물·교차검증 인자를 실제 증거로 채워 제출하면 됩니다. "
             "관문이 거절하면 그 사유만 해소하고 다시 마감하세요.",
-            Kind.INFO, "worker",
+            Kind.INFO, "leader",   # 마감 도구는 리더 자격 턴에만 장착된다(_holds_completion)
         )
         if flow.current is None:
             self._log("task_close_complete", by=actor, turn=turn_no)

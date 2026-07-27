@@ -7891,7 +7891,7 @@ def test_e2e통과_뒤_마감을_구조가_구동한다(monkeypatch, tmp_path):
     calls = []
 
     async def _rt(flow, who, body, kind, role, **kw):
-        calls.append((who, body))
+        calls.append((who, body, role))
         flow.current = None            # 봇이 관문을 통과해 실제로 마감함
         return ""
     s.run_turn = _rt
@@ -7911,6 +7911,7 @@ def test_e2e통과_뒤_마감을_구조가_구동한다(monkeypatch, tmp_path):
     f = _F()
     assert _a.run(s._drive_task_close(f)) is True
     assert calls and "complete_task" in calls[0][1]          # 마감 전용 턴이 실제로 나갔다
+    assert calls[0][2] == "leader"                           # 리더 자격이라야 마감 도구가 붙는다
     assert any(e["event"] == "task_close_complete" for e in s.flow_log), s.flow_log
 
 
