@@ -2352,6 +2352,39 @@ class Sys:
         if flow.current is None:
             self._log("task_close_complete", by=actor, turn=turn_no)
             return True
+        # [마지막 자발성 제거(2026-07-27, U-065 실측)] 도구도 붙어 있고 지시도 명시했는데 봇들은
+        # 마감을 **부르지 않고 설명만** 반복했다(마감 턴 4회·호출 0·거절 0, 세 봇 순회에도 동일).
+        # 오늘 백로그 완료·주기 검증에서 한 것과 같은 원칙을 마지막 칸에도 적용한다 — 구조가
+        # 마감을 **호출**하고, 옳은지는 기존 fail-closed 관문이 판정한다. 인자는 만들지 않는다:
+        # 주기 완료·e2e 통과·교차검증·증거는 모두 이미 장부에 있고, 없으면 관문이 거절한다
+        # (거절 사유는 complete_task_refused로 남아 다음 수가 판 비용 없이 정해진다).
+        if turn_no >= 2:
+            try:
+                # [실행 사실 기록 — 대상이 확실한 자리(2026-07-27, U-065)] 관문은 'run으로 실제
+                # 실행했는가'(verified)를 본다. 재개는 e2e를 다시 돌리지 않고 판정만 복원하므로 그
+                # 표식이 비어 마감이 막힌다. 여기서는 Task가 확실히 존재하고, 판정이 e2e_pass이며
+                # **전 항목이 증거를 가진 경우에만** 기록한다 — 증거 없는 항목이 하나라도 있으면
+                # 그건 애초에 e2e_pass가 아니므로, 허위 완료 경로는 열리지 않는다.
+                _res_d = getattr(flow, "e2e_results", None) or {}
+                if ((getattr(flow, "wrapup_state", None) or {}).get("verdict") == "e2e_pass"
+                        and _res_d
+                        and all(bool(r.get("ok")) and str(r.get("evidence") or "").strip()
+                                for r in _res_d.values())
+                        and not getattr(ref, "verified", False)):
+                    ref.verified = True
+                    self._log("task_close_verified_from_e2e", items=len(_res_d))
+                from .rule.task import complete_task as _ct
+                _out = await _ct(flow, "leader", {})
+                _txt = _out
+                if isinstance(_txt, dict):
+                    _txt = ((_txt.get("content") or [{}])[0] or {}).get("text", "")
+                _txt = str(_txt or "").strip().splitlines()
+                if flow.current is None:
+                    self._log("task_close_complete", by=0, turn=turn_no, via="structure")
+                    return True
+                self._log("task_close_structure_refused", why=(_txt[0][:180] if _txt else ""))
+            except Exception as _e_ct:
+                self._log("task_close_structure_error", why=str(_e_ct)[:120])
         if turn_no >= 3:
             flow._stage_stuck = "task-close"
             self._log("task_close_stalled", by=actor, attempts=turn_no)

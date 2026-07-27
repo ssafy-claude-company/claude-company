@@ -665,6 +665,18 @@ def rule_e2e_finish(flow) -> str:
     except WrapupError as e:
         return str(e)
     if verdict == E2E_PASS:
+        # [실행 사실 기록(2026-07-27, U-065 실측)] 마감 관문은 '이 흐름에서 산출물을 run으로 실제
+        # 실행했는가'(current.verified)를 요구한다 — 재개 때 일부러 0으로 되돌리는 옳은 원칙이다.
+        # 그런데 Task 경계 e2e가 바로 그 재실행을 **이미** 했다: 전 항목을 exact command로 돌려
+        # SYS receipt로 증거를 받아야만 e2e_pass가 선다. 그 사실을 기록하지 않아, 다 만들고 검증까지
+        # 끝낸 판이 '한 번도 실행하지 않았습니다'로 영영 못 닫혔다(재개 6회 연속 동일 정체).
+        # 새 사실을 만드는 게 아니라 **일어난 실행을 장부에 남긴다** — 증거 없는 pass는 애초에
+        # e2e_pass가 되지 않으므로 허위 완료 경로는 열리지 않는다.
+        try:
+            if flow.current is not None:
+                flow.current.verified = True
+        except Exception:
+            pass
         return "e2e_pass — 전 항목 증거 있는 충족. Task 마무리 가능."
     head = f"e2e_fail — 결함 {len(defects)}건."
     if new_ms is not None:

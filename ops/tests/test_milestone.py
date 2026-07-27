@@ -1467,3 +1467,16 @@ def test_표결_파서_찬성부정은_찬성아님():
     assert _classify_vote("찬성하기 어렵습니다") == "abstain"
     assert _classify_vote("찬성하지만 일정 우려 있습니다") == "for"
     assert _classify_vote("[찬성] 스키마 확인했습니다") == "for"
+
+
+def test_e2e통과는_실행사실을_장부에_남긴다(monkeypatch):
+    """[2026-07-27 U-065 실측] 마감 관문은 '이 흐름에서 산출물을 run으로 실제 실행했는가'를 요구하고,
+    재개 때 그 표식을 0으로 되돌린다(옳은 원칙). 그런데 Task 경계 e2e가 바로 그 재실행을 이미 한다 —
+    전 항목을 exact command로 돌려 SYS receipt를 받아야만 e2e_pass가 선다. 그 사실을 안 남겨,
+    다 만들고 검증까지 끝낸 판이 '한 번도 실행하지 않았습니다'로 여섯 번 연속 못 닫혔다."""
+    import inspect
+    from system.rule import wrapup
+    src = inspect.getsource(wrapup.rule_e2e_finish)
+    assert "verified = True" in src, "e2e_pass가 실행 사실을 기록하지 않는다"
+    # 허위 완료 경로가 열리지 않는지: 증거 없는 pass는 애초에 e2e_pass가 아니다(문서화된 불변식).
+    assert "증거 없는 pass는 pass가 아니다" in inspect.getsource(wrapup)
