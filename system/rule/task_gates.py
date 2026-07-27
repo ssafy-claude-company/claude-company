@@ -698,6 +698,29 @@ def _gate_iface_dialogue(flow, args, has_product):
         _ckpt(flow)
     return None
 
+def _ledger_workers(flow) -> set:
+    """이 Task 장부에서 **완료된 백로그의 수행자** 집합.
+
+    [2026-07-27, U-067 실측] 기여 관문은 `flow.act_by`(이 흐름의 Write/Edit/run 횟수)로 '회의 발언만
+    하고 실작업 0'을 가린다 — 옳은 취지다. 그런데 그 카운터는 **흐름 단위**라 재개하면 0에서 시작한다.
+    실판에서 팀 10명이 백로그 124건을 완료했는데도 재개된 마감 흐름에서는 7명이 '실작업 0'으로 잡혀
+    마감이 막혔다. 완료된 백로그는 그 사람이 실제로 만들어 인도했다는 지속 기록이므로(장부는 인도
+    시점에 쓰인다), 흐름 카운터가 비어 있어도 기여로 센다 — 관문의 취지('부른 직군은 기여한다')는
+    그대로 지켜지고, 정말 아무것도 안 한 사람은 여전히 잡힌다.
+    """
+    out = set()
+    for relay in (getattr(flow, "backlog_relays", None) or {}).values():
+        for b in (getattr(relay, "backlogs", None) or []):
+            if getattr(b, "status", "") == "done":
+                try:
+                    who = int(getattr(b, "assignee", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if who:
+                    out.add(who)
+    return out
+
+
 def _gate_contrib(flow, args, third, has_product, _engx, _scopex):
     """[게이트] 팀 기여 의무 — RFC-009. 교차 검증(cross_checks)과 **독립**. 검증이 됐어도(검증은
     기능 위주라 폴리시 부재를 못 잡음 — RFC-009 §3), 팀에 부른 직군이 이 흐름에서 회의 발언만 하고
@@ -713,7 +736,9 @@ def _gate_contrib(flow, args, third, has_product, _engx, _scopex):
     import re
     from .._util import _speech_clip
     if has_product and not flow.current.contrib_checked:
-        contrib_idle = [m for m in third if flow.act_by.get(m, 0) == 0]
+        _ledger = _ledger_workers(flow)   # 흐름 카운터가 비어도 장부의 완료 백로그는 실작업이다
+        contrib_idle = [m for m in third
+                        if flow.act_by.get(m, 0) == 0 and int(m) not in _ledger]
         _cd = bool(re.search(r"\[\s*기여\s*(?:불필요|제외|면제)\s*\]", args.get("result") or ""))
         # [흡수 차단 — [기여 불필요] 블랭킷 우회 봉쇄(2026-06-21, 라이브 P-026 규명)] 회의에 참여
         # (participated)했는데 이 Task에서 Work를 한 번도 못 받고(work_delegated_to 밖) 실작업 0인 멤버 =

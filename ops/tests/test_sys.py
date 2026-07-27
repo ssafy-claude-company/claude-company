@@ -8193,3 +8193,30 @@ def test_수용대조는_e2e가_전부_덮었을_때만_증거로_인정된다()
     assert _cov(_acc_flow(acc, full[:1]), acc) == 0, "안 덮인 항목이 있는데 통과시킨다"
     assert _cov(_acc_flow(acc, full, all_ok=False), acc) == 0, "증거 없는 항목으로 통과시킨다"
     assert _cov(_acc_flow(acc, full, verdict="e2e_fail"), acc) == 0, "판정 없이 통과시킨다"
+
+
+def test_기여_판정은_흐름_카운터가_비어도_장부를_본다():
+    """[2026-07-27 U-067 실측] 기여 관문은 `flow.act_by`(이 흐름의 Write/Edit/run)로 '회의 발언만
+    하고 실작업 0'을 가린다 — 옳은 취지다. 그런데 그 카운터는 흐름 단위라 재개하면 0에서 시작한다.
+    팀 10명이 백로그 124건을 완료했는데도 재개된 마감 흐름에서 7명이 '실작업 0'으로 잡혀 마감이
+    막혔다. 완료된 백로그는 인도 시점에 쓰이는 지속 기록이므로 기여로 센다. **정말 아무것도 안 한
+    사람은 여전히 잡혀야 한다.**"""
+    from types import SimpleNamespace
+    from system.rule.task_gates import _ledger_workers
+
+    def _b(assignee, status):
+        return SimpleNamespace(assignee=assignee, status=status)
+
+    flow = SimpleNamespace(backlog_relays={
+        "ST-1": SimpleNamespace(backlogs=[_b(11, "done"), _b(12, "in_progress")]),
+        "ST-2": SimpleNamespace(backlogs=[_b(13, "done"), _b(0, "done")]),
+    })
+    got = _ledger_workers(flow)
+    assert got == {11, 13}, f"장부 판정이 틀렸다: {got}"
+    assert 12 not in got, "미완 백로그를 기여로 센다"
+
+    import inspect
+    from system.rule import task_gates
+    src = inspect.getsource(task_gates._gate_contrib)
+    assert "_ledger_workers(flow)" in src, "관문이 장부를 보지 않는다"
+    assert "flow.act_by.get(m, 0) == 0" in src, "흐름 카운터 판정이 사라졌다"
