@@ -1161,7 +1161,8 @@ def test_member는_request_recruit_run():
     # [배포 탈중앙화 2026-07-08] deploy는 이제 전 멤버 장착(리더 독점 폐지 — 검증 끝낸 owner가 직접 공개).
     # [P0 B-2 2026-07-13] atelier(공유 판)도 전원 — 사용은 자발.
     assert {t.name for t in make_guide_tools(f, 12, "member")} == {"request", "recruit", "run", "report", "deploy",
-                                                                   "atelier"}
+                                                                   "atelier",
+                                                          "complete_task"}
 
 
 def test_leader는_project_task_도구():
@@ -8002,3 +8003,30 @@ def test_마감_이어붙이기는_예산_안에서만_돈다(monkeypatch, tmp_p
     conts = [e for e in s.flow_log if e["event"] == "task_close_owner_continued"]
     assert len(conts) <= 2, conts            # 이어붙이기는 유계
     assert turns, "상한 뒤에는 실제 마감 턴으로 넘어가야 한다"
+
+
+def test_e2e통과판은_소유권_재배정에도_인도사실을_보존(monkeypatch, tmp_path):
+    """[2026-07-27 U-065 실측] 재개 시 소유권을 리더로 재배정하며 owner_delivered를 지운다(새 owner의
+    허위 완료 방지 — 작업 도중이라면 옳다). 그런데 산출물이 있고 Task 경계 e2e까지 통과한 판에서
+    지우면 관문이 '인도된 산출물 없음'으로 보아 영영 못 닫고, 재개할 때마다 같은 자리에서 멎는다."""
+    from system import sys_recovery
+
+    class _St:
+        owner = "이전"
+    class _Ref:
+        task_id = "T-1"
+        owner = 111
+        owner_delivered = True
+        status = _St()
+    class _Flow:
+        def _info(self, x): return "리더"
+    class _Sys:
+        logs = []
+        def _log(self, ev, **kw): self.logs.append({"event": ev, **kw})
+        def _save_projects(self): pass
+
+    src = inspect_src = __import__("inspect").getsource(sys_recovery)
+    assert "kept_delivered" in src, "인도 사실 보존 분기가 없다"
+
+    # e2e_pass면 보존, 아니면 종전대로 초기화 — 분기 조건 자체를 고정한다.
+    assert '"e2e_pass"' in src.split("kept_delivered")[0][-600:], "보존 조건이 e2e_pass가 아니다"

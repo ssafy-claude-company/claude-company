@@ -506,8 +506,17 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     if _rec and ref.owner and int(ref.owner) != int(_rec):
         ref.owner = int(_rec)
         ref.status.owner = flow._info(int(_rec)) or ref.status.owner
-        ref.owner_delivered = False
-        sys._log("owner_reconciled_to_leader", task=ref.task_id, new_owner=int(_rec))
+        # [인도 사실 보존(2026-07-27, U-065 실측)] 소유권 재배정은 '새 owner가 잔여 실작업 없이
+        # 완료를 선언'하는 것을 막으려 인도 사실을 지운다 — 작업 도중이라면 옳다. 그러나 이 Task는
+        # 이미 산출물이 있고 **Task 경계 전수 검증(e2e_pass)까지 통과**한 상태다. 그때 인도 사실을
+        # 지우면 관문이 '인도된 산출물 없음'으로 보아 영영 못 닫고, 재개할 때마다 같은 자리에서
+        # 멎는다(실측: 재개 3회 연속 동일 정체). 검증이 산출물의 실재를 이미 증명했으므로
+        # e2e_pass 상태에서는 보존한다 — 허위 완료 방지는 e2e 증거가 대신한다.
+        _verified = str(((proj or {}).get("wrapup_state") or {}).get("verdict") or "") == "e2e_pass"
+        if not _verified:
+            ref.owner_delivered = False
+        sys._log("owner_reconciled_to_leader", task=ref.task_id, new_owner=int(_rec),
+                 kept_delivered=bool(_verified))
     if isinstance(proj, dict) and proj.pop("pending_owner_reconcile", None) is not None:
         try:
             sys._save_projects()

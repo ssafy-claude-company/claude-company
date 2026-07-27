@@ -566,13 +566,13 @@ from .rule.project import send_file as _rule_send_file  # noqa: F401
 
 
 def _holds_completion(flow, me_id, role) -> bool:
-    """[완료 권한 = 리더(전 방식 복귀 — 사용자 2026-07)] complete_task(마감)는 리더가 쥔다. QA 검증은 별도로
-    _gate_cross_check가 **하드 의무**로 강제한다(owner 인도 후 다른 멤버 검증 0이면 마감 보류 — 리더가 peer/QA
-    검증 없이는 못 닫음). 즉 '리더 완료 + QA 검증 필수'가 원래 구조다. 앞서 시도한 'QA에게 완료권 이관'은 엉뚱한
-    데를 고친 것이라 되돌림 — 라이브 P-005의 비수렴 근본은 완료권이 아니라 ① 진짜 버그(키보드 회귀) ② 목표-유계
-    부재(배포 됐는데 목표 밖 이슈를 안에서 무한 수정)였다. 그건 목표-유계로 따로 해결한다."""
-    return role == "leader"
-
+    """[리더 폐지(2026-07-27, 사용자: '리더라는 존재 자체를 없애버리고')] 마감 권한을 '리더'라는
+    자리에 묶어두면, 그 자리에 있는 봇이 못/안 부를 때 판 전체가 닫히지 못한다(U-065: 구현·검증이
+    모두 끝난 판이 마감 호출자 부재로 여섯 겹의 교착을 겪음). 마감의 옳음은 **자리**가 아니라
+    **관문**이 지킨다 — 주기 완료·e2e 통과·교차검증·증거는 complete_task 게이트가 전부 검사하며,
+    자격 없는 호출은 그 자리에서 거절된다. 그러므로 팀의 누구든 마감을 시도할 수 있게 한다
+    (허위 완료 방지는 게이트가, 권한 분산은 여기서)."""
+    return True
 
 def _resolve_scoped_backlog(flow, subtasks, backlog_id, me_id, st_hint=""):
     """지역 ID(B1...)를 실제 ``(SubTask, Backlog)`` 한 쌍으로 해석한다.
@@ -1385,7 +1385,21 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               {"result": str, "percept_na": str, "visual_evidence": str, "data_source": str,
                "acceptance_check": str, "standard_check": str, "contrib_waiver": str})
         async def complete_task(args):
-            return await _rule_complete_task(flow, role, args)
+            _res = await _rule_complete_task(flow, role, args)
+            # [거절 사유 관측(2026-07-27)] 마감 관문의 거절문은 봇에게만 돌아가 로그에 안 남아,
+            # 왜 안 닫히는지 알려면 매번 판을 태워야 했다(U-065: 여섯 겹을 판마다 하나씩 벗김).
+            # 마감이 안 난 경우의 사유 첫 줄만 남긴다 — 진단이 판 비용에 묶이지 않게.
+            try:
+                if flow.current is not None and flow.log:
+                    _txt = _res
+                    if isinstance(_txt, dict):
+                        _txt = ((_txt.get("content") or [{}])[0] or {}).get("text", "")
+                    _txt = str(_txt or "").strip().splitlines()[0] if str(_txt or "").strip() else ""
+                    if _txt:
+                        flow.log("complete_task_refused", why=_txt[:180])
+            except Exception:
+                pass
+            return _res
         tools.append(complete_task)
 
     return tools

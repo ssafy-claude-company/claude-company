@@ -25,6 +25,11 @@ FLOW_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL, RUN_TOOL,
               # 등록만 되고 여기 빠져 '권한 밖 도구' 거부 — 봇들이 선점하려다 전원 차단돼 작업 전이
               # 교착의 숨은 뿌리였다. 릴레이는 전 멤버 표면(자기 등재·선정·중단·차단).
               "mcp__guide__pick_backlog", "mcp__guide__drop_backlog", "mcp__guide__block_backlog",
+              # [리더 폐지(2026-07-27, 사용자: '리더라는 존재 자체를 없애버리고')] 마감도 자리가
+              # 아니라 관문이 지킨다 — 주기 완료·e2e 통과·교차검증·증거를 complete_task 게이트가
+              # 전부 검사하므로 자격 없는 호출은 그 자리에서 거절된다. 등록(guide_tools)과 허용을
+              # 한 세트로 열어, 마감 호출자 부재로 판이 못 닫히는 일이 없게 한다(U-065 교착).
+              "mcp__guide__complete_task",
               "mcp__guide__deploy",   # [배포 탈중앙화(2026-07-08, 사용자)] deploy는 전원 — 검증 끝낸 owner가 직접 공개(리더 독점 폐지)
               "mcp__guide__atelier"]  # [P0 B-2(2026-07-13)] 공유 판 — 전원, 사용은 자발(산출물·증거 남김, 승격 핀 done 회신)
 # 리더(코디네이터) 흐름 도구: 조율만(run 없음) — 구현·실행은 owner/QA가 한다.
