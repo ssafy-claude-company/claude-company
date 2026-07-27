@@ -303,7 +303,12 @@ def _acceptance_covered_by_e2e(flow, acc: str) -> int:
         row = results.get(str(item.get("id") or ""))
         if not isinstance(row, dict) or not row.get("ok") or not str(row.get("evidence") or "").strip():
             continue
-        passed_specs.append(_norm(item.get("verifier_spec") or item.get("spec")))
+        # 항목의 '무엇을 본다'(spec)와 '어떻게 본다'(verifier_spec)를 **둘 다** 대조 대상에 넣는다 —
+        # 수용 기준 줄은 조건문이므로 spec 쪽과 만난다(verifier_spec만 보면 실증 절차와 비교하게 된다).
+        for _f in ("spec", "verifier_spec"):
+            _v = _norm(item.get(_f))
+            if _v:
+                passed_specs.append(_v)
     if not passed_specs:
         return 0
 

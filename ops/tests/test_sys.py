@@ -8166,7 +8166,10 @@ def test_마감턴은_일상대화_분기로_열리지_않는다():
 
 def _acc_flow(acc, specs, all_ok=True, verdict="e2e_pass"):
     from types import SimpleNamespace
-    cl = [{"id": f"c{i}", "spec": sp} for i, sp in enumerate(specs)]
+    # 실판 항목은 '무엇을 본다'(spec)와 '어떻게 본다'(verifier_spec)를 따로 들고, 수용 기준 줄은
+    # 조건문이라 spec 쪽과 만난다 — verifier_spec만 보면 실증 절차와 비교하게 된다(실측 실패 지점).
+    cl = [{"id": f"c{i}", "spec": sp, "verifier_spec": "python3 verify.py --check"}
+          for i, sp in enumerate(specs)]
     res = {f"c{i}": {"ok": all_ok, "evidence": "SYS-RUN exit=0"} for i in range(len(specs))}
     return SimpleNamespace(
         wrapup_state={"verdict": verdict}, e2e_checklist=cl, e2e_results=res,
