@@ -2795,3 +2795,27 @@ def test_백로그_귀속_출처가_기록된다():
     seg = src[max(0, i - 600):i + 300]
     for tag in ('"r1"', '"draft"', '"fallback"'):
         assert tag in seg, f"출처 구분({tag})이 없다"
+
+
+def test_운영_안내는_봇의_상황요약에_들어가지_않는다():
+    """[2026-07-27 U-067 실측] 파킹·중지 같은 SYS 게시는 사람에게 다음 행동을 알리는 문구인데,
+    상황 요약이 발신자 0을 전부 '사람'으로 라벨해 봇에게 사람의 말처럼 들어갔다. 그 결과 마감 관문
+    앞에서 봇 6명이 연달아 "`재개` 눌러서 다시 태우면 됩니다"라며 **자기 차례를 사람 차례로** 읽었다
+    (마감 호출 0회). 사용자의 실제 메시지는 그대로 들어와야 한다."""
+    import asyncio
+    from types import SimpleNamespace
+    from system.sys_prompt import channel_situation
+
+    rows = [SimpleNamespace(body="[막혀서 멈췄어요] … '재개'를 누르면 이어서 진행해요", from_id=0,
+                            message_id="1"),
+            SimpleNamespace(body="게임 만들어줘", from_id=0, message_id="2"),
+            SimpleNamespace(body="■ 중지됨", from_id=0, message_id="3")]
+
+    class _G:
+        async def read_thread(self, *a, **k):
+            return rows
+
+    out = asyncio.run(channel_situation(SimpleNamespace(guide=_G(), bot_info={}), 1))
+    assert "재개" not in out, "운영 안내가 봇에게 사람의 말로 들어간다"
+    assert "중지됨" not in out, "종결 표기가 대화로 섞인다"
+    assert "게임 만들어줘" in out, "사용자의 실제 요청까지 걸러졌다"

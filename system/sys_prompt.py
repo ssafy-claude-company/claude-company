@@ -347,6 +347,13 @@ def portfolio_note(sys) -> str:
         + cap_note + "\n".join(shown) + "\n\n")
 
 
+# SYS가 채널에 거는 운영 안내(사람 대상) — 봇의 상황 요약에서 제외할 머리표.
+_SYS_NOTICE_PREFIXES = (
+    "[막혀서 멈췄어요]", "[크레딧 한도]", "[사람 확인 필요]", "[e2e 복기 정체]",
+    "[조건 재협상 승인 요청]", "[GOAL 잠금 정체]", "■",
+)
+
+
 async def channel_situation(sys, channel_id, exclude_root=None, limit=14) -> str:
     """이 채널의 최근 대화를 짧게 추려 흐름에 부착할 텍스트로 — 봇이 '지금 이 채널이 무엇을 주고받는
     자리이고 어떤 맥락인지'를 알고 답하게 한다. 신규 흐름은 세션이 비어 채널 맥락을 모르므로(라이브:
@@ -360,6 +367,13 @@ async def channel_situation(sys, channel_id, exclude_root=None, limit=14) -> str
     for m in msgs or []:
         body = (getattr(m, "body", "") or "").strip().replace("\n", " ")
         if not body:
+            continue
+        # [운영 안내는 대화가 아니다(2026-07-27, U-067 실측)] 파킹·중지 같은 SYS 게시는 **사람에게**
+        # 다음 행동을 알리는 문구인데, 여기서는 발신자 0이 전부 '사람'으로 라벨돼 봇에게 사람의 말처럼
+        # 들어갔다. 그 결과 마감 관문 앞에서 봇 6명이 연달아 "`재개` 눌러서 다시 태우면 됩니다"라며
+        # **자기 차례를 사람 차례로** 읽었다(마감 호출 0회). 운영 안내는 상황 요약에서 제외한다 —
+        # 채널 대화(사람·동료의 말)만 남긴다. 사용자의 실제 요청·메시지는 그대로 들어온다.
+        if body.startswith(_SYS_NOTICE_PREFIXES):
             continue
         if exclude_root and str(getattr(m, "message_id", "")) == str(exclude_root):
             continue   # 방금 들어온 그 요청 자신은 제외(원문은 origin_note가 따로 보여줌)
