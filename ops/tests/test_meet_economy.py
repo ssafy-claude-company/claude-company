@@ -2727,3 +2727,41 @@ def test_형식_반려문은_해법까지_잘리지_않고_전달된다():
     assert not looks_like_verification_command('rg -n "설계" .collab/T-1/DRAFT.md')
     assert not looks_like_verification_command("python3 -m http.server 4173 --directory public")
     assert looks_like_verification_command("python3 verify_ui.py")
+
+
+def test_e2e_검증구간에는_산출물을_고칠_수_없다():
+    """[2026-07-27 U-067] 검증 항목마다 산출물 버전을 영수증에 박으므로, 검증 중 산출물이 바뀌면
+    통과분이 전부 무효가 된다 — 여러 봇이 검증 중에 계속 고치면 분모가 매번 갱신돼 수렴하지 않는다.
+    e2e 구간의 산출물은 고정하고, 고칠 것은 '실패 보고 → 복기 → 새 주기'로만 들어온다."""
+    import asyncio, os, tempfile
+    from system.permissions import make_pre_tool_use_hook, organt_allowed_tools
+
+    class _Audit:
+        def record(self, event, **fields):
+            return {}
+
+    with tempfile.TemporaryDirectory() as ws:
+        f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L"})
+        f.workspace = ws
+        f.e2e_checklist = [{"spec": "첫 탭에 시작"}]
+        f.wrapup_state = None
+        hook = make_pre_tool_use_hook(_Audit(), organt_allowed_tools(), actor=11, role="개발", flow=f)
+
+        def _w():
+            return asyncio.run(hook(
+                {"tool_name": "Write", "cwd": ws,
+                 "tool_input": {"file_path": os.path.join(ws, "game.js"), "content": "x"}},
+                "tu_e2e", None))
+
+        def _out(r):
+            return ((r or {}).get("hookSpecificOutput") or {})
+
+        out = _out(_w())
+        assert out.get("permissionDecision") == "deny", "검증 구간에도 산출물이 고쳐진다"
+        assert "실패로 보고" in out.get("permissionDecisionReason", ""), \
+            "고칠 길(실패 보고)을 알려주지 않는다"
+
+        # 판정이 서면 구간이 닫힌다 — 다음 주기 작업까지 막으면 안 된다
+        f.wrapup_state = {"verdict": "e2e_pass"}
+        assert "검증 구간" not in _out(_w()).get("permissionDecisionReason", ""), \
+            "판정 후에도 검증 구간 이유로 쓰기가 막힌다"

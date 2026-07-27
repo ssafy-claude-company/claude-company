@@ -202,6 +202,21 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                     return _deny("협의 기록(.collab/)은 시스템 소유 — 회의 결론 초안 DRAFT.md만 Edit로 직접 편집 가능하고, 나머지는 meet/vote/보고로만  "
                                  "기록됩니다(봇은 Read로 열람만).")
 
+        # 2.4) [검증 구간 산출물 고정(2026-07-27, U-067 실측)] Task 경계 e2e가 열린 동안 산출물이
+        #      바뀌면 그때까지 통과한 항목의 영수증이 전부 stale이 된다(항목마다 산출물 버전을 기록
+        #      하므로). 여러 봇이 검증 중에도 계속 고치면 분모가 매번 갱신돼 **끝내 수렴하지 않는다**
+        #      (실측: 개시 3회·통과 0). 검증은 '한 버전을 전수로 본다'는 뜻이므로 그 구간의 산출물은
+        #      고정한다 — 고칠 게 있으면 e2e를 실패로 보고하면 되고, 복기가 새 주기를 열어 그때 고친다
+        #      (교착 아님: 실패 경로가 항상 열려 있다). DRAFT는 산출물이 아니라 회의 표면이라 예외.
+        if tool in ("Write", "Edit") and not _is_draft and flow is not None:
+            if (getattr(flow, "e2e_checklist", None)
+                    and not (getattr(flow, "wrapup_state", None) or {}).get("verdict")):
+                audit.record("tool_denied", actor=actor, role=role, tool=tool,
+                             reason="e2e 검증 구간 산출물 고정", tool_use_id=tool_use_id)
+                return _deny("[검증 구간] Task 경계 전수 검증(e2e)이 진행 중이라 산출물은 고정됩니다 — "
+                             "지금 고치면 이미 통과한 항목들의 검증이 모두 무효가 되어 검증이 끝나지 않습니다. "
+                             "고칠 것을 찾았으면 그 항목을 **실패로 보고**하세요(복기가 새 주기를 열고, 그때 고칩니다).")
+
         # 2.5) [쓰기 리스] 리스(flow.write_lease)가 배정된 행위자는 그 샌드박스 안에만 쓴다 — 병렬
         #      가지 간·본 작업물과의 파일 충돌이 구조적으로 불가능. 현재 호출부 없음(휴면 인프라 —
         #      병렬 Work/alive-집합 도입 시 재사용; 리스가 비면 비용 0).
