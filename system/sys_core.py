@@ -65,6 +65,22 @@ def _activity_fingerprint(rows) -> str:
     return f"{len(values)}:{h.hexdigest()}"
 
 
+def _stamp_activity(row) -> str:
+    """활동 한 줄 → `[MM-DD HH:MM] 본문`(2026-07-27, 사용자: '생각등에 시간 안남는게 많은데').
+
+    시각은 **생성 시점**에 박힌 벽시계라 heartbeat를 다시 보내도 같은 문자열이다 — 수신측의 중복/
+    신규 판정(활동 커서·tail overlap)이 그대로 성립한다. 벽시계가 없는 옛 행은 본문만 보낸다.
+    """
+    text = str(row[0]) if isinstance(row, (list, tuple)) else str(row)
+    wall = row[2] if isinstance(row, (list, tuple)) and len(row) > 2 else None
+    if not wall:
+        return text
+    try:
+        return f"[{time.strftime('%m-%d %H:%M', time.localtime(float(wall)))}] {text}"
+    except (TypeError, ValueError, OSError):
+        return text
+
+
 def _changed_activity_payload(state: dict, rows):
     """heartbeat 전송용 변화 감지. 같은 길이라도 guard가 밀려 tail/content가 바뀌면 새 목록을 보낸다."""
     values = list(rows or [])
@@ -4114,7 +4130,7 @@ class Sys:
         표시. 임의 상한 없음(표시는 UI 스크롤이 맡음). 있으면 그대로, 없으면 []."""
         for f in list(self.active_flows.values()):
             if getattr(f, "user_channel", None) == int(channel_id) and not getattr(f, "done", False):
-                return [x[0] for x in (getattr(f, "activity_log", None) or [])]
+                return [_stamp_activity(x) for x in (getattr(f, "activity_log", None) or [])]
         return []
 
     async def _flush_terminal_observability(self, flow):
@@ -4131,7 +4147,7 @@ class Sys:
         except Exception:
             pass
         try:
-            activity = [row[0] for row in (getattr(flow, "activity_log", None) or [])]
+            activity = [_stamp_activity(row) for row in (getattr(flow, "activity_log", None) or [])]
             root_id = int(getattr(flow, "root_id", 0) or 0)
             if root_id and activity:
                 actor = getattr(getattr(flow, "comm", None), "alive", None)

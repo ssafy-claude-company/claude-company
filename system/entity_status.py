@@ -65,9 +65,12 @@ def snapshot(flow):
     acts = []
     try:
         mono_now = time.monotonic()
-        for t, m in list(getattr(flow, "activity_log", []) or [])[-5:]:
+        for row in list(getattr(flow, "activity_log", []) or [])[-5:]:
+            t, m = row[0], row[1]
+            wall = row[2] if len(row) > 2 else None      # 복원된 옛 행은 근사 변환으로 폴백
             acts.append({"t": str(t)[:140],
-                         "ts": round(time.time() - max(0.0, mono_now - float(m)), 1)})
+                         "ts": round(float(wall) if wall
+                                     else time.time() - max(0.0, mono_now - float(m)), 1)})
     except Exception:
         acts = []
     # [📍 회의 국면 핀(2026-07-17, 사용자: '회의가 하나로 묶여 구분 안 감 — 가시성')] 현재 단계 회의
