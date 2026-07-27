@@ -1183,6 +1183,38 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
             changed += 1
     current_epoch = write_revision(flow)
     current_stamp = workspace_artifact_stamp(flow)
+    # [비준 승계(2026-07-27, U-067 실측)] e2e 실패로 새 주기가 열리면 잠금 조건이 그 주기로 **복사**
+    # 되는데, 종전엔 비준(회의가 정한 exact 검증 명령)이 따라가지 않아 새 조건이 '미비준'이 됐다.
+    # 그러면 SYS는 매 바퀴 "비준하라"만 안내하고 검증은 한 번도 돌지 않는다 — 같은 세 갈래가 12번
+    # 반복되며 단계가 36개까지 불어난 실측 폭주의 뿌리다. 비준은 (desc, verify) 쌍에 spec 해시로
+    # 결속돼 있으므로, **같은 조건이면 같은 비준**이다(승계해도 무엇을 증명으로 인정하는지는 안 바뀐다).
+    # 영수증(passed·evidence)은 승계하지 않는다 — 증명은 새 산출물에서 다시 벌어야 한다.
+    _ratified_by_spec = {}
+    for _ms_r in (getattr(flow, "milestones", None) or []):
+        for _c_r in list(getattr(_ms_r, "criteria", None) or []) + list(
+                getattr(_ms_r, "locked_criteria", None) or []):
+            _cmd_r = str(getattr(_c_r, "ratified_verifier_command", "") or "")
+            if not _cmd_r:
+                continue
+            _spec_r = verifier_spec_hash(_c_r.desc, _c_r.verify)
+            if getattr(_c_r, "ratified_verifier_spec_hash", "") != _spec_r:
+                continue                      # 조건이 바뀐 뒤의 낡은 비준은 승계 대상 아님
+            _ratified_by_spec.setdefault(_spec_r, _c_r)
+
+    def _inherit_ratification(_c):
+        """같은 조건에 이미 선 비준이 있으면 물려준다(없으면 그대로)."""
+        if str(getattr(_c, "ratified_verifier_command", "") or ""):
+            return False
+        src_r = _ratified_by_spec.get(verifier_spec_hash(_c.desc, _c.verify))
+        if src_r is None or src_r is _c:
+            return False
+        _c.ratified_verifier_command = src_r.ratified_verifier_command
+        _c.ratified_verifier_command_hash = src_r.ratified_verifier_command_hash
+        _c.ratified_verifier_spec_hash = src_r.ratified_verifier_spec_hash
+        if flow.log:
+            flow.log("goal_lock_ratification_inherited", desc=str(_c.desc)[:60])
+        return True
+
     for ref in refs:
         exact = next((c for c in target.criteria
                       if c.desc.strip() == ref.desc.strip()
@@ -1222,11 +1254,13 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
             else:
                 exact = Criterion(desc=ref.desc, verify=ref.verify, release_lock=True)
                 target.criteria.append(exact)
+            _inherit_ratification(exact)
             changed += 1
             needs_verify = True
         elif not getattr(exact, "release_lock", False):
             exact.release_lock = True
             changed += 1
+        _inherit_ratification(exact)
         # 상위 잠금은 waived/blocked·임의 evidence·옛 산출물 영수증으로 우회할 수 없다.
         natural_lock = not direct_verifier_command(
             exact.verify, getattr(flow, "workspace", ""), require_existing=False)
@@ -1410,8 +1444,29 @@ def renegotiate_criterion(flow, obj, target: str, reason: str) -> str:
     if c.passed:
         return f"이미 충족된 조건입니다(재협상 불요): {c.desc[:40]}"
     if getattr(c, "release_lock", False):
+        # [사다리에서 떨어지던 칸(2026-07-27, U-067 실측)] 잠금 조건은 이월·포기가 금지인 게 맞지만,
+        # 종전엔 여기서 그냥 되돌아 나와 **정체 카운터도 안 풀고 사람에게도 안 올렸다** — 같은 자리를
+        # 12바퀴 돌며 단계가 36개까지 불어났다. 포기는 여전히 불가하되, 반복 정체는 **사람에게 넘긴다**
+        # (봇이 못 푸는 자리라는 사실 자체가 사람이 볼 신호다). 카운터를 풀어 경보 반복도 멈춘다.
+        obj.iter_stuck = 0
+        oid_l = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
+        try:
+            flow._stage_stuck = (
+                f"GOAL 잠금 조건이 반복해서 실증되지 않습니다 — {c.desc[:60]}")
+        except Exception:
+            pass
+        if flow.log:
+            flow.log("goal_lock_stuck_parked", id=oid_l, target=c.desc[:60])
+        esc_l = getattr(flow, "escalate_to_human", None)
+        if callable(esc_l):
+            try:
+                esc_l(f"[GOAL 잠금 정체] '{c.desc[:60]}'이(가) 반복 검증에도 실증되지 않습니다 — "
+                      f"{reason[:120]}. 조건을 바꿀지, 실증 방법을 바꿀지 판단이 필요합니다.")
+            except Exception:
+                pass
         return (f"상위 GOAL 잠금 조건은 이월·포기할 수 없습니다: {c.desc[:40]} — "
-                f"실제 실증 `{c.verify[:80]}`을 통과해야 Task 최종 release가 열립니다.")
+                f"실제 실증 `{c.verify[:80]}`을 통과해야 Task 최종 release가 열립니다. "
+                f"반복 정체를 사람에게 알렸습니다.")
     deferred = defer_criterion(flow, obj, c, reason)
     if deferred:
         return deferred

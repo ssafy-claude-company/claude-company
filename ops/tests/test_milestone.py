@@ -1557,3 +1557,36 @@ def test_봇의_임의_실행은_등재_대상이_아니다():
         workspace = "/nonexistent"
     assert any("verify_ui.py" in c for c in known_verifier_commands(_F())), \
         "분모의 verifier를 검증 명령으로 못 읽는다"
+
+
+def test_잠금조건_비준은_새_주기로_승계된다():
+    """[2026-07-27 U-067 실측] e2e 실패로 새 주기가 열리면 GOAL 잠금 조건이 그 주기로 복사되는데,
+    비준(회의가 정한 exact 검증 명령)이 따라가지 않아 새 조건이 '미비준'이 됐다. 그러면 SYS는 매
+    바퀴 '비준하라'만 안내하고 검증은 한 번도 돌지 않는다 — 같은 세 갈래가 12번 반복되며 단계가
+    36개까지 불어났다. 비준은 (desc, verify)에 해시로 결속되므로 같은 조건이면 같은 비준이다.
+    **영수증은 승계하지 않는다** — 증명은 새 산출물에서 다시 벌어야 한다."""
+    import inspect
+    from system.rule import milestone
+
+    src = inspect.getsource(milestone.promote_final_locked_criteria)
+    assert "_inherit_ratification" in src, "새 주기 조건이 비준을 물려받지 않는다"
+    i = src.index("def _inherit_ratification")
+    body = src[i:i + 900]
+    assert "ratified_verifier_spec_hash" in body, "조건이 바뀐 뒤의 낡은 비준까지 물려받는다"
+    for leaked in ("_c.passed", "_c.evidence", "receipt_id"):
+        assert leaked not in body, f"영수증({leaked})까지 승계하면 증명 없이 통과한다"
+
+
+def test_잠금조건이_반복_정체하면_사람에게_올라간다():
+    """[2026-07-27 U-067 실측] 탈출 사다리는 GOAL 잠금 조건에서 그냥 되돌아 나와 정체 카운터도 안
+    풀고 사람에게도 안 올렸다 — 같은 자리를 12바퀴 돌았다. 포기는 여전히 불가하되, 반복 정체는
+    사람에게 넘기고 경보 반복을 멈춘다."""
+    import inspect
+    from system.rule import milestone
+
+    src = inspect.getsource(milestone.renegotiate_criterion)
+    i = src.index('if getattr(c, "release_lock", False):')
+    seg = src[i:i + 1400]
+    assert "goal_lock_stuck_parked" in seg, "반복 정체가 사람에게 안 올라간다"
+    assert "iter_stuck = 0" in seg, "정체 카운터를 안 풀어 경보가 매 바퀴 반복된다"
+    assert "이월·포기할 수 없습니다" in seg, "잠금 조건 포기 금지가 풀렸다"
