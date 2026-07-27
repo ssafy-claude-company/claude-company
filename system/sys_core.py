@@ -2274,6 +2274,11 @@ class Sys:
                     _tls = {t.name: t for t in make_guide_tools(flow, actor, "leader")}
                     await _tls["request"].handler({
                         "to_id": str(_peer), "kind": "Work",
+                        # [owner 보호 게이트 통과(2026-07-27, U-065 실측)] 이 위임은 owner의 일을
+                        # 가로채는 재구현이 아니라 **다른 산출물(검증 보고)**이다. 명시하지 않으면
+                        # 본문 겹침만으로 owner_protect_blocked에 막혀 검증이 영영 안 올라가고,
+                        # 마감 관문은 교차검증 0으로 계속 거절해 판이 그 자리에서 멎었다.
+                        "different_deliverable": "제작이 아니라 제작자와 분리된 독립 사용 검증 보고",
                         "body": ("[SYS — 마감 전 독립 검증] 이 Task의 산출물이 완성되고 전수 검증도 "
                                  "통과했습니다. 마감에는 제작자가 아닌 동료의 실제 사용 검증 1회가 "
                                  "필요합니다. 산출물을 **사용자처럼 처음부터 끝까지 직접 써보고**(화면이면 "
@@ -2290,6 +2295,15 @@ class Sys:
         await self._drain_inflight(flow)
         if any(not t.done() for t in (getattr(flow, "inflight_tasks", None) or ())):
             self._log("task_close_awaiting_inflight")
+            return True
+        # [관문 충돌 봉합(2026-07-27, U-065 실측 — 봇들이 스스로 진단한 교착)] 마감 관문은 '턴 한도로
+        # 미완 반환된 같은 담당자에게 request(Work)로 이어 붙이라'고 요구하는데, 봇의 재위임은
+        # **같은 직군 1명 제한**에 즉시 거절된다 — 두 규칙이 물려 판이 그 자리에서 영영 멎었다
+        # (라이브: "마감 관문과 위임 규칙이 서로 충돌해서 진행이 막힌 상태"). 이 이어붙이기는
+        # 새 배분이 아니라 **같은 사람의 중단된 일 잇기**이므로 SYS가 직접 굴린다(직군 규칙 밖).
+        _cont = await self._auto_continue_owner(flow, actor)
+        if str(_cont or "").strip():
+            self._log("task_close_owner_continued", by=actor)
             return True
         turn_no = int(getattr(flow, "_close_turns", 0) or 0) + 1
         flow._close_turns = turn_no
