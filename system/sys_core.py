@@ -2311,6 +2311,20 @@ class Sys:
                 flow._close_cont = _cont_n + 1
                 self._log("task_close_owner_continued", by=actor, n=_cont_n + 1)
                 return True
+        # [관문 상태 관측(2026-07-27)] 마감이 왜 안 열리는지는 관문의 거절문이 봇에게만 돌아가
+        # 로그에 안 남아, 매번 판을 태워야 알 수 있었다. 마감 시점의 판정 재료를 남긴다.
+        try:
+            _mss_d = getattr(flow, "milestones", None) or []
+            self._log("task_close_state",
+                      cc=int(getattr(ref, "cross_checks", 0) or 0),
+                      offdom=int(getattr(ref, "cross_check_offdomain", 0) or 0),
+                      delivered=bool(getattr(ref, "owner_delivered", False)),
+                      lwrites=int(getattr(ref, "leader_writes", 0) or 0),
+                      ms_open=[m.ms_id for m in _mss_d
+                               if getattr(m, "status", "") not in ("done", "superseded")][:3],
+                      verdict=str((getattr(flow, "wrapup_state", None) or {}).get("verdict") or ""))
+        except Exception:
+            pass
         turn_no = int(getattr(flow, "_close_turns", 0) or 0) + 1
         flow._close_turns = turn_no
         await self.run_turn(
