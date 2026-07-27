@@ -1,0 +1,13 @@
+# reconcile-payments.timer — 30분마다 결제 대사(reconcile-payments.service) 기동. 설치는 운영자(README).
+[Unit]
+Description=Run murmur payment reconciliation every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=60
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

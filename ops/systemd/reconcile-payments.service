@@ -1,0 +1,18 @@
+# reconcile-payments.service — 결제 대사 1회(oneshot). reconcile-payments.timer가 30분마다 기동.
+# 역할: pending인 채 오래된 주문을 토스 조회로 동기화 — 승인 응답 유실 봉합(자동 부여)·버려진 주문
+# 만료 처리. 승인↔부여 정합의 최종 안전망(웹훅·재방문 자가치유의 보조가 아니라 주기 보증).
+# 설치는 운영자(사용자 승인) — ops/systemd/README.md 참조. 이 레포에서는 파일 제공만.
+[Unit]
+Description=Murmur payment reconciliation (heal lost approvals, expire stale orders)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/ClaudeCompany/murmur/backend
+Environment=DJANGO_SETTINGS_MODULE=config.settings
+Environment=PYTHONPATH=/root/ClaudeCompany
+Environment=ORGANT_PJT=/root/ClaudeCompany
+# DATABASE_URL + TOSS_SECRET_KEY(토스 조회) — 웹과 같은 env 재사용. 키 미설정이면 무해 no-op.
+EnvironmentFile=/etc/murmur-web.env
+ExecStart=/root/ClaudeCompany/.venv/bin/python manage.py reconcile_payments --minutes 30

@@ -761,7 +761,15 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  409162f   ← HEAD — ★큐 전달·재시도·중지 세대 원자화(2026-07-25):
+murmur  c24e577   ← HEAD — ★결제 실서비스화 A~D(2026-07-27, 이현준-8 — 사용자 사업자 등록 완료):
+                          A 웹훅 방어(토스 공식 확인: 일반 결제 웹훅에 서명 없음 → URL 비표
+                          TOSS_WEBHOOK_SECRET+스로틀+관측, 위조 웹훅 무력 회귀 박제) · B 승인↔부여
+                          원자성(Person 잠금·결과불명은 pending 유지·대사 금액불일치 격리·
+                          reconcile-payments 타이머 유닛 제공) · C 환불 완성(부분 환불·멱등·회수
+                          정책 박제·취소 깔때기 원자화) · D 사업자 고지 골격(MURMUR_BUSINESS env→
+                          약관·방침·요금제·홈 표기, /refunds 신설 — 실값·활성화는 사용자 답 대기,
+                          질문 목록 = ops/2026-07-27-결제-실서비스-핸드오프.md). Django 475·결제 39.
+                          (이전 409162f) ★큐 전달·재시도·중지 세대 원자화(2026-07-25):
                           HTTP/ORM/local pending을 단일 판독기로 통합하고 stale pick 해제를
                           exact-payload CAS로 만들었다. HTTP claim/unpick 토큰으로 응답 유실
                           재전송을 멱등화했으며, stop ack는 읽은 StopSignal 세대만 소거해
