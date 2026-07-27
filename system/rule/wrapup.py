@@ -677,9 +677,18 @@ def rule_e2e_finish(flow) -> str:
         # 끝낸 판이 '한 번도 실행하지 않았습니다'로 영영 못 닫혔다(재개 6회 연속 동일 정체).
         # 새 사실을 만드는 게 아니라 **일어난 실행을 장부에 남긴다** — 증거 없는 pass는 애초에
         # e2e_pass가 되지 않으므로 허위 완료 경로는 열리지 않는다.
+        # [담당자 표식보다 증거가 위다(2026-07-27, U-067 실측)] 복구는 담당자가 있고 인도 기록이
+        # 없으면 '턴 한도 미완'을 다시 세운다(재개마다). 그 표식을 푸는 유일한 길이 '담당자의 새
+        # 인도'라, **0결함으로 전수 검증을 통과한 판이 옛 표식 하나 때문에 영영 못 닫혔다**
+        # (라이브: e2e_pass 직후 마감 3회 거부 → 파킹). 미완·미인도 표식은 '일이 덜 끝났다'의
+        # 대리 신호이고, 전수 검증은 그것을 **직접 측정**한 결과다 — 측정이 대리를 이긴다.
+        # 증거 없는 pass는 애초에 e2e_pass가 되지 않으므로 허위 완료 경로는 열리지 않는다.
         try:
             if flow.current is not None:
                 flow.current.verified = True
+                flow.current.owner_incomplete = False
+                if int(getattr(flow.current, "owner", 0) or 0):
+                    flow.current.owner_delivered = True
         except Exception:
             pass
         return "e2e_pass — 전 항목 증거 있는 충족. Task 마무리 가능."

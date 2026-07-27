@@ -2462,7 +2462,21 @@ class Sys:
                     self._log("task_close_complete", by=0, turn=turn_no, via="structure")
                     return True
                 _why = (_txt[0] if _txt else "")
-                self._log("task_close_structure_refused", why=_why[:180])
+                # [진전이면 상한을 되돌린다(2026-07-27, U-067 실측)] 마감 관문은 여러 겹이고 각각
+                # '보고 다시 부르면 풀리는' 보류다. 그런데 상한이 **횟수**라, 못 푸는 사유 하나에
+                # 3번을 다 써버리면(라이브: 옛 미완 표식) 뒤 관문은 시도조차 못 하고 파킹됐다.
+                # 사유가 바뀌면 그건 앞 관문을 통과했다는 뜻이니 시도를 되돌리고, 같은 사유가
+                # 되풀이될 때만 상한을 채운다. 총량은 별도 하드 상한이 막는다(무한 방지).
+                _prev_why = str(getattr(flow, "_close_last_why", "") or "")
+                _now_why = _why[:120]
+                if _now_why and _now_why != _prev_why:
+                    flow._close_last_why = _now_why
+                    flow._close_progress = int(getattr(flow, "_close_progress", 0) or 0) + 1
+                    if int(getattr(flow, "_close_total", 0) or 0) < 8:
+                        flow._close_turns = 0        # 앞 관문이 풀렸다 — 다음 관문에 시도를 준다
+                flow._close_total = int(getattr(flow, "_close_total", 0) or 0) + 1
+                self._log("task_close_structure_refused", why=_why[:180],
+                          total=int(flow._close_total), gates_cleared=int(getattr(flow, "_close_progress", 0) or 0))
                 # [판단이 필요한 관문은 봇에게(2026-07-27, 사용자: '봇에게 QA 시키는 게 좋지 않아?')]
                 # 구조가 답할 수 있는 것은 **사실로 확정되는 것**뿐이다(지각 차원 유무·시각 검증 여부).
                 # '합의한 좋음 기준이 코드에 도달했나' 같은 관문은 산출물을 하나씩 대조하는 실제 QA다 —
@@ -3424,7 +3438,8 @@ class Sys:
                 if flow.current is None or not _ms_on():
                     return False
                 return ((getattr(flow, "wrapup_state", None) or {}).get("verdict") == "e2e_pass"
-                        and int(getattr(flow, "_close_turns", 0) or 0) < 3)
+                        and int(getattr(flow, "_close_turns", 0) or 0) < 3
+                        and int(getattr(flow, "_close_total", 0) or 0) < 8)   # 총량 하드 상한
 
             def _needs_kickoff():
                 # [작업 단계 회의 강요 봉합(2026-07-20, e2e 실측: 미룸 5회·강제 2회)] 킥오프 meet 강제는

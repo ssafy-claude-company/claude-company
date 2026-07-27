@@ -8054,3 +8054,34 @@ def test_증류는_범용만_저장소경로는_걸러진다():
     assert "ops/verify.sh" not in out                 # 저장소 경로 줄은 제거
     assert "config/app.yml" not in out
     assert any(e["event"] == "distill_project_specific_dropped" for e in s.flow_log)
+
+
+def test_전수검증_통과는_옛_미완표식을_이긴다():
+    """[2026-07-27 U-067 실측] 복구는 담당자가 있고 인도 기록이 없으면 '턴 한도 미완'을 재개마다
+    다시 세운다. 그 표식을 푸는 유일한 길이 '담당자의 새 인도'라, **0결함으로 전수 검증을 통과한
+    판이 옛 표식 하나 때문에 마감 3회 거부 뒤 파킹**됐다. 미완·미인도는 '덜 끝났다'의 대리 신호이고
+    전수 검증은 그것을 직접 측정한 결과다 — 측정이 대리를 이긴다."""
+    import inspect
+    from system.rule import wrapup
+
+    src = inspect.getsource(wrapup.rule_e2e_finish)
+    i = src.index("E2E_PASS")
+    seg = src[i:i + 1600]
+    assert "owner_incomplete = False" in seg, "전수 검증 통과가 옛 미완 표식을 안 푼다"
+    assert "owner_delivered = True" in seg, "전수 검증 통과가 인도 사실로 안 남는다"
+    assert "verified = True" in seg, "실행 사실 기록이 사라졌다"
+
+
+def test_마감_시도_상한은_횟수가_아니라_진전_기준이다():
+    """[2026-07-27 U-067 실측] 마감 관문은 여러 겹이고 각각 '보고 다시 부르면 풀리는' 보류다.
+    상한이 횟수라 못 푸는 사유 하나에 3번을 다 써버리면 뒤 관문은 시도조차 못 했다. 사유가 바뀌면
+    앞 관문을 통과한 것이니 시도를 되돌리고, 총량은 하드 상한이 막는다."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys)
+    i = src.index("task_close_structure_refused")
+    seg = src[max(0, i - 1200):i + 400]
+    assert "_close_last_why" in seg, "사유가 바뀌었는지(=진전) 보지 않는다"
+    assert "_close_turns = 0" in seg, "앞 관문을 통과해도 시도가 안 돌아온다"
+    assert "_close_total" in seg, "총량 하드 상한이 없어 무한 시도가 가능하다"
