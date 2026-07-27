@@ -672,7 +672,7 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  72b4c4b   ← HEAD — ★큐 전달·재시도·중지 세대 원자화(2026-07-25):
+murmur  311a247   ← HEAD — ★큐 전달·재시도·중지 세대 원자화(2026-07-25):
                           HTTP/ORM/local pending을 단일 판독기로 통합하고 stale pick 해제를
                           exact-payload CAS로 만들었다. HTTP claim/unpick 토큰으로 응답 유실
                           재전송을 멱등화했으며, stop ack는 읽은 StopSignal 세대만 소거해

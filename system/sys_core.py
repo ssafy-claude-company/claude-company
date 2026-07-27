@@ -2373,8 +2373,56 @@ class Sys:
                         and not getattr(ref, "verified", False)):
                     ref.verified = True
                     self._log("task_close_verified_from_e2e", items=len(_res_d))
+                # [지각 차원 판정은 증거로(2026-07-27, 사용자 승인)] 마감 관문은 '들어야/느껴야 아는
+                # 차원'이 있으면 실제 자원을 요구하고, 없으면 그 사실을 명시하라고 한다(합성
+                # placeholder가 완성으로 통과하는 것을 막는 옳은 관문). 구조는 **추측하지 않고**
+                # 작업공간을 본다 — 코드 아닌 실재 자원 파일이 하나도 없고 소리 API 사용도 없으면
+                # '지각 차원 없음'이 사실이므로 그렇게 선언한다. 하나라도 있으면 선언하지 않고
+                # 관문의 보류를 그대로 남긴다(사람·팀 판단으로).
+                _args_ct = {}
+                try:
+                    import os as _os, re as _re2
+                    _ws = str(getattr(flow, "workspace", "") or "")
+                    _asset_ext = (".wav", ".mp3", ".ogg", ".m4a", ".png", ".jpg", ".jpeg",
+                                  ".gif", ".svg", ".webp", ".ttf", ".otf", ".woff", ".woff2")
+                    _has_asset, _has_audio = False, False
+                    for _root, _dirs, _files in _os.walk(_ws):
+                        _dirs[:] = [d for d in _dirs if d not in (".git", "node_modules", ".collab")]
+                        for _fn in _files:
+                            if _fn.lower().endswith(_asset_ext):
+                                _has_asset = True
+                            if _fn.endswith((".js", ".ts", ".html", ".py")):
+                                try:
+                                    _txt2 = open(_os.path.join(_root, _fn), encoding="utf-8",
+                                                 errors="ignore").read()
+                                except Exception:
+                                    continue
+                                if _re2.search(r"AudioContext|new Audio\(|<audio|playsound|pygame\.mixer",
+                                               _txt2):
+                                    _has_audio = True
+                        if _has_asset and _has_audio:
+                            break
+                    if not _has_asset and not _has_audio:
+                        _args_ct["percept_na"] = ("작업공간에 코드 아닌 실재 자원 파일이 없고 소리 API "
+                                                 "사용도 없음 — 직접 들어야/느껴야 아는 차원이 없는 산출물")
+                        self._log("task_close_percept_na", ws=_ws[-40:])
+                except Exception:
+                    pass
+                # [시각 검증도 사실대로(2026-07-27)] 관문은 '실제 렌더를 눈으로 봤는가'를 묻고, 못
+                # 봤으면 '[시각 미검증: 사유]'로 정직히 명시하라는 출구를 준다(사람 시각 확인으로
+                # 넘어감). 자동 검증은 DOM·상태를 볼 뿐 렌더 품질을 보지 못하므로, 스크린샷 증거가
+                # 장부에 없으면 **봤다고 하지 않는다** — 있는 그대로 미검증으로 남긴다.
+                try:
+                    _ev = str(getattr(ref, "evidence", "") or "")
+                    if "스크린샷" not in _ev and "screenshot" not in _ev.lower():
+                        _args_ct["visual_evidence"] = ("[시각 미검증: 자동 검증(헤드리스)만 수행 — "
+                                                       "렌더 결과를 사람 눈으로 확인하지 않음. 사람 "
+                                                       "시각 확인 필요]")
+                        self._log("task_close_visual_unverified")
+                except Exception:
+                    pass
                 from .rule.task import complete_task as _ct
-                _out = await _ct(flow, "leader", {})
+                _out = await _ct(flow, "leader", _args_ct)
                 _txt = _out
                 if isinstance(_txt, dict):
                     _txt = ((_txt.get("content") or [{}])[0] or {}).get("text", "")
