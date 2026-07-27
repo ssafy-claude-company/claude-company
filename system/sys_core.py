@@ -2389,7 +2389,8 @@ class Sys:
         if flow.current is None:
             self._log("task_close_complete", by=actor, turn=turn_no)
             return True
-        if turn_no >= 2:
+        # 구조가 손을 뗀 뒤에는 마감 호출을 선점하지 않는다 — 그 관문은 봇이 직접 부른다.
+        if turn_no >= 2 and not getattr(flow, "_close_structure_done", False):
             try:
                 # [실행 사실 기록 — 대상이 확실한 자리(2026-07-27, U-065)] 관문은 'run으로 실제
                 # 실행했는가'(verified)를 본다. 재개는 e2e를 다시 돌리지 않고 판정만 복원하므로 그
@@ -2474,6 +2475,15 @@ class Sys:
                     flow._close_progress = int(getattr(flow, "_close_progress", 0) or 0) + 1
                     if int(getattr(flow, "_close_total", 0) or 0) < 8:
                         flow._close_turns = 0        # 앞 관문이 풀렸다 — 다음 관문에 시도를 준다
+                elif _now_why:
+                    # [구조가 못 여는 관문에서는 손을 뗀다(2026-07-27, U-067 실측)] 같은 사유가
+                    # 되풀이된다 = 구조가 실을 수 있는 것(사실로 확정되는 인자)으로는 이 관문이
+                    # 안 열린다는 뜻이다. 그런데 구조가 매 바퀴 호출을 선점하니 **봇이 부를 기회
+                    # 자체가 없었다**(라이브: 수용 기준 관문에서 3번 헛돌고 파킹). 이제부터 이
+                    # 관문은 봇이 직접 부른다 — 구조는 자리를 비켜 준다.
+                    if not getattr(flow, "_close_structure_done", False):
+                        flow._close_structure_done = True
+                        self._log("task_close_handed_to_bot", why=_now_why[:100])
                 flow._close_total = int(getattr(flow, "_close_total", 0) or 0) + 1
                 self._log("task_close_structure_refused", why=_why[:180],
                           total=int(flow._close_total), gates_cleared=int(getattr(flow, "_close_progress", 0) or 0))
@@ -2486,14 +2496,18 @@ class Sys:
                     await self.run_turn(
                         flow, actor,
                         "[SYS — 마감 관문 보류] 현재 상태: 판 진행 중 · 마감 시도가 아래 사유로 "
-                        "보류됐습니다. 관문은 요구된 검증의 실제 수행 결과를 result에서 봅니다"
-                        "(형식만 채운 재호출은 걸러집니다).\n\n— 관문 사유 —\n" + _why,
+                        "보류됐습니다. 이 관문은 산출물을 직접 대조해야 답할 수 있어 구조가 대신 "
+                        "통과시키지 않습니다 — **마감(complete_task) 호출은 당신이 합니다**. 관문은 "
+                        "요구된 검증의 실제 수행 결과를 result에서 봅니다(형식만 채운 재호출은 "
+                        "걸러집니다).\n\n— 관문 사유 —\n" + _why,
                         Kind.INFO, "leader")
             except Exception as _e_ct:
                 self._log("task_close_structure_error", why=str(_e_ct)[:120])
-        if turn_no >= 3:
+        _close_cap = 6 if getattr(flow, "_close_structure_done", False) else 3
+        if turn_no >= _close_cap:
             flow._stage_stuck = "task-close"
-            self._log("task_close_stalled", by=actor, attempts=turn_no)
+            self._log("task_close_stalled", by=actor, attempts=turn_no,
+                      handed=bool(getattr(flow, "_close_structure_done", False)))
         else:
             self._log("task_close_turn", by=actor, turn=turn_no)
         return True
@@ -3438,7 +3452,7 @@ class Sys:
                 if flow.current is None or not _ms_on():
                     return False
                 return ((getattr(flow, "wrapup_state", None) or {}).get("verdict") == "e2e_pass"
-                        and int(getattr(flow, "_close_turns", 0) or 0) < 3
+                        and int(getattr(flow, "_close_turns", 0) or 0) < 6
                         and int(getattr(flow, "_close_total", 0) or 0) < 8)   # 총량 하드 상한
 
             def _needs_kickoff():

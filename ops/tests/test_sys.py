@@ -8099,3 +8099,23 @@ def test_복구도_전수검증이_선_판을_미완으로_되돌리지_않는�
     seg = src[max(0, i - 900):i + 500]
     assert "_e2e_ok" in seg, "복구가 전수 검증 통과 여부를 보지 않는다"
     assert "not _e2e_ok" in seg, "검증이 선 판까지 미완으로 되돌린다"
+
+
+def test_구조는_못_여는_마감관문에서_손을_뗀다():
+    """[2026-07-27 U-067 실측] 마감 관문 중에는 산출물을 직접 대조해야 답할 수 있어 구조가 대신
+    통과시키면 안 되는 것이 있다(수용 기준·지각). 그런데 구조가 매 바퀴 complete_task 호출을
+    선점해 **봇이 부를 기회 자체가 없었고**, 같은 사유로 3번 헛돌고 파킹됐다. 같은 사유가
+    되풀이되면 구조는 자리를 비켜 주고, 봇이 부를 시간을 준다(총량은 여전히 유한)."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys._drive_task_close)
+    assert "_close_structure_done" in src, "구조가 못 여는 관문에서도 계속 호출을 선점한다"
+    i = src.index("if turn_no >= 2")
+    assert "not getattr(flow, \"_close_structure_done\"" in src[i:i + 200], \
+        "손을 뗀 뒤에도 구조가 마감을 호출한다"
+    assert "_close_cap = 6 if getattr(flow, \"_close_structure_done\"" in src, \
+        "봇에게 넘긴 뒤 부를 시간을 주지 않는다"
+    j = src.index("마감 관문 보류")
+    assert "complete_task) 호출은 당신이 합니다" in src[j:j + 600], \
+        "누가 마감을 불러야 하는지 봇에게 알리지 않는다"
