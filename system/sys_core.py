@@ -2283,6 +2283,14 @@ class Sys:
                     return True
             except Exception as _e_cc:
                 self._log("task_close_crosscheck_failed", why=str(_e_cc)[:80])
+        # [인플라이트 대기 봉합(2026-07-27, U-065 실측)] 마감 관문은 '완주 중인 위임 1건'이 남아 있으면
+        # 거절한다("[마감 대기] … 결과를 회수한 뒤 마감합니다"). 바로 위에서 독립 검증을 위임해 놓고
+        # 다음 세그먼트에 곧장 마감을 구동하니, 봇이 complete_task를 불러도 매번 이 사유로 막혔다
+        # (봇들은 '마감 경로가 사라졌다'고 오해해 서로 위임만 반복했다). 회수될 때까지 턴을 태우지 않는다.
+        await self._drain_inflight(flow)
+        if any(not t.done() for t in (getattr(flow, "inflight_tasks", None) or ())):
+            self._log("task_close_awaiting_inflight")
+            return True
         turn_no = int(getattr(flow, "_close_turns", 0) or 0) + 1
         flow._close_turns = turn_no
         await self.run_turn(
