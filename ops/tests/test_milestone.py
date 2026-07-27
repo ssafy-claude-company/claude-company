@@ -1480,3 +1480,32 @@ def test_e2e통과는_실행사실을_장부에_남긴다(monkeypatch):
     assert "verified = True" in src, "e2e_pass가 실행 사실을 기록하지 않는다"
     # 허위 완료 경로가 열리지 않는지: 증거 없는 pass는 애초에 e2e_pass가 아니다(문서화된 불변식).
     assert "증거 없는 pass는 pass가 아니다" in inspect.getsource(wrapup)
+
+
+def test_GOAL잠금_재개방이_반복되면_사람에게_넘긴다(monkeypatch):
+    """[2026-07-27 U-067 실측] 잠금 조건의 영수증은 '비준 명령으로 검증됐을 때만' 유효한데, 검증이
+    다른 명령으로 돌면 통과해도 무효라 주기가 다시 열린다 — 재개방↔재검증이 끝없이 돈다(실측:
+    e2e 개시 3회·통과 0, 파일 쓰기 0인 구간에도 지속). 매번 통과하는데 매번 되돌리면 그건 봇이
+    풀 문제가 아니라 계약 불일치이므로, 연속 3회면 파킹 신호를 세워 사람에게 넘긴다."""
+    import inspect
+    from system.rule import milestone
+
+    src = inspect.getsource(milestone.promote_final_locked_criteria)
+    assert "_goal_lock_reopens" in src, "재개방 횟수를 세지 않는다"
+    assert "goal_lock_reopen_parked" in src, "반복 재개방에 파킹 신호가 없다"
+    assert "_stage_stuck" in src, "파킹 신호를 세우지 않는다"
+
+
+def test_잠금조건은_비준명령으로_검증한다():
+    """[2026-07-27 U-067] 잠금 조건의 verify가 우연히 실행 가능하면 direct 경로가 먼저 잡아
+    비준 명령 대신 verify를 실행했고, 검증 통과에도 영수증이 무효라 순환했다. 비준 명령이 있는
+    잠금 조건은 direct에서 제외해 항상 ratified 경로로 보낸다(없으면 종전대로 direct)."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys._verify_exhausted_milestone)
+    i = src.find("direct = [")
+    assert i > 0, "direct 선별부를 찾지 못함"
+    seg = src[i:i + 400]
+    assert "release_lock" in seg and "ratified_goal_verifier_command" in seg, \
+        "잠금 조건이 비준 명령 경로로 가지 않는다"

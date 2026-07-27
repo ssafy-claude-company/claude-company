@@ -1183,8 +1183,29 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
         target.iter_stuck = 0
         changed += 1
         invalidate_e2e_state(flow, "GOAL 잠금 재실증 필요")
+        # [무한 재개방 차단(2026-07-27, U-067 실측)] 재개방 → 재검증 → 다시 재개방이 끝없이 돌 수
+        # 있다(잠금이 요구하는 영수증과 실제 검증이 어긋나면 통과해도 무효). 검증이 매번 통과하는데
+        # 잠금이 매번 되돌리면 그건 봇이 풀 문제가 아니라 계약 불일치다 — 연속 3회면 사람에게 넘긴다
+        # (파킹 신호만 세우고 집행은 오케스트레이터). 정상 재개방은 1~2회로 끝난다.
+        _n = int(getattr(flow, "_goal_lock_reopens", 0) or 0) + 1
+        try:
+            flow._goal_lock_reopens = _n
+        except Exception:
+            _n = 1
         if flow.log:
-            flow.log("goal_lock_final_reopened", ms=target.ms_id, criteria=len(refs))
+            flow.log("goal_lock_final_reopened", ms=target.ms_id, criteria=len(refs), n=_n)
+        if _n >= 3:
+            try:
+                flow._stage_stuck = f"GOAL 잠금 재개방 반복({_n}회) — 비준 명령과 검증 영수증 불일치"
+                if flow.log:
+                    flow.log("goal_lock_reopen_parked", ms=target.ms_id, n=_n)
+            except Exception:
+                pass
+    if not needs_verify:
+        try:
+            flow._goal_lock_reopens = 0   # 유효 영수증이 섰다 — 순환 카운터 리셋
+        except Exception:
+            pass
     changed += _sync_goal_locked_evidence(flow, target)
     if changed:
         _pnote(flow, f"[GOAL 최종 인수] 상위 잠금 조건 {len(refs)}건을 {target.ms_id} 실증 분모로 확정")
