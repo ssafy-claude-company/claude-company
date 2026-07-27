@@ -503,3 +503,18 @@ def test_pipeline_flag_default_off(monkeypatch):
     assert pipeline_on() is True
     monkeypatch.setenv("ORGANT_PIPELINE", "other")
     assert pipeline_on() is False
+
+
+def test_실행산출_목록은_재시작을_넘긴다(tmp_path):
+    """[2026-07-27] 검증기 리포트 경로를 재시작 후 잊으면 복원 시 그 파일이 다시 manifest에 섞여
+    복원된 영수증이 통째로 stale 처리된다 — 무한 재개방의 재발 경로. 체크포인트에 동승시킨다."""
+    import inspect
+    from system import sys_recovery
+
+    save = inspect.getsource(sys_recovery.checkpoint_open_task)
+    assert '"run_outputs"' in save, "실행 산출 목록이 체크포인트에 안 실린다"
+
+    src = inspect.getsource(sys_recovery)
+    i_set = src.index('flow.run_outputs = set(proj.get("run_outputs")')
+    i_stamp = src.index("stamp, epoch = workspace_artifact_stamp(flow)", i_set - 4000)
+    assert i_set < i_stamp, "스탬프를 계산한 뒤에 복원하면 같은 눈으로 검사하지 않는다"

@@ -1496,16 +1496,64 @@ def test_GOAL잠금_재개방이_반복되면_사람에게_넘긴다(monkeypatch
     assert "_stage_stuck" in src, "파킹 신호를 세우지 않는다"
 
 
-def test_잠금조건은_비준명령으로_검증한다():
-    """[2026-07-27 U-067] 잠금 조건의 verify가 우연히 실행 가능하면 direct 경로가 먼저 잡아
-    비준 명령 대신 verify를 실행했고, 검증 통과에도 영수증이 무효라 순환했다. 비준 명령이 있는
-    잠금 조건은 direct에서 제외해 항상 ratified 경로로 보낸다(없으면 종전대로 direct)."""
-    import inspect
-    from system.sys_core import Sys
+def test_검증기가_남긴_리포트는_산출물_스탬프를_바꾸지_않는다():
+    """[2026-07-27 U-067 실측] 봇이 만든 검증기가 작업공간에 리포트를 남기면(artifacts/…/latest.json)
+    그 파일이 authoring manifest에 섞여 **검증할 때마다 스탬프가 바뀌었다** → 방금 선 영수증이 스스로
+    무효 → 주기 재개방 → 또 검증… 구조적 무한(실측: e2e 개시 3회·통과 0, 그 사이 Write/Edit 0건).
+    실행이 처음 만든 파일은 저작 입력이 아니므로 스탬프 밖이다. 단, **이미 있던 파일을 실행이 고치면
+    스탬프는 바뀌어야 한다**(제품 변경은 계속 잡힌다)."""
+    import os, tempfile
+    from types import SimpleNamespace
+    from system.rule.milestone import (
+        record_run_outputs, workspace_artifact_stamp, workspace_file_set)
 
-    src = inspect.getsource(Sys._verify_exhausted_milestone)
-    i = src.find("direct = [")
-    assert i > 0, "direct 선별부를 찾지 못함"
-    seg = src[i:i + 400]
-    assert "release_lock" in seg and "ratified_goal_verifier_command" in seg, \
-        "잠금 조건이 비준 명령 경로로 가지 않는다"
+    with tempfile.TemporaryDirectory() as ws:
+        with open(os.path.join(ws, "index.html"), "w") as fp:
+            fp.write("<h1>game</h1>")
+        flow = SimpleNamespace(workspace=ws, log=None, run_outputs=None)
+
+        base = workspace_artifact_stamp(flow)
+        assert base, "스탬프를 만들 수 없다"
+
+        def _verify_run(payload):
+            """검증기 흉내 — 실행할 때마다 리포트를 새로 쓴다(타임스탬프 등으로 내용이 달라진다)."""
+            pre = workspace_file_set(flow)
+            out = os.path.join(ws, "artifacts", "verify_ui")
+            os.makedirs(out, exist_ok=True)
+            with open(os.path.join(out, "latest.json"), "w") as fp:
+                fp.write(payload)
+            record_run_outputs(flow, pre)
+
+        _verify_run('{"ts": 1}')
+        sealed = workspace_artifact_stamp(flow)      # 영수증이 봉인되는 시점의 스탬프
+        _verify_run('{"ts": 2}')
+        assert workspace_artifact_stamp(flow) == sealed, \
+            "검증을 다시 돌렸다고 영수증이 무효가 된다(무한 재개방의 원인)"
+        assert sealed == base, "실행 산출이 스탬프에 섞여 있다"
+
+        # 제품이 실제로 바뀌면 여전히 무효 — 보호 성질은 유지된다
+        with open(os.path.join(ws, "index.html"), "w") as fp:
+            fp.write("<h1>game v2</h1>")
+        assert workspace_artifact_stamp(flow) != sealed, "제품 변경이 스탬프에 안 잡힌다"
+
+
+def test_실행이_기존_파일을_고치면_스탬프가_바뀐다():
+    """등재는 '처음 생긴 파일'만 대상 — 실행이 기존 산출물을 덮어쓰면 그건 제품 변경이다."""
+    import os, tempfile
+    from types import SimpleNamespace
+    from system.rule.milestone import (
+        record_run_outputs, workspace_artifact_stamp, workspace_file_set)
+
+    with tempfile.TemporaryDirectory() as ws:
+        with open(os.path.join(ws, "app.js"), "w") as fp:
+            fp.write("v1")
+        flow = SimpleNamespace(workspace=ws, log=None, run_outputs=None)
+        sealed = workspace_artifact_stamp(flow)
+
+        pre = workspace_file_set(flow)
+        with open(os.path.join(ws, "app.js"), "w") as fp:   # 실행이 기존 파일을 고침
+            fp.write("v2")
+        record_run_outputs(flow, pre)
+
+        assert "app.js" not in (flow.run_outputs or set()), "기존 파일이 실행 산출로 등재됐다"
+        assert workspace_artifact_stamp(flow) != sealed, "실행의 제품 변경이 가려진다"

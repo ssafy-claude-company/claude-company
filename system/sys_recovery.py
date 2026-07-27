@@ -253,6 +253,9 @@ def checkpoint_open_task(sys, flow) -> None:
     p["e2e_results"] = copy.deepcopy(getattr(flow, "e2e_results", None))
     p["wrapup_state"] = copy.deepcopy(getattr(flow, "wrapup_state", None))
     p["e2e_origin_context"] = list(getattr(flow, "e2e_origin_context", None) or [])
+    # [실행 산출 목록(2026-07-27)] 검증기가 남기는 리포트 경로들 — 재시작 후에도 스탬프가 같은 눈을
+    # 유지해야 복원된 영수증이 '검증기 리포트가 바뀌었다'는 이유로 무효화되지 않는다.
+    p["run_outputs"] = sorted(getattr(flow, "run_outputs", None) or ())
     # [로드맵 §9(2026-07-14)] 전체 구조 회의가 확정한 다단계 로드맵(달구지→자동차→스포츠카) —
     # 주기 완수마다 다음 단계 회의를 코칭하는 근거라 재시작을 넘어 살아야 한다.
     p["roadmap"] = list(getattr(flow, "roadmap", None) or [])
@@ -280,6 +283,9 @@ def _restore_e2e_state(flow, proj) -> bool:
     results = copy.deepcopy(proj.get("e2e_results"))
     wrapup = copy.deepcopy(proj.get("wrapup_state"))
     flow.e2e_origin_context = list(proj.get("e2e_origin_context") or [])
+    # [실행 산출 목록(2026-07-27)] 스탬프를 계산하기 **전에** 세운다 — 재시작 후 검증기 리포트가
+    # 다시 manifest에 섞이면 복원된 영수증이 통째로 stale 처리된다(무한 재개방의 재발 경로).
+    flow.run_outputs = set(proj.get("run_outputs") or ())
     if checklist is None:
         flow.e2e_checklist = flow.e2e_results = flow.wrapup_state = None
         flow._e2e_receipt_nonce = None

@@ -1922,8 +1922,9 @@ class Sys:
         """
         from .rule.milestone import (claim_kick_target, iter_verify, next_milestone,
                                      promote_final_locked_criteria,
-                                     ratified_goal_verifier_command, renegotiate_criterion,
-                                     workspace_artifact_stamp, write_revision, wrapup_done)
+                                     ratified_goal_verifier_command, record_run_outputs,
+                                     renegotiate_criterion, workspace_artifact_stamp,
+                                     workspace_file_set, write_revision, wrapup_done)
         from .rule.evidence import (
             direct_verifier_command, verifier_command_hash, verifier_spec_hash,
         )
@@ -1972,19 +1973,7 @@ class Sys:
         # 직접 실행한다. 그 외 자연어는 아래 작업 봇 검증 경로를 탄다. 실패는 재검증 루프가 아니라
         # 단계기계의 보충 SubTask 회의로 넘긴다.
         workspace = getattr(flow, "workspace", None)
-        # [잠금 조건은 비준 명령으로만(2026-07-27, U-067 실측)] GOAL 잠금 조건의 영수증은
-        # **회의가 비준한 exact command로 검증됐을 때만** 유효하다(promote_final_locked_criteria의
-        # valid_receipt: normalize(verified_command) == ratified_command). 그런데 그 조건의 `verify`가
-        # 우연히 실행 가능하면 아래 direct 경로가 먼저 잡아 **비준 명령 대신 verify를 실행**했고,
-        # 검증은 통과해도 영수증이 무효라 주기가 다시 열렸다 — 재개방↔재검증 무한 순환(실측:
-        # e2e 개시 3회·통과 0, 파일 쓰기 0인 구간에도 계속). 잠금 조건은 direct에서 제외해
-        # 항상 ratified 경로로 보낸다(비준 명령이 없으면 unratified_release가 사람 경로로 넘긴다).
-        direct = [
-            c for c in pending
-            if direct_verifier_command(c.verify, workspace)
-            and not (getattr(c, "release_lock", False)
-                     and ratified_goal_verifier_command(c, workspace, require_existing=True))
-        ]
+        direct = [c for c in pending if direct_verifier_command(c.verify, workspace)]
         natural_release = [
             c for c in ms.criteria
             if not c.passed and c.status == "active"
@@ -2009,8 +1998,10 @@ class Sys:
         )
         for c, command, structurally_ratified in system_runs:
             c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
+            _pre = workspace_file_set(flow)          # 검증기가 새로 남기는 리포트는 저작물이 아니다
             ok, rc, out, err, reason = await run_workspace_command(
                 workspace, command, timeout=60)
+            record_run_outputs(flow, _pre)
             tail = ((out or "") + (("\n[stderr] " + err) if (err or "").strip() else ""))[-400:].strip()
             evidence = f"exit={rc} `{command[:80]}`" + (f"\n{tail}" if tail else "")
             result = {"desc": c.desc, "passed": bool(ok),

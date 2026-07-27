@@ -1024,10 +1024,23 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             of.close(); ef.close()
             return timed_out, rc, out, err
 
+        # [실행 산출 등재(2026-07-27, U-067)] 검증기가 새로 남기는 리포트가 authoring manifest에
+        # 섞이면 검증이 자기 영수증을 무효화한다(rule/milestone.record_run_outputs 참조).
+        try:
+            from .rule.milestone import record_run_outputs as _rro, workspace_file_set as _wfs
+            _pre_files = _wfs(flow)
+        except Exception:
+            _rro = _wfs = None
+            _pre_files = None
         try:
             timed_out, rc, out, err = await anyio.to_thread.run_sync(_exec)
         except Exception as e:
             return _ok(f"실행 오류: {e}")
+        if _rro is not None and _pre_files is not None:
+            try:
+                _rro(flow, _pre_files)
+            except Exception:
+                pass
         if timed_out:
             _dbg(f"[RUN] {me_id} `{cmd[:60]}` TIMEOUT")
             return _ok("실행 시간초과(60s) — 그룹째 정리함. 서버는 'node server.js & sleep 1; curl ...'처럼 "

@@ -890,6 +890,70 @@ def write_revision(flow) -> int:
     return total
 
 
+def _stamp_root(flow) -> str:
+    """스탬프 대상 작업공간의 실경로(부적격이면 빈 문자열)."""
+    root = str(getattr(flow, "workspace", "") or "").strip()
+    try:
+        root = os.path.realpath(root)
+    except OSError:
+        return ""
+    if not root or root in _STAMP_BROAD_ROOTS or not os.path.isdir(root):
+        return ""
+    return root
+
+
+def _stamp_files(root):
+    """manifest 대상 파일을 (상대경로, 절대경로)로 산출 — 스탬프와 스냅샷이 같은 눈을 쓴다."""
+    for base, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in _STAMP_SKIP_DIRS)
+        for name in sorted(files):
+            if name in (".DS_Store",) or any(name.endswith(s) for s in _STAMP_SKIP_SUFFIXES):
+                continue
+            path = os.path.join(base, name)
+            yield os.path.relpath(path, root).replace(os.sep, "/"), path
+
+
+def workspace_file_set(flow) -> set:
+    """현재 manifest 대상 파일들의 상대경로 집합 — 실행 전후 비교용."""
+    root = _stamp_root(flow)
+    if not root:
+        return set()
+    try:
+        return {rel for rel, _ in _stamp_files(root)}
+    except OSError:
+        return set()
+
+
+def record_run_outputs(flow, before) -> int:
+    """실행(run)으로 **처음 생긴** 파일을 실행 산출로 등재한다 — 스탬프에서 제외될 대상.
+
+    [2026-07-27, U-067 실측] 봇이 만든 검증기는 리포트를 작업공간에 남긴다
+    (`artifacts/verify_ui/latest.json`). 그 파일이 authoring manifest에 들어가면 **검증할 때마다
+    스탬프가 바뀌어 방금 선 영수증이 스스로 무효**가 되고, 무효면 주기가 다시 열려 또 검증하고…
+    구조적으로 끝나지 않는다(실측: e2e 개시 3회·통과 0, 그 사이 Write/Edit 0건 — 봇이 고쳐서가
+    아니라 검증이 자기를 무효화했다).
+
+    스탬프의 물음은 '저작한 산출물이 영수증 이후 바뀌었나'이므로 실행이 낳은 파일은 애초에 대상이
+    아니다(docstring의 'authoring 입력 manifest'가 원래 뜻). run 도구는 파일 작성 명령 자체가
+    금지돼 있어(`_RUN_AUTHOR`) run으로 제품을 저작할 수 없으니 '실행이 처음 만든 파일'은 안전한
+    경계다. **이미 있던 파일을 실행이 고치면 스탬프는 그대로 바뀐다** — 제품 변경은 계속 잡힌다.
+    """
+    after = workspace_file_set(flow)
+    fresh = {rel for rel in after if rel not in (before or set())}
+    if not fresh:
+        return 0
+    known = set(getattr(flow, "run_outputs", None) or ())
+    known |= fresh
+    try:
+        flow.run_outputs = known
+    except Exception:
+        return 0
+    if getattr(flow, "log", None):
+        flow.log("run_output_registered", n=len(fresh), total=len(known),
+                 sample=", ".join(sorted(fresh)[:3])[:120])
+    return len(fresh)
+
+
 def workspace_artifact_stamp(flow) -> str:
     """작업공간의 authoring 입력 manifest hash.
 
@@ -898,50 +962,44 @@ def workspace_artifact_stamp(flow) -> str:
     영수증을 재사용하지 못하게 하는 2차 버전이다. 읽기 실패도 manifest에 표식으로 포함해 fail-open하지
     않는다.
     """
-    root = str(getattr(flow, "workspace", "") or "").strip()
-    try:
-        root = os.path.realpath(root)
-    except OSError:
+    root = _stamp_root(flow)
+    if not root:
         return ""
-    if not root or root in _STAMP_BROAD_ROOTS or not os.path.isdir(root):
-        return ""
+    # [실행이 낳은 파일은 저작 입력이 아니다(2026-07-27, U-067 실측)] record_run_outputs 참조.
+    skip_rel = set(getattr(flow, "run_outputs", None) or ())
     h = hashlib.sha256()
     try:
-        for base, dirs, files in os.walk(root, topdown=True, followlinks=False):
-            dirs[:] = sorted(d for d in dirs if d not in _STAMP_SKIP_DIRS)
-            for name in sorted(files):
-                if name in (".DS_Store",) or any(name.endswith(s) for s in _STAMP_SKIP_SUFFIXES):
-                    continue
-                path = os.path.join(base, name)
-                rel = os.path.relpath(path, root).replace(os.sep, "/")
-                try:
-                    if os.path.islink(path):
-                        link_hash = hashlib.sha256(
-                            ("LINK:" + os.readlink(path)).encode("utf-8", "replace")
-                        )
-                        target = os.path.realpath(path)
-                        # regular-file symlink는 링크 문자열뿐 아니라 실제 실행되는 target 내용도
-                        # 결속한다. target이 바뀌었는데 receipt가 살아남는 구멍을 닫는다.
-                        if os.path.isfile(target):
-                            link_hash.update(b"\0TARGET:")
-                            with open(target, "rb") as fp:
-                                for chunk in iter(lambda: fp.read(1024 * 1024), b""):
-                                    link_hash.update(chunk)
-                        digest = link_hash.digest()
-                    else:
-                        file_hash = hashlib.sha256()
-                        with open(path, "rb") as fp:
-                            # 큰 파일도 표본이 아니라 전체 내용을 스트리밍한다. 앞·뒤+크기 표본은
-                            # 동일 크기 파일의 중간 바이트 변경을 놓쳐 release/e2e 영수증을 이전
-                            # 산출물에 재사용하게 만든다. chunk 단위라 메모리는 파일 크기와 무관하다.
+        for rel, path in _stamp_files(root):
+            if rel in skip_rel:
+                continue
+            try:
+                if os.path.islink(path):
+                    link_hash = hashlib.sha256(
+                        ("LINK:" + os.readlink(path)).encode("utf-8", "replace")
+                    )
+                    target = os.path.realpath(path)
+                    # regular-file symlink는 링크 문자열뿐 아니라 실제 실행되는 target 내용도
+                    # 결속한다. target이 바뀌었는데 receipt가 살아남는 구멍을 닫는다.
+                    if os.path.isfile(target):
+                        link_hash.update(b"\0TARGET:")
+                        with open(target, "rb") as fp:
                             for chunk in iter(lambda: fp.read(1024 * 1024), b""):
-                                file_hash.update(chunk)
-                        digest = file_hash.digest()
-                    h.update(rel.encode("utf-8", "surrogateescape") + b"\0")
-                    h.update(digest)
-                except (OSError, ValueError) as exc:
-                    h.update(rel.encode("utf-8", "surrogateescape") + b"\0ERR:")
-                    h.update(type(exc).__name__.encode())
+                                link_hash.update(chunk)
+                    digest = link_hash.digest()
+                else:
+                    file_hash = hashlib.sha256()
+                    with open(path, "rb") as fp:
+                        # 큰 파일도 표본이 아니라 전체 내용을 스트리밍한다. 앞·뒤+크기 표본은
+                        # 동일 크기 파일의 중간 바이트 변경을 놓쳐 release/e2e 영수증을 이전
+                        # 산출물에 재사용하게 만든다. chunk 단위라 메모리는 파일 크기와 무관하다.
+                        for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+                            file_hash.update(chunk)
+                    digest = file_hash.digest()
+                h.update(rel.encode("utf-8", "surrogateescape") + b"\0")
+                h.update(digest)
+            except (OSError, ValueError) as exc:
+                h.update(rel.encode("utf-8", "surrogateescape") + b"\0ERR:")
+                h.update(type(exc).__name__.encode())
     except OSError:
         return ""
     return h.hexdigest()
