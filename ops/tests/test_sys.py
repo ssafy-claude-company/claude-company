@@ -8270,3 +8270,18 @@ def test_깊은체인_복원도_전수검증을_존중한다():
     src = inspect.getsource(sys_recovery)
     assert "ref.owner_incomplete = not _e2e_ok" in src, "깊은 체인 복원이 검증을 무시하고 미완으로 되돌린다"
     assert src.count("ref.owner_incomplete = True") == 1, "무조건 미완으로 세우는 경로가 남아 있다"
+
+
+def test_닫힌_단위의_빈_장부는_검증을_막지_않는다():
+    """[2026-07-27 전수감사] 백로그가 0건인 채 done이 된 단위 하나가 검증 구동기를 **영구 정지**
+    시켰다 — meeting_stage는 done 단위를 안 보므로 그 장부를 채울 회의도 안 열리고, 회의도 검증도
+    작업도 없이 안내 없이 판이 닫혔다. 이미 닫힌 단위는 검증 대상이 아니다. 단 **열린 단위의 빈
+    장부는 여전히 막아야 한다**(그건 회의가 채울 상태다)."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys._verify_exhausted_milestone)
+    i = src.index('if relay is None or not getattr(relay, "backlogs", None):')
+    seg = src[i:i + 800]
+    assert 'st.status in ("done", "superseded")' in seg, "닫힌 단위의 빈 장부가 검증을 영구 정지시킨다"
+    assert "return False" in seg, "열린 단위의 빈 장부까지 통과시키면 안 된다"

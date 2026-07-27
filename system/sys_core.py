@@ -1961,6 +1961,14 @@ class Sys:
         for st in ms.subtasks:
             relay = relays.get(st.st_id)
             if relay is None or not getattr(relay, "backlogs", None):
+                # [닫힌 단위의 빈 장부는 검증을 막지 않는다(2026-07-27, 전수감사)] 종전엔 상태를
+                # 보기 전에 탈출해, 백로그가 0건인 채 done이 된 단위 하나가 **검증 구동기를 영구
+                # 정지**시켰다 — meeting_stage는 done 단위를 안 보므로 그 장부를 채울 회의도 안
+                # 열리고, 회의도 검증도 작업도 없이 안내 없이 판이 닫혔다. 이미 닫힌 단위는
+                # 검증 대상이 아니므로 건너뛴다. 열린 단위의 빈 장부는 종전대로 막는다
+                # (그건 회의가 채워야 할 상태이고 meeting_stage가 실제로 연다).
+                if st.status in ("done", "superseded"):
+                    continue
                 return False
             # 최종 계약 검증은 산출물이 더 바뀌지 않는 경계에서만 유효하다. blocked/open 하나라도
             # 남으면 먼저 선행·보충 백로그를 해결하고, 모든 장부가 terminal인 뒤에만 verifier를 연다.

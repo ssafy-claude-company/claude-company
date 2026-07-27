@@ -2865,3 +2865,20 @@ def test_같은_형식벽_반복은_사유와_함께_사람에게_넘어간다()
     park = inspect.getsource(Sys)
     j = park.index("막혀서 멈췄어요")
     assert "막힌 지점" in park[j:j + 900], "멈춤 안내가 무엇을 답해야 하는지 안 보여준다"
+
+
+def test_회의_골격과_등록_요구가_어긋나지_않는다():
+    """[2026-07-27 전수감사] 봇이 편집하는 **골격**에 없는 것을 등록기가 요구하면, 골격만 채운
+    초안이 완성(빈칸 0·이의 0)으로 판정돼 표결까지 간 뒤 반드시 거부된다 — 예산만 태우는 구조다.
+    ①선행 대기(blocked) 연결 칸이 골격에 없었다 ②단위 거부문이 폐지된 계약('| 실증')을 요구했다."""
+    import inspect
+    from system.rule import milestone
+    from system.rule.milestone import stage_draft_template
+
+    bl = stage_draft_template("backlog", "안건")
+    assert "[해결:" in bl, "등록기가 요구하는 선행 대기 연결 칸이 골격에 없다"
+
+    reg = inspect.getsource(milestone.register_stage)
+    assert "'단위: ⟦목표⟧ | ⟦실증⟧'" not in reg, "폐지된 계약 문구로 반려한다(봇이 엉뚱하게 고친다)"
+    st = stage_draft_template("subtask", "안건")
+    assert "단위: ⟦작업 영역" in st, "골격의 단위 형식이 바뀌었다"
