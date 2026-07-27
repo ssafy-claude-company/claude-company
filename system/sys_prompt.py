@@ -7,6 +7,7 @@
 테스트 monkeypatch·서브클래스 오버라이드 의미 보존.
 """
 import os
+import re as _re
 import time
 
 from .audit import CAP_MIN
@@ -347,11 +348,11 @@ def portfolio_note(sys) -> str:
         + cap_note + "\n".join(shown) + "\n\n")
 
 
-# SYS가 채널에 거는 운영 안내(사람 대상) — 봇의 상황 요약에서 제외할 머리표.
-_SYS_NOTICE_PREFIXES = (
-    "[막혀서 멈췄어요]", "[크레딧 한도]", "[사람 확인 필요]", "[e2e 복기 정체]",
-    "[조건 재협상 승인 요청]", "[GOAL 잠금 정체]", "■",
-)
+# SYS가 채널에 거는 운영 안내(사람 대상)를 봇의 상황 요약에서 가른다.
+# [열거 대신 구조(2026-07-27, U-067 실측)] 처음엔 문구를 열거했는데 바로 빠진 게 나왔다
+# ("[사람 조치 필요] … '재개'를 누르면"). SYS 운영 안내는 예외 없이 **머리에 대괄호 라벨**을 달고,
+# 사용자의 실제 말("게임 만들어줘")은 그렇지 않다 — 그 형태로 가른다(목록 관리 불필요).
+_SYS_NOTICE_RE = _re.compile(r"^\s*(?:■|\[[^\]\n]{2,24}\])")
 
 
 async def channel_situation(sys, channel_id, exclude_root=None, limit=14) -> str:
@@ -373,7 +374,7 @@ async def channel_situation(sys, channel_id, exclude_root=None, limit=14) -> str
         # 들어갔다. 그 결과 마감 관문 앞에서 봇 6명이 연달아 "`재개` 눌러서 다시 태우면 됩니다"라며
         # **자기 차례를 사람 차례로** 읽었다(마감 호출 0회). 운영 안내는 상황 요약에서 제외한다 —
         # 채널 대화(사람·동료의 말)만 남긴다. 사용자의 실제 요청·메시지는 그대로 들어온다.
-        if body.startswith(_SYS_NOTICE_PREFIXES):
+        if _SYS_NOTICE_RE.match(body):
             continue
         if exclude_root and str(getattr(m, "message_id", "")) == str(exclude_root):
             continue   # 방금 들어온 그 요청 자신은 제외(원문은 origin_note가 따로 보여줌)

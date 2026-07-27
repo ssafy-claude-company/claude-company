@@ -2809,7 +2809,10 @@ def test_운영_안내는_봇의_상황요약에_들어가지_않는다():
     rows = [SimpleNamespace(body="[막혀서 멈췄어요] … '재개'를 누르면 이어서 진행해요", from_id=0,
                             message_id="1"),
             SimpleNamespace(body="게임 만들어줘", from_id=0, message_id="2"),
-            SimpleNamespace(body="■ 중지됨", from_id=0, message_id="3")]
+            SimpleNamespace(body="■ 중지됨", from_id=0, message_id="3"),
+            # 열거 대신 구조로 가른다 — 목록에 없던 새 안내도 걸러져야 한다(실측: 이 문구가 빠져 있었다)
+            SimpleNamespace(body="[사람 조치 필요] 작업이 멈췄어요 — '재개'를 누르면 다시 시도해요",
+                            from_id=0, message_id="4")]
 
     class _G:
         async def read_thread(self, *a, **k):
@@ -2818,4 +2821,5 @@ def test_운영_안내는_봇의_상황요약에_들어가지_않는다():
     out = asyncio.run(channel_situation(SimpleNamespace(guide=_G(), bot_info={}), 1))
     assert "재개" not in out, "운영 안내가 봇에게 사람의 말로 들어간다"
     assert "중지됨" not in out, "종결 표기가 대화로 섞인다"
+    assert "사람 조치 필요" not in out, "목록에 없던 운영 안내가 새어 들어간다"
     assert "게임 만들어줘" in out, "사용자의 실제 요청까지 걸러졌다"
