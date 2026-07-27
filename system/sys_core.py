@@ -2100,11 +2100,8 @@ class Sys:
 
         # 실패는 우선 구조가 해결한다: meeting_stage=subtask → 영역+초기 백로그 병합 회의.
         # 보충 실행 뒤에도 조건 진전이 기본 3회 연속 없을 때만 기존 재협상 사다리(후속 이월→사람)를 쓴다.
-        try:
-            stuck_limit = max(1, int(os.environ.get("ORGANT_ITER_STUCK_LIMIT", "3") or 3))
-        except ValueError:
-            stuck_limit = 3
-        if ms.iter_stuck >= stuck_limit:
+        from .rule.milestone import stuck_limit as _stuck_limit
+        if ms.iter_stuck >= _stuck_limit():
             for c in [x for x in ms.criteria if not x.passed and x.status == "active"]:
                 renegotiate_criterion(
                     flow, ms, c.desc,
@@ -3384,6 +3381,8 @@ class Sys:
             # 같은 세션으로 이어서 완료까지 재호출한다 — '턴 한도 = 무조건 中断' 결함 해소.
             cont = 0
             _stage_stall, _stage_stall_cap = 0, 3   # 단계 회의가 같은 단계에 계속 막히면 컷(무한 재개 방지)
+            # 같은 단계를 몇 번까지 다시 열 수 있나 — 보충 분해 자체는 정상이지만 반복은 폭주다(U-067: 12회).
+            _stage_reopen_cap = max(2, int(os.environ.get("ORGANT_STAGE_REOPEN_CAP", "4") or 4))
             # [완료 참칭 방지(2026-07-14, 사용자: '프론트가 답변 하나 뱉고 끝나버린거 아니야')] 선거로 연
             # 제작 요청인데 앵커가 Task도 안 열고(flow.current None) meet도 안 부른 채 평문만 뱉으면, 종전엔
             # 루프 조건이 False라 한 턴에 종료→완료 참칭. '킥오프 미완'을 조건에 더해 SYS가 다시 깨워 **실제
@@ -3570,6 +3569,12 @@ class Sys:
                 if _ms_on() and not flow.cancelled:
                     if await self._verify_exhausted_milestone(flow):
                         continue
+                    # [파킹은 같은 바퀴에서 소비(2026-07-27, U-067 실측)] 실증이 재협상 사다리로
+                    # 파킹 신호를 세우고 False를 반환하면, 종전엔 곧바로 아래 단계 회의가 한 번 더
+                    # 열려 **멈추기 직전에 단위가 3개 더 생겼다**. 신호가 서 있으면 회의를 열지 말고
+                    # 루프 상단의 파킹 처리로 넘긴다.
+                    if getattr(flow, "_stage_stuck", None):
+                        continue
                 if _stage_pending() and not flow.cancelled:
                     # [위임 완주 우선(2026-07-20, U-035 실측)] 리더가 자유 위임(동료 질문)을 걸어둔 채
                     # 단계 회의를 열면 meet 게이트가 '[대기] 위임 진행 중'으로 즉시 거절 — 여는 의견
@@ -3590,13 +3595,25 @@ class Sys:
                         "my_opinion": (str(_op or "").strip() or "여는 의견 없음")[:1500], "_sys_open": True})
                     self._log("stage_meeting_opened", stage=str(_stg), ch=int(flow.user_channel or 0))
                     # 단계가 진행됐으면(다른 단계로) 무진행 아님 — cont 안 올림. 같은 단계면 정체 카운트.
+                    # [같은 단계 재개설도 센다(2026-07-27, U-067 실측)] 종전엔 '착지 실패'만 셌다 —
+                    # 회의가 매번 **성공**해 단계가 바뀌면 카운터가 0으로 리셋되므로, 같은 단계가
+                    # 12번 다시 열려 단위 36개를 만드는 동안 한 번도 안 걸렸다. 성공 착지도 세어
+                    # 같은 단계의 반복 개설을 끊는다(정상 파이프는 단계당 1회라 무영향).
+                    _seen_st = getattr(flow, "_stage_open_n", None) or {}
+                    _seen_st[str(_stg)] = int(_seen_st.get(str(_stg), 0) or 0) + 1
+                    try:
+                        flow._stage_open_n = _seen_st
+                    except Exception:
+                        pass
                     if _ms_stage(flow) == _stg:
                         _stage_stall += 1
-                        if _stage_stall >= _stage_stall_cap:
-                            self._log("stage_stall_break", stage=str(_stg), n=_stage_stall)
-                            break                       # 이 단계가 끝내 안 착지 — 무한 재개 차단
                     else:
                         _stage_stall = 0
+                    if (_stage_stall >= _stage_stall_cap
+                            or _seen_st[str(_stg)] >= _stage_reopen_cap):
+                        self._log("stage_stall_break", stage=str(_stg), n=_stage_stall,
+                                  opened=_seen_st[str(_stg)])
+                        break                           # 끝내 안 착지하거나 같은 단계 반복 개설 — 차단
                     continue
                 # [Task 경계 전용 드라이버] SYS가 분모를 한 번만 열고 검증 담당에게 e2e 도구만 준다.
                 # 불응은 세 번 뒤 stopped로 파킹되며 일반 continue 프롬프트로 돌아가 토큰을 태우지 않는다.

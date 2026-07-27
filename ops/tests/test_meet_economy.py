@@ -2727,3 +2727,71 @@ def test_형식_반려문은_해법까지_잘리지_않고_전달된다():
     assert not looks_like_verification_command('rg -n "설계" .collab/T-1/DRAFT.md')
     assert not looks_like_verification_command("python3 -m http.server 4173 --directory public")
     assert looks_like_verification_command("python3 verify_ui.py")
+
+
+def test_같은_단계_반복_개설도_상한에_걸린다():
+    """[2026-07-27 U-067 실측] 정체 카운터는 '착지 실패'만 셌다 — 회의가 매번 **성공**해 단계가
+    바뀌면 0으로 리셋되므로, 같은 단계가 12번 다시 열려 단위 36개를 만드는 동안 한 번도 안 걸렸다.
+    성공 착지도 세어 같은 단계의 반복 개설을 끊는다."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys)
+    assert "_stage_reopen_cap" in src, "같은 단계 재개설 횟수를 안 센다"
+    i = src.index("_stage_open_n")
+    seg = src[i:i + 900]
+    assert "stage_stall_break" in seg, "반복 개설이 상한에 안 걸린다"
+
+
+def test_파킹_신호는_같은_바퀴에서_소비된다():
+    """[2026-07-27 U-067 실측] 실증이 파킹 신호를 세우고 False를 반환하면, 곧바로 아래 단계 회의가
+    한 번 더 열려 **멈추기 직전에 단위가 3개 더 생겼다**. 신호가 서 있으면 회의를 열지 않는다."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys)
+    i = src.index("if await self._verify_exhausted_milestone(flow):")
+    seg = src[i:i + 700]
+    j = seg.index("_stage_pending()")
+    assert "_stage_stuck" in seg[:j], "파킹 신호를 확인하기 전에 단계 회의가 먼저 열린다"
+
+
+def test_이어받은_회의의_기존_줄은_첫_발언자_것이_아니다():
+    """[2026-07-27 U-067 실측] 첫 발언 시점의 '이미 본 줄'이 빈 집합이라, 같은 단계 재회의(초안
+    보존)에서 **첫 발언자 한 명이 파일에 이미 있던 모든 줄을 통째로 귀속**받았다 — 한 봇이 한
+    회의에서 여러 건을 연속 등재하던 쏠림의 뿌리. 첫 스캔은 기존 줄을 기준선으로 깔고 시작한다."""
+    import inspect
+    from system.rule import communication
+
+    src = inspect.getsource(communication)
+    i = src.index('_seen_lines')
+    seg = src[max(0, i - 900):i + 300]
+    assert 'if "lines" not in _dstate' in seg, "이어받은 초안의 줄이 첫 발언자에게 상속된다"
+    assert "_dregion(_dtxt)" in seg, "귀속은 파일 전문, 등록은 결정 구획 — 범위가 어긋난다"
+
+
+def test_귀속_폴백은_이_판의_팀_안에서_고르고_동점을_분산한다():
+    """[2026-07-27 U-067 실측] 폴백이 **전사 로스터**에서 골라 이 판에 없는 사람이 주인이 되거나
+    늘 같은 사람이 뽑혔다(적합도 전원 동점이면 max가 사전 첫 키를 준다 → 한 명 깔때기)."""
+    import inspect
+    from system.rule import milestone
+
+    src = inspect.getsource(milestone.register_stage)
+    i = src.index("def _owner_fb")
+    seg = src[max(0, i - 700):i + 500]
+    assert "_fb_pool" in seg and "project_team" in seg, "폴백이 전사 로스터에서 고른다"
+    assert "_fb_load" in seg, "적합도 동점이 늘 같은 사람에게 간다"
+
+
+def test_백로그_귀속_출처가_기록된다():
+    """[2026-07-27] 한 사람에게 쏠릴 때 '정말 그가 썼나'와 '기계가 몰아줬나'를 로그로 가를 수 없어
+    원인 판별이 막혔다. 값은 그대로 두고 출처만 남긴다."""
+    import inspect
+    from system.rule import milestone
+
+    src = inspect.getsource(milestone.register_stage)
+    assert "backlog_owner_attributed" in src, "귀속 출처를 기록하지 않는다"
+    i = src.index("backlog_owner_attributed")
+    seg = src[max(0, i - 600):i + 300]
+    for tag in ('"r1"', '"draft"', '"fallback"'):
+        assert tag in seg, f"출처 구분({tag})이 없다"

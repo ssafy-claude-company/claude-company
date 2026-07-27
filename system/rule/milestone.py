@@ -844,7 +844,7 @@ def iter_verify(flow, obj, results):
             note += ("\n(방금 끝낸 것이 위 조건이 아니라 **당신이 집은 백로그**라면, 조건 desc로 바꿔 "
                      "쓰지 말고 report_iter(target=<SubTask id>)로 그 단위에 보고하세요 — in_progress "
                      "백로그를 쥔 상태의 무지정 보고는 자동으로 그 단위에 귀속됩니다.)")
-    if obj.iter_stuck >= _STUCK_LIMIT:
+    if obj.iter_stuck >= stuck_limit():
         if flow.log:
             flow.log("ms_iter_stuck", kind=kind, id=oid, iter=obj.iter_n, stuck=obj.iter_stuck)
         note += (f"\n[정체 — {obj.iter_stuck}회 연속 진전 없음] 반복이 결과를 못 바꾸고 있습니다. "
@@ -854,7 +854,16 @@ def iter_verify(flow, obj, results):
     return False, note
 
 
-_STUCK_LIMIT = int(os.environ.get("ORGANT_ITER_STUCK_LIMIT", "3"))
+def stuck_limit() -> int:
+    """진전 없는 연속 iter 임계(기본 3). [단일 진실원(2026-07-27)] 종전엔 import 시 1회 읽는 상수와
+    호출마다 읽는 sys_core가 갈려, 러너 기동 뒤 값을 바꾸면 두 곳이 어긋났다. 여기 한 곳만 읽는다."""
+    try:
+        return max(1, int(os.environ.get("ORGANT_ITER_STUCK_LIMIT", "3") or 3))
+    except ValueError:
+        return 3
+
+
+_STUCK_LIMIT = stuck_limit()   # 하위호환 별칭(읽는 시점 고정 — 새 코드는 stuck_limit()을 써라)
 
 
 def roadmap_phases(flow):
@@ -2135,7 +2144,11 @@ def meeting_stage(flow):
     # [백로그 소진 = 회의 트리거(2026-07-16, 잔재 감사 ①)] 전 단위의 백로그가 소진(전부 done/dropped)
     # 됐는데 주기가 아직 열려 있으면(조건 미충족) 추가 분해 회의 — 종전엔 handoff 코칭('meet를 열어라')
     # 만 있고 stage가 None이라, 봇이 meet를 불러도 결론 경로가 없었다(수렴 소진 낭비). 체인이 자동 개설.
+    # [재분해에도 수렴 조건(2026-07-27, U-067 실측)] 종전엔 '조건 미충족 + 백로그 소진'만으로 무한
+    # 재점화 — 같은 세 영역이 12세대 반복돼 단계가 36개까지 불었다. 앞 세대가 결과를 못 바꿨다는
+    # 사실(iter_stuck)을 여기서 본다: 임계를 넘으면 또 쪼개지 말고 재협상 사다리로 흐른다.
     if (_open.status == "open"
+            and int(getattr(_open, "iter_stuck", 0) or 0) < stuck_limit()
             and any(not c.passed and c.status != "waived" for c in _open.criteria)):
         return "subtask"
     return None                                          # 전 단계 완료 → 작업/검증 단계
@@ -2303,13 +2316,22 @@ def _goal_procedure_error(goal):
             "마일스톤의 '단계:'와 백로그가 담습니다.")
 
 
+DRAFT_LANDED_MARK = "<!-- SYS:STAGE-LANDED -->"
+
+
 def draft_should_reset(stage, existing) -> bool:
     """[흐름 재개 안전 불변식(2026-07-21, 사용자: '흐름 중엔 아무리 재시작해도 상관없다 — 재복구가
     있으니 안전하게 재개돼야')] 회의 개시가 DRAFT 골격을 새로 깔지(True), 진행분을 보존할지(False).
     같은 단계의 DRAFT가 이미 디스크에 있으면 **절대 리셋하지 않는다** — 러너 재시작(토큰·서버·사용자
     중지 등 어떤 이유든)으로 회의가 중단됐다가 재개돼도 봇들이 채워온 결론이 살아 있어야 한다.
-    이 판정이 재시작-안전의 정본(회의 개시부·복구 경로가 공유). 새 단계이거나 초안 부재면 새 골격."""
-    return existing is None or f"[stage:{stage}]" not in str(existing)
+    이 판정이 재시작-안전의 정본(회의 개시부·복구 경로가 공유). 새 단계이거나 초안 부재면 새 골격.
+
+    [착지한 초안은 재사용 금지(2026-07-27, U-067 실측)] 등록에 성공한 초안이 파일에 그대로 남아,
+    다음 같은-단계 회의가 그 완성본을 물려받아 **자리표시 0·이의 0으로 즉시 재가결**했다 —
+    같은 단위 3개가 12세대 반복된 경로다. '중단된 초안'(표지 없음, 보존해야 함)과 '착지한
+    초안'(표지 있음, 새로 시작해야 함)을 표지 한 줄로 가른다."""
+    return (existing is None or f"[stage:{stage}]" not in str(existing)
+            or DRAFT_LANDED_MARK in str(existing))
 
 
 def draft_missing_key(stage, text):
@@ -2818,6 +2840,23 @@ def stage_preflight(stage, text, flow=None):
                                 f"같습니다(백로그 배정이 한쪽으로 쏠려 다른 쪽이 빕니다). 하나로 합치거나 "
                                 f"영역을 서로 뚜렷이 다른 이름으로 가르세요('1차/2차'식 세부 쪼개기 금지 — "
                                 f"그건 그 영역 안의 백로그입니다).")
+        # [세대 간 중복도 반려(2026-07-27, U-067 실측)] 위 검사는 **한 수렴안 안**만 본다 — 앞 세대
+        # 단위가 done이 되면 목록에서 빠지므로, 같은 영역 3개를 12세대 반복해도 중복 0으로 통과했다
+        # (단계 36개). 이미 있는 단위와 겹치면 새로 쪼개지 말고 그 단위를 이어가야 한다.
+        _open_p = next((m for m in (getattr(flow, "milestones", None) or [])
+                        if m.status not in ("done", "superseded")), None) if flow else None
+        for _st_p in (getattr(_open_p, "subtasks", None) or []):
+            if getattr(_st_p, "status", "") == "superseded":
+                continue
+            _et = _atoks(str(getattr(_st_p, "goal", "") or ""))
+            for _t_p, _u_p in _uts:
+                if _et and _u_p and len(_et & _u_p) / max(min(len(_et), len(_u_p)), 1) >= 0.7:
+                    errs.append(f"영역 중복 — '{_t_p}'는 이미 열린 단위 {_st_p.st_id}"
+                                f"('{str(getattr(_st_p, 'goal', ''))[:24]}')와 같은 영역입니다. 같은 영역을 "
+                                f"다시 쪼개면 앞 세대가 한 일이 장부에서 갈라집니다 — 그 단위의 백로그로 "
+                                f"이어가거나, 이번 주기에 정말 새로운 영역만 단위로 여세요.")
+                    break
+
     if stage == "backlog" and not any(l.strip().startswith("백로그:") for l in lines):
         errs.append("'백로그: ⟦구체 작업⟧' 줄이 1개 이상 필요합니다.")
     return errs
@@ -3207,13 +3246,24 @@ def register_stage(flow, stage, prop, origin=""):
         # 귀속이 끝내 실패해도 무주로 태어나지 않는다 — 적임(role_fit)을 주인으로 지정(발제자=주인
         # 원칙의 폴백. '선점 대기'는 담당 이탈 같은 예외에만 존재).
         _bots_o = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
+        # [폴백은 이 판의 팀 안에서(2026-07-27, U-067 실측)] 종전엔 **전사 로스터**에서 골라, 이 판에
+        # 없는 사람이 주인이 되거나 늘 같은 사람이 뽑혔다(같은 함수 근처 _team_o는 이미 팀으로 좁혀져
+        # 있어 내부 비일관이었다). 게다가 적합도가 전원 동점(시소러스 미스로 전부 0)이면 max가 늘
+        # **사전 첫 키**를 줘서 한 명에게 깔때기가 됐다 — 동점은 '이번 회의에서 덜 가져간 쪽'으로 깬다.
+        _fb_pool = {int(x): _bots_o[int(x)] for x in (
+            getattr(getattr(flow, "current", None), "team", None)
+            or getattr(flow, "project_team", None) or _bots_o.keys())
+            if int(x or 0) in _bots_o} or dict(_bots_o)
+        _fb_load = {}
 
         def _owner_fb(_st_o, _body_o):
-            if not _bots_o:
+            if not _fb_pool:
                 return 0
             from ..role_fit import role_fit as _rf2
             _q2 = f"{getattr(_st_o, 'goal', '')} {_body_o}"
-            return int(max(_bots_o, key=lambda k: _rf2(_q2, _bots_o[k])))
+            _pick = max(_fb_pool, key=lambda k: (_rf2(_q2, _fb_pool[k]), -int(_fb_load.get(k, 0) or 0), -k))
+            _fb_load[_pick] = int(_fb_load.get(_pick, 0) or 0) + 1
+            return int(_pick)
 
         # [R1 원저자 귀속(2026-07-22, U-041)] 백로그 본문이 R1 독립 기고의 한 줄과 크게 겹치면 그
         # 기고자를 발제자로 — 병합 회의에서 앵커가 전사한 것을 실제 낸 사람에게 되돌린다(강제 아님).
@@ -3446,12 +3496,17 @@ def register_stage(flow, stage, prop, origin=""):
         # 제외할 수 있다. 순차 등록 중 "지금까지 본 항목"만 보면 줄 순서가 독립성 결과를 바꾼다.
         _planned = []
         for _s, _st_d, _body, _supplement_for in _supplement_plan:
-            _base_owner = int(
-                _r1_author(_body)
-                or _attr_of(draft_norm_line(_s) or _s)
-                or _owner_fb(_st_d, _body)
-                or 0
-            )
+            # [귀속 출처를 남긴다(2026-07-27)] 한 사람에게 쏠릴 때 '정말 그가 썼나(r1·attr)'와
+            # '기계가 몰아준 건가(fallback)'를 로그만으로 가를 수 없어 원인 판별이 막혔다. 값은 안
+            # 바꾸고 출처만 기록한다 — 다음 판에서 실측으로 갈린다.
+            _src_r1 = int(_r1_author(_body) or 0)
+            _src_attr = int(_attr_of(draft_norm_line(_s) or _s) or 0) if not _src_r1 else 0
+            _base_owner = _src_r1 or _src_attr or int(_owner_fb(_st_d, _body) or 0) or 0
+            _attr_src = ("r1" if _src_r1 else "draft" if _src_attr
+                         else "fallback" if _base_owner else "none")
+            if flow.log:
+                flow.log("backlog_owner_attributed", src=_attr_src, owner=int(_base_owner),
+                         st=str(getattr(_st_d, "st_id", "")), body=str(_body)[:40])
             _planned.append([
                 _s, _st_d, _body, _supplement_for, _base_owner,
             ])

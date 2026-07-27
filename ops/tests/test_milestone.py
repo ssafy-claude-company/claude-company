@@ -1650,3 +1650,64 @@ def test_잠금조건이_반복_정체하면_사람에게_올라간다():
     assert "goal_lock_stuck_parked" in seg, "반복 정체가 사람에게 안 올라간다"
     assert "iter_stuck = 0" in seg, "정체 카운터를 안 풀어 경보가 매 바퀴 반복된다"
     assert "이월·포기할 수 없습니다" in seg, "잠금 조건 포기 금지가 풀렸다"
+
+
+def _ms_open_with(goals, criteria_passed=False, iter_stuck=0):
+    from system.rule.milestone import Criterion, Milestone, SubTask
+    ms = Milestone(ms_id="MS-9", goal="주기", criteria=[
+        Criterion(desc="조건 A", verify="확인")], status="open")
+    ms.criteria[0].passed = criteria_passed
+    ms.iter_stuck = iter_stuck
+    ms.subtasks = [SubTask(st_id=f"MS-9/ST-{i+1}", goal=g, criteria=[], status="done")
+                   for i, g in enumerate(goals)]
+    return ms
+
+
+def test_재분해는_정체_임계를_넘으면_열리지_않는다():
+    """[2026-07-27 U-067 실측] '조건 미충족 + 백로그 소진'만으로 재분해가 무한 재점화돼 같은 세
+    영역이 12세대 반복, 단계가 36개까지 불었다. 앞 세대가 결과를 못 바꿨으면(iter_stuck) 또 쪼개지
+    말고 재협상 사다리로 흘러야 한다. **첫 재분해는 반드시 허용**(정상 보충 경로)."""
+    from types import SimpleNamespace
+    from system.rule.milestone import meeting_stage, stuck_limit
+
+    def _stage(stuck):
+        ms = _ms_open_with(["실브라우저 루프 재현"], iter_stuck=stuck)
+        cur = SimpleNamespace(status=SimpleNamespace(goal="게임 한 종"), team=[11, 12])
+        flow = SimpleNamespace(milestones=[ms], backlog_relays={}, current=cur,
+                              workspace="", log=None)
+        return meeting_stage(flow)
+
+    assert _stage(0) == "subtask", "첫 보충 분해까지 막으면 정상 주기가 못 닫힌다"
+    assert _stage(stuck_limit()) != "subtask", "정체가 임계를 넘어도 계속 쪼갠다(폭주)"
+
+
+def test_이미_열린_단위와_같은_영역은_반려된다():
+    """[2026-07-27 U-067 실측] 중복 검사가 **한 수렴안 안**만 봐서, 앞 세대 단위가 done이 되면
+    같은 영역 3개를 12세대 반복해도 중복 0으로 통과했다. 이미 있는 단위와 겹치면 새로 쪼개지 말고
+    그 단위를 이어가야 한다."""
+    from types import SimpleNamespace
+    from system.rule.milestone import stage_preflight
+
+    ms = _ms_open_with(["실브라우저 루프 재현"])
+    flow = SimpleNamespace(milestones=[ms], backlog_relays={}, current=None,
+                          workspace="", log=None)
+    text = ("## 결정\n단위: 실브라우저 루프 재현\n"
+            "백로그: [실브라우저 루프 재현] 브라우저로 한 판을 끝까지 돌린다\n")
+    errs = stage_preflight("subtask", text, flow=flow)
+    assert any("이미 열린 단위" in e for e in errs), "같은 영역 재분해가 그대로 통과한다"
+
+    errs2 = stage_preflight("subtask", text.replace("실브라우저 루프 재현", "결제 연동"), flow=flow)
+    assert not any("이미 열린 단위" in e for e in errs2), "정말 새로운 영역까지 막으면 보충이 불가능"
+
+
+def test_착지한_회의_초안은_다음_회의가_물려받지_않는다():
+    """[2026-07-27 U-067 실측] 등록까지 끝난 초안이 파일에 남아, 다음 같은-단계 회의가 그 완성본을
+    물려받아 자리표시 0·이의 0으로 즉시 재가결했다(같은 단위 3개 × 12세대). 중단된 초안(표지 없음)은
+    재시작-안전을 위해 계속 보존해야 하므로, 표지 한 줄로 둘을 가른다."""
+    from system.rule.milestone import DRAFT_LANDED_MARK, draft_should_reset
+
+    interrupted = "[stage:subtask]\n## 결정\n단위: 쓰다 만 것\n"
+    assert draft_should_reset("subtask", interrupted) is False, \
+        "중단된 초안을 지우면 재시작마다 회의가 처음부터다"
+    assert draft_should_reset("subtask", interrupted + DRAFT_LANDED_MARK + "\n") is True, \
+        "착지한 초안을 물려받아 즉시 재가결한다(세대 증식)"

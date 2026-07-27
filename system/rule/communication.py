@@ -619,10 +619,19 @@ async def meet(flow, me_id, args):
                 # [발제 귀속 — 턴별 diff(2026-07-16, 사용자: '발제한 애가 주인, 누가 발제했는지 남아야')]
                 # 이 턴에 새로 나타난(또는 고쳐 쓴) '백로그:' 줄은 이 화자의 발제 — 봇 규약(태그) 없이
                 # SYS가 구조적으로 추적한다. 마지막 실질 저자가 주인(고쳐 쓴 사람이 새 주인).
+                # [범위 통일(2026-07-27, U-067 실측)] 귀속은 파일 전문을 훑고 등록은 결정 구획만
+                # 파싱해, '## 참고'에 익명 병합된 R1 기고의 줄까지 누군가의 발제로 잡혔다. 두 쪽이
+                # 같은 구획을 본다(draft_norm_line 주석이 선언한 계약의 남은 절반).
                 from .milestone import draft_norm_line as _dnorm
-                _cur_lines = {n for n in (_dnorm(l) for l in _dtxt.splitlines())
+                _cur_lines = {n for n in (_dnorm(l) for l in _dregion(_dtxt).splitlines())
                               if n and n.startswith("백로그:")}
-                _seen_lines = _dstate.setdefault("lines", set())
+                # [이어받은 초안의 줄은 남의 것(2026-07-27, U-067 실측)] 종전엔 첫 발언 시점의
+                # _seen_lines가 **빈 집합**이라, 같은 단계 재회의(초안 보존)에서 **첫 발언자 한 명이
+                # 파일에 이미 있던 모든 줄을 통째로 귀속**받았다 — 한 봇이 한 회의에서 5건을 연속
+                # 등재하던 형태의 뿌리. 첫 스캔은 '이미 있던 줄'을 기준선으로 깔고 시작한다.
+                if "lines" not in _dstate:
+                    _dstate["lines"] = set(_cur_lines)
+                _seen_lines = _dstate["lines"]
                 _attr = _dstate.setdefault("attr", {})
                 for _ln in _cur_lines - _seen_lines:
                     _attr[_ln] = int(m)
@@ -1447,6 +1456,16 @@ async def meet(flow, me_id, args):
                         _ok, _note = _ms_regstage(flow, _stage, _ms_dprop(_stage, _dtxt), topic)
                         if _ok:
                             _landed, _conclusion = True, _note
+                            # [착지 표지(2026-07-27, U-067)] 이 초안은 등록까지 끝났다 — 다음 같은-단계
+                            # 회의가 이 완성본을 물려받아 즉시 재가결하지 않게 표지를 남긴다.
+                            # 중단된 초안엔 표지가 없으므로 재시작-안전 보존 계약은 그대로다.
+                            try:
+                                from .milestone import DRAFT_LANDED_MARK as _DLM
+                                _cur_d = str(_dread(flow, "DRAFT.md") or "")
+                                if _cur_d and _DLM not in _cur_d:
+                                    _dwrite(flow, "DRAFT.md", _cur_d.rstrip() + "\n" + _DLM + "\n")
+                            except Exception:
+                                pass
                             _confirm_note = "\n\n" + _note
                             if flow.log:
                                 flow.log("stage_confirmed", stage=str(_stage), passes=_pass, via="draft")
@@ -1650,6 +1669,16 @@ async def meet(flow, me_id, args):
                             flow, _stage, _top, topic)   # 이 단계 결론 '하나'만 등록
                         if _ok:
                             _landed, _conclusion = True, _note
+                            # [착지 표지(2026-07-27, U-067)] 이 초안은 등록까지 끝났다 — 다음 같은-단계
+                            # 회의가 이 완성본을 물려받아 즉시 재가결하지 않게 표지를 남긴다.
+                            # 중단된 초안엔 표지가 없으므로 재시작-안전 보존 계약은 그대로다.
+                            try:
+                                from .milestone import DRAFT_LANDED_MARK as _DLM
+                                _cur_d = str(_dread(flow, "DRAFT.md") or "")
+                                if _cur_d and _DLM not in _cur_d:
+                                    _dwrite(flow, "DRAFT.md", _cur_d.rstrip() + "\n" + _DLM + "\n")
+                            except Exception:
+                                pass
                             _confirm_note = "\n\n" + _note
                             if flow.log:
                                 flow.log("stage_confirmed", stage=str(_stage), passes=_pass, merges=_mrg)
