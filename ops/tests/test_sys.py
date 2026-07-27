@@ -7955,3 +7955,50 @@ def test_교차검증_0이면_마감전에_독립검증을_구조가_위임(monk
     ev = [e for e in s.flow_log if e["event"] == "task_close_crosscheck_sent"]
     assert ev and ev[0]["to"] == 13, s.flow_log      # 제작자(12)와 다른 도메인인 QA(13)에게
     assert f._close_cc_sent is True                  # 1회만 — 반복 위임 없음
+
+
+def test_마감_이어붙이기는_예산_안에서만_돈다(monkeypatch, tmp_path):
+    """[2026-07-27 실측 사고] 마감 구동이 미완 위임 이어붙이기(_auto_continue_owner)의 반환값만 보고
+    재진입해, 마감 턴 카운터가 오르지 않은 채 **91,402회** 폭주했다. 이어붙이기도 마감 시도 예산
+    안에서 세고 상한을 넘으면 일반 마감 턴으로 넘어가야 한다."""
+    import asyncio as _a
+    from system.sys_core import Sys as SYS
+
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    s = SYS.__new__(SYS)
+    s.flow_log = []
+    s._log = lambda ev, **kw: s.flow_log.append({"event": ev, **kw})
+    turns = []
+
+    async def _rt(flow, who, body, kind, role, **kw):
+        turns.append(role)
+        return ""
+    s.run_turn = _rt
+
+    async def _drain(flow):
+        return ""
+    s._drain_inflight = _drain
+
+    async def _cont(flow, lead):
+        return "(이어붙임)"          # 매번 무언가 반환 — 폭주의 원인이던 조건
+    s._auto_continue_owner = _cont
+
+    class _T:
+        team = [11, 12]
+        owner = 12
+        cross_check_offdomain = 1
+    class _C:
+        done = False
+    class _F:
+        current = _T()
+        comm = _C()
+        anchor = 11
+        leader = 11
+        wrapup_state = {"verdict": "e2e_pass"}
+    f = _F()
+
+    for _ in range(6):
+        _a.run(s._drive_task_close(f))
+    conts = [e for e in s.flow_log if e["event"] == "task_close_owner_continued"]
+    assert len(conts) <= 2, conts            # 이어붙이기는 유계
+    assert turns, "상한 뒤에는 실제 마감 턴으로 넘어가야 한다"

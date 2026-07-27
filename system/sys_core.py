@@ -2301,10 +2301,16 @@ class Sys:
         # **같은 직군 1명 제한**에 즉시 거절된다 — 두 규칙이 물려 판이 그 자리에서 영영 멎었다
         # (라이브: "마감 관문과 위임 규칙이 서로 충돌해서 진행이 막힌 상태"). 이 이어붙이기는
         # 새 배분이 아니라 **같은 사람의 중단된 일 잇기**이므로 SYS가 직접 굴린다(직군 규칙 밖).
-        _cont = await self._auto_continue_owner(flow, actor)
-        if str(_cont or "").strip():
-            self._log("task_close_owner_continued", by=actor)
-            return True
+        # [폭주 차단(2026-07-27, 실측: 이 자리에서 91,402회 재진입)] _auto_continue_owner는 자기
+        # 상한(ORGANT_AUTO_CONTINUE)까지 매번 무언가를 반환하므로, 반환값만 보고 재진입하면
+        # 마감 턴 카운터가 오르지 않은 채 무한히 돈다. 이어붙이기도 **마감 시도 예산 안에서** 센다.
+        _cont_n = int(getattr(flow, "_close_cont", 0) or 0)
+        if _cont_n < 2:
+            _cont = await self._auto_continue_owner(flow, actor)
+            if str(_cont or "").strip():
+                flow._close_cont = _cont_n + 1
+                self._log("task_close_owner_continued", by=actor, n=_cont_n + 1)
+                return True
         turn_no = int(getattr(flow, "_close_turns", 0) or 0) + 1
         flow._close_turns = turn_no
         await self.run_turn(
