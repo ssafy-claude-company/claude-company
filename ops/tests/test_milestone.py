@@ -1559,22 +1559,82 @@ def test_봇의_임의_실행은_등재_대상이_아니다():
         "분모의 verifier를 검증 명령으로 못 읽는다"
 
 
-def test_잠금조건_비준은_새_주기로_승계된다():
+def test_잠금조건_비준은_새_주기로_승계된다(tmp_path):
     """[2026-07-27 U-067 실측] e2e 실패로 새 주기가 열리면 GOAL 잠금 조건이 그 주기로 복사되는데,
     비준(회의가 정한 exact 검증 명령)이 따라가지 않아 새 조건이 '미비준'이 됐다. 그러면 SYS는 매
-    바퀴 '비준하라'만 안내하고 검증은 한 번도 돌지 않는다 — 같은 세 갈래가 12번 반복되며 단계가
-    36개까지 불어났다. 비준은 (desc, verify)에 해시로 결속되므로 같은 조건이면 같은 비준이다.
-    **영수증은 승계하지 않는다** — 증명은 새 산출물에서 다시 벌어야 한다."""
-    import inspect
-    from system.rule import milestone
+    바퀴 '비준하라'만 안내하고 자동 검증은 한 번도 돌지 않는다 — 같은 세 갈래가 12번 반복되며
+    단계가 36개까지 불어난 폭주의 뿌리다. 비준은 (desc, verify)에 해시로 결속되므로 같은 조건이면
+    같은 비준이다. **영수증(통과·증거)은 승계하지 않는다** — 증명은 새 산출물에서 다시 번다."""
+    from types import SimpleNamespace
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import (Criterion, Milestone,
+                                       promote_final_locked_criteria,
+                                       ratified_goal_verifier_command)
 
-    src = inspect.getsource(milestone.promote_final_locked_criteria)
-    assert "_inherit_ratification" in src, "새 주기 조건이 비준을 물려받지 않는다"
-    i = src.index("def _inherit_ratification")
-    body = src[i:i + 900]
-    assert "ratified_verifier_spec_hash" in body, "조건이 바뀐 뒤의 낡은 비준까지 물려받는다"
-    for leaked in ("_c.passed", "_c.evidence", "receipt_id"):
-        assert leaked not in body, f"영수증({leaked})까지 승계하면 증명 없이 통과한다"
+    (tmp_path / "verify_ui.py").write_text("print('ok')\n")
+    cmd = "python3 verify_ui.py --desktop-width 1280"
+    desc, verify = "조건: 브라우저에서 한 판이 끝까지 돈다", "브라우저로 시작→플레이→결과를 1회 확인"
+
+    def _lock(**kw):
+        c = Criterion(desc=desc, verify=verify, release_lock=True)
+        for k, v in kw.items():
+            setattr(c, k, v)
+        return c
+
+    # 1주기: 회의가 비준을 세워 통과까지 갔다. 2주기(e2e 실패 후 보충): 조건만 복사돼 비준이 없다.
+    done = Milestone(ms_id="MS-1", goal="1차", criteria=[], status="done")
+    done.criteria = [_lock(
+        passed=True, evidence="exit=0", evidence_source="sys_run", receipt_id="r-1",
+        ratified_verifier_command=cmd,
+        ratified_verifier_command_hash=verifier_command_hash(cmd),
+        ratified_verifier_spec_hash=verifier_spec_hash(desc, verify))]
+    done.locked_criteria = [Criterion(desc=desc, verify=verify)]
+    fresh = Milestone(ms_id="MS-2", goal="결함 해소", criteria=[], status="open")
+    fresh.criteria = []
+    fresh.locked_criteria = [Criterion(desc=desc, verify=verify)]
+
+    flow = SimpleNamespace(milestones=[done, fresh], workspace=str(tmp_path),
+                           writes_by_role={}, run_outputs=set(), current=None, log=None)
+    promote_final_locked_criteria(flow, checkpoint=False)
+
+    got = next((c for c in fresh.criteria if c.desc == desc), None)
+    assert got is not None, "잠금 조건이 새 주기로 승격되지 않았다"
+    assert ratified_goal_verifier_command(got, str(tmp_path), require_existing=True) == cmd, \
+        "비준이 새 주기로 안 따라가 자동 검증이 영영 안 돈다(폭주의 뿌리)"
+    assert not got.passed and not str(got.evidence or "").strip(), \
+        "영수증까지 승계하면 새 산출물에서 증명 없이 통과한다"
+
+
+def test_조건이_바뀌면_옛_비준은_승계되지_않는다(tmp_path):
+    """비준은 그 조건(desc+verify)에 대한 결정이다 — 조건이 달라지면 무엇으로 증명할지도 다시
+    정해야 한다. spec 해시가 다르면 물려주지 않는다."""
+    from types import SimpleNamespace
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import (Criterion, Milestone,
+                                       promote_final_locked_criteria,
+                                       ratified_goal_verifier_command)
+
+    (tmp_path / "verify_ui.py").write_text("print('ok')\n")
+    cmd = "python3 verify_ui.py --desktop-width 1280"
+    old_desc, old_verify = "옛 조건", "옛 절차"
+    new_desc, new_verify = "새 조건: 다른 것을 본다", "새 절차로 확인"
+
+    done = Milestone(ms_id="MS-1", goal="1차", criteria=[], status="done")
+    c_old = Criterion(desc=old_desc, verify=old_verify, release_lock=True)
+    c_old.ratified_verifier_command = cmd
+    c_old.ratified_verifier_command_hash = verifier_command_hash(cmd)
+    c_old.ratified_verifier_spec_hash = verifier_spec_hash(old_desc, old_verify)
+    done.criteria = [c_old]
+    done.locked_criteria = [Criterion(desc=new_desc, verify=new_verify)]
+
+    flow = SimpleNamespace(milestones=[done], workspace=str(tmp_path),
+                           writes_by_role={}, run_outputs=set(), current=None, log=None)
+    promote_final_locked_criteria(flow, checkpoint=False)
+
+    got = next((c for c in done.criteria if c.desc == new_desc), None)
+    assert got is not None
+    assert not ratified_goal_verifier_command(got, str(tmp_path), require_existing=True), \
+        "다른 조건의 비준을 물려받으면 팀이 정하지 않은 방법으로 통과한다"
 
 
 def test_잠금조건이_반복_정체하면_사람에게_올라간다():
