@@ -496,6 +496,15 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     # 다시 요구해 마감이 안 닫히던 진짜 원인 차단(verified는 종전대로 0 — 재개 때 1회 재실행).
     ref.owner_delivered = bool(snap.get("owner_delivered", False))
     ref.cross_checks = int(snap.get("cross_checks", 0) or 0)
+    # [주인 표시 복원(2026-07-27, U-065 실측)] owner id는 살아 돌아오는데 표시 이름(status.owner)이
+    # 비어, 이어가기 프롬프트가 'Owner: 미정'으로 나갔다 — 봇들은 주인이 안 정해진 줄 알고 마감을
+    # 미루며 "owner만 확정되면 complete_task로 마감하면 된다"만 반복했다(재개 5회 연속 동일 정체).
+    # 이름은 id에서 파생되는 표시값이지 새 사실이 아니다 — 있는 사실을 이름으로 되살린다.
+    if getattr(ref, "owner", 0) and not str(getattr(ref.status, "owner", "") or "").strip():
+        try:
+            ref.status.owner = flow._info(int(ref.owner)) or f"<@{int(ref.owner)}>"
+        except Exception:
+            pass
     # [소유권-리더십 화해 — 재배정 신호로만] 리더십이 재배정됐으면(proj.pending_owner_reconcile=새 리더)
     # Task 소유권을 새 리더로 넘긴다. 안 그러면 스테일 owner(예: 디자이너)가 새 리더(백엔드)의 남은 도메인
     # 쓰기를 게이트#4로 막아, 봇끼리 소유권 이전만 LIFO 베턴에 반복 거부되는 순환대기 데드락(라이브 P-005).

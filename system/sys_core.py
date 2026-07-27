@@ -2242,9 +2242,19 @@ class Sys:
         # 관문 거절조차 없이 세 턴이 조용히 흘렀다(마감 0). 마감은 베턴 보유자(앵커)=리더 자리에서,
         # 리더 자격으로 연다 — 아래 run_turn의 role도 "leader"여야 도구가 붙는다.
         team = [int(m) for m in (getattr(ref, "team", None) or [])]
-        actor = int(getattr(flow, "anchor", 0) or 0) or int(getattr(flow, "leader", 0) or 0)
-        if actor not in team and team:
-            actor = int(getattr(flow, "leader", 0) or 0) or team[0]
+        # [한 봇에 매달리지 않기(2026-07-27, U-065 실측)] 같은 봇만 계속 깨우면 그 CLI 세션이 턴 한도로
+        # 굳었을 때 매번 **글자 그대로 같은 응답**만 돌아오고 도구 호출이 0이다(실측: 마감 턴 4회 동안
+        # complete_task 호출 0·거절 0). 마감은 자리가 아니라 누구나 할 수 있으므로, 시도할 때마다
+        # 팀원을 돌려가며 깨운다 — 굳지 않은 세션 하나만 있으면 판이 닫힌다.
+        _tried = [int(x) for x in (getattr(flow, "_close_tried", None) or [])]
+        _pool = [m for m in team if m not in _tried] or team
+        actor = int(getattr(flow, "anchor", 0) or 0)
+        if actor not in _pool:
+            actor = _pool[0] if _pool else (int(getattr(flow, "leader", 0) or 0) or actor)
+        try:
+            flow._close_tried = (_tried + [int(actor)])[-8:]
+        except Exception:
+            pass
         # [교차검증 무기한 대기 봉합(2026-07-26, 대기지점 전수 조사)] 마감 관문은 '다른 멤버의 실제
         # 검증 1회'를 하드 의무로 요구하는데(옳다 — 리더 단독 마감이 사용성 결함을 통과시킨 이력),
         # 그 검증은 누군가 자발적으로 맡아야만 올라간다. 아무도 안 맡으면 마감이 영원히 열리지
@@ -2330,9 +2340,13 @@ class Sys:
         await self.run_turn(
             flow, actor,
             "[SYS — Task 마감 전용 턴] 전 주기가 닫혔고 Task 경계 전수 검증(e2e)이 통과했습니다. "
-            "새 구현·새 백로그·재검증을 시작하지 말고, 이 Task를 complete_task로 마감하세요. "
-            "마감 관문이 요구하는 산출물·교차검증 인자를 실제 증거로 채워 제출하면 됩니다. "
-            "관문이 거절하면 그 사유만 해소하고 다시 마감하세요.",
+            "새 구현·새 백로그·재검증을 시작하지 말고, **지금 당신이** 이 Task를 complete_task로 "
+            "마감하세요.\n"
+            "**마감 권한은 자리가 아닙니다** — 리더·owner 지정을 기다리지 마세요. 팀의 누구든 "
+            "마감을 호출할 수 있고, 옳은지는 관문이 판정합니다(주기 완료·e2e 통과·교차검증·증거를 "
+            "전부 검사하며 자격이 없으면 그 자리에서 거절합니다). 'owner가 확정되면 하겠다'는 "
+            "대기는 이 판에서 성립하지 않습니다 — 기다릴 대상이 없습니다.\n"
+            "관문이 거절하면 그 사유만 해소하고 다시 마감하세요. 사유 없이 미루지 마세요.",
             Kind.INFO, "leader",   # 마감 도구는 리더 자격 턴에만 장착된다(_holds_completion)
         )
         if flow.current is None:
@@ -2814,10 +2828,12 @@ class Sys:
         if proj and leader_id and leader_id != proj.get("leader") and leader_id in self.bot_info:
             self._log("leader_reassigned", project=proj["id"], old=proj.get("leader"), new=leader_id)
             proj["leader"] = leader_id
-            # [소유권-리더십 화해 — 데드락 근본] 재배정 신호를 심는다: 재개(restore_open_task) 때 현재 Task
-            # 소유권을 새 리더로 넘겨, 스테일 owner가 새 리더 쓰기를 막아 소유권 이전만 반복 거부되는 순환대기
-            # 데드락을 애초에 차단(신호가 있을 때만 화해 → 정상 인도 흐름 무영향). restore가 1회 쓰고 소거.
-            proj["pending_owner_reconcile"] = int(leader_id)
+            # [소유권 이양 폐지(2026-07-27, 사용자: '리더라는 존재 자체를 없애버리고')] 종전엔 재배정
+            # 신호를 심어 재개 때 Task 소유권을 새 리더로 넘겼다 — '리더 쓰기를 스테일 owner가 막는'
+            # 리더 시대의 데드락 대책이었다. 리더가 사라지고 도구 권한이 열린 지금은 막을 것이 없고,
+            # 오히려 재개마다 소유권이 흔들려 봇들이 'owner 확정'을 기다리며 마감을 미룬다(U-065 실측:
+            # 재개 4회 연속 동일 정체 — 'owner 확정 후 complete_task로 마감만 다시 태우면 됩니다').
+            # 소유는 **일한 사람**에게 남긴다 — 화해할 자리가 없으므로 이양하지 않는다.
             self._save_projects()
             self._sync_topic(channel_id)   # 토픽(서버 영속)에도 반영 — 리클레임 후 시드로 원복되지 않게
         lead = self._valid_leader(proj) if proj else leader_id
