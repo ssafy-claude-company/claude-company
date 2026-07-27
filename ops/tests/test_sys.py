@@ -7912,7 +7912,11 @@ def test_e2e통과_뒤_마감을_구조가_구동한다(monkeypatch, tmp_path):
     f = _F()
     assert _a.run(s._drive_task_close(f)) is True
     assert calls and "마감 지점" in calls[0][1]                # 마감 지점 턴이 실제로 나갔다
-    assert calls[0][2] == "leader"                           # 리더 자격이라야 마감 도구가 붙는다
+    # [계약 갱신(2026-07-27, U-067 실측)] 종전 전제 "리더 자격이라야 마감 도구가 붙는다"는 폐지됐다 —
+    # 마감권은 자리가 아니라 관문이 판정하므로 도구는 역할과 무관하게 붙는다(_holds_completion). 반대로
+    # role="leader" + Kind.INFO는 프롬프트를 캐주얼 분기로 보내 "도구를 쓰지 마세요"를 주므로,
+    # 마감 턴은 리더로 열면 안 된다(라이브: 봇 6명 연속 말만 하고 호출 0회).
+    assert calls[0][2] != "leader", "마감 턴이 일상 대화 분기로 열린다"
     assert any(e["event"] == "task_close_complete" for e in s.flow_log), s.flow_log
 
 
@@ -8138,3 +8142,23 @@ def test_마감턴은_전용_표면으로_연다():
     drive = inspect.getsource(Sys._drive_task_close)
     assert drive.count('tool_mode="close"') >= 2, \
         "마감 턴(첫 구동·관문 보류 후)이 전용 표면으로 열리지 않는다"
+
+
+def test_마감턴은_일상대화_분기로_열리지_않는다():
+    """[2026-07-27 U-067 실측] `Kind.INFO` + role="leader"는 프롬프트를 캐주얼 분기로 보내
+    "이건 일상 대화입니다 … 협업/제작 도구를 쓰지 마세요"를 봇에게 준다(sys_prompt). 마감 턴이 그
+    조합이라 봇 6명이 연달아 '마감하면 됩니다'라고 말만 하고 호출은 0회였다 — 시킨 대로 한 것이다.
+    같은 판의 e2e 전용 턴은 role="worker"라 이 분기를 피했고 도구를 실제로 썼다."""
+    import inspect
+    from system.sys_core import Sys
+    from system.sys_prompt import prompt as _p
+
+    src = inspect.getsource(Sys._drive_task_close)
+    assert 'Kind.INFO, "leader"' not in src, "마감 턴이 아직 일상 대화 분기로 열린다"
+    assert src.count('"worker"') >= 2, "마감 턴이 행동 맥락으로 열리지 않는다"
+
+    # 분기 자체가 살아 있는지도 함께 고정 — 진짜 잡담은 계속 캐주얼로 가야 한다
+    from types import SimpleNamespace
+    _sys = SimpleNamespace(bot_info={}, workspace="", projects={}, _info=lambda x: "")
+    body = _p(_sys, "오늘 점심 뭐 먹지?", "I", "leader", 11, flow=None)
+    assert "도구를 쓰지 마세요" in body, "일상 대화 분기가 사라졌다(잡담에 팀을 소집하게 된다)"

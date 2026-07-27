@@ -2384,10 +2384,14 @@ class Sys:
             "[SYS — Task 마감 지점] 현재 상태: 판은 진행 중(정지 아님) · 전 주기 완료 · Task 경계 "
             "전수 검증(e2e) 통과 · 남은 단계는 마감뿐입니다. 마감 권한은 자리가 아니라 관문이며 "
             "관문이 증거로 판정합니다.",
-            Kind.INFO, "leader",   # 마감 도구는 리더 자격 턴에만 장착된다(_holds_completion)
-            # [마감 전용 표면(2026-07-27, U-067 실측)] 도구 26개가 열린 마감 턴에서 봇 6명이
-            # 연속으로 "마감하면 됩니다"만 말하고 아무도 부르지 않았다. 이 턴이 하는 일은
-            # '산출물을 보고 닫는 것' 하나다 — 표면을 그것만 남긴다(e2e 전용 턴과 같은 방식).
+            # [행동 턴을 '일상 대화'로 열지 마라(2026-07-27, U-067 실측)] Kind.INFO + role="leader"는
+            # 프롬프트를 캐주얼 분기로 보낸다 — 봇이 받는 문장이 "이건 일상 대화입니다 … 협업/제작
+            # 도구를 쓰지 마세요"가 된다(sys_prompt: _is_info and role == "leader"). 마감 턴이 이
+            # 조합이라, 봇 6명이 연달아 "마감하면 됩니다"라고 말만 하고 호출은 0회였다 — 시킨 대로
+            # 한 것이다. 같은 판의 e2e 전용 턴은 role="worker"라 이 분기를 피했고 도구를 잘 썼다.
+            # 마감권은 이제 자리가 아니라 관문이 판정하므로(_holds_completion) leader일 이유도 없다.
+            Kind.INFO, "worker",
+            # 이 턴이 하는 일은 '산출물을 보고 닫는 것' 하나다 — 표면을 그것만 남긴다.
             tool_mode="close",
         )
         if flow.current is None:
@@ -2504,7 +2508,7 @@ class Sys:
                         "통과시키지 않습니다 — **마감(complete_task) 호출은 당신이 합니다**. 관문은 "
                         "요구된 검증의 실제 수행 결과를 result에서 봅니다(형식만 채운 재호출은 "
                         "걸러집니다).\n\n— 관문 사유 —\n" + _why,
-                        Kind.INFO, "leader", tool_mode="close")
+                        Kind.INFO, "worker", tool_mode="close")
             except Exception as _e_ct:
                 self._log("task_close_structure_error", why=str(_e_ct)[:120])
         _close_cap = 6 if getattr(flow, "_close_structure_done", False) else 3
