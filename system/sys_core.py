@@ -3567,6 +3567,7 @@ class Sys:
                 # 계속 굴리지 않는다 — quota_halt와 동형 파킹: mark_stopped(재시작 생존·'완료' 아닌 '중지')
                 # + 안내 1회 후 break. 무한 재루프의 토큰 낭비를 끊고, 재개는 사용자의 방향 제시·재개 버튼.
                 if getattr(flow, "_stage_stuck", None):
+                    _stuck_why = str(getattr(flow, "_stage_stuck", "") or "")
                     try:
                         flow._stage_stuck = None
                     except Exception:
@@ -3590,7 +3591,12 @@ class Sys:
                         await flow.guide.post(int(flow.user_channel), 0,
                                               "[막혀서 멈췄어요] 이 단계를 팀이 스스로 정하지 못해, 계속 헛돌지 "
                                               "않게 여기서 멈춥니다. 어떻게 하면 좋을지 한 줄 알려주신 뒤 '재개'를 "
-                                              "누르면 이어서 진행해요.")
+                                              "누르면 이어서 진행해요."
+                                              # [무엇을 답해야 하는지 보여준다(2026-07-27)] 종전엔 사유가
+                                              # 로그에만 있어, 사람이 판을 열어봐도 무엇을 한 줄로 답해야
+                                              # 하는지 알 수 없었다 — 막힌 지점을 그대로 싣는다.
+                                              + (f"\n\n— 막힌 지점 —\n{_stuck_why[:600]}"
+                                                 if _stuck_why and len(_stuck_why) > 12 else ""))
                     except Exception:
                         pass
                     self._log("stage_stuck_parked", ch=int(flow.user_channel or 0))

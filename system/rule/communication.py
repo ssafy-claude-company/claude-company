@@ -671,8 +671,25 @@ async def meet(flow, me_id, args):
                         _dwrite(flow, "DRAFT.md", _nd1)
                         _dtxt = _nd1
                         _ph, _obj = _ms_dstat(_dtxt)
+                        # [같은 벽이면 빨리 사람에게(2026-07-27)] 봇이 이의를 지우고 명령을 안 고치는
+                        # 되풀이는 패스만 태운다 — 사용량이 유한하다. 같은 사유가 3번이면 헛돌지 말고
+                        # **무엇을 답해야 하는지 그대로 실어** 사람에게 넘긴다.
+                        _pf_key = str(_pf_errs[0])[:80]
+                        _pf_seen = getattr(flow, "_pf_repeat", None) or {}
+                        _pf_seen[_pf_key] = int(_pf_seen.get(_pf_key, 0) or 0) + 1
+                        try:
+                            flow._pf_repeat = _pf_seen
+                        except Exception:
+                            pass
                         if flow.log:
-                            flow.log("draft_blocked_by_preflight", stage=str(_stage), n=len(_pf_errs))
+                            flow.log("draft_blocked_by_preflight", stage=str(_stage),
+                                     n=len(_pf_errs), repeat=_pf_seen[_pf_key])
+                        if _pf_seen[_pf_key] >= 3:
+                            try:
+                                flow._stage_stuck = ("계획 회의가 같은 형식 검사에 3회 막혔습니다 — "
+                                                     + str(_pf_errs[0])[:600])
+                            except Exception:
+                                pass
                 try:
                     flow.note_activity(0, f"🗳 결론 DRAFT — 빈칸 {_ph} · 이의 {_obj}", force=True)
                 except Exception:

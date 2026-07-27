@@ -2841,3 +2841,22 @@ def test_이의를_지워도_등록검사가_막으면_완성이_아니다():
     # 완성 컷 직전에 걸려야 한다 — 표결까지 간 뒤 거부되면 같은 낭비가 반복된다
     j = src.index('flow.log("draft_ready"')
     assert i < j, "완성 선언 뒤에 검사하면 표결→거부 루프가 그대로다"
+
+
+def test_같은_형식벽_반복은_사유와_함께_사람에게_넘어간다():
+    """[2026-07-27] 봇이 이의를 지우고 명령은 안 고치는 되풀이는 패스만 태운다 — 사용량은 유한하다.
+    같은 사유가 3번이면 헛돌지 말고 사람에게 넘기되, **무엇을 답해야 하는지 그대로 실어** 보낸다.
+    종전 멈춤 안내는 '한 줄 알려주세요'뿐이라 판을 열어봐도 무엇을 답할지 알 수 없었다."""
+    import inspect
+    from system.rule import communication
+    from system.sys_core import Sys
+
+    src = inspect.getsource(communication)
+    i = src.index("draft_blocked_by_preflight")
+    seg = src[max(0, i - 900):i + 900]
+    assert "_pf_repeat" in seg, "같은 벽의 반복을 세지 않는다"
+    assert "_stage_stuck" in seg, "반복해도 사람에게 안 넘어간다"
+
+    park = inspect.getsource(Sys)
+    j = park.index("막혀서 멈췄어요")
+    assert "막힌 지점" in park[j:j + 900], "멈춤 안내가 무엇을 답해야 하는지 안 보여준다"
