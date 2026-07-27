@@ -866,6 +866,18 @@ def stuck_limit() -> int:
 _STUCK_LIMIT = stuck_limit()   # 하위호환 별칭(읽는 시점 고정 — 새 코드는 stuck_limit()을 써라)
 
 
+def roadmap_done_count(flow) -> int:
+    """로드맵 진척 = **계획된 주기 중** 완주한 수.
+
+    [복기 주기는 로드맵 칸이 아니다(2026-07-27, 전수감사)] 종전엔 done인 마일스톤을 전부 셌다.
+    그런데 e2e 실패로 열리는 복기 주기(origin="e2e:…")도 완주하면 그 수에 합산돼, **로드맵에 남은
+    계획 단계가 있는데도 '최종 주기 도달'로 판정**됐다 — 사다리가 한 칸씩 잘려나가고 다음 계획
+    주기 회의가 안 열린다. 복기는 계획에 없던 보충이므로 분모에서도 분자에서도 뺀다.
+    """
+    return sum(1 for m in (getattr(flow, "milestones", None) or [])
+               if m.status == "done" and not str(getattr(m, "origin", "") or "").startswith("e2e:"))
+
+
 def roadmap_phases(flow):
     """[로드맵 phase 정규화(2026-07-20, 사용자: '개입 최대한 줄여')] 로드맵 항목을 phase 목록으로 —
     회의 골격이 '단계: 최소버전 → 확장 → 완성' 한 줄을 유도하므로, **띄운 화살표(' → ')만** 구분자로
@@ -1102,7 +1114,7 @@ def _final_release_milestone(flow):
     if not live:
         return None
     phases = roadmap_phases(flow)
-    done_n = sum(1 for m in live if m.status == "done")
+    done_n = roadmap_done_count(flow)
     active = next((m for m in live if m.status != "done"), None)
     if active is not None:
         if phases and done_n + 1 < len(phases):
@@ -1406,7 +1418,7 @@ def defer_criterion(flow, obj, c, reason: str):
             or getattr(c, "release_lock", False)):
         return None
     phases = roadmap_phases(flow)
-    done_n = sum(1 for m in (getattr(flow, "milestones", None) or []) if m.status == "done")
+    done_n = roadmap_done_count(flow)
     if len(phases) < done_n + 2:            # 현 주기=phase[done_n] — 받아줄 다음 phase가 없다
         return None
     if sum(1 for x in obj.criteria if x is not c and x.status != "waived") < 1:
@@ -1615,10 +1627,14 @@ def wrapup_done(flow, obj) -> str:
         _chk = (f"바로 열어 확인: {_url}" if _url else "채널 상단 '완성작' 버튼에서 바로 실행해 확인하세요")
         _pnote(flow, f"[마일스톤 보고] ({obj.ms_id}) {obj.goal[:100]}\n{_ev}\n"
                      f"→ 사용자 확인 단위입니다 — {_chk}")
-        _rm = list(getattr(flow, "roadmap", None) or [])
-        _done_n = sum(1 for m in flow.milestones if m.status == "done")
+        # [진척 표기도 같은 눈으로(2026-07-27, 전수감사)] 여기만 정규화 안 한 raw roadmap을 써서
+        # ①한 줄 화살표 로드맵("최소버전 → 확장")이면 len=1이라 **안내가 아예 안 떴고**
+        # ②숫자가 한 칸 앞섰다(1주기 완주에 "2/2 완수"). 다른 전 경로가 쓰는 roadmap_phases와
+        # 복기 제외 셈법(roadmap_done_count)으로 통일한다.
+        _rm = roadmap_phases(flow)
+        _done_n = roadmap_done_count(flow)
         if _done_n < len(_rm):
-            _pnote(flow, f"[다음 단계] 로드맵 {_done_n + 1}/{len(_rm)} 완수 — 다음: **{_rm[_done_n][:60]}**. "
+            _pnote(flow, f"[다음 단계] 로드맵 {_done_n}/{len(_rm)} 완수 — 다음: **{_rm[_done_n][:60]}**. "
                          f"meet 회의를 열어 다음 주기 수렴안([수렴안] 목표/조건/단위)을 확정하세요"
                          f"(사용자 보고·목표 확인 후).")
     return "done"
@@ -2122,8 +2138,8 @@ def meeting_stage(flow):
         # [phase 정규화(2026-07-20)] 한 줄 화살표 로드맵(구 판 복원분)도 phase 수로 바로 센다 —
         # 종전 len(raw)=1이면 2단계부터 회의가 영영 안 열렸다(이월 수신처 소멸과 같은 뿌리).
         _road = roadmap_phases(flow)
-        _done = [m for m in _mss if m.status == "done"]
-        if not _mss or (_road and len(_done) < len(_road)):
+        _done_n = roadmap_done_count(flow)
+        if not _mss or (_road and _done_n < len(_road)):
             return "milestone"
         return None                                     # 로드맵 소진 → 작업/완료 단계
     _sts = [st for st in _open.subtasks if st.status != "superseded"]

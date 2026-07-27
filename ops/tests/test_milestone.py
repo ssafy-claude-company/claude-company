@@ -1749,3 +1749,23 @@ def test_목표회의는_완수조건이_명령_부채가_됨을_예고한다():
     _, agenda = stage_agenda("goal")
     assert "명령 한 줄" in agenda, "나중에 돌아올 명령 부채를 예고하지 않는다"
     assert "다시 쓰세요" in agenda, "지금 고칠 길을 알려주지 않는다"
+
+
+def test_로드맵_진척은_복기주기를_빼고_같은_눈으로_센다():
+    """[2026-07-27 전수감사] ①복기(e2e 실패로 열린) 주기가 done이 되면 로드맵 완주 수에 합산돼,
+    **계획 단계가 남았는데도 '최종 주기 도달'로 판정**되고 다음 계획 회의가 안 열렸다(사다리가 한
+    칸씩 잘림). ②사용자 안내만 정규화 안 한 roadmap을 써서 한 줄 화살표 로드맵이면 안내가 아예
+    안 뜨고 숫자도 한 칸 앞섰다."""
+    from types import SimpleNamespace
+    from system.rule.milestone import Milestone, roadmap_done_count, roadmap_phases
+
+    def _ms(mid, status, origin=""):
+        m = Milestone(ms_id=mid, goal="g", criteria=[], status=status)
+        m.origin = origin
+        return m
+
+    flow = SimpleNamespace(
+        roadmap=["최소버전 → 확장 → 완성"],
+        milestones=[_ms("MS-1", "done"), _ms("MS-R", "done", "e2e:결함1"), _ms("MS-2", "open")])
+    assert roadmap_phases(flow) == ["최소버전", "확장", "완성"], "한 줄 화살표 로드맵이 안 쪼개진다"
+    assert roadmap_done_count(flow) == 1, "복기 주기가 로드맵 완주로 잡힌다(사다리가 잘린다)"
