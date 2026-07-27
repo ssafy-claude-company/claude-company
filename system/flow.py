@@ -258,10 +258,13 @@ class Flow:
         if _who:
             t = f"[{_who}] {t}"[:140]
         log = self.activity_log
+        # [시각도 함께 남긴다(2026-07-27, 사용자: '생각등에 시간 안남는게 많은데')] 종전엔 monotonic만
+        # 남겨 화면에 '언제'가 없었다(monotonic은 프로세스 밖에서 뜻이 없다). 벽시계를 같이 적어 두면
+        # 전송·표시가 근사 변환 없이 그 시각을 그대로 쓴다.
         if log and log[-1][0] == t:
-            log[-1] = (t, time.monotonic())       # 같은 활동 반복 — 시각만 갱신(스팸 방지)
+            log[-1] = (t, time.monotonic(), time.time())   # 같은 활동 반복 — 시각만 갱신(스팸 방지)
         else:
-            log.append((t, time.monotonic()))
+            log.append((t, time.monotonic(), time.time()))
             if len(log) > self._ACT_GUARD:         # 폭주 최후 방어 — 정상 흐름은 여기 안 닿음
                 del log[0:len(log) - self._ACT_GUARD]
         # 전역 현재-worker 창을 설명 토큰으로 추측해 백로그에 붙이지 않는다. 현재 수행자가 실제로
