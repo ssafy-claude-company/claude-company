@@ -98,10 +98,10 @@ def test_종결_flush는_throttle안_마지막생각을_원장과_요청기록�
     assert mirrored["act"] == backlog2.activity
     assert flow.guide.picks[-1][0] == 777
     # [시각 동승(2026-07-27, 사용자: '생각등에 시간 안남는게 많은데')] 전송 줄은 생성 시각을
-    # `[MM-DD HH:MM] ` 접두로 달고 나간다 — 본문은 원장 그대로여야 하고, 시각은 heartbeat마다
+    # `[@<epoch>] ` 접두로 달고 나간다 — 본문은 원장 그대로여야 하고, 시각은 heartbeat마다
     # 같은 문자열이어야 한다(수신측 중복/신규 판정이 문자열 비교라서).
     _sent = flow.guide.picks[-1][1]["activity"]
-    _stamp = re.compile(r"^\[\d{2}-\d{2} \d{2}:\d{2}\] ")
+    _stamp = re.compile(r"^\[@\d+\] ")
     assert [_stamp.sub("", line) for line in _sent] == [row[0] for row in flow.activity_log]
     assert all(_stamp.match(line) for line in _sent), "생각 줄에 시각이 안 붙는다"
 

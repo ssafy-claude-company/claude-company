@@ -66,18 +66,20 @@ def _activity_fingerprint(rows) -> str:
 
 
 def _stamp_activity(row) -> str:
-    """활동 한 줄 → `[MM-DD HH:MM] 본문`(2026-07-27, 사용자: '생각등에 시간 안남는게 많은데').
+    """활동 한 줄 → `[@<epoch>] 본문`(2026-07-27, 사용자: '생각등에 시간 안남는게 많은데').
 
-    시각은 **생성 시점**에 박힌 벽시계라 heartbeat를 다시 보내도 같은 문자열이다 — 수신측의 중복/
-    신규 판정(활동 커서·tail overlap)이 그대로 성립한다. 벽시계가 없는 옛 행은 본문만 보낸다.
+    **서버가 포맷하지 않는다** — 시각(epoch)만 싣고 표기는 화면 한 곳이 정한다(보는 사람의 시간대·
+    오늘/어제 판단이 거기 있다). 서버 지역시각을 문자열로 박으면 다른 시간대의 독자에게 화면 안
+    두 시각 체계가 섞인다. 시각은 **생성 시점**이라 heartbeat를 다시 보내도 같은 문자열이다 —
+    수신측의 중복/신규 판정(활동 커서·tail overlap)이 그대로 성립한다. 없는 옛 행은 본문만.
     """
     text = str(row[0]) if isinstance(row, (list, tuple)) else str(row)
     wall = row[2] if isinstance(row, (list, tuple)) and len(row) > 2 else None
     if not wall:
         return text
     try:
-        return f"[{time.strftime('%m-%d %H:%M', time.localtime(float(wall)))}] {text}"
-    except (TypeError, ValueError, OSError):
+        return f"[@{int(float(wall))}] {text}"
+    except (TypeError, ValueError):
         return text
 
 
