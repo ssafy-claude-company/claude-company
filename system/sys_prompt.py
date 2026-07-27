@@ -429,11 +429,13 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
         # 상위 검증 실적(임계치 이상)' 순 폴백을 동료 목록에 공급 — RULE_SPEC §11(4) 'accumulated
         # 직무기준/strengths로 멤버 선택'의 스펙-코드 간극을 코드가 스펙 쪽으로 수렴. 공급 원칙:
         # 시스템은 정보만 주고 선택 판단은 리더 몫. 데이터 없는 봇은 종전 표기 그대로(증가분 0).
-        prof = (sys.bot_profiles.get(i) or "").strip()
-        if prof:
-            first = next((ln.lstrip("-•* ").strip() for ln in prof.splitlines() if ln.strip()), "")
-            if first:
-                return f" — 강점: {first[:80]}"
+        # [개인 기준은 방송하지 않는다(2026-07-27, 전수감사 실측)] 종전엔 그 봇의 **개인 직무 기준
+        # 첫 줄**을 전원 프롬프트의 동료 목록에 실었다 — 시스템 불변식 '봇별 완전 격리·직군 공용 학습
+        # 폐지'와 정면 충돌이고, 한 봇이 브레인 저장소에서 배운 `ops/verify.sh`가 게임 판 전원에게
+        # 퍼진 P-063 오염의 **실제 통로**였다(07-27 아침 수리는 파일 미러만 막았고 이 프롬프트 경로는
+        # 그대로였다 — 실측: 32명 중 4명의 첫 줄이 저장소 지식·프롬프트 자리표시자 `(줄들)`).
+        # 동료 선택에 필요한 것은 '무엇을 실제로 해냈나'이지 '그 봇이 무엇을 믿나'가 아니다 —
+        # 판 중립적인 검증된 실적(capability_ledger)만 남긴다.
         tops = [(int(c), n) for n, c in (sys.capability_ledger.get(i) or {}).items()
                 if int(c) >= CAP_MIN.get(n, 3)]
         if tops:
