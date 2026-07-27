@@ -2709,8 +2709,11 @@ def _milestone_verifier_errors(flow, entries, proposed_phases=None):
     """
     workspace = getattr(flow, "workspace", "") if flow is not None else ""
     rows = list(entries or [])
+    # [무엇이 거부됐는지 말한다(2026-07-27, U-068 실측)] 종전엔 미달 '조건'만 나열해, 봇들이 자기가
+    # 써넣은 명령이 문제였다는 걸 못 알아채고 같은 명령을 다시 냈다(`npm run verify …` — 이 판엔
+    # npm 프로젝트가 없다). 회의는 4패스를 태우고 무진전으로 컷됐다. 반려는 본 것을 말해야 한다.
     non_exact = [
-        str(row.get("desc") or "")
+        (str(row.get("desc") or ""), " ".join(str(row.get("verify") or "").split()))
         for row in rows
         if not direct_verifier_command(
             row.get("verify"), workspace, require_existing=False)
@@ -2734,8 +2737,13 @@ def _milestone_verifier_errors(flow, entries, proposed_phases=None):
             "non-zero로 끝나는 스크립트를 하나 만들어 그 실행 명령을 비준하세요"
             "(예: `python3 verify_ui.py`). 스크립트가 아직 없어도 명령만 정확하면 비준됩니다 — "
             "만드는 일은 이번 주기 백로그로 넣으세요. 서버를 띄우기만 하는 명령"
-            "(`python3 -m http.server …`)은 아무것도 판정하지 않아 실증이 아닙니다. 미달: "
-            + " · ".join(x[:60] for x in non_exact[:6])
+            "(`python3 -m http.server …`)은 아무것도 판정하지 않아 실증이 아닙니다.\n— 거부된 줄 "
+            "(왼쪽=조건, 오른쪽=지금 적힌 명령) —\n"
+            + "\n".join(
+                f"· {d[:55]} ← 지금 적힌 명령: "
+                + (f"`{v[:70]}` (이 작업공간에서 실행 가능한 검증 명령이 아닙니다)" if v
+                   else "(비어 있음)")
+                for d, v in non_exact[:6])
         )
 
     # flow 없는 독립 파서 테스트는 GOAL 정본을 알 수 없다. 실제 회의 경로는 반드시 flow를 넘겨

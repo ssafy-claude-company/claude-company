@@ -1711,3 +1711,19 @@ def test_착지한_회의_초안은_다음_회의가_물려받지_않는다():
         "중단된 초안을 지우면 재시작마다 회의가 처음부터다"
     assert draft_should_reset("subtask", interrupted + DRAFT_LANDED_MARK + "\n") is True, \
         "착지한 초안을 물려받아 즉시 재가결한다(세대 증식)"
+
+
+def test_비준_반려는_거부된_명령을_보여준다():
+    """[2026-07-27 U-068 실측] 반려문이 미달 '조건'만 나열해, 봇들이 자기가 써넣은 명령이 문제였다는
+    걸 못 알아채고 같은 명령을 다시 냈다(`npm run verify …` — 이 판엔 npm 프로젝트가 없다). 회의는
+    4패스를 태우고 무진전 컷. 반려는 **본 것을 말해야** 한다 — 어느 줄의 어떤 명령이 거부됐는지."""
+    from types import SimpleNamespace
+    from system.rule.milestone import _milestone_verifier_errors
+
+    flow = SimpleNamespace(workspace="/nonexistent", milestones=[], current=None, log=None)
+    errs = _milestone_verifier_errors(flow, [
+        {"desc": "초행 사용자가 첫 루프를 완료한다", "verify": "npm run verify -- --goal GOAL@abc"},
+    ])
+    joined = "\n".join(errs)
+    assert "npm run verify" in joined, "봇이 써넣은 명령을 안 보여준다(같은 명령을 다시 낸다)"
+    assert "초행 사용자가" in joined, "어느 조건이 걸렸는지 안 보여준다"
