@@ -8285,3 +8285,32 @@ def test_닫힌_단위의_빈_장부는_검증을_막지_않는다():
     seg = src[i:i + 800]
     assert 'st.status in ("done", "superseded")' in seg, "닫힌 단위의 빈 장부가 검증을 영구 정지시킨다"
     assert "return False" in seg, "열린 단위의 빈 장부까지 통과시키면 안 된다"
+
+
+def test_전수_실패는_세번까지_무한재시도를_끊는다():
+    """[2026-07-27 전수감사] 전수가 빈 결과로 끝나면 그 봇이 후보에 영원히 남고, 수면 루프가
+    '아직 빈 봇 있음'으로 판단해 **60초마다 같은 LLM 턴을 무한 반복**한다. 게다가 이 경로는 판이
+    없어 크레딧 원장에도 안 잡힌다 — 화면에 안 보이는 채로 사용량만 샌다."""
+    import inspect
+    from system.sys_core import Sys
+
+    pick = inspect.getsource(Sys.pick_endow_bots)
+    assert "_form_fail" in pick and "< 3" in pick, "실패한 봇이 후보에서 안 빠진다(무한 재시도)"
+    src = inspect.getsource(Sys)
+    i = src.index('self._log("endow_noop"')
+    assert "_form_fail" in src[max(0, i - 400):i], "실패를 세지 않는다"
+
+
+def test_재개_상한_초과는_유령요청을_남기지_않는다():
+    """[2026-07-27 전수감사] 재개 상한(5회)을 넘으면 task만 취소하고 unpick·중지 표기·사용자 게시가
+    전부 없었다 — 요청이 picked인 채 남아 러너 재시작 시 stale-pick 회수가 되살리고 카운터는 0이라
+    5회를 또 돈다. 사용자에겐 아무 표시도 없다."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys)
+    i = src.index("재개 상한 도달")
+    seg = src[i:i + 1600]
+    assert "mark_stopped" in seg, "상한 초과 요청이 picked인 채 남는다(유령)"
+    assert "사람 조치 필요" in seg, "사용자에게 아무 표시도 안 남는다"
+    assert "cut_resume_exhausted" in seg, "관측 이벤트가 없다"

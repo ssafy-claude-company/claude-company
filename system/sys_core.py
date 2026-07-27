@@ -727,9 +727,15 @@ class Sys:
         """[사수 전수] 직무 '시작 기준'이 없는 봇(직군 있음·예비 제외) — 신규(온보딩 직후)든 기존이든.
         같은 직군 사수가 전수하고, 사수가 없으면 채용봇이 직군 유산으로 폴백(그마저 없으면 첫 작업
         때 자기 작성 폴백이 받친다)."""
+        # [실패는 세 번까지(2026-07-27, 전수감사)] 전수가 빈 결과로 끝나면 그 봇은 후보에 영원히
+        # 남고, 수면 루프가 '아직 빈 봇 있음'으로 판단해 **60초마다 같은 LLM 턴을 무한 반복**한다.
+        # 게다가 이 경로의 비용은 판(user_channel 0)이 없어 크레딧 원장에도 안 잡힌다 — 화면에
+        # 안 보이는 채로 사용량만 샌다. 세 번 실패하면 후보에서 뺀다(첫 작업 자기작성 폴백이 받침).
+        _fail = getattr(self, "_form_fail", None) or {}
         return [int(mid) for mid, label in self.bot_info.items()
                 if str(label or "").strip() and not str(label).strip().startswith("예비")
-                and not self.bot_profiles.get(int(mid))]
+                and not self.bot_profiles.get(int(mid))
+                and int(_fail.get(int(mid), 0) or 0) < 3]
 
     def _pick_mentor(self, job, exclude_mid):
         """같은 직군에서 개인 기준을 보유한 선배(사수) — 경험 많은 순. 없으면 None(채용봇 폴백)."""
@@ -1124,9 +1130,15 @@ class Sys:
             cut = body[:600]
             body = cut[:cut.rfind("\n")] if "\n" in cut else cut
         if not body or self._hollow_standard(body):
-            self._log("endow_noop", bot=mid, by=worker)
+            # 실패를 세어 무한 재시도를 끊는다(pick_endow_bots가 3회에서 후보 제외).
+            if not hasattr(self, "_form_fail"):
+                self._form_fail = {}
+            self._form_fail[int(mid)] = int(self._form_fail.get(int(mid), 0) or 0) + 1
+            self._log("endow_noop", bot=mid, by=worker, fails=self._form_fail[int(mid)])
             return False
         self.bot_profiles[mid] = body
+        if getattr(self, "_form_fail", None):
+            self._form_fail.pop(int(mid), None)
         self._save_profiles()
         await self._sync_craft(mid)                       # 웹 개인 노하우 표면 동기
         self._log("craft_endowed", bot=mid, by=worker, mentor=bool(is_mentor), size=len(body))
@@ -4548,7 +4560,29 @@ class Sys:
                                         self._resume_cut_mids.discard(int(_mid))
                                         log.info("■ 재개 요청 거부(이미 중지됨): msg=%s ch=%s", _mid, _info["ch"])
                                 else:
+                                    # [유령 요청 방지(2026-07-27, 전수감사)] 종전엔 task만 취소하고
+                                    # unpick·중지 표기·사용자 게시가 전부 없었다 — 요청이 picked인 채
+                                    # 남아 러너 재시작 시 stale-pick 회수가 되살리고 카운터는 0이라
+                                    # 5회를 또 돈다. 사용자에겐 아무 표시도 없다. 여기서 정직하게 닫는다.
                                     log.info("⏱ %s — 재개 상한 도달(%d회), 중단: msg=%s ch=%s", _why, _n - 1, _mid, _info["ch"])
+                                    try:
+                                        _msd = getattr(guide, "mark_stopped", None)
+                                        if _msd:
+                                            try:
+                                                await _msd(int(_info["ch"]), msg_id=int(_mid))
+                                            except (TypeError, ValueError):
+                                                await _msd(int(_info["ch"]))
+                                    except Exception:
+                                        pass
+                                    try:
+                                        await guide.post(
+                                            int(_info["ch"]), 0,
+                                            f"[반복 정체 — 사람 조치 필요] 같은 자리에서 {_n - 1}번 다시 "
+                                            f"시작했는데 진행이 없어 멈춥니다({_why}). 어떻게 하면 좋을지 "
+                                            f"한 줄 알려주신 뒤 '재개'를 눌러 주세요.")
+                                    except Exception:
+                                        pass
+                                    self._log("cut_resume_exhausted", ch=int(_info["ch"]), n=_n - 1)
                             except Exception:
                                 pass
                 # ── 진행 중 흐름 개입 폴 ──
