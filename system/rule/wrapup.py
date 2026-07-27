@@ -664,6 +664,11 @@ def rule_e2e_finish(flow) -> str:
         verdict, defects, new_ms = finish_e2e(flow)
     except WrapupError as e:
         return str(e)
+    # [재개방 차단기 리셋(2026-07-27)] 판정에 실제로 닿았으면 순환이 아니다 — 여기서만 0으로.
+    try:
+        flow._goal_lock_reopens = 0
+    except Exception:
+        pass
     if verdict == E2E_PASS:
         # [실행 사실 기록(2026-07-27, U-065 실측)] 마감 관문은 '이 흐름에서 산출물을 run으로 실제
         # 실행했는가'(current.verified)를 요구한다 — 재개 때 일부러 0으로 되돌리는 옳은 원칙이다.

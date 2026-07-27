@@ -1024,13 +1024,20 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             of.close(); ef.close()
             return timed_out, rc, out, err
 
-        # [실행 산출 등재(2026-07-27, U-067)] 검증기가 새로 남기는 리포트가 authoring manifest에
-        # 섞이면 검증이 자기 영수증을 무효화한다(rule/milestone.record_run_outputs 참조).
+        # [검증 산출 등재(2026-07-27, U-067)] 검증기가 실행마다 덮어쓰는 리포트가 authoring
+        # manifest에 섞이면 검증이 자기 영수증을 무효화한다(rule/milestone.record_run_outputs).
+        # **회의가 검증 수단으로 결속한 명령일 때만** 등재한다 — 임의 run은 종전대로 스탬프에 잡힌다.
+        _rro = None
+        _pre_files = None
         try:
-            from .rule.milestone import record_run_outputs as _rro, workspace_file_set as _wfs
-            _pre_files = _wfs(flow)
+            from .rule.milestone import (known_verifier_commands as _kvc,
+                                         record_run_outputs as _rro0,
+                                         workspace_file_digests as _wfd)
+            from .rule.evidence import normalize_verifier_command as _nvc
+            if _nvc(cmd) in _kvc(flow):
+                _rro, _pre_files = _rro0, _wfd(flow)
         except Exception:
-            _rro = _wfs = None
+            _rro = None
             _pre_files = None
         try:
             timed_out, rc, out, err = await anyio.to_thread.run_sync(_exec)

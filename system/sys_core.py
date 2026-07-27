@@ -1924,7 +1924,7 @@ class Sys:
                                      promote_final_locked_criteria,
                                      ratified_goal_verifier_command, record_run_outputs,
                                      renegotiate_criterion, workspace_artifact_stamp,
-                                     workspace_file_set, write_revision, wrapup_done)
+                                     workspace_file_digests, write_revision, wrapup_done)
         from .rule.evidence import (
             direct_verifier_command, verifier_command_hash, verifier_spec_hash,
         )
@@ -1998,7 +1998,7 @@ class Sys:
         )
         for c, command, structurally_ratified in system_runs:
             c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
-            _pre = workspace_file_set(flow)          # 검증기가 새로 남기는 리포트는 저작물이 아니다
+            _pre = workspace_file_digests(flow)      # 검증기가 남기는 리포트는 저작물이 아니다
             ok, rc, out, err, reason = await run_workspace_command(
                 workspace, command, timeout=60)
             record_run_outputs(flow, _pre)

@@ -33,7 +33,7 @@ async def _final_release_recheck(flow):
         _ckpt as _ms_ckpt, _final_release_milestone,
         _sync_goal_locked_evidence, invalidate_e2e_state,
         ratified_goal_verifier_command, record_run_outputs, workspace_artifact_stamp,
-        workspace_file_set, write_revision,
+        workspace_file_digests, write_revision,
     )
 
     target = _final_release_milestone(flow)
@@ -79,7 +79,7 @@ async def _final_release_recheck(flow):
         before_stamp = workspace_artifact_stamp(flow)
         before_epoch = write_revision(flow)
         c.verify_attempts = int(getattr(c, "verify_attempts", 0) or 0) + 1
-        _pre = workspace_file_set(flow)              # 검증기 자신의 리포트로 재실증이 깨지지 않게
+        _pre = workspace_file_digests(flow)          # 검증기 자신의 리포트로 재실증이 깨지지 않게
         ok, rc, out, err, reason = await run_workspace_command(
             workspace, command, timeout=60)
         record_run_outputs(flow, _pre)

@@ -913,45 +913,76 @@ def _stamp_files(root):
             yield os.path.relpath(path, root).replace(os.sep, "/"), path
 
 
-def workspace_file_set(flow) -> set:
-    """현재 manifest 대상 파일들의 상대경로 집합 — 실행 전후 비교용."""
+def workspace_file_digests(flow) -> dict:
+    """manifest 대상 파일의 {상대경로: 내용해시} — 검증 실행 전후 비교용."""
     root = _stamp_root(flow)
     if not root:
-        return set()
+        return {}
+    out = {}
     try:
-        return {rel for rel, _ in _stamp_files(root)}
+        for rel, path in _stamp_files(root):
+            try:
+                fh = hashlib.sha256()
+                with open(path, "rb") as fp:
+                    for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+                        fh.update(chunk)
+                out[rel] = fh.hexdigest()
+            except (OSError, ValueError):
+                out[rel] = "ERR"
     except OSError:
-        return set()
+        return {}
+    return out
+
+
+def known_verifier_commands(flow) -> set:
+    """이 판에서 **회의가 검증 수단으로 결속한** 명령들(정규화) — e2e 분모의 verifier와 조건 영수증."""
+    out = set()
+    for item in (getattr(flow, "e2e_checklist", None) or []):
+        if isinstance(item, dict):
+            cmd = normalize_verifier_command(item.get("verifier_command"))
+            if cmd:
+                out.add(cmd)
+    for ms in (getattr(flow, "milestones", None) or []):
+        for c in list(getattr(ms, "criteria", None) or []) + list(
+                getattr(ms, "locked_criteria", None) or []):
+            for value in (getattr(c, "verified_command", ""),
+                          ratified_goal_verifier_command(
+                              c, getattr(flow, "workspace", ""), require_existing=False)):
+                cmd = normalize_verifier_command(value)
+                if cmd:
+                    out.add(cmd)
+    return out
 
 
 def record_run_outputs(flow, before) -> int:
-    """실행(run)으로 **처음 생긴** 파일을 실행 산출로 등재한다 — 스탬프에서 제외될 대상.
+    """**검증 실행이 건드린 파일**을 검증 산출로 등재한다 — 스탬프에서 제외될 대상.
 
-    [2026-07-27, U-067 실측] 봇이 만든 검증기는 리포트를 작업공간에 남긴다
-    (`artifacts/verify_ui/latest.json`). 그 파일이 authoring manifest에 들어가면 **검증할 때마다
+    [2026-07-27, U-067 실측] 봇이 만든 검증기는 실행할 때마다 리포트를 덮어쓴다
+    (`artifacts/verify_ui/latest.json`). 그 파일이 authoring manifest에 들어 있으면 **검증할 때마다
     스탬프가 바뀌어 방금 선 영수증이 스스로 무효**가 되고, 무효면 주기가 다시 열려 또 검증하고…
     구조적으로 끝나지 않는다(실측: e2e 개시 3회·통과 0, 그 사이 Write/Edit 0건 — 봇이 고쳐서가
     아니라 검증이 자기를 무효화했다).
 
-    스탬프의 물음은 '저작한 산출물이 영수증 이후 바뀌었나'이므로 실행이 낳은 파일은 애초에 대상이
-    아니다(docstring의 'authoring 입력 manifest'가 원래 뜻). run 도구는 파일 작성 명령 자체가
-    금지돼 있어(`_RUN_AUTHOR`) run으로 제품을 저작할 수 없으니 '실행이 처음 만든 파일'은 안전한
-    경계다. **이미 있던 파일을 실행이 고치면 스탬프는 그대로 바뀐다** — 제품 변경은 계속 잡힌다.
+    스탬프의 물음은 '저작한 산출물이 영수증 이후 바뀌었나'이므로 검증기 자신의 리포트는 애초에
+    대상이 아니다(docstring의 'authoring 입력 manifest'가 원래 뜻). 등재 대상은 **회의가 검증
+    수단으로 결속한 명령**(known_verifier_commands)이 만들거나 고친 파일뿐이다 — 봇의 임의 run은
+    등재하지 않으므로 `python -c`로 제품을 몰래 고쳐도 스탬프는 그대로 잡는다(원 위협 모델 유지).
     """
-    after = workspace_file_set(flow)
-    fresh = {rel for rel in after if rel not in (before or set())}
-    if not fresh:
+    after = workspace_file_digests(flow)
+    before = before or {}
+    touched = {rel for rel, dg in after.items() if before.get(rel) != dg}
+    if not touched:
         return 0
     known = set(getattr(flow, "run_outputs", None) or ())
-    known |= fresh
+    known |= touched
     try:
         flow.run_outputs = known
     except Exception:
         return 0
     if getattr(flow, "log", None):
-        flow.log("run_output_registered", n=len(fresh), total=len(known),
-                 sample=", ".join(sorted(fresh)[:3])[:120])
-    return len(fresh)
+        flow.log("run_output_registered", n=len(touched), total=len(known),
+                 sample=", ".join(sorted(touched)[:3])[:120])
+    return len(touched)
 
 
 def workspace_artifact_stamp(flow) -> str:
@@ -1241,10 +1272,11 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
         target.iter_stuck = 0
         changed += 1
         invalidate_e2e_state(flow, "GOAL 잠금 재실증 필요")
-        # [무한 재개방 차단(2026-07-27, U-067 실측)] 재개방 → 재검증 → 다시 재개방이 끝없이 돌 수
-        # 있다(잠금이 요구하는 영수증과 실제 검증이 어긋나면 통과해도 무효). 검증이 매번 통과하는데
-        # 잠금이 매번 되돌리면 그건 봇이 풀 문제가 아니라 계약 불일치다 — 연속 3회면 사람에게 넘긴다
-        # (파킹 신호만 세우고 집행은 오케스트레이터). 정상 재개방은 1~2회로 끝난다.
+        # [무한 재개방 차단(2026-07-27, U-067 실측)] 재개방 → 재검증(통과) → 다시 재개방이 끝없이
+        # 돈다. 검증이 매번 통과하는데 잠금이 매번 되돌리면 봇이 풀 문제가 아니라 계약 불일치이므로
+        # 누적 3회에 사람에게 넘긴다(파킹 신호만 세우고 집행은 오케스트레이터). **성공 1회로 리셋하면
+        # 안 된다** — 이 순환은 매 바퀴 '통과'를 포함하므로 카운터가 영원히 1에 머문다(실측). 리셋은
+        # e2e가 실제로 판정에 닿았을 때만(rule_e2e_finish).
         _n = int(getattr(flow, "_goal_lock_reopens", 0) or 0) + 1
         try:
             flow._goal_lock_reopens = _n
@@ -1259,11 +1291,6 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
                     flow.log("goal_lock_reopen_parked", ms=target.ms_id, n=_n)
             except Exception:
                 pass
-    if not needs_verify:
-        try:
-            flow._goal_lock_reopens = 0   # 유효 영수증이 섰다 — 순환 카운터 리셋
-        except Exception:
-            pass
     changed += _sync_goal_locked_evidence(flow, target)
     if changed:
         _pnote(flow, f"[GOAL 최종 인수] 상위 잠금 조건 {len(refs)}건을 {target.ms_id} 실증 분모로 확정")

@@ -1492,34 +1492,37 @@ def test_GOAL잠금_재개방이_반복되면_사람에게_넘긴다(monkeypatch
 
     src = inspect.getsource(milestone.promote_final_locked_criteria)
     assert "_goal_lock_reopens" in src, "재개방 횟수를 세지 않는다"
+    assert "flow._goal_lock_reopens = 0" not in src, \
+        "통과 1회로 리셋하면 이 순환(매 바퀴 통과 포함)은 영원히 안 걸린다"
+    from system.rule import wrapup
+    assert "_goal_lock_reopens = 0" in inspect.getsource(wrapup.rule_e2e_finish), \
+        "판정에 닿아도 카운터가 안 풀리면 정상 판이 파킹된다"
     assert "goal_lock_reopen_parked" in src, "반복 재개방에 파킹 신호가 없다"
     assert "_stage_stuck" in src, "파킹 신호를 세우지 않는다"
 
 
 def test_검증기가_남긴_리포트는_산출물_스탬프를_바꾸지_않는다():
-    """[2026-07-27 U-067 실측] 봇이 만든 검증기가 작업공간에 리포트를 남기면(artifacts/…/latest.json)
-    그 파일이 authoring manifest에 섞여 **검증할 때마다 스탬프가 바뀌었다** → 방금 선 영수증이 스스로
-    무효 → 주기 재개방 → 또 검증… 구조적 무한(실측: e2e 개시 3회·통과 0, 그 사이 Write/Edit 0건).
-    실행이 처음 만든 파일은 저작 입력이 아니므로 스탬프 밖이다. 단, **이미 있던 파일을 실행이 고치면
-    스탬프는 바뀌어야 한다**(제품 변경은 계속 잡힌다)."""
+    """[2026-07-27 U-067 실측] 봇이 만든 검증기는 실행마다 리포트를 덮어쓴다
+    (artifacts/verify_ui/latest.json). 그 파일이 authoring manifest에 섞여 **검증할 때마다 스탬프가
+    바뀌었다** → 방금 선 영수증이 스스로 무효 → 주기 재개방 → 또 검증… 구조적 무한(실측: e2e 개시
+    3회·통과 0, 그 사이 Write/Edit 0건). 검증 실행이 건드린 파일은 저작 입력이 아니라 스탬프 밖이다."""
     import os, tempfile
     from types import SimpleNamespace
     from system.rule.milestone import (
-        record_run_outputs, workspace_artifact_stamp, workspace_file_set)
+        record_run_outputs, workspace_artifact_stamp, workspace_file_digests)
 
     with tempfile.TemporaryDirectory() as ws:
         with open(os.path.join(ws, "index.html"), "w") as fp:
             fp.write("<h1>game</h1>")
+        out = os.path.join(ws, "artifacts", "verify_ui")
+        os.makedirs(out)
+        with open(os.path.join(out, "latest.json"), "w") as fp:
+            fp.write('{"ts": 0}')                    # 이전 실행이 이미 남긴 리포트
         flow = SimpleNamespace(workspace=ws, log=None, run_outputs=None)
 
-        base = workspace_artifact_stamp(flow)
-        assert base, "스탬프를 만들 수 없다"
-
         def _verify_run(payload):
-            """검증기 흉내 — 실행할 때마다 리포트를 새로 쓴다(타임스탬프 등으로 내용이 달라진다)."""
-            pre = workspace_file_set(flow)
-            out = os.path.join(ws, "artifacts", "verify_ui")
-            os.makedirs(out, exist_ok=True)
+            """검증기 흉내 — 실행할 때마다 같은 리포트 파일을 새 내용으로 덮어쓴다."""
+            pre = workspace_file_digests(flow)
             with open(os.path.join(out, "latest.json"), "w") as fp:
                 fp.write(payload)
             record_run_outputs(flow, pre)
@@ -1529,7 +1532,6 @@ def test_검증기가_남긴_리포트는_산출물_스탬프를_바꾸지_않�
         _verify_run('{"ts": 2}')
         assert workspace_artifact_stamp(flow) == sealed, \
             "검증을 다시 돌렸다고 영수증이 무효가 된다(무한 재개방의 원인)"
-        assert sealed == base, "실행 산출이 스탬프에 섞여 있다"
 
         # 제품이 실제로 바뀌면 여전히 무효 — 보호 성질은 유지된다
         with open(os.path.join(ws, "index.html"), "w") as fp:
@@ -1537,23 +1539,21 @@ def test_검증기가_남긴_리포트는_산출물_스탬프를_바꾸지_않�
         assert workspace_artifact_stamp(flow) != sealed, "제품 변경이 스탬프에 안 잡힌다"
 
 
-def test_실행이_기존_파일을_고치면_스탬프가_바뀐다():
-    """등재는 '처음 생긴 파일'만 대상 — 실행이 기존 산출물을 덮어쓰면 그건 제품 변경이다."""
-    import os, tempfile
-    from types import SimpleNamespace
-    from system.rule.milestone import (
-        record_run_outputs, workspace_artifact_stamp, workspace_file_set)
+def test_봇의_임의_실행은_등재_대상이_아니다():
+    """등재는 **회의가 검증 수단으로 결속한 명령**의 실행에만 건다. 봇이 임의 run으로
+    (`python -c`처럼) 제품을 몰래 고치는 경로는 종전대로 스탬프가 잡아야 한다 — 원 위협 모델."""
+    import inspect
+    from system import guide_tools
+    from system.rule.milestone import known_verifier_commands
 
-    with tempfile.TemporaryDirectory() as ws:
-        with open(os.path.join(ws, "app.js"), "w") as fp:
-            fp.write("v1")
-        flow = SimpleNamespace(workspace=ws, log=None, run_outputs=None)
-        sealed = workspace_artifact_stamp(flow)
+    src = inspect.getsource(guide_tools)
+    i = src.index("검증 산출 등재")
+    assert "known_verifier_commands" in src[i:i + 900], \
+        "임의 run까지 등재하면 간접 쓰기 우회가 열린다"
 
-        pre = workspace_file_set(flow)
-        with open(os.path.join(ws, "app.js"), "w") as fp:   # 실행이 기존 파일을 고침
-            fp.write("v2")
-        record_run_outputs(flow, pre)
-
-        assert "app.js" not in (flow.run_outputs or set()), "기존 파일이 실행 산출로 등재됐다"
-        assert workspace_artifact_stamp(flow) != sealed, "실행의 제품 변경이 가려진다"
+    class _F:
+        e2e_checklist = [{"verifier_command": "python3 verify_ui.py --desktop-width 1280"}]
+        milestones = []
+        workspace = "/nonexistent"
+    assert any("verify_ui.py" in c for c in known_verifier_commands(_F())), \
+        "분모의 verifier를 검증 명령으로 못 읽는다"
