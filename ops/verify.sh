@@ -56,6 +56,22 @@ echo "  claude-company $(git -C "$R" rev-parse --short HEAD 2>/dev/null)  (info 
 m=$(git -C "$R/murmur" rev-parse --short HEAD 2>/dev/null)
 if grep -qE "^murmur[[:space:]]+$m" "$R/ops/STATE.md"; then echo "  murmur $m  ✓"
 else echo "  murmur $m  ⚠ STATE.md 갱신 필요"; fail=1; fi
+echo "== 6) 원격 백업 신선도 (미푸시 감지) =="
+# [백업 누락 재발 방지(2026-07-28)] 7/3~7/28 3주간 브레인 레포가 원격에 한 번도 안 올라갔다
+# (원격 미설정 — 7/6 병합 스냅샷 이후 단절). 커밋은 828개 정상이었으나 '사본'이 없어 디스크 한 장이
+# 유일본이었다. 이력이 있다≠백업이 있다. 서버 이전 때야 발견돼, 검증이 상시로 잡게 한다.
+# 차단 아닌 경고(fail 미설정) — 오프라인·원격 미연결 환경에서도 검증 자체는 돌아야 한다.
+for _r in "$R" "$R/murmur"; do
+  _n=$([ "$_r" = "$R" ] && echo claude-company || echo murmur)
+  _u=$(git -C "$_r" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+  if [ -z "$_u" ]; then
+    echo "  $_n  ⚠ 원격 미연결 — 이 디스크가 유일본(백업 없음)"
+  else
+    _c=$(git -C "$_r" rev-list --count "$_u"..HEAD 2>/dev/null || echo 0)
+    if [ "${_c:-0}" -gt 0 ]; then echo "  $_n  ⚠ 미푸시 ${_c}개 — 원격에 백업 안 됨"
+    else echo "  $_n  ✓ 원격 백업 최신"; fi
+  fi
+done
 echo "======================================"
 [ "$fail" = 0 ] && echo "ALL_GREEN" || echo "FAIL — 위 ⚠ 확인"
 exit $fail
