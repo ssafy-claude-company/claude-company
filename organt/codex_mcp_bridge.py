@@ -282,6 +282,45 @@ def _codex_stream_limit() -> int:
 # 2026-07-23 교정). gpt-5.4는 xhigh까지만 지원 → max를 걸면 codex가 거부하니 5.4엔 max를 쓰지 않는다.
 _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high",
                "xhigh": "xhigh", "max": "max", "minimal": "minimal"}
+# 위 주석의 '5.4엔 max를 쓰지 않는다'는 규율이었을 뿐 코드가 아니었다 — 구형 모델을 고른 봇은
+# 매 턴 400(Invalid value: 'max'. Supported: none/minimal/low/medium/high/xhigh)으로 죽었다.
+# 게다가 effort 미지정 턴은 -c를 안 붙여 **머신 전역 ~/.codex/config.toml(현재 ultra)** 을 물려받으므로,
+# 앱이 아무것도 안 골라도 같은 400이 난다(2026-07-28 실측). 그래서 구형 모델엔 항상 명시 강도를 싣고,
+# 지원 상한(xhigh)을 넘는 값은 깎는다. 5.6 계열은 종전 그대로(무회귀 — max·전역 상속 유지).
+_LEGACY_EFFORT_CEIL = "xhigh"          # gpt-5.6 이전 세대가 받는 최고 강도
+_LEGACY_EFFORT_DEFAULT = "high"        # 구형 모델인데 아무도 안 고른 경우(전역 상속 차단용 명시값)
+
+
+def _clamp_effort(model, effort):
+    """모델이 실제로 받는 codex reasoning effort. 모르는 모델은 건드리지 않는다(빈 값=전역 상속)."""
+    ce = _EFFORT_MAP.get(str(effort or "").strip().lower()) or ""
+    m = str(model or "").strip().lower()
+    if not m.startswith("gpt-") or m.startswith("gpt-5.6"):
+        return ce                                    # 최신 세대·비-codex 경로는 종전 동작 그대로
+    if not ce:
+        return _LEGACY_EFFORT_DEFAULT                # 전역 config(ultra) 상속을 끊는다
+    if ce in ("max", "ultra"):
+        return _LEGACY_EFFORT_CEIL
+    return ce
+
+
+def _usage_from_event(ev):
+    """codex --json 이벤트에서 이 턴의 토큰 사용량을 뽑는다(스키마 변화 방어적).
+
+    turn.completed.usage가 정본(턴 단위). token_count는 요청 단위 last_token_usage를 누적한다.
+    """
+    typ = ev.get("type")
+    if typ == "turn.completed":
+        u = ev.get("usage")
+        if not isinstance(u, dict) or not u:
+            info = ev.get("info") or {}
+            u = info.get("last_token_usage") or info.get("total_token_usage") or {}
+        return ("turn", u if isinstance(u, dict) else {})
+    if typ == "token_count":
+        info = ev.get("info") or {}
+        u = info.get("last_token_usage") or {}
+        return ("delta", u if isinstance(u, dict) else {})
+    return (None, {})
 
 
 def _bwrap_args(ws: str, read_only: bool = False) -> list:
@@ -396,6 +435,7 @@ async def _run_codex_process(
     stderr=None,
     mcp_url: str | None,
     read_only: bool = False,
+    on_usage=None,
 ):
     """Codex subprocess 하나를 실행하고 stdout/stderr/프로세스 그룹을 전부 회수한다."""
     ws = str(cwd)
@@ -411,7 +451,7 @@ async def _run_codex_process(
         codex += ["-c", 'mcp_servers.guide.url="%s"' % mcp_url]
     if model:
         codex += ["-m", str(model)]
-    _ce = _EFFORT_MAP.get(str(effort or "").strip().lower())
+    _ce = _clamp_effort(model, effort)
     if _ce:   # 추론 강도를 codex에 실제 반영(종전엔 안 넘겨 무시됐음 — 사용자 지적)
         codex += ["-c", 'model_reasoning_effort="%s"' % _ce]
     args = _bwrap_args(ws, read_only=read_only) + ["--"] + codex
@@ -430,6 +470,10 @@ async def _run_codex_process(
         else None
     )
     final_text, sid, _err = "", session_id, b""
+    # [토큰 계량(2026-07-28, 사용자: '토큰 소비가 기록되지 않아 크레딧이 소비되지 않는다')]
+    # Claude 경로는 SDK가 결산(total_cost_usd)을 주지만 codex 경로는 아무도 안 봤다 → GPT 봇의
+    # 판은 원장에 0원으로 남아 무제한이었다. 여기서 이 턴의 토큰을 모아 상위(Organt)에 넘긴다.
+    usage_turn, usage_sum, api_error = {}, {}, ""
     try:
         try:
             proc.stdin.write((prompt or "").encode("utf-8"))
@@ -449,6 +493,19 @@ async def _run_codex_process(
             except Exception:
                 continue
             typ = ev.get("type")
+            _uk, _u = _usage_from_event(ev)
+            if _uk == "turn":
+                usage_turn = _u or usage_turn
+            elif _uk == "delta" and _u:
+                for k, v in _u.items():
+                    if isinstance(v, (int, float)):
+                        usage_sum[k] = usage_sum.get(k, 0) + v
+            if typ in ("turn.failed", "error"):
+                # 400(모델·강도 불일치 등)은 종전에 stdout 이벤트로만 오고 stderr엔 안 남아, 턴이
+                # '빈 발화'로 조용히 끝났다 — 사유를 잡아 예외 문구에 싣는다(운영 진단).
+                _m = ev.get("message") or ((ev.get("error") or {}).get("message") if isinstance(ev.get("error"), dict) else "")
+                if _m and not api_error:
+                    api_error = str(_m)[:600]
             if typ == "thread.started":
                 sid = ev.get("thread_id") or sid
             elif typ == "item.completed":
@@ -489,16 +546,24 @@ async def _run_codex_process(
             stderr(_err.decode("utf-8", "replace")[-2000:])
         except Exception:
             pass
+    if on_usage:
+        try:
+            on_usage(dict(usage_turn or usage_sum or {}))
+        except Exception:
+            pass
     if proc.returncode not in (0, None):
         raise RuntimeError(
             f"codex exec 실패(rc={proc.returncode}) "
-            f"{_err.decode('utf-8', 'replace')[-500:]}")
+            f"{api_error or _err.decode('utf-8', 'replace')[-500:]}")
+    if api_error and not final_text:
+        # rc=0인데 모델이 한 마디도 못 한 경우(스트림 안 오류) — 조용한 빈 턴 대신 사유를 올린다.
+        raise RuntimeError(f"codex 턴 실패: {api_error}")
     return final_text, sid
 
 
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None,
-                         read_only=False):
+                         read_only=False, on_usage=None):
     """GPT 봇 한 턴. guide 도구가 있을 때만 전용 port/bridge를 턴 수명 동안 임대한다."""
     tool_names = {
         getattr(tool, "name", None)
@@ -520,6 +585,7 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
         "on_narrate": on_narrate,
         "stderr": stderr,
         "read_only": bool(read_only),
+        "on_usage": on_usage,
     }
     if not turn_tools:
         return await _run_codex_process(**process_args, mcp_url=None)

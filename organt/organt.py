@@ -230,14 +230,26 @@ class Organt:
         if _cwd:
             prompt = (f"[작업공간 — 절대경로] 당신의 모든 파일은 정확히 여기 있습니다: {_cwd}\n"
                       f"이 경로가 당신의 cwd입니다. 파일·디렉터리는 항상 이 절대경로 기준으로 확인하세요.\n\n") + prompt
+        _model = getattr(self, "_codex_model", None)
+
+        def _take_usage(u, _m=_model):
+            # [토큰 계량(2026-07-28)] codex는 비용을 안 주고 토큰만 준다 → 공표 단가로 환산해
+            # Claude 경로와 같은 결산 형태로 남긴다. handle()의 on_turn이 이걸 그대로 실어
+            # 러너 → 웹(report_usage) → UsageLedger로 흘려보낸다.
+            from .gpt_pricing import usage_record
+            rec = usage_record(_m, u)
+            if rec:
+                self._last_result = {**(getattr(self, "_last_result", None) or {}), **rec}
+
         async with botpool.slot():
             return await run_codex_turn(
                 prompt=prompt, cwd=_cwd, session_id=self.session_id,
                 tools=([] if micro else (getattr(self, "_codex_tools", None) or [])),
-                model=getattr(self, "_codex_model", None),
+                model=_model,
                 effort=getattr(self, "_codex_effort", None),
                 read_only=bool(getattr(self, "_codex_read_only", False)),
-                on_activity=self.on_activity, on_narrate=self.narrate)
+                on_activity=self.on_activity, on_narrate=self.narrate,
+                on_usage=_take_usage)
 
     async def _run_once(self, prompt: str, micro: bool = False):
         """ClaudeSDKClient 한 번 실행 → (최종 발화, session_id).
@@ -408,7 +420,11 @@ class Organt:
                 and not _is_transient_api_error(final_text)
             try:
                 self.on_turn({**(self._last_result or {}),
-                              "model": getattr(self.config, "model", "") or "",
+                              # 실제로 이 턴을 돈 모델 — 종전엔 전역 설정값을 실어 per-agent 지정
+                              # (특히 GPT 봇)이 결산·원장에서 전부 전역 모델로 보였다.
+                              "model": (getattr(self, "_codex_model", None)
+                                        or getattr(self.options, "model", None)
+                                        or getattr(self.config, "model", "") or ""),
                               "duration_ms": (self._last_result or {}).get("duration_ms")
                               or int((time.monotonic() - _t0) * 1000),
                               "retries": _retries, "ok": _ok, "error": _err})

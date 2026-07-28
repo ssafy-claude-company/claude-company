@@ -2,6 +2,36 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-26.
 
+## ★ 운영 계량 수리 — GPT 봇이 크레딧을 안 쓰던 구멍 (2026-07-28, 사용자 지시: '운영측 문제 먼저')
+
+- **지시**: "gpt 모델이 Luna가 선택창에 없다든가 토큰 소비가 기록되지 않아 크레딧이 소비되지 않는 등
+  운영측 문제를 해결한 뒤 e2e를 개선하고, 구조적 안정성이 확보돼 e2e가 깔끔히 진행된다고 파악될 때 돌린다."
+- **① GPT 턴이 원장에 0원으로 남았다(핵심)**: Claude 경로는 SDK가 `total_cost_usd`를 주지만 codex 경로는
+  토큰조차 읽지 않았다(`_run_codex_process`가 발화·session_id만 파싱). 러너는 결산에 `cost_usd`가 있을 때만
+  `report_usage`를 보내므로(`builder.on_turn`) **GPT 봇의 판은 UsageLedger에 한 줄도 안 쌓였다** —
+  크레딧 소비 0, `MURMUR_QUOTA_ENFORCE=1`인데도 한도가 영원히 안 걸림(무제한 판).
+  수리: codex `turn.completed.usage`(없으면 `token_count.last_token_usage` 누적)를 읽어 `on_usage`로 올리고,
+  **공표 단가표(`organt/gpt_pricing.py`)로 토큰→USD 환산** → Claude와 같은 결산 형태로 원장에 흐른다.
+  단가는 env `ORGANT_GPT_PRICES`로 무배포 갱신. 모르는 gpt-* 모델은 0원이 아니라 중간 등급으로 셈한다
+  (0원 = 계량 구멍이 다시 생기는 자리).
+- **② 구세대 GPT 모델은 매 턴 400으로 죽고 있었다(실측)**: 강도 미지정 턴은 `-c`를 안 붙여 머신 전역
+  `~/.codex/config.toml`(현재 `ultra`)을 물려받는데, gpt-5.4 계열은 그 값을 거부한다
+  (`Invalid value: 'max'. Supported: none/minimal/low/medium/high/xhigh` — 실제 호출로 확인).
+  코드 주석엔 '5.4엔 max를 쓰지 않는다'는 규율만 있고 강제가 없었다 → `_clamp_effort`로 모델별 상한을
+  강제하고, 구세대엔 항상 명시 강도를 실어 전역 상속을 끊는다. **5.6 계열은 무회귀**(max·전역 상속 유지).
+- **③ codex 오류가 조용히 빈 턴이 됐다**: 400은 stdout 이벤트(`turn.failed`/`error`)로만 오고 stderr엔
+  안 남아, 실패가 '봇이 말을 안 했다'로 보였다(오진의 원인). 사유를 잡아 예외 문구에 싣는다.
+- **④ 선택창에 Luna 없음**: 허용 목록과 UI 카드가 갈라져 있었다(murmur `7972dd0`). 카드에 있는 값은
+  반드시 저장 가능이라는 정합을 테스트로 고정.
+- **⑤ 결산의 모델 표기**: 종전엔 전역 설정값을 실어 per-agent 지정(특히 GPT)이 원장·관측에서 전부
+  전역 모델로 보였다 → 실제 그 턴을 돈 모델로 정정.
+- **⑥ 이전 잔재**: `atelier_client` 기본 URL이 구 VPS(sslip)를 가리켜 env를 안 고치면 봇의 캔버스 기록이
+  은퇴한 서버로 갔다 → 현 호스트로. **남은 승인 대기 2건**: `/etc/organt-runner.env`의 `ATELIER_URL`
+  (여전히 구 VPS) · murmur CSP `frame-ancestors`(구 VPS만 허용 — 새 atelier가 murmur를 못 품음).
+  atelier 서비스는 현재 정지(disabled) 상태.
+- 검증: `ops/verify.sh` — Django **526** · 브레인 pytest **928** · 프론트 빌드/UI 계약 OK.
+- **다음**: e2e 구조 개선(마감 호출 미발생 축). 라이브 판은 그 뒤 사용자 지시로.
+
 ## ★ 라이브 서버 이전 완료 — VPS → 미니PC (2026-07-28)
 
 - **라이브 위치가 바뀌었다**: 구 VPS(<OLD_SERVER_IP>, murmur-ai.duckdns.org) → **미니PC(dojin-mini)**.
@@ -820,7 +850,13 @@ claude-company  ce6f6de(hist) — 2026-07-14 ★기계적 킥오프 SYS 구조�
                           참여 확정문 의제 권고 씹힘을 구조로 교정). 01:55 러너 재시작 반영(라이브). 스위트 597 그린.
                           · atelier 도구(B-2, 변도진-2) **라이브**(07-14 00:14 러너 재기동, 사용자 승인) — env
                           ATELIER_URL/TOKEN 적재 확인, 봇 전원 장착(사용은 자발). 첫 자발 사용 관측은 아직(다음 흐름들에서)
-murmur  969b012   ← HEAD — ★결정을 설계한다(2026-07-28, 사용자: '하나씩 전 공간을 차지하면서
+murmur  7972dd0   ← HEAD — ★선택창에 Luna 등재(2026-07-28, 사용자: 'Luna가 선택창에 없다'):
+                          허용 목록(_GPT_MODELS)과 UI 카드(ModelsView)가 갈라져 API로는 저장되는
+                          모델을 화면에서 못 골랐다. 카드 추가 + **'카드에 있으면 저장 가능'을 계약
+                          테스트로 고정**(tests_models_fable). GPT 비용 축을 실단가 순서와 정렬
+                          (Sol>Terra>Luna). 검증 Django 526 · 브레인 928 ALL_GREEN.
+                          이전: e3b01b6 통신판매업 표기(신고번호 없으면 '신고 면제 사업자' 명시).
+                          이전: ★결정을 설계한다(2026-07-28, 사용자: '하나씩 전 공간을 차지하면서
                           필요없는 설명 붙이면서 나열해둔게 UI UX적 설계야?'): 공개 범위 3종을 세로
                           블록 나열 → **세그먼트 한 줄 + 고른 것 설명 한 줄**(닫힘→열림 한 축의 3단계라
                           척도가 순서로 읽힘, 세로 공간 1/3). 새 프리미티브 대신 기존 .seg 재사용(.wide

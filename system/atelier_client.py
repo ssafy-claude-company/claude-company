@@ -1,7 +1,7 @@
 """[Core] atelier 클라이언트 — Organt가 '선택해서' 쓰는 공유 캔버스(외부 독립 서비스).
 
 지위: deploy.py(Render API)와 동일한 외부 서비스 클라이언트 — 매체(Guide 구현체)가 아니므로
-매체중립 불변식과 무관. 설정은 env로만: ATELIER_URL(기본 https://atelier.45-76-226-111.sslip.io),
+매체중립 불변식과 무관. 설정은 env로만: ATELIER_URL(기본 https://atelier.dojin-mini.shop),
 ATELIER_TOKEN(service 토큰). 토큰 없으면 도구가 장착만 되고 호출 시 안내를 돌려준다.
 
 동작 3개(전부 판의 공개 API — 사람과 동일한 문):
@@ -16,7 +16,9 @@ import urllib.request
 
 
 def _cfg():
-    url = (os.environ.get("ATELIER_URL") or "https://atelier.45-76-226-111.sslip.io").rstrip("/")
+    # [서버 이전(2026-07-28)] 기본값이 구 VPS(sslip)를 가리켜, env를 안 고치면 봇의 캔버스 기록이
+    # 은퇴한 서버로 갔다(데이터 분기). 기본값도 현 라이브 호스트로 옮긴다.
+    url = (os.environ.get("ATELIER_URL") or "https://atelier.dojin-mini.shop").rstrip("/")
     tok = os.environ.get("ATELIER_TOKEN", "").strip()
     return url, tok
 
