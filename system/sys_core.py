@@ -2411,9 +2411,15 @@ class Sys:
         # 그 검증은 누군가 자발적으로 맡아야만 올라간다. 아무도 안 맡으면 마감이 영원히 열리지
         # 않는다. 구조가 **실제 검증을 독립 도메인 동료에게 위임**해 게이트를 정당하게 연다 —
         # 카운터를 올리는 게 아니라 진짜 검증 응답으로 열리므로 안전 성질은 그대로다.
+        # [교차검증 위임이 정작 마감 자리에서 꺼져 있었다(2026-07-28, U-079 실측)] 조건에
+        # `not flow.comm.done`이 있었는데, 마감 구동은 **일이 다 끝난 뒤**에 도는 자리다. 실판에서
+        # flow_done(comm_done=true)이 마감 시도보다 먼저 찍혀 위임이 통째로 건너뛰어졌고
+        # (로그의 cross_check 흔적 0), 관문은 '다른 멤버의 검증 참여 0'으로 정당하게 거부했다 —
+        # e2e_pass·인도까지 끝낸 판이 열 수 없는 문 앞에 섰다. 마감 구동 자신이 끝난 흐름에서도
+        # 봇을 깨우므로 이 조건은 이 자리에선 모순이다. 위임의 안전성은 남은 두 조건이 지킨다:
+        # 아직 교차검증이 0이고(cc==0), 이 흐름에서 한 번도 안 보냈을 때(_close_cc_sent)만 나간다.
         if (int(getattr(ref, "cross_check_offdomain", 0) or 0) == 0
-                and not getattr(flow, "_close_cc_sent", False)
-                and not flow.comm.done):
+                and not getattr(flow, "_close_cc_sent", False)):
             try:
                 from .rule.communication import _jobs_of, _norm_job
                 _own = int(getattr(ref, "owner", 0) or 0) or int(getattr(flow, "leader", 0) or 0)
