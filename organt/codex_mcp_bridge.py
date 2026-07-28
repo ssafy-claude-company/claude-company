@@ -47,6 +47,7 @@ class CodexToolBridge:
 
     def __init__(self, host: str = "127.0.0.1", port: int = 0):
         self._tools: List = []
+        self._calls = 0
         self._host = host
         self._port = port or int(os.environ.get("ORGANT_CODEX_MCP_PORT", "8791"))
         self._server = None            # uvicorn.Server
@@ -62,6 +63,9 @@ class CodexToolBridge:
 
         @srv.call_tool()
         async def _call(name, arguments):
+            # [턴 예산(2026-07-28)] 이 턴에 도구가 실제로 불렸는가 — '말만 하고 끝난 턴'을 판별하는
+            # 유일한 사실. 알 수 없는 도구 이름이어도 '부르려 했다'는 행동이므로 함께 센다.
+            self._calls += 1
             tool = next((x for x in self._tools if x.name == name), None)
             if tool is None:
                 return [_mt.TextContent(type="text", text=f"(알 수 없는 도구: {name})")]
@@ -73,8 +77,14 @@ class CodexToolBridge:
             return out or [_mt.TextContent(type="text", text="")]
 
     def set_tools(self, tools) -> None:
-        """이번 봇 턴의 guide 도구로 교체(make_guide_tools 결과)."""
+        """이번 봇 턴의 guide 도구로 교체(make_guide_tools 결과). 도구 호출 계수도 함께 리셋."""
         self._tools = list(tools or [])
+        self._calls = 0
+
+    @property
+    def tool_calls(self) -> int:
+        """set_tools 이후 이 브리지로 들어온 도구 호출 수(이어간 패스 포함)."""
+        return self._calls
 
     @property
     def url(self) -> str:
@@ -180,6 +190,17 @@ def set_turn_tools_sink(fn):
 def _log_turn_tools(names):
     if _TURN_TOOLS_SINK:
         _TURN_TOOLS_SINK(names)
+# 턴 진행 관측 훅(이어가기 등) — 같은 방식으로 flow.log에 연결된다(미연결이면 no-op).
+_TURN_NOTE_SINK = None
+def set_turn_note_sink(fn):
+    global _TURN_NOTE_SINK
+    _TURN_NOTE_SINK = fn
+def _log_turn_note(event, **kw):
+    if _TURN_NOTE_SINK:
+        try:
+            _TURN_NOTE_SINK(event, kw)
+        except Exception:
+            pass
 # 이 표식들은 milestone의 모든 실질 턴 도구 표면에 있다. 따라서 run은 e2e 직전뿐 아니라
 # 자동 release 검증이 백로그 소진 경계에서 시작될 수 있는 milestone 실질 턴 전체에 노출된다.
 # 실제 실행 권한은 run 핸들러의 workspace/단일활성/봉인/receipt/권한강등 게이트가 결정한다.
@@ -561,9 +582,76 @@ async def _run_codex_process(
     return final_text, sid
 
 
+# ── 턴 예산(2026-07-28) ──────────────────────────────────────────────────────
+# Claude 봇은 max_turns(기본 16) 안에서 도구를 부르고 또 부르며 한 wake를 끝낸다. codex는 `exec`
+# 한 판이 **모델이 발화를 내놓는 순간 끝난다** — 그래서 GPT 봇은 '무엇을 하겠다'고 말하는 것만으로
+# 자기 턴을 소진했다(U-065·U-067 실측: 마감 구간에서 complete_task 호출 0, 💭 발화만 남기고 종료).
+# 이건 프롬프트로 재촉할 문제가 아니라 실행기의 구조적 비대칭이다(STATE 2026-07-27 '미해결로 남긴 것').
+#
+# 그래서 **도구 호출이 0인 실질 턴**만 같은 세션으로 이어 붙여 Claude와 대칭을 맞춘다.
+#   · **켜지는 자리를 좁힌다** — 호출이 곧 일인 턴(마감·e2e 전용 모드)만. 회의 발언은 도구 없이
+#     끝나는 게 정상이라(발언 자체가 행위) 전 턴에 걸면 모든 회의 턴이 3배로 돈다.
+#   · 이어가는 조건은 사실 하나뿐 — 이 브리지로 들어온 도구 호출 수가 0.
+#   · **재진입마다 카운터를 올린다**(2026-07-27 폭주 91,402회의 교훈 — '무언가 반환하면 재시도'는
+#     상한 없는 루프다). 예산은 상한이 있고, 소진되면 그냥 끝난다.
+#   · 이어가기 패스의 토큰도 전부 원장에 누적된다(공짜 재시도 금지).
+_CODEX_TURN_BUDGET_DEFAULT = 2
+_CODEX_TURN_BUDGET_MAX = 4
+# 재촉·격려는 넣지 않는다(2026-07-27 사용자 교정 '장려 프롬프트는 아주 조심해야'). 상태와 규칙만.
+_CODEX_CONTINUE_PROMPT = (
+    "[턴 상태] 직전 응답에는 도구 호출이 없었습니다. 이 턴은 아직 열려 있습니다"
+    "(남은 이어가기 {left}회).\n"
+    "판의 상태는 발언이 아니라 도구 호출로만 바뀝니다. 할 일이 없으면 그대로 끝내면 됩니다."
+)
+
+
+def _codex_turn_budget() -> int:
+    try:
+        v = int(os.environ.get("ORGANT_CODEX_TURN_BUDGET",
+                               str(_CODEX_TURN_BUDGET_DEFAULT)))
+    except (TypeError, ValueError):
+        v = _CODEX_TURN_BUDGET_DEFAULT
+    return max(0, min(_CODEX_TURN_BUDGET_MAX, v))
+
+
+async def _run_codex_budgeted(bridge, process_args, *, mcp_url, budget=0):
+    """도구 호출 없이 끝난 턴을 예산 안에서 같은 세션으로 이어 붙인다(budget=0이면 종전 동작)."""
+    budget = max(0, int(budget or 0))
+    acc, outer = {}, process_args.get("on_usage")
+
+    def _accumulate(u):
+        for k, v in (u or {}).items():
+            if isinstance(v, (int, float)):
+                acc[k] = acc.get(k, 0) + v
+        if outer:
+            outer(dict(acc))          # 누적 총량을 넘긴다 — 이어간 패스가 과금에서 새지 않는다
+
+    def _silent():
+        # 도구 호출 수를 알 수 없는 브리지(대체 구현·스텁)면 이어가지 않는다 — 근거 없는 재진입 금지.
+        n = getattr(bridge, "tool_calls", None)
+        return isinstance(n, int) and n == 0
+
+    args = {**process_args, "on_usage": _accumulate, "mcp_url": mcp_url}
+    text, sid = await _run_codex_process(**args)
+    used = 0
+    while used < budget and _silent():
+        used += 1                     # ★ 재진입 조건은 반드시 카운터를 올린다
+        _log_turn_note("codex_turn_continue", pass_no=used, budget=budget)
+        text2, sid = await _run_codex_process(**{
+            **args,
+            "prompt": _CODEX_CONTINUE_PROMPT.format(left=budget - used),
+            "session_id": sid or args.get("session_id"),
+        })
+        if text2:
+            text = text2
+    if used and _silent():
+        _log_turn_note("codex_turn_silent", passes=used)   # 예산을 다 쓰고도 도구 0 — 관측 대상
+    return text, sid
+
+
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None,
-                         read_only=False, on_usage=None):
+                         read_only=False, on_usage=None, expect_tool=False):
     """GPT 봇 한 턴. guide 도구가 있을 때만 전용 port/bridge를 턴 수명 동안 임대한다."""
     tool_names = {
         getattr(tool, "name", None)
@@ -603,10 +691,9 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
             pass
         try:
             await bridge.start()
-            return await _run_codex_process(
-                **process_args,
-                mcp_url=bridge.url,
-            )
+            return await _run_codex_budgeted(
+                bridge, process_args, mcp_url=bridge.url,
+                budget=(_codex_turn_budget() if expect_tool else 0))
         finally:
             bridge.set_tools([])
             await asyncio.shield(bridge.stop())

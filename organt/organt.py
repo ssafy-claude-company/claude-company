@@ -249,7 +249,10 @@ class Organt:
                 effort=getattr(self, "_codex_effort", None),
                 read_only=bool(getattr(self, "_codex_read_only", False)),
                 on_activity=self.on_activity, on_narrate=self.narrate,
-                on_usage=_take_usage)
+                on_usage=_take_usage,
+                # [턴 예산(2026-07-28)] 호출이 곧 일인 턴(마감·e2e)에서만 침묵 턴을 이어 붙인다 —
+                # SYS가 그 턴에 표식을 단다. 회의 발언 턴은 종전 그대로 한 판에 끝난다.
+                expect_tool=bool(getattr(self, "_codex_expect_tool", False)) and not micro)
 
     async def _run_once(self, prompt: str, micro: bool = False):
         """ClaudeSDKClient 한 번 실행 → (최종 발화, session_id).

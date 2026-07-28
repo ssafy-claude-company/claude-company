@@ -2673,6 +2673,12 @@ class Sys:
                 from .guide_tools import make_guide_tools
                 organt._codex_tools = make_guide_tools(
                     flow, organt_id, role, mode=_mode)
+            # [턴 예산 표식(2026-07-28)] 이 두 모드는 **호출이 곧 일**인 전용 턴이다(마감·e2e 판정).
+            # codex는 발화 한 번이면 exec가 끝나므로, GPT 봇은 '하겠습니다'로 자기 턴을 소진하고
+            # 도구를 못 부른 채 나갔다(U-065·U-067: complete_task 호출 0). 이 턴에 한해 침묵 턴을
+            # 예산 안에서 이어 붙인다(organt 쪽 구현 — Claude 봇은 max_turns가 이미 그 역할).
+            # 회의 발언 턴에는 달지 않는다 — 발언 자체가 행위라 도구 0이 정상이다.
+            organt._codex_expect_tool = _mode in ("close", "e2e")
             if _mode == "e2e":
                 # Claude의 네이티브 수정 표면을 제거한다. Codex는 allowed_tools를 쓰지 않으므로
                 # 별도 read-only bwrap 신호를 내려 네이티브 셸 쓰기를 막고, exact verifier는

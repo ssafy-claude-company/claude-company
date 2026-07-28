@@ -153,9 +153,12 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         # system을 참조해도 되므로 여기서 flow.log에 연결한다(system→organt 역참조 금지).
         try:
             from .codex_mcp_bridge import set_turn_tools_sink as _tt_sink
+            from .codex_mcp_bridge import set_turn_note_sink as _tn_sink
             if getattr(flow, 'log', None):
                 _tt_sink(lambda names, _f=flow: _f.log(
                     'turn_tools', n=len(names), close=('complete_task' in names)))
+                # [턴 예산(2026-07-28)] 침묵 턴을 이어 붙였는가 — 마감 미호출 축을 로그로 본다.
+                _tn_sink(lambda ev, kw, _f=flow: _f.log(ev, **kw))
         except Exception:
             pass
         _bopts = dict(
