@@ -620,11 +620,14 @@ async def _run_codex_budgeted(bridge, process_args, *, mcp_url, budget=0):
     acc, outer = {}, process_args.get("on_usage")
 
     def _accumulate(u):
-        for k, v in (u or {}).items():
-            if isinstance(v, (int, float)):
-                acc[k] = acc.get(k, 0) + v
+        # [정정(2026-07-28)] codex가 주는 usage는 **스레드 누계**다(실측). 이어가는 패스는 같은
+        # 스레드를 resume하므로 **마지막 값이 이미 전 패스를 포함**한다 — 더하면 이중 청구다.
+        # 그래서 합산이 아니라 최신 값으로 갱신한다(청구 자체는 상위에서 직전 누계와의 차분).
+        if isinstance(u, dict) and u:
+            acc.clear()
+            acc.update(u)
         if outer:
-            outer(dict(acc))          # 누적 총량을 넘긴다 — 이어간 패스가 과금에서 새지 않는다
+            outer(dict(acc))
 
     def _silent():
         # 도구 호출 수를 알 수 없는 브리지(대체 구현·스텁)면 이어가지 않는다 — 근거 없는 재진입 금지.

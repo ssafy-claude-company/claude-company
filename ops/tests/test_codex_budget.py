@@ -91,17 +91,26 @@ def test_예산은_상한이_있다(monkeypatch):
     assert bridge_mod._codex_turn_budget() == bridge_mod._CODEX_TURN_BUDGET_DEFAULT
 
 
-def test_이어간_패스의_토큰도_누적된다(monkeypatch):
-    """재시도가 공짜면 계량이 다시 새고, 사용자는 안 쓴 판에 돈을 덜 낸 것처럼 보인다."""
+def test_이어간_패스는_스레드_누계를_그대로_넘긴다(monkeypatch):
+    """codex usage는 스레드 누계다 — 패스마다 더하면 이중 청구다(2026-07-28 실측 정정).
+    이어가는 패스는 같은 스레드를 resume하므로 **마지막 값이 이미 전 패스를 포함**한다."""
     monkeypatch.setenv("ORGANT_CODEX_TURN_BUDGET", "2")
     b = _FakeBridge()
     seen = []
-    monkeypatch.setattr(bridge_mod, "_run_codex_process",
-                        _fake_process(b, usage={"input_tokens": 100, "output_tokens": 10}))
+    totals = iter([{"input_tokens": 100, "output_tokens": 10},      # 1패스 시점 누계
+                   {"input_tokens": 260, "output_tokens": 24},      # 2패스 시점 누계
+                   {"input_tokens": 430, "output_tokens": 41}])     # 3패스 시점 누계
+
+    async def _run(**kwargs):
+        b.ran_pass()
+        kwargs["on_usage"](next(totals))
+        return "말만 했습니다", "sid-1"
+
+    monkeypatch.setattr(bridge_mod, "_run_codex_process", _run)
     asyncio.run(bridge_mod._run_codex_budgeted(
         b, _args(on_usage=seen.append), mcp_url="http://x/mcp",
         budget=bridge_mod._codex_turn_budget()))
-    assert seen[-1] == {"input_tokens": 300, "output_tokens": 30}   # 3패스 합
+    assert seen[-1] == {"input_tokens": 430, "output_tokens": 41}   # 합(790)이 아니라 마지막 누계
 
 
 def test_이어가기_프롬프트는_재촉하지_않는다():
