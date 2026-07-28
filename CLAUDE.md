@@ -7,7 +7,14 @@
 - 철학: **Organt = Organic Agent** — Agent 도구관의 전복(사람같이 일하고 협업, sync 베팅). 정본 = `murmur/docs/PHILOSOPHY.md`.
 - 캐논: `User ⇄ 매체(murmur/Discord) ⇄ SYS ⇄ Organt`. **추상 Rule/Guide 계약을 SYS가 들고, Guide(구현체)가 매체별 구현.**
 
-## 구조 (유일 작업 위치 = 여기 `/root/ClaudeCompany`)
+## 작업 흐름 (2026-07-28 개정 — 다중 세션 격리)
+- **정본 `/root/ClaudeCompany`는 병합 대상이지 작업 장소가 아니다.** 라이브 서비스(murmur-web·organt-runner)가 이 트리를 직접 import한다 — 여기 저장하는 순간 라이브다.
+- 세션 시작: **`bash ops/wt.sh new <세션이름>`** → `/root/wt/<세션이름>`에서 개발·커밋 → **`bash ops/land.sh <세션이름>`**(검증+정본 병합).
+- 정본 직접 커밋은 pre-commit 훅이 **차단**한다(worktree는 통과). 비상 탈출구는 훅 메시지 참조.
+- dojin 계정 세션은 `sudo -n` 접두(트리가 root 소유). 예: `sudo -n bash ops/wt.sh new 현준-1`.
+- 상세·경위: `ops/STATE.md` "세션 격리 재실효화" 절.
+
+## 구조 (정본 = `/root/ClaudeCompany`, 편집은 자기 worktree에서)
 - `system/` — SYS+Rule 추상코어 (sys_core.py·rule/). 의존의 종착점(역참조 0).
 - `organt/` — 봇 런타임(builder·organt).
 - `guide/` — 전송+리스너(murmur_guide=원격HTTP·discord_guide·discord_main).
@@ -27,6 +34,7 @@
 | 하려는 것 | 위치/명령 |
 |---|---|
 | 현재 상태·진행중·라이브 커밋 | **`ops/STATE.md` 읽기** |
+| 세션 작업 시작(필수 경로) | `bash ops/wt.sh new <세션>` → `/root/wt/<세션>` → `bash ops/land.sh <세션>` |
 | 레포 간 공개 계약·병렬 개발 기준 | **`ops/CONTRACTS.md`** (여기 없으면 내부=자유변경, 계약만 조율) |
 | 전체 검증 (테스트+신선도) | `bash ops/verify.sh` |
 | 코드 구조·파일 지도 | `murmur/docs/CODEBASE_MAP.md` |

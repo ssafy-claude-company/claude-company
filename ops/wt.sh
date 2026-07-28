@@ -16,9 +16,18 @@ case "$CMD" in
     [ -n "$S" ] || { echo "사용: wt.sh new <task>"; exit 2; }
     W="/root/wt/$S"
     [ -e "$W" ] && { echo "이미 존재: $W"; exit 1; }
-    git -C "$MS" worktree add "$W" -b "s/$S" >/dev/null            # claude-company(브레인+ops+메타)
+    # 브랜치가 이미 있으면(rm은 브랜치를 남긴다) 재사용, 없으면 생성. 실패는 즉시 중단 —
+    # 종전엔 -b 고정 + set -e 부재로 이름 재사용 시 조용히 실패하고 ✓를 찍었다(2026-07-28 수선).
+    _add() { # _add <레포경로> <워크트리경로>
+      if git -C "$1" show-ref --verify --quiet "refs/heads/s/$S"; then
+        git -C "$1" worktree add "$2" "s/$S" >/dev/null
+      else
+        git -C "$1" worktree add "$2" -b "s/$S" >/dev/null
+      fi
+    }
+    _add "$MS" "$W"            || { echo "✗ claude-company worktree 생성 실패"; exit 1; }
     echo "  [브랜치] claude-company (system/organt/guide/ops)"
-    git -C "$MS/murmur" worktree add "$W/murmur" -b "s/$S" >/dev/null  # murmur(별도 레포)
+    _add "$MS/murmur" "$W/murmur" || { echo "✗ murmur worktree 생성 실패"; exit 1; }
     echo "  [브랜치] murmur"
     ln -s "$MS/.venv" "$W/.venv"
     ln -sfn "$MS/murmur/frontend/node_modules" "$W/murmur/frontend/node_modules" 2>/dev/null || true
