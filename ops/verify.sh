@@ -79,7 +79,7 @@ echo "== 7) 비밀값 유출 검사 (원격 백업 = 외부 공개 가능성) ==
 # (검출된 2건은 마스킹을 검증하는 테스트 픽스처), 이 게이트가 그 상태를 유지시킨다.
 # 환경값(IP·도메인·경로)은 비밀이 아니라 차단하지 않는다 — 레포는 비공개 유지가 전제.
 _leak=$( (cd "$R" && git grep -nIE \
-  "(sk-ant-[A-Za-z0-9]|ghp_[A-Za-z0-9]{20}|github_pat_[A-Za-z0-9]|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY)" \
+  "(sk-ant-[A-Za-z0-9]|ghp_[A-Za-z0-9]{20}|github_pat_[A-Za-z0-9]|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|\b45\.76\.226\.111\b|\b49\.142\.51\.40\b)" \
   -- . ':!ops/tests/' 2>/dev/null) | head -5 )
 if [ -n "$_leak" ]; then
   echo "  ⚠ 비밀값으로 보이는 값이 추적 파일에 있다 — 푸시 전 제거·회전 필요:"
