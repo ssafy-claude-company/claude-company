@@ -1083,6 +1083,14 @@ def invalidate_e2e_state(flow, reason: str = "") -> bool:
     flow.e2e_results = None
     flow.wrapup_state = None
     flow._e2e_receipt_nonce = None
+    # [교차검증 위임 재발송 가능하게(2026-07-28, U-079 실측)] 마감 관문의 '다른 멤버 검증 1회'는
+    # 구조가 한 번 위임해 채운다(_close_cc_sent). 그런데 위임 직후 e2e가 무효화되면 판이 마감
+    # 앞단으로 밀리고, 그 사이 대상 봇은 깨어나지 못한 채 위임이 흐지부지된다 — 표식만 True로 남아
+    # **두 번째 위임이 영영 안 나간다**(실측: crosscheck_sent 1회 → cc 0 유지 → PM만 마감 재시도).
+    # e2e 경계가 폐기되는 이 자리에서 표식도 함께 되돌린다. 교차검증이 이미 성립했으면(cc>0) 위임
+    # 조건 자체가 거짓이라 재발송은 일어나지 않는다 — 중복 위임 위험 없음.
+    if getattr(flow, "_close_cc_sent", False):
+        flow._close_cc_sent = False
     if hasattr(flow, "_run_receipts"):
         flow._run_receipts = {}
     if had and getattr(flow, "log", None):
