@@ -339,3 +339,92 @@ def test_e2e_통과_뒤_마감까지_관통한다(onflag, tmp_path):
         if f.current is None:
             break
     assert f.current is None, f"마감이 끝내 안 닫혔다 — 마지막 사유: {out[:500]}"
+
+
+def test_다단계_사다리_2주기_관통후_마감(onflag, tmp_path):
+    """[사다리 예행(2026-07-27)] 오늘 되살린 다단계 로드맵은 **한 번도 끝까지 안 돌아본 경로**다.
+    2주기 로드맵을 실제로 관통시켜 확인한다: ①1주기 완주 뒤 계획 단계가 다시 열리는가 ②중간
+    주기엔 GOAL 잠금이 안 붙고 최종 주기에만 붙는가 ③로드맵이 남았으면 e2e가 안 열리는가
+    ④소진 뒤 e2e가 열려 마감까지 가는가 ⑤단계 재개설 상한이 정상 사다리를 죽이지 않는가."""
+    from system.rule.backlog import Backlog, relay_for
+    from system.rule.evidence import verifier_command_hash, verifier_spec_hash
+    from system.rule.milestone import (
+        iter_verify, meeting_stage, open_milestone, open_subtask,
+        promote_final_locked_criteria, roadmap_done_count, workspace_artifact_stamp,
+        write_revision, wrapup_done,
+    )
+    from system.rule.wrapup import rule_e2e_open
+
+    g = FakeGuide()
+    f = _flow(g)
+    f.workspace = str(tmp_path)
+    f.origin_request = "카운터 웹앱"
+    for _b in ("acceptance_checked", "percept_checked", "existence_checked", "gap_checked"):
+        setattr(f, _b, False)
+    (tmp_path / "verify_ui.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<h1>c</h1>\n", encoding="utf-8")
+    (tmp_path / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    f.log = tallying_logger(f, lambda ev, **kw: None)
+
+    lead = _tools(f, 11, "leader")
+    _drive(lead, "create_task", {"title": "카운터", "members": "12"})
+    f.current.status.goal = "버튼으로 숫자를 올리는 웹앱"
+    f.current.acceptance = "- 조건: 버튼이 숫자를 올린다 | 실증: python3 verify_ui.py"
+    f.roadmap = ["최소버전", "확장"]                     # 사다리 2칸
+
+    def _run_cycle(goal, final):
+        ms = open_milestone(f, goal, [{"desc": f"{goal} 동작", "verify": "python3 verify_ui.py"}])
+        assert not isinstance(ms, str), ms
+        st = open_subtask(f, ms, f"{goal} 구현", [])
+        relay_for(f, st)._pool["B1"] = Backlog("B1", "구현", 12, status="done", assignee=12)
+        st.status = "done"
+        promote_final_locked_criteria(f, checkpoint=False)
+        locked = [c for c in ms.criteria if getattr(c, "release_lock", False)]
+        assert bool(locked) is final, \
+            f"{goal}: 잠금 조건이 {'붙어야' if final else '안 붙어야'} 하는데 {len(locked)}건"
+        ep, stmp = write_revision(f), workspace_artifact_stamp(f)
+        rows = []
+        for c in ms.criteria:
+            r = {"desc": c.desc, "passed": True, "evidence": "exit=0 `python3 verify_ui.py`"}
+            if getattr(c, "release_lock", False):
+                r.update({"_sys_run_receipt": r["evidence"], "_sys_run_receipt_id": "auto-lock-t",
+                          "_verified_command": "python3 verify_ui.py",
+                          "_verified_command_hash": verifier_command_hash("python3 verify_ui.py"),
+                          "_verified_spec_hash": verifier_spec_hash(c.desc, c.verify),
+                          "_verified_write_epoch": ep, "_verified_artifact_stamp": stmp})
+            rows.append(r)
+        ok, note = iter_verify(f, ms, rows)
+        assert ok, f"{goal} 주기 미충족 — {note}"
+        assert wrapup_done(f, ms) == "done"
+        return ms
+
+    # ① 1주기(중간) — 잠금 없음, 완주 뒤 계획 단계가 다시 열린다
+    _run_cycle("최소버전", final=False)
+    assert roadmap_done_count(f) == 1, "로드맵 완주 수가 안 는다"
+    assert meeting_stage(f) == "milestone", "1주기 완주 뒤 다음 계획 회의가 안 열린다(사다리 끊김)"
+    # ③ 로드맵이 남았으면 e2e는 아직
+    assert "로드맵" in _txt(rule_e2e_open(f)), "로드맵이 남았는데 e2e가 열린다(판정 낭비)"
+
+    # ② 2주기(최종) — 잠금 조건이 여기서만 붙는다
+    _run_cycle("확장", final=True)
+    assert roadmap_done_count(f) == 2
+    assert meeting_stage(f) is None, "로드맵 소진 뒤에도 계획 회의를 연다"
+
+    # ④ 소진 → e2e → 마감
+    qa = _tools(f, 12, "member")
+    assert "e2e 개시" in _drive(qa, "e2e_open")
+    _drive(qa, "e2e_scope", {"surfaces": "GET / || python3 verify_ui.py",
+                             "arcs": "기동→클릭 || python3 verify_ui.py"})
+    for it in f.e2e_checklist:
+        _drive(qa, "e2e_result", {"item": it["id"], "ok": "pass", "observed": "OK",
+                                  "evidence": "검사 출력", "receipt": _run_receipt(qa, it)})
+    assert "e2e_pass" in _drive(qa, "e2e_finish")
+
+    out = ""
+    for _ in range(6):
+        out = _txt(_drive(qa, "complete_task", {
+            "result": "완료: 카운터 웹앱 — 전수 검증 0결함",
+            "visual_evidence": "[시각 미검증: 자동 검증만 수행]"}))
+        if f.current is None:
+            break
+    assert f.current is None, f"사다리 판이 마감까지 못 갔다 — {out[:400]}"
