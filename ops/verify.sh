@@ -72,6 +72,22 @@ for _r in "$R" "$R/murmur"; do
     else echo "  $_n  ✓ 원격 백업 최신"; fi
   fi
 done
+echo "== 7) 비밀값 유출 검사 (원격 백업 = 외부 공개 가능성) =="
+# [2026-07-28] ops/가 git에 올라가는 이유는 tests(41)·verify·land·wt·contracts가 '검증의 단일
+# 진실원'이라 버전 관리가 필수이기 때문이다. 그러나 그 대가로 레포가 외부(원격)로 나가므로,
+# 실키·비밀번호·개인키가 섞여 들어가면 그대로 유출된다. 감사 시점엔 실제 비밀값 0이었고
+# (검출된 2건은 마스킹을 검증하는 테스트 픽스처), 이 게이트가 그 상태를 유지시킨다.
+# 환경값(IP·도메인·경로)은 비밀이 아니라 차단하지 않는다 — 레포는 비공개 유지가 전제.
+_leak=$( (cd "$R" && git grep -nIE \
+  "(sk-ant-[A-Za-z0-9]|ghp_[A-Za-z0-9]{20}|github_pat_[A-Za-z0-9]|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY)" \
+  -- . ':!ops/tests/' 2>/dev/null) | head -5 )
+if [ -n "$_leak" ]; then
+  echo "  ⚠ 비밀값으로 보이는 값이 추적 파일에 있다 — 푸시 전 제거·회전 필요:"
+  echo "$_leak" | sed 's/^/    /'
+  fail=1
+else
+  echo "  ✓ 실키·개인키 없음 (테스트 픽스처 제외)"
+fi
 echo "======================================"
 [ "$fail" = 0 ] && echo "ALL_GREEN" || echo "FAIL — 위 ⚠ 확인"
 exit $fail
