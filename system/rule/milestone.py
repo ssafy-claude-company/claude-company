@@ -2574,6 +2574,30 @@ def _final_milestone_proposal(flow, proposed_phases=None) -> bool:
     return not phases or done_n + 1 >= len(phases)
 
 
+def _goal_marker_not_final_note(flow, proposed_phases=None) -> str:
+    """'최종 주기가 아니다' 반려를 **그들이 쓴 문장에서 기계가 읽은 값**으로 돌려준다.
+
+    [구조 수리(2026-07-28, U-077 실측)] 종전 반려문은 규칙만 통보했다("최종 마일스톤에서만
+    비준할 수 있습니다"). 팀은 초안에 '이번 주기 = 최종 마일스톤'이라고 **문장으로 선언**해 두고
+    같은 초안을 10번 다시 냈다 — 선언으로는 구조가 바뀌지 않는데, 무엇이 어긋났는지 볼 방법이
+    없었기 때문이다. 이제 SYS가 자기 판정의 근거(그들의 `단계:` 줄을 몇 개로 읽었는지, 지금이
+    몇 번째인지)를 그대로 보여주고, **출구 두 개를 구조로 제시**한다.
+    """
+    phases = [str(p) for p in (proposed_phases or roadmap_phases(flow) or [])]
+    done_n = sum(1 for m in (getattr(flow, "milestones", None) or [])
+                 if getattr(m, "status", "") == "done")
+    listed = " · ".join(f"{i + 1}) {p[:24]}" for i, p in enumerate(phases[:6])) or "(비어 있음)"
+    return (
+        "GOAL@ marker는 로드맵의 최종 주기에서만 비준할 수 있습니다. "
+        f"이 초안의 `단계:` 줄을 SYS는 **{len(phases)}주기**로 읽었고({listed}), "
+        f"이번은 그중 **{done_n + 1}번째**라 마지막이 아닙니다 — "
+        "'최종 마일스톤'이라고 문장으로 적어도 주기 수는 `단계:` 줄이 정합니다. 출구는 둘입니다: "
+        "①이번 주기 몫의 완수조건을 GOAL@ 없이 직접 쓰세요(사용자 수용 조건은 마지막 주기에서 비준합니다). "
+        "②이 판을 한 주기로 끝낼 생각이면 `단계:` 줄을 항목 하나로 줄이세요 — 그러면 이번이 마지막이 되어 "
+        "GOAL@ 비준이 열립니다."
+    )
+
+
 def _resolve_goal_ratification_entries(flow, entries, proposed_phases=None):
     """GOAL markers를 canonical desc 행으로 결정적으로 확장한다.
 
@@ -2598,7 +2622,7 @@ def _resolve_goal_ratification_entries(flow, entries, proposed_phases=None):
     if flow is None:
         return ordinary, ["GOAL@ marker는 canonical GOAL 정본이 있는 실제 Task 회의에서만 쓸 수 있습니다."]
     if not _final_milestone_proposal(flow, proposed_phases):
-        return ordinary, ["GOAL@ marker는 로드맵의 최종 마일스톤에서만 비준할 수 있습니다."]
+        return ordinary, [_goal_marker_not_final_note(flow, proposed_phases)]
 
     refs = _natural_goal_refs(flow)
     by_key = {
