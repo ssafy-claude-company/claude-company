@@ -907,7 +907,7 @@ murmur  7231f14   ← HEAD — ★내 직원만 판에 부른다 + 낡은 탭 �
                           **채널마다 두 번씩** GuideMessage를 물었다 — 채널 6개 40쿼리, 18개 54쿼리.
                           채널 수와 무관한 3회 집계로 바꿔 **18개=20쿼리**. 근거 인덱스 (channel_id, ts)
                           추가(0036, 라이브 적용 확인). 재발 방지는 숫자가 아니라 모양으로 고정한다 —
-                          tests_query_budget.py는 '채널이 세 배가 돼도 쿼리는 그대로'를 검사한다.
+                          tests_query_budget.py는 '채널이 세 배가 돼도 쿼리는 그대로'를 검사하고, 값 자체(last_ts·working·정렬)는 tests_sns_basics.WorkspaceOrderTests가 지킨다(592 green).
                           ★의존성: vite 5→7 · postcss 8.5.24로 npm 취약점 3건(1 high) → 0건.
                           ★주의(오늘 걸림돌): manage.py를 그냥 부르면 /etc/murmur-web.env가 없어 **sqlite 폴백**에
                           마이그레이션이 적용된다. 라이브 DB를 만질 땐 반드시 `set -a; . /etc/murmur-web.env`.
