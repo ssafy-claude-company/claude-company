@@ -2,6 +2,21 @@
 
 > 세션 시작 시 이 파일을 1회 읽어라. **stale하면 `verify.sh`가 heads 대조로 잡아낸다**(코드만 바뀌고 여기 안 바뀌면 검증에서 들킴). 갱신 기준일: 2026-07-26.
 
+## ★ 라이브 서버 이전 완료 — VPS → 미니PC (2026-07-28)
+
+- **라이브 위치가 바뀌었다**: 구 VPS(<OLD_SERVER_IP>, murmur-ai.duckdns.org) → **미니PC(dojin-mini)**.
+  새 주소: 웹 `https://murmur.dojin-mini.shop`, SSH `ssh -p 80(또는 22/8122) root@murmur.dojin-mini.shop`.
+- 이전 방식: 런북(`ops/2026-07-28-서버이전-런북.md`) 순서대로 pull 이전. DB는 구 서버 정본을 덮어씀
+  (sns_person 459 대조 일치). 코드 HEAD `f626423`, murmur `969b012`. ops/var(봇 기억)·봇 자격증명 이전 완료.
+- 환경 차이 2건을 흡수했다(둘 다 새 서버 host 설정, 레포 코드 무변경):
+  ① Ubuntu 26.04의 bwrap AppArmor 제한 → `/etc/apparmor.d/bwrap` 전용 프로필(unconfined+userns)로 대체
+  ② venv python을 world-readable `/opt/uv-python/…/python3.12`에 두어 nobody 강등 후에도 실행 가능하게 함
+  (+ chromium 의존 라이브러리 5종 apt 설치).
+- 검증: `ops/verify.sh` **ALL_GREEN**(pytest 920 전부 통과), 외부 200/403, 러너 부팅, stats 구 서버와 일치.
+- 구 서버: 러너 정지·자동시작 해제 상태로 보존 중(사용자 해지 결정 대기). **구 서버 러너를 재가동하면
+  데이터가 갈라진다 — 금지.**
+
+
 ## ★ U-067 결과 — 증류 수리는 통했고, e2e 경계에서 새 루프 발견 (2026-07-27)
 
 - **증류 수리 효과(실측)**: 팀 로스터의 남의 증류 지식 **0건**, 봇들이 비준한 검증 명령이
