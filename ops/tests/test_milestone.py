@@ -1646,10 +1646,13 @@ def test_잠금조건이_반복_정체하면_사람에게_올라간다():
 
     src = inspect.getsource(milestone.renegotiate_criterion)
     i = src.index('if getattr(c, "release_lock", False):')
-    seg = src[i:i + 1400]
+    seg = src[i:i + 2400]
     assert "goal_lock_stuck_parked" in seg, "반복 정체가 사람에게 안 올라간다"
     assert "iter_stuck = 0" in seg, "정체 카운터를 안 풀어 경보가 매 바퀴 반복된다"
     assert "이월·포기할 수 없습니다" in seg, "잠금 조건 포기 금지가 풀렸다"
+    # [단, 정본에서 사라진 잠금은 예외(2026-07-27, 전수감사)] 지금 팀이 합의한 계약에 없는 조건이
+    # 출구 없이 판을 영원히 막던 것 — 그건 잠금 취급을 풀고 일반 사다리로 보낸다.
+    assert "goal_lock_stale_released" in seg, "정본에서 사라진 낡은 잠금에 출구가 없다"
 
 
 def _ms_open_with(goals, criteria_passed=False, iter_stuck=0):

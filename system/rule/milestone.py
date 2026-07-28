@@ -1192,6 +1192,8 @@ def promote_final_locked_criteria(flow, checkpoint=True) -> int:
     # 부분/구 locked snapshot도 정본 우선 합집합으로 복구한다. 정확히 같은 참조의 실증 상태는 보존하고,
     # 같은 desc의 낡은 verify는 정본으로 교체한다.
     for ms in (getattr(flow, "milestones", None) or []):
+        if getattr(ms, "status", "") == "superseded":
+            continue          # 폐기된 주기에 잠금 조건을 되쓰지 않는다(전수감사)
         existing = {(c.desc.strip(), c.verify.strip()): c
                     for c in (getattr(ms, "locked_criteria", None) or [])}
         merged = []
@@ -1465,6 +1467,21 @@ def renegotiate_criterion(flow, obj, target: str, reason: str) -> str:
     if c.passed:
         return f"이미 충족된 조건입니다(재협상 불요): {c.desc[:40]}"
     if getattr(c, "release_lock", False):
+        # [정본에서 사라진 잠금은 팀의 계약이 아니다(2026-07-27, 전수감사)] 저장본 합집합 때문에
+        # GOAL 문구가 바뀌어도 옛 desc가 refs에 남고, 그 조건도 fresh 영수증을 요구한다. 그런데
+        # 잠금은 이월·포기가 금지라 **출구가 사람뿐**이었다 — 지금 팀이 합의한 계약에 없는 조건이
+        # 판을 영원히 막는 셈이다. 현재 정본에 없으면 잠금 취급을 풀고 일반 사다리(이월)로 보낸다.
+        try:
+            _canon = {str(x.desc or "").strip() for x in _mk_criteria(_goal_acceptance_entries(flow))}
+        except Exception:
+            _canon = set()
+        if _canon and str(c.desc or "").strip() not in _canon:
+            c.release_lock = False
+            if flow.log:
+                flow.log("goal_lock_stale_released", target=str(c.desc)[:60])
+            deferred_stale = defer_criterion(flow, obj, c, reason)
+            if deferred_stale:
+                return deferred_stale
         # [사다리에서 떨어지던 칸(2026-07-27, U-067 실측)] 잠금 조건은 이월·포기가 금지인 게 맞지만,
         # 종전엔 여기서 그냥 되돌아 나와 **정체 카운터도 안 풀고 사람에게도 안 올렸다** — 같은 자리를
         # 12바퀴 돌며 단계가 36개까지 불어났다. 포기는 여전히 불가하되, 반복 정체는 **사람에게 넘긴다**

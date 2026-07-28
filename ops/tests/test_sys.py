@@ -8372,3 +8372,41 @@ def test_저장된_개인기준에_오염이_없다():
             if any(t in low for t in Sys._SELF_TERMS) or Sys._PROJ_PATH_RE.search(line):
                 bad.append((mid[-6:], line[:60]))
     assert not bad, f"저장된 개인 기준에 이 판 밖에선 거짓인 줄이 남아 있다: {bad[:5]}"
+
+
+def test_마감관문_순서는_만들게하는것이_회계보다_앞이다():
+    """[2026-07-27 전수감사] 교차검증·인터페이스·기여 관문의 처방은 전부 "누가 더 만들어라/검증해라"다.
+    그러면 저작 수가 올라 **이미 통과한 수용 계약이 스스로 무효**가 되고(버전 인식) 배포 신선도가
+    다시 발동한다. 종전 순서는 되돌리는 관문이 앞이라 마감 시도가 자기 진전을 지웠다."""
+    import inspect
+    from system.rule import task
+
+    src = inspect.getsource(task)
+    pos = {name: src.index(f"_gate_{name}(flow") for name in
+           ("cross_check", "contrib", "acceptance", "deploy_fresh")}
+    assert pos["cross_check"] < pos["acceptance"], "되돌리는 관문(수용)이 유발 관문보다 앞이다"
+    assert pos["contrib"] < pos["acceptance"], "기여가 수용보다 뒤면 통과가 지워진다"
+    assert pos["contrib"] < pos["deploy_fresh"], "배포 신선도가 기여보다 앞이면 다시 발동한다"
+
+
+def test_존재이유_관문도_e2e_증거로_열린다():
+    """[2026-07-27 전수감사] 이 관문은 봇이 쓴 텍스트로만 열려 있었다 — 구조가 채울 인자조차 없어
+    봇이 안 쓰면 영영 안 열린다. 존재이유 줄이 e2e 분모에 들어가 증거와 함께 통과했다면 그 '전체
+    실행'은 이미 일어난 것이다(수용 관문과 같은 원리·같은 one-strike 규칙)."""
+    import inspect
+    from system.rule import task_gates
+
+    src = inspect.getsource(task_gates._gate_existence)
+    assert "_acceptance_covered_by_e2e" in src, "증거로 여는 길이 없다(봇이 안 쓰면 영구 차단)"
+    assert "existence_covered_by_e2e" in src, "증거 통과가 기록되지 않는다"
+
+
+def test_미검증을_검증으로_라벨링하지_않는다():
+    """[2026-07-27 전수감사] 구조 폴백이 '[시각 미검증: 사유]'를 넘기면 다시 '[시각 검증: …]'로
+    감싸 `[시각 검증: [시각 미검증: …]]`가 장부에 남았다 — 관문은 통과하지만 기록이 사실과 반대로
+    읽힌다."""
+    from system.rule.task_gates import _merge_gate_args
+
+    out = _merge_gate_args({"result": "완료", "visual_evidence": "[시각 미검증: 헤드리스만 수행]"})
+    assert "[시각 검증: [시각 미검증" not in out["result"], "미검증이 검증으로 기록된다"
+    assert "[시각 미검증: 헤드리스만 수행]" in out["result"], "사유가 사라졌다"

@@ -437,6 +437,18 @@ def _gate_existence(flow, args):
         _res_e = args.get("result") or ""
         _e_ok = bool(re.search(r"\[\s*존재\s*이유\s*(?:검증|충족|확인|통과)\s*[\]:：]", _res_e))
         _e_na = bool(re.search(r"\[\s*존재\s*이유\s*(?:N\s*/?\s*A|불가|면제)\s*[:：]\s*\S{2,}", _res_e, re.I))
+        # [구조가 이미 한 실행은 인정한다(2026-07-27, 전수감사)] 이 관문은 봇이 쓴 텍스트로만 열려
+        # 있었다 — 구조 드라이버가 채울 인자조차 없어, 봇이 안 쓰면 **영영 안 열린다**. 그런데
+        # 존재이유 줄이 Task 경계 e2e 분모에 그대로 들어가 exact command로 실행되고 SYS receipt로
+        # 봉인돼 통과했다면 그 '전체 실행'은 이미 일어난 것이다(수용 관문과 같은 원리·같은
+        # one-strike 규칙 — 한 줄이라도 안 덮이면 인정하지 않는다).
+        if not (_e_ok or _e_na):
+            _exi_only = "\n".join(ln for ln in (flow.current.acceptance or "").splitlines()
+                                   if "존재이유" in ln)
+            if _acceptance_covered_by_e2e(flow, _exi_only):
+                _e_ok = True
+                if flow.log:
+                    flow.log("existence_covered_by_e2e", task=flow.current.task_id)
         if not (_e_ok or _e_na):
             if flow.log:
                 flow.log("existence_gate", task=flow.current.task_id)
@@ -811,7 +823,14 @@ def _merge_gate_args(args):
                      ("standard_check", "[최대성 검증]\n{v}"),
                      ("contrib_waiver", "[기여 불필요] {v}")):
         _v = str(args.get(_k) or "").strip()
-        if _v:
+        if not _v:
+            continue
+        # [사실대로 기록한다(2026-07-27, 전수감사)] 구조 폴백이 '[시각 미검증: 사유]'를 넘기면
+        # 여기서 다시 '[시각 검증: …]'로 감싸 `[시각 검증: [시각 미검증: …]]`가 장부에 남았다 —
+        # 관문은 통과하지만 기록이 사실과 반대로 읽힌다. 이미 마커 형태면 그대로 싣는다.
+        if _v.startswith("[") and _v.endswith("]"):
+            _b16.append(_v)
+        else:
             _b16.append(_fmt.format(v=_v))
     if _b16:
         args = dict(args)

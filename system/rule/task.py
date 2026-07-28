@@ -846,36 +846,42 @@ async def complete_task(flow, role, args):
     _msg = _gate_visual(flow, args)
     if _msg:
         return _ok(_msg)
-    _msg = _gate_acceptance(flow, args)
-    if _msg:
-        return _ok(_msg)
-    _msg = _gate_existence(flow, args)
-    if _msg:
-        return _ok(_msg)
-    _msg = _gate_data_provenance(flow, args)
-    if _msg:
-        return _ok(_msg)
-    _msg = _gate_deploy_fresh(flow, args)   # [배포 신선도] 검증한 버전 ≠ 라이브면 마감 불가(로컬·라이브 분기 생존 차단)
-    if _msg:
-        return _ok(_msg)
     # [교차 검증 의무 — _gate_cross_check] 공유 지역변수(third·has_product·_engx·_scopex)는 이후
     # 게이트(iface·contrib)·마감 기록(contrib_idle_now)도 소비하므로 여기서 계산해 명시 전달.
+    # (계산 자체는 부작용이 없어 순서와 무관하다.)
     third = [m for m in flow.current.team
              if m not in (flow.leader, flow.current.owner)]
     # [발견1 교정] 검증 대상: owner 위임 산출물 OR 리더 직접구현(leader_writes>0). 리더 독식도
     # 제3자 검증을 면제하지 않는다(보편 이치). 산출물도 없으면(아무것도 안 만든 Task) 게이트 무의미.
     has_product = bool(flow.current.owner) or getattr(flow.current, "leader_writes", 0) > 0
     _engx, _scopex = flow.comm.engagement, flow.comm.scope
+    # [되돌리는 관문을 뒤로(2026-07-27, 전수감사)] 아래 네 관문의 처방은 전부 "누가 더 만들어라/
+    # 검증해라"다 — 그러면 저작 수(writes_by_role)가 올라, 이미 통과한 수용 계약이 스스로 무효가
+    # 되고(버전 인식) 배포 신선도가 다시 발동한다. 종전 순서는 **되돌리는 관문(수용·배포신선도)이
+    # 되돌림을 유발하는 관문보다 앞**이라, 마감 시도가 자기 진전을 지우며 예산만 태웠다.
+    # 판정식은 한 글자도 안 바꾸고 순서만 — 만들게 하는 관문 → 현재 버전을 회계하는 관문.
     _msg = _gate_cross_check(flow, third, has_product, _engx, _scopex)
-    if _msg:
-        return _ok(_msg)
-    _msg = _gate_standard(flow, args)
     if _msg:
         return _ok(_msg)
     _msg = _gate_iface_dialogue(flow, args, has_product)
     if _msg:
         return _ok(_msg)
     _msg = _gate_contrib(flow, args, third, has_product, _engx, _scopex)
+    if _msg:
+        return _ok(_msg)
+    _msg = _gate_data_provenance(flow, args)
+    if _msg:
+        return _ok(_msg)
+    _msg = _gate_acceptance(flow, args)
+    if _msg:
+        return _ok(_msg)
+    _msg = _gate_existence(flow, args)
+    if _msg:
+        return _ok(_msg)
+    _msg = _gate_standard(flow, args)
+    if _msg:
+        return _ok(_msg)
+    _msg = _gate_deploy_fresh(flow, args)   # [배포 신선도] 검증한 버전 ≠ 라이브면 마감 불가(로컬·라이브 분기 생존 차단)
     if _msg:
         return _ok(_msg)
     if _po2():

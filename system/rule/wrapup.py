@@ -518,7 +518,7 @@ def _boundary_gap(flow) -> str:
     """Task 경계 판정 — 미완 마일스톤 목록(비면 경계 도달). §6: e2e는 Task 경계에서."""
     from .milestone import (
         goal_locked_release_error, promote_final_locked_criteria,
-        work_ledger_release_error,
+        roadmap_done_count, roadmap_phases, work_ledger_release_error,
     )
     promote_final_locked_criteria(flow)
     ms = getattr(flow, "milestones", None) or []
@@ -528,6 +528,16 @@ def _boundary_gap(flow) -> str:
     # 이전 미완 주기는 superseded로 닫히는데(open_milestone), 그러면 e2e가 영영 안 열리고
     # 마감은 'e2e가 아직'으로 막혀 **양쪽 어디로도 못 가는 교착**이 된다. 다른 세 곳
     # (task.py·sys_core·next_milestone)은 이미 교정돼 있었다.
+    # [로드맵이 남았으면 아직 Task 경계가 아니다(2026-07-27, 전수감사)] 종전엔 여기서 로드맵 소진을
+    # 안 봐, 중간 주기에서 e2e가 열리고 그 판정이 다음 주기 개설로 버려졌다(e2e 1회분 낭비). 잠금
+    # 조건이 있으면 대신 "최종 주기에서 실증하라"는 사유가 나가는데 실제 원인은 '로드맵 미소진'이라
+    # 오도됐다. complete_task는 이미 같은 검사를 한다 — 같은 술어를 여기에도 둔다.
+    _road = roadmap_phases(flow)
+    if _road:
+        _rdone = roadmap_done_count(flow)
+        if _rdone < len(_road):
+            return (f"로드맵 {_rdone}/{len(_road)} 완수 — 남은 주기: "
+                    f"{_road[_rdone][:60]}")
     open_ms = [m.ms_id for m in ms if m.status not in ("done", "superseded")]
     if open_ms:
         return f"미완 마일스톤: {', '.join(open_ms)}"
