@@ -860,6 +860,21 @@ class Sys:
             pass
         return flow.anchor
 
+    def _channel_roster(self, channel_id):
+        """이 채널이 부를 수 있는 직원 {id: 직군}.
+
+        [내 직원만(2026-07-28, 사용자 지시)] 매체가 채널 주인 기준으로 좁힌 로스터를 넣어주면 그걸,
+        없으면 전체 로스터를 쓴다(디스코드 등 소유 개념이 없는 매체는 종전 그대로). 라벨 조회는
+        전체 로스터로 보강 — 판 도중 채용된 신입이 아직 좁힌 목록에 없어도 이름이 비지 않게.
+        """
+        try:
+            scoped = (getattr(self, "channel_rosters", None) or {}).get(int(channel_id or 0))
+        except (TypeError, ValueError):
+            scoped = None
+        if not scoped:
+            return self.bot_info
+        return {int(k): (v or self.bot_info.get(int(k)) or "예비") for k, v in scoped.items()}
+
     async def _elect_proposer(self, channel_id, body):
         """[발제자 응찰 — 갭5, 사용자 설계 2026-07-09] 무지정 새 요청의 발제자를 is_leader 폴백(지정)이
         아니라 **봇들의 자기선택**으로 정한다. 채용 공고·1층 발언권 응찰의 '발제자판' — 4입구 문법 통일.
@@ -868,9 +883,12 @@ class Sys:
         받는다. 최고 응찰이 발제자. 아무도 응찰 안 하면 None(호출부가 종전 폴백=leader). 후보 사전
         필터·인원 상한 없음(누가 맞는지는 시스템이 아니라 봇 자신이 판단 — 매직넘버 금지)."""
         from .rule.comm_helpers import _is_system_role_label
-        cands = [int(m) for m in self.bot_info
-                 if not _is_spare_label(self.bot_info.get(int(m)))
-                 and not _is_system_role_label(self.bot_info.get(int(m)))   # [채용 제외(2026-07-21 사용자 결정)]
+        # [내 직원만 부른다(2026-07-28, 사용자 지시)] 참여 공고는 이 채널이 쓸 수 있는 직원에게만 간다 —
+        # 매체가 채널 주인 기준으로 좁혀 넣어준 로스터(_channel_roster). 없으면 전체(무회귀).
+        _roster = self._channel_roster(channel_id)
+        cands = [int(m) for m in _roster
+                 if not _is_spare_label(_roster.get(int(m)))
+                 and not _is_system_role_label(_roster.get(int(m)))   # [채용 제외(2026-07-21 사용자 결정)]
                  and self.engaged.holder(int(m)) is None]
         if not cands:
             return None
@@ -4707,6 +4725,18 @@ class Sys:
                         seen.discard(mid)
                         continue
                     guide.set_origin(ch)
+                    # [내 직원만(2026-07-28)] 이 채널의 가용 직원을 매체에 물어 보관 — 참여 공고가
+                    # 그 목록에만 간다. 매체가 이 능력을 안 가지면(디스코드 등) 종전대로 전체.
+                    try:
+                        _cr = getattr(guide, "channel_roster", None)
+                        if _cr:
+                            _scoped = await _cr(ch)
+                            if _scoped:
+                                if not hasattr(self, "channel_rosters"):
+                                    self.channel_rosters = {}
+                                self.channel_rosters[int(ch)] = _scoped
+                    except Exception:
+                        pass
                     inflight[mid] = {"task": asyncio.create_task(
                                          self.route_channel_request(
                                              ch, req, elect=_elect, claimed=True)),
