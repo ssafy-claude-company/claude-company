@@ -475,7 +475,21 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     # root 정본이 없는 전환기/직접 task_snapshot 왕복만 Task 내부 상태를 폴백한다.
     if not _root_interject:
         _restore_interject_state(flow, snap)
-    team = [int(x) for x in snap.get("team", []) if int(x) in flow.pool]
+    # [팀은 복원 때 줄어들면 안 된다(2026-07-28, U-079 실측)] 종전엔 현재 pool로 걸러서, 판이
+    # 진행되는 사이 로스터가 바뀌면(오늘 넣은 '내 직원만' 스코프 등) 그 Task의 구성원이 조용히
+    # 사라졌다 — 마감 직전 교차검증 위임이 "채용 풀에 없습니다"로 거부되는 실측 결함의 뿌리다.
+    # 이 Task에 이미 속했던 사람은 이 흐름 안에서 계속 유효하다: 걸러내는 대신 pool에 합류시킨다
+    # (판 밖으로 확장되지 않는다 — 이 flow의 pool에만, 스냅샷에 있던 id에 한해).
+    _snap_team = [int(x) for x in snap.get("team", [])]
+    _missing = [m for m in _snap_team if m not in flow.pool]
+    if _missing:
+        try:
+            flow.pool = list(flow.pool) + _missing
+            if getattr(flow, "log", None):
+                flow.log("restored_team_readmitted", n=len(_missing))
+        except Exception:
+            pass
+    team = [m for m in _snap_team if m in flow.pool]
     if flow.leader not in team:
         team = [flow.leader] + team
     group = [(f"<@{i}>", flow._info(i)) for i in team]
