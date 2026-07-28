@@ -84,6 +84,20 @@ def _norm_offdomain(val) -> str:
     return "" if s.lower() in _OFFDOMAIN_NEGATIONS else s
 
 
+def preflight_wall_key(errs) -> str:
+    """같은 '벽'인지 판정하는 서명 — 등재 사유 **전체 집합**으로 만든다.
+
+    [실측 수리(2026-07-28, U-074)] 종전엔 `errs[0][:80]`, 즉 **첫 사유 하나**가 열쇠였다.
+    같은 벽인데 검사 순서가 바뀌면(예: '실증 명령이 실행 불가' ↔ 'GOAL@ 행 비준 누락'이 번갈아
+    1번으로 올라옴) 열쇠가 매번 달라져 3회 카운터가 1,1,1,2로 흩어졌다 — 사람에게 넘기는 장치가
+    한 번도 안 걸리고 회의가 같은 자리를 돌며 판의 90%를 태웠다(실측 1,315크레딧, 산출물 0).
+    순서에 무관하게, 사유 집합이 같으면 같은 벽이다.
+    """
+    keys = sorted({str(e).strip()[:60] for e in (errs or [])
+                   if e is not None and str(e).strip()})
+    return "|".join(keys)[:400]
+
+
 def _turn_signals(flow, res, allowed):
     """발언 텍스트 → (지명 대상 id|None, 패스 여부). 지명은 allowed(대화 참여자) 안에서만 해석 —
     참여자 밖 지명·해석 불가 이름은 '지명 없음'으로 무해화(자기선택 경로로 넘어간다)."""
@@ -674,7 +688,7 @@ async def meet(flow, me_id, args):
                         # [같은 벽이면 빨리 사람에게(2026-07-27)] 봇이 이의를 지우고 명령을 안 고치는
                         # 되풀이는 패스만 태운다 — 사용량이 유한하다. 같은 사유가 3번이면 헛돌지 말고
                         # **무엇을 답해야 하는지 그대로 실어** 사람에게 넘긴다.
-                        _pf_key = str(_pf_errs[0])[:80]
+                        _pf_key = preflight_wall_key(_pf_errs)
                         _pf_seen = getattr(flow, "_pf_repeat", None) or {}
                         _pf_seen[_pf_key] = int(_pf_seen.get(_pf_key, 0) or 0) + 1
                         try:
