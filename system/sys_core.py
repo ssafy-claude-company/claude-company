@@ -3116,7 +3116,11 @@ class Sys:
                     await _sl(channel_id, lead)
             except Exception:
                 pass
-        flow = Flow(self.guide, channel_id, self.guild_id, lead, self.bot_info)
+        # [내 직원만 — 근원에서(2026-07-28, U-078 실측)] 참여 공고 한 자리만 좁혔더니 회의 심의단
+        # 보충·재응찰 같은 다른 후보 경로가 전역 로스터를 그대로 봐서 남의 직원 2명이 판에 들어왔다.
+        # 호출처를 하나씩 잠그는 대신 **판이 태어나는 자리**에 채널 로스터를 심는다 — 그 아래 모든
+        # 선택(flow.bot_info)이 자동으로 같은 범위를 본다.
+        flow = Flow(self.guide, channel_id, self.guild_id, lead, self._channel_roster(channel_id))
         # [참여 응찰 = 팀] 공고 응찰자 전원이 이 판의 팀 — create_task가 2차 공고 없이 그대로 쓴다
         flow.join_bidders = list(_joined_team)
         flow.was_elect = bool(elect)   # [완료 참칭 방지] 선거로 연 새 제작 요청 — 앵커가 Task도 안 열고
