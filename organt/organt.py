@@ -145,18 +145,61 @@ class Organt:
         except (OSError, ValueError):
             return None
 
-    def _save_session_id(self, sid: str) -> None:
-        self.session_id = sid
+    def _state_read(self) -> dict:
+        try:
+            d = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _state_write(self, **fields) -> None:
+        """상태 파일을 **병합** 저장 — 남의 키(codex 사용량 누계 등)를 지우지 않는다."""
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            # cwd를 함께 영속 — CLI 세션 저장소는 cwd 기준이라, 같은 세션을 잇는 다음 빌드가
-            # '세션이 시작된 그 cwd'를 그대로 쓰게 한다(pinned_cwd). 흐름 도중 작업공간이 바뀌어도
-            # (create_project의 폴더 카빙) resume가 깨지지 않는 구조적 근거.
-            self.state_path.write_text(
-                json.dumps({"session_id": sid, "cwd": str(self.options.cwd or "")}),
-                encoding="utf-8")
+            st = self._state_read()
+            st.update(fields)
+            self.state_path.write_text(json.dumps(st), encoding="utf-8")
         except OSError:
             pass
+
+    def _save_session_id(self, sid: str) -> None:
+        self.session_id = sid
+        # cwd를 함께 영속 — CLI 세션 저장소는 cwd 기준이라, 같은 세션을 잇는 다음 빌드가
+        # '세션이 시작된 그 cwd'를 그대로 쓰게 한다(pinned_cwd). 흐름 도중 작업공간이 바뀌어도
+        # (create_project의 폴더 카빙) resume가 깨지지 않는 구조적 근거.
+        self._state_write(session_id=sid, cwd=str(self.options.cwd or ""))
+
+    def _codex_usage_delta(self, sid, usage) -> dict:
+        """codex가 준 **스레드 누계**를 이 턴 몫(차분)으로 바꾼다.
+
+        [과금 수리(2026-07-28, U-074 실측)] `turn.completed.usage`는 그 턴이 쓴 양이 아니라
+        **스레드 전체 누계**다(실측: 같은 세션에 짧은 프롬프트 3연속 → 11,556 → 24,671 → 37,805).
+        누계를 그대로 청구하면 이어가는 턴마다 과거를 다시 청구한다 — 턴 N개면 대략 N/2배 과다.
+        실판에서 168턴이 3,000크레딧을 태운 원인이 이것이다. 직전 누계를 세션과 함께 영속해
+        차분만 청구한다(새 세션·세션 교체면 그 턴 전액 = 정확히 그 스레드의 첫 청구).
+        """
+        u = usage if isinstance(usage, dict) else {}
+        if not u:
+            return {}
+        keys = ("input_tokens", "cached_input_tokens", "output_tokens",
+                "reasoning_output_tokens", "cache_write_input_tokens")
+        now = {k: float(u.get(k) or 0) for k in keys if isinstance(u.get(k), (int, float))}
+        st = self._state_read()
+        book = st.get("codex_usage") if isinstance(st.get("codex_usage"), dict) else {}
+        key = str(sid or "")
+        # 세션별 누계 장부 — 마이크로 턴(응찰·표결)은 매번 **새 스레드**라, 한 칸만 두면 그 값이
+        # 본세션 기준선을 덮어써 다음 실질 턴이 다시 전액 청구된다(과다청구 재발). sid별로 둔다.
+        prev = book.get(key) if isinstance(book.get(key), dict) else {}
+        delta = {}
+        for k, v in now.items():
+            base = float(prev.get(k) or 0)
+            # 누계가 줄어드는 일은 없어야 하지만(세션 재생성 등), 나면 음수 대신 이번 값을 청구.
+            delta[k] = int(v - base) if v >= base else int(v)
+        book[key] = {k: int(v) for k, v in now.items()}
+        if len(book) > 4:                       # 장부는 최근 4스레드만(파일 무한 증식 방지)
+            book = {k: book[k] for k in list(book)[-4:]}
+        self._state_write(codex_usage=book)
+        return delta
 
     def _reset_session(self) -> None:
         """스테일 세션 폐기 — resume 대상이 저장소에 없을 때(cwd 불일치·유실) 새 출발.
@@ -231,18 +274,17 @@ class Organt:
             prompt = (f"[작업공간 — 절대경로] 당신의 모든 파일은 정확히 여기 있습니다: {_cwd}\n"
                       f"이 경로가 당신의 cwd입니다. 파일·디렉터리는 항상 이 절대경로 기준으로 확인하세요.\n\n") + prompt
         _model = getattr(self, "_codex_model", None)
+        _raw_usage = {}
 
-        def _take_usage(u, _m=_model):
-            # [토큰 계량(2026-07-28)] codex는 비용을 안 주고 토큰만 준다 → 공표 단가로 환산해
-            # Claude 경로와 같은 결산 형태로 남긴다. handle()의 on_turn이 이걸 그대로 실어
-            # 러너 → 웹(report_usage) → UsageLedger로 흘려보낸다.
-            from .gpt_pricing import usage_record
-            rec = usage_record(_m, u)
-            if rec:
-                self._last_result = {**(getattr(self, "_last_result", None) or {}), **rec}
+        def _take_usage(u):
+            # codex가 주는 값은 **스레드 누계** — 여기선 받아만 두고, 세션 id를 아는 아래에서
+            # 차분으로 바꿔 청구한다(_codex_usage_delta).
+            if isinstance(u, dict) and u:
+                _raw_usage.clear()
+                _raw_usage.update(u)
 
         async with botpool.slot():
-            return await run_codex_turn(
+            _text, _sid = await run_codex_turn(
                 prompt=prompt, cwd=_cwd, session_id=self.session_id,
                 tools=([] if micro else (getattr(self, "_codex_tools", None) or [])),
                 model=_model,
@@ -253,6 +295,14 @@ class Organt:
                 # [턴 예산(2026-07-28)] 호출이 곧 일인 턴(마감·e2e)에서만 침묵 턴을 이어 붙인다 —
                 # SYS가 그 턴에 표식을 단다. 회의 발언 턴은 종전 그대로 한 판에 끝난다.
                 expect_tool=bool(getattr(self, "_codex_expect_tool", False)) and not micro)
+
+        # 누계 → 이 턴 몫으로 환산해 결산에 싣는다. handle()의 on_turn이 그대로 실어
+        # 러너 → 웹(report_usage) → UsageLedger로 흘려보낸다.
+        from .gpt_pricing import usage_record
+        rec = usage_record(_model, self._codex_usage_delta(_sid or self.session_id, _raw_usage))
+        if rec:
+            self._last_result = {**(getattr(self, "_last_result", None) or {}), **rec}
+        return _text, _sid
 
     async def _run_once(self, prompt: str, micro: bool = False):
         """ClaudeSDKClient 한 번 실행 → (최종 발화, session_id).
