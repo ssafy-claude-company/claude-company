@@ -1810,13 +1810,20 @@ class Sys:
                 candidate_owner[b.backlog_id] = owner
         if not candidate_owner:
             return None
+        # [빈손도 응찰한다(2026-07-28, U-079 실측)] 종전엔 '자기가 가진 백로그'를 가진 사람만 물었다.
+        # 자기 몫을 다 끝낸 봇은 다음 판돌이에서 통째로 빠져(실측: 팀 9명 중 4명이 인계 응찰 0회),
+        # 인계가 소수에게 몰리고 남은 갈래는 순서대로 소화됐다. 남은 백로그가 있는 한, 손이 빈 팀원도
+        # 같은 형식으로 응찰할 수 있게 후보를 연다 — 선정되면 그 갈래의 담당이 그 사람으로 바뀐다.
+        _idle = [m for m in bots if m not in by_owner and m != int(holder or 0)]
+        for _m in _idle[:6]:                      # wake 비용 상한 — 한 판돌이에 최대 6명
+            by_owner.setdefault(_m, list(rem))
         bids = []
         for owner, owned in by_owner.items():
             opts = " · ".join(f"{b.backlog_id}:{(b.body or '')[:55]}" for b in owned)
             try:
                 ans = await self.run_turn(
                     flow, owner,
-                    f"[다음 백로그 응찰] 당신이 가진 남은 백로그: {opts}\n"
+                    f"[다음 백로그 응찰] 지금 남아 있는 백로그: {opts}\n"
                     f"지금 다음으로 할 자기 백로그 하나를 골라 `[응찰: N, {owned[0].backlog_id}] 이유` "
                     f"형식으로 답하세요. 지금 순서가 아니면 `[패스]`. 도구·작업 없이 즉답.\n"
                     # [점수의 뜻을 구조가 정한다(2026-07-28, U-079 실측: 응찰 10건 중 9건이 9점 —
