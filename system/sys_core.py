@@ -1873,6 +1873,18 @@ class Sys:
             else:
                 selected = next(b.backlog_id for b in rem if b.backlog_id in valid)
         owner = valid[selected]
+        # [담당자 생존 확인(2026-07-28, 사용자 지적)] 담당은 백로그 제출자 id에서 온다. 그 사이 그
+        # 직원이 해고되거나 로스터에서 빠지면(특히 '내 직원만' 스코프처럼 로스터가 좁아진 뒤) 없는
+        # 사람에게 일이 배정되고, 그 갈래는 깨우지 못한 채 활성으로 남아 **단일 활성 규칙 때문에 판
+        # 전체가 멈춘다**. 살아있는 팀원 중 직군 적합도가 가장 높은 사람에게 넘긴다(백로그 자체는 유지).
+        if bots and int(owner) not in bots:
+            from .role_fit import role_fit
+            _body = next((str(getattr(b, "body", "") or "") for b in rem
+                          if b.backlog_id == selected), "")
+            _new = max(bots, key=lambda k: role_fit(_body, bots[k]))
+            self._log("backlog_owner_missing", backlog=str(selected),
+                      gone=int(owner), reassigned=int(_new))
+            owner = _new
         # 응찰/선정 micro 턴 사이에는 다른 표면이 선점할 수 있다. 최종 변이 직전에 전역 잠금을
         # 다시 읽어, relay-local pick이 다른 SubTask의 active를 보지 못하는 경합을 막는다.
         from .rule.backlog import active_backlog_rows
