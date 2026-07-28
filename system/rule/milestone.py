@@ -3299,6 +3299,13 @@ def register_stage(flow, stage, prop, origin=""):
                         best, hit = _ov, _st3
                 if hit is not None and best >= 0.34 and (m3.group(2) or "").strip():
                     return hit, m3.group(2).strip()
+                # [라벨이 안 맞으면 빈 영역부터(2026-07-27, 전수감사)] 겹침이 임계 미만이면 종전엔
+                # 말없이 **첫 단위**로 몰아넣어, 라벨 어휘가 단위 제목과 다르면 전부 한 곳에 쌓이고
+                # 나머지 영역이 굶었다(주석이 스스로 'ST-3/6/7 백로그 0의 근본'이라 기록한 증상).
+                # 어디로 갔는지 남기고, 아직 빈 영역이 있으면 그쪽을 먼저 채운다.
+                if flow is not None and getattr(flow, "log", None):
+                    flow.log("backlog_dest_fallback", label=str(m3.group(1))[:24],
+                             best=round(best, 2), empty_left=len(_empty_sts))
             return (_empty_sts[0] if _empty_sts else _alive_sts[0]), _it
         # [발제자=주인(2026-07-16, 사용자: '백로그 발제한 애가 주인, 누가 발제했는지 남아야')] 회의
         # DRAFT에 그 줄을 쓴 봇을 SYS가 턴별 diff로 귀속 추적(flow._draft_attr) — 등록 시 그 봇이
