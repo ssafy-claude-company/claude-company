@@ -994,6 +994,24 @@ def record_run_outputs(flow, before) -> int:
     touched = {rel for rel, dg in after.items() if before.get(rel) != dg}
     if not touched:
         return 0
+    # [중복 증거 관측(2026-07-28, U-079 실측)] 같은 검증 결과가 이름만 바꿔 여러 번 저장된다:
+    # motion-b1/motion-b2-hooks/motion-evidence가 **바이트 단위로 동일**(3개), b1-baseline/b2도 동일(2개).
+    # 제품 150K에 증거 6.0MB — 같은 검사를 다시 돌려 새 이름으로 남긴 몫이다. 재실행 자체를 막으려면
+    # 명령·입력 동일성 판정이 필요해 여기서 끊지 않고, **먼저 규모를 사실로 남긴다**(수리는 관측 뒤).
+    try:
+        _seen = {}
+        for _rel in sorted(touched):
+            _dg = after.get(_rel)
+            if not _dg:
+                continue
+            _seen.setdefault(_dg, []).append(_rel)
+        _dups = {d: r for d, r in _seen.items() if len(r) > 1}
+        if _dups and getattr(flow, "log", None):
+            flow.log("duplicate_verification_artifact",
+                     groups=len(_dups), files=sum(len(r) for r in _dups.values()),
+                     sample=";".join(sorted(next(iter(_dups.values())))[:3])[:160])
+    except Exception:
+        pass
     known = set(getattr(flow, "run_outputs", None) or ())
     known |= touched
     try:
