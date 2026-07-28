@@ -55,14 +55,18 @@ def test_codex_이벤트에서_사용량을_읽는다():
     assert _usage_from_event({"type": "item.completed"}) == (None, {})
 
 
-def test_GPT턴_사용량이_Organt결산에_들어간다(monkeypatch):
-    """codex 턴 → on_usage → _last_result. 이 사슬이 끊기면 원장이 0원이 된다."""
+def test_GPT턴_사용량이_Organt결산에_들어간다(monkeypatch, tmp_path):
+    """codex 턴 → on_usage → _last_result. 이 사슬이 끊기면 원장이 0원이 된다.
+
+    상태 파일은 tmp_path로 격리한다 — 세션별 사용량 누계가 거기 쌓이므로(차분 청구), 공유
+    경로를 쓰면 두 번째 실행이 '차분 0'이 되어 테스트가 자기 앞 실행에 오염된다.
+    """
     async def fake_turn(**kw):
         kw["on_usage"]({"input_tokens": 1_000, "cached_input_tokens": 0, "output_tokens": 500})
         return "완료했습니다", "sid-1"
 
     monkeypatch.setattr("organt.codex_mcp_bridge.run_codex_turn", fake_turn)
-    o = Organt(_cfg())
+    o = Organt(_cfg(), state_path=str(tmp_path / "state.json"))
     o._codex_model = "gpt-5.6-luna"
     text, sid = asyncio.run(o._run_codex("일 해줘"))
     assert (text, sid) == ("완료했습니다", "sid-1")
