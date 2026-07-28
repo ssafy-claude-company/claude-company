@@ -495,9 +495,8 @@ class Sys:
                 # 훼손하는 역설(절단된 반쪽 원칙이 매 턴 주입됨). 마지막 완전한 줄까지만 남긴다.
                 cut = body[:1500]
                 body = cut[:cut.rfind("\n")] if "\n" in cut else cut
-            if job and body and me is not None and not self._hollow_standard(body):
-                self.bot_profiles[int(me)] = body        # 자기 기준으로만(직군 공용 아님)
-                absorbed.append((job, body))
+            if job and body and me is not None and self._set_bot_profile(int(me), body, src="absorb"):
+                absorbed.append((job, self.bot_profiles[int(me)]))   # 자기 기준으로만(직군 공용 아님)
             return ""
 
         def _learn(m):
@@ -581,6 +580,18 @@ class Sys:
     _PROJ_PATH_RE = re.compile(
         r"(?:^|[\s`'\"(\[])(?:\./)?[\w.-]+/[\w./-]*\.(?:sh|py|js|mjs|ts|json|ya?ml|toml|md|html|css)\b")
 
+    # [이 판 밖에선 거짓인 고유명(2026-07-27, 전수감사)] 경로 규칙만으로는 `murmur`·`systemd`·
+    # `STATE.md`·`Fable/Opus` 같은 **이 저장소·이 운영의 고유명**이 그대로 통과했다(실측: 오염 30여
+    # 줄 중 3줄만 잡힘). 그런 줄은 다른 판에서 거짓이 되므로 개인 기준에 남기지 않는다. 어휘를
+    # 프롬프트가 아니라 **코드 상수 한 곳**에 둬야 다음 오염도 같은 자리에서 막힌다.
+    _SELF_TERMS = (
+        "murmur", "organt", "claude-company", "state.md", "playbook", "verify.sh",
+        "test_contracts", "report_iter", "systemd", "render", "duckdns",
+        "판단은 fable", "집행은 opus", "ops/", "/etc/",
+    )
+    # 프롬프트 골격 토큰이 기준으로 저장된 것(실측: 두 봇의 기준 첫 줄이 문자 그대로 "(줄들)").
+    _FORM_PLACEHOLDERS = ("(줄들)", "(기준 줄들)", "(개선된 개인 기준 줄들)", "⟦", "⟧")
+
     def _strip_project_specifics(self, body, mid=0):
         """[증류는 범용만(2026-07-27, 사용자: '증류는 범용적인 좋은 내용을 담는 것')]
 
@@ -593,11 +604,35 @@ class Sys:
         경로가 박힌 줄만 버린다(원칙 줄은 보존). 버릴 원칙이면 다음 증류에서 일반형으로 다시 선다.
         """
         lines = [ln for ln in str(body or "").splitlines()]
-        keep = [ln for ln in lines if not self._PROJ_PATH_RE.search(ln)]
+
+        def _keepable(ln):
+            if self._PROJ_PATH_RE.search(ln):
+                return False
+            low = ln.lower()
+            if any(t in low for t in self._SELF_TERMS):
+                return False
+            return not any(t in ln for t in self._FORM_PLACEHOLDERS)
+
+        keep = [ln for ln in lines if _keepable(ln)]
         if len(keep) != len(lines):
             self._log("distill_project_specific_dropped", bot=int(mid or 0),
                       dropped=len(lines) - len(keep))
         return "\n".join(keep).strip()
+
+    def _set_bot_profile(self, mid, body, src="") -> bool:
+        """개인 기준을 쓰는 **유일한 문**. 정화·빈값 판정을 여기서 한 번만 한다.
+
+        [기록 지점이 셋인데 정화는 하나뿐이었다(2026-07-27, 전수감사)] 증류 경로에만 필터가 있고
+        흡수(보고의 craft_standard)·전수(사수/유산) 경로는 무검사 저장이었다 — `ops/verify.sh`도
+        프롬프트 자리표시자 `(줄들)`도 그 두 문으로 들어왔다. 게다가 증류는 경험 5건 이상인 봇만
+        도는데 오염이 심한 봇들은 경험 0이라 **영원히 정화 대상이 아니었다**. 저장 시점에 거른다.
+        """
+        cleaned = self._strip_project_specifics(body, mid=mid)
+        if not cleaned or self._hollow_standard(cleaned):
+            self._log("bot_profile_rejected", bot=int(mid or 0), src=str(src)[:24])
+            return False
+        self.bot_profiles[int(mid)] = cleaned
+        return True
 
     @staticmethod
     def _hollow_standard(body) -> bool:
@@ -672,9 +707,7 @@ class Sys:
             # 하드캡은 '줄 단위'로 — 문장 중간 절단 방지(_absorb_role_profiles 관례 동형).
             cut = body[:cap]
             body = cut[:cut.rfind("\n")] if "\n" in cut else cut
-        body = self._strip_project_specifics(body, mid)
-        if body and not self._hollow_standard(body) and body != cur:
-            self.bot_profiles[mid] = body
+        if body != cur and self._set_bot_profile(mid, body, src="distill"):
             self.bot_experience[mid] = []                 # 증류 완료 — 원석 비움
             self.bot_distill_counts[mid] = int(self.bot_distill_counts.get(mid, 0)) + 1   # 천장 성장 실적
             self._save_profiles()
@@ -1102,7 +1135,13 @@ class Sys:
         except TypeError:
             organt = self.organt_builder(worker, server, "member", flow)
         label = str(self.bot_info.get(mid, "")) or f"봇{mid}"
-        heritage = self.role_profiles.get(job) or "(이 직군의 회사 유산이 아직 없음 — 좋은 시작 기준을 빚어주세요)"
+        # [동결된 유산은 읽지도 않는다(2026-07-27, 전수감사)] 주석은 role_profiles를 "레거시 동결"
+        # 이라 선언했지만 여기서 실제로 읽혀 **신입 기준의 재료**가 됐다 — 그 유산은 특정 옛 판의
+        # 지식이다(실측: 게임 기획자 유산의 '좋은 예'가 방명록 DB 비교, 브랜드 스토리텔러 유산이
+        # 포트폴리오 판 전용, 백엔드 유산이 Node/Postgres 전제). 동결된 오염이 채용 때마다
+        # 재생산됐다. 선언대로 읽기를 끊는다 — 사수가 없으면 빈 시작이고, 첫 작업의 자기작성
+        # 폴백이 받는다(그게 그 봇 자신의 판에서 나온 기준이라 더 참이다).
+        heritage = "(이 직군의 회사 유산은 쓰지 않습니다 — 이 판에서 참인 기준을 새로 빚어주세요)"
         if is_mentor:
             my_std = self.bot_profiles.get(worker) or ""
             head = (f"[사수 온보딩 — 시작 기준 전수] 당신은 '{job}' 선배입니다. 새 동료(직군 {label})가 "
@@ -1136,7 +1175,11 @@ class Sys:
             self._form_fail[int(mid)] = int(self._form_fail.get(int(mid), 0) or 0) + 1
             self._log("endow_noop", bot=mid, by=worker, fails=self._form_fail[int(mid)])
             return False
-        self.bot_profiles[mid] = body
+        if not self._set_bot_profile(mid, body, src="endow"):
+            if not hasattr(self, "_form_fail"):
+                self._form_fail = {}
+            self._form_fail[int(mid)] = int(self._form_fail.get(int(mid), 0) or 0) + 1
+            return False
         if getattr(self, "_form_fail", None):
             self._form_fail.pop(int(mid), None)
         self._save_profiles()

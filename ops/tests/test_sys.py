@@ -7528,9 +7528,12 @@ def test_사수전수_선배가_시작기준을_빚는다(tmp_path):
     assert any(e["event"] == "craft_endowed" and e.get("mentor") for e in s.flow_log)
 
 
-def test_사수전수_선배없으면_채용봇이_유산으로_폴백(tmp_path):
-    """[사수 전수 — 폴백] 그 직군에 기준 보유 선배가 없으면 채용봇이 직군 유산(동결 role_profiles)으로
-    시작 기준을 대신 잡는다 — '증류 안 된 봇'이 구조적으로 없게(신규 직군은 유산 없이도 빚음)."""
+def test_사수전수_선배없으면_채용봇이_빚되_옛_유산은_재료가_아니다(tmp_path):
+    """[사수 전수 — 폴백 / 계약 정정(2026-07-27, 전수감사)] 그 직군에 기준 보유 선배가 없으면
+    채용봇이 시작 기준을 대신 빚는다(증류 안 된 봇이 구조적으로 없게). 다만 **직군 유산은 재료로
+    쓰지 않는다** — 주석은 '동결'이라 선언했는데 실제로는 읽혀 신입 기준의 재료가 됐고, 그 유산은
+    특정 옛 판의 지식이었다(실측: 게임 기획자 유산의 '좋은 예'가 방명록 DB 비교, 백엔드 유산이
+    Node/Postgres 전제). 동결된 오염이 채용 때마다 재생산됐다."""
     calls = {}
 
     class _Recruiter:
@@ -7547,7 +7550,8 @@ def test_사수전수_선배없으면_채용봇이_유산으로_폴백(tmp_path)
     s.role_profiles["디자인"] = "- 접근성 대비 4.5:1"     # 직군 유산(동결)
     assert asyncio.run(s.endow_craft(33)) is True
     assert calls["worker"] == 90                         # 선배 없음 → 채용봇 폴백
-    assert "채용 폴백" in calls["prompt"] and "접근성 대비" in calls["prompt"]   # 유산이 재료
+    assert "채용 폴백" in calls["prompt"]
+    assert "접근성 대비" not in calls["prompt"]          # 옛 유산은 재료로 안 들어간다
     assert "시선 흐름" in s.bot_profiles[33]
 
 
@@ -8314,3 +8318,57 @@ def test_재개_상한_초과는_유령요청을_남기지_않는다():
     assert "mark_stopped" in seg, "상한 초과 요청이 picked인 채 남는다(유령)"
     assert "사람 조치 필요" in seg, "사용자에게 아무 표시도 안 남는다"
     assert "cut_resume_exhausted" in seg, "관측 이벤트가 없다"
+
+
+def test_개인기준_쓰기는_단일_문을_지난다():
+    """[2026-07-27 전수감사] 기록 지점이 셋(흡수·증류·전수)인데 정화는 증류 한 곳에만 있었다 —
+    `ops/verify.sh`도 프롬프트 자리표시자 `(줄들)`도 나머지 두 문으로 무검사 저장됐다. 게다가 증류는
+    경험 5건 이상인 봇만 도는데 오염이 심한 봇들은 경험 0이라 영원히 정화 대상이 아니었다.
+    저장 시점에 한 번만 거른다."""
+    import inspect
+    from system.sys_core import Sys
+
+    src = inspect.getsource(Sys)
+    assert src.count("self.bot_profiles[int(mid)] = cleaned") == 1, "정화 없는 직접 쓰기가 있다"
+    assert "self.bot_profiles[mid] = body" not in src, "증류/전수가 문을 우회한다"
+    for src_tag in ('src="distill"', 'src="endow"', 'src="absorb"'):
+        assert src_tag in src, f"{src_tag} 경로가 단일 문을 안 지난다"
+
+
+def test_정화규칙은_이_판_밖에서_거짓인_고유명을_버린다():
+    """[2026-07-27 전수감사] 경로 규칙만으로는 `murmur`·`systemd`·`STATE.md` 같은 이 저장소·운영의
+    고유명이 그대로 통과했다(실측: 오염 30여 줄 중 3줄만 잡힘). 그런 줄은 다른 판에서 거짓이 된다.
+    어휘는 프롬프트가 아니라 코드 상수 한 곳에 둔다 — 다음 오염도 같은 자리에서 막히게."""
+    from types import SimpleNamespace
+    from system.sys_core import Sys
+
+    strip = Sys._strip_project_specifics
+    me = SimpleNamespace(_PROJ_PATH_RE=Sys._PROJ_PATH_RE, _SELF_TERMS=Sys._SELF_TERMS,
+                         _FORM_PLACEHOLDERS=Sys._FORM_PLACEHOLDERS, _log=lambda *a, **k: None)
+    body = ("- 검증은 ops/verify.sh로 실제 트레이스를 재현한다\n"
+            "- murmur 고유 아이덴티티로 사운드를 통일한다\n"
+            "(줄들)\n"
+            "- 상태 전이는 수치로 먼저 잠근다")
+    out = strip(me, body, mid=0)
+    assert "verify.sh" not in out and "murmur" not in out and "(줄들)" not in out, out
+    assert "상태 전이는 수치로 먼저 잠근다" in out, "범용 원칙까지 버리면 안 된다"
+
+
+def test_저장된_개인기준에_오염이_없다():
+    """[2026-07-27 전수감사] 함수 단위 테스트만 있고 **저장분**을 보는 테스트가 없어 '필터는 통과,
+    저장분은 오염'이 동시에 성립했다(STATE가 '0건'이라 적었는데 실제로는 아니었다)."""
+    import json
+    import os
+    from system.sys_core import Sys
+
+    path = os.path.join(os.environ.get("MURMUR_ROOT", "/root/ClaudeCompany"),
+                        "ops/var/organt_sns_state/role_profiles.json")
+    if not os.path.exists(path):
+        return                      # 저장분 없는 환경(CI 등)은 검사 대상 아님
+    bad = []
+    for mid, body in (json.load(open(path)).get("bot_profiles") or {}).items():
+        for line in str(body).splitlines():
+            low = line.lower()
+            if any(t in low for t in Sys._SELF_TERMS) or Sys._PROJ_PATH_RE.search(line):
+                bad.append((mid[-6:], line[:60]))
+    assert not bad, f"저장된 개인 기준에 이 판 밖에선 거짓인 줄이 남아 있다: {bad[:5]}"
