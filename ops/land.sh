@@ -2,6 +2,7 @@
 # [착지] 세션이 자기 작업을 정본(main)에 스스로 병합·검증한다. 통합 세션 불필요.
 #   ops/land.sh <task>     자기 worktree 안에서 실행 (예: bash ops/land.sh 변도진)
 # 2레포(claude-company=루트, murmur). 동시 착지는 flock으로 직렬화(race 방지).
+# 정본 직접 커밋은 pre-commit 훅(ops/hooks)이 막는다 — 수동 충돌 해결 커밋은 ALLOW_CANON_COMMIT=1.
 set -uo pipefail
 MS=/root/ClaudeCompany
 S="${1:?사용: land.sh <task>}"
@@ -45,7 +46,8 @@ for spec in $REPOS; do
     echo "  $name: $br → $base 병합 ($ahead 커밋)"
     git -C "$main" checkout -q "$base"
     if ! git -C "$main" merge --no-edit "$br"; then
-      echo "  ⚠ $name 병합 충돌 — 'git -C $main status'로 수동 해결 후 다시 land.sh"; exit 1
+      echo "  ⚠ $name 병합 충돌 — 'git -C $main status'로 수동 해결 후"
+      echo "     ALLOW_CANON_COMMIT=1 git -C $main commit  (사유를 메시지에) 하고 다시 land.sh"; exit 1
     fi
     merged=$((merged+1))
   fi
@@ -53,9 +55,10 @@ done
 [ "$merged" = 0 ] && { echo "병합할 커밋 없음(브랜치가 정본과 같음)."; exit 0; }
 
 # 3) murmur 스탬프 갱신(claude-company는 STATE 동거라 신선도 info)
+#    LAND_OK=1: 정본 직접 커밋을 막는 pre-commit 훅의 착지 전용 통과로.
 m=$(git -C "$MS/murmur" rev-parse --short HEAD)
 sed -i -E "s/^(murmur[[:space:]]+)[0-9a-f]+/\1$m/" "$MS/ops/STATE.md"
-git -C "$MS" add ops/STATE.md 2>/dev/null && git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" 2>/dev/null || true
+git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" 2>/dev/null || true
 
 # 4) 정본 전체 검증
 echo "════ 정본 전체 검증 ════"

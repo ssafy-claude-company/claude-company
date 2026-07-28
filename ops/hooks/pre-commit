@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# [세션 격리 강제 — 2026-07-28] 정본 체크아웃에서의 직접 커밋을 막는다.
+#
+# 왜: 정본(/root/ClaudeCompany, …/murmur)은 라이브 서비스(murmur-web·organt-runner)의
+# import 소스다. 여기서 여러 세션이 직접 커밋하면 (1) 남의 미완성 파일이 무관한 커밋에
+# 섞이고(2026-07-28 d7f3556 실사고), (2) 반쯤 고친 코드가 재시작 순간 라이브로 부팅된다.
+#
+# 규칙: 작업은 세션별 worktree에서.
+#   bash ops/wt.sh new <세션>      → /root/wt/<세션> 에서 개발·커밋
+#   bash ops/land.sh <세션>        → 검증 후 정본 병합(이 훅의 영향 없음: 병합은 커밋 훅 미대상)
+#
+# 탈출구(정말 필요할 때만):
+#   LAND_OK=1            land.sh 내부 스탬프 커밋용(사람이 직접 쓰지 말 것)
+#   ALLOW_CANON_COMMIT=1 비상용 — 병합 충돌 수동 해결 등. 커밋 메시지에 사유를 남길 것.
+set -u
+
+# worktree에서는 통과 — 정본 체크아웃에서만 막는다.
+top="$(git rev-parse --show-toplevel 2>/dev/null)"
+case "$top" in
+  /root/ClaudeCompany|/root/ClaudeCompany/murmur) ;;   # 정본 → 아래 검사
+  *) exit 0 ;;                                          # worktree 등 → 허용
+esac
+
+[ "${LAND_OK:-}" = "1" ] && exit 0
+[ "${ALLOW_CANON_COMMIT:-}" = "1" ] && exit 0
+
+cat >&2 <<'MSG'
+✋ 정본 체크아웃에는 직접 커밋하지 않습니다 (라이브 서비스의 import 소스).
+   세션 작업은 worktree에서:
+     bash ops/wt.sh new <세션>       # /root/wt/<세션> 생성
+     (거기서 개발·커밋)
+     bash ops/land.sh <세션>         # 검증 + 정본 병합
+   비상(병합 충돌 수동 해결 등)일 때만:
+     ALLOW_CANON_COMMIT=1 git commit ...   # 커밋 메시지에 사유 명시
+MSG
+exit 1

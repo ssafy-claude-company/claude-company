@@ -1155,6 +1155,7 @@ murmur  1b0cef5   ← HEAD — ★전 화면 원칙 감사(2026-07-28, 세션 �
 - **웹 표면도 개인화(fe3ef5d)**: Agent.craft·craft_distills(마이그 0020) + 러너 persist_craft 동기(흡수·개인증류·온보딩) + AgentDetail '이 직원의 노하우'(직군 RoleProfile 표시 폐기) + 추천 지표 개인화. 기존 증류분 2봇(이서준·장건우) craft 백필 완료 — UI에서 봇별 상이 확인 가능.
 
 ## 병렬 세션 (Fable 판정 — task 단위 full-context, CONTRACTS.md 참조)
+> **개정 2026-07-28**: 아래 기본값은 폐기 — worktree 기본·정본 직접 커밋 차단. 말미 "세션 격리 재실효화" 절 참조.
 - **기본 = 작업(task)당 full-context 세션**(전 트리 편집권). 분할 축 = task+claim(파일 glob), 레포 아님. per-repo 1:1 편성 폐기(횡단 기능 역설계).
 - 시작 `claim.sh add <task> <파일glob>` → 개발(계약 17seam 준수) → 착지 전 `claim.sh check`+full `verify.sh` → **bash ops/land.sh <세션>**으로 스스로 정본 병합(통합 세션 불필요).
 - **동시 세션 상한 ≈2~3**(claim 중첩 확률↑, 스케일=task 큐잉). worktree(`wt.sh`)는 레포-로컬 대량작업 등 opt-in만.
@@ -1177,3 +1178,34 @@ murmur  1b0cef5   ← HEAD — ★전 화면 원칙 감사(2026-07-28, 세션 �
 
 ## 남은 일 → **`murmur/docs/BACKLOG.md` 단일 소스** 참조
 요약: OPS 알림(systemd OnFailure)·pending N+1 / 보안 H3 스코핑·SSRF-lite / 제품 B1 랜딩 프리뷰 / Discord 이행(비검증) / 테스트 잔여물 정리(신선 seed로 대부분 해소됨 — Render→Postgres 이전 시 리셋) / M9 순환임포트 · communication.py 추가 분할.
+
+## 세션 격리 재실효화 (2026-07-28, 도진-인프라 — 사용자 요청 진단·착지)
+
+**사고**: 현준-1·현준-2가 같은 정본 트리에서 동시 작업 → 현준-2의 착지 커밋(d7f3556)에
+현준-1 미완성 파일 5개가 무관한 메시지로 혼입. 같은 날 러너·웹 재시작 다수 — 반쯤 고친
+파일이 디스크에 놓인 순간 라이브 import 대상이었다.
+
+**진단(사실)**:
+- 07-04 `6750805`에서 "per-repo → task 단위 full-context(정본 직접 + claim)" 전환, worktree는 opt-in으로 강등.
+- 전제였던 claim 등재는 07-13 이후 실등재 0건(CLAIMS.md 정체). 원인은 규율이 아니라 **구조 부재**:
+  `claim.sh check`를 land.sh·verify.sh·훅 어디서도 호출하지 않았다 — 자발 준수에만 의존.
+- 정본 = 라이브: `/root/murmur-stack → /root/ClaudeCompany` 심링크로 murmur-web·organt-runner가
+  세션들이 편집하는 트리를 그대로 구동. murmur-dev는 심링크조차 없이 정본 경로 하드코딩.
+- 마찰: remote-control 세션 다수가 dojin 계정 — /root 전제 도구를 쓰려면 매번 sudo. 정본 직접
+  편집으로 미끄러지는 실무적 유인.
+
+**판정**: worktree 기본 복귀 + 정본 커밋 구조적 차단(= (a)+(b) 조합). claim은 강제화하지 않고
+권고로 존치 — 분할 축이 자유 glob인 한 강제해도 빈틈이 남고, 물리적 트리 분리가 같은 문제를
+더 단순하게 막는다. 동시 세션 수(오늘 6+)도 claim 모델의 전제(≈2~3)를 이미 넘었다.
+
+**착지한 강제 장치(말이 아니라 구조)**:
+- `ops/hooks/pre-commit` + 양 레포 `core.hooksPath` — **정본 체크아웃 직접 커밋 차단**.
+  worktree는 통과. 탈출구: `LAND_OK=1`(land.sh 내부 전용) / `ALLOW_CANON_COMMIT=1`(비상, 사유 명시).
+- `land.sh`: 스탬프 커밋에 LAND_OK 배선, 충돌 수동 해결 안내에 탈출구 명시.
+- `wt.sh` 헤더: "정본 직접 + claim 기본" 문구 폐기 → worktree 기본.
+
+**미결(사용자 승인 대기)**:
+- **개발/배포 트리 분리** — 근본 결함은 격리가 아니라 이것. 제안: `/root/live` 별도 체크아웃 +
+  `murmur-stack` 심링크 전환 + `ops/deploy.sh`(검증 통과 커밋만 명시적 배포). systemd·라이브 변경이라
+  적용 보류, 제안서 `ops/2026-07-28-배포분리-제안.md`.
+- 세션 계정 통일(root vs dojin) — 마찰 원인이나 보안 트레이드오프라 사용자 결정 사안.

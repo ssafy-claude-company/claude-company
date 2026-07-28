@@ -3,7 +3,9 @@
 #   wt.sh new <task>    claude-company(system/organt/guide/ops) + murmur 를 s/<task> 브랜치로
 #   wt.sh rm  <task>    워크트리 제거(브랜치는 남김)
 #   wt.sh list
-# [Fable] 기본 협업은 정본 트리 직접 작업(task+claim). worktree는 레포-로컬 대량작업 등 opt-in만.
+# [개정 2026-07-28] 기본 = 세션당 worktree. 정본 트리 직접 작업 금지(pre-commit 훅이 막음).
+#   근거: 정본=라이브 import 소스인데 07-04 "정본 직접+claim" 전환 후 claim이 무등재로 형해화,
+#   07-28 타 세션 미완성 파일이 통커밋에 섞이는 실사고(d7f3556). 상세: STATE.md '세션 격리 재실효화'.
 # 워커는:  MURMUR_ROOT=/root/wt/<task> bash /root/wt/<task>/ops/verify.sh --only <레포>
 set -uo pipefail
 MS=/root/ClaudeCompany
