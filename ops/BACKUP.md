@@ -14,7 +14,27 @@
 `system`·`organt`·`guide`는 **독립 레포가 아니다** — 루트 레포가 직접 소유한 디렉터리다(7/6 병합).
 따라서 루트 레포 하나만 백업되면 브레인 전체가 백업된다.
 
-## 2. 원격 연결 (최초 1회)
+## 2. 접근 권한 — Deploy Key (권한 상승 없이 비공개 레포 접근)
+계정 토큰(PAT)은 계정 전체 권한이라 과하다. **Deploy key = 레포 하나에만 붙는 SSH 키** — 
+그 레포 밖으로는 아무것도 못 하므로, private 전환에 계정 권한 상승이 필요 없다.
+```bash
+# 서버에서 키 생성(레포당 1개, passphrase 없음 — 자동 푸시용)
+ssh-keygen -t ed25519 -C "deploy-claude-company" -f ~/.ssh/deploy_claude_company -N ""
+cat ~/.ssh/deploy_claude_company.pub
+# → GitHub 레포 Settings → Deploy keys → Add deploy key → "Allow write access" 체크
+
+# 이 레포만 그 키를 쓰게(계정 키와 분리)
+cat >> ~/.ssh/config <<'CFG'
+Host github-claude-company
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/deploy_claude_company
+CFG
+git remote set-url origin git@github-claude-company:ssafy-claude-company/claude-company.git
+```
+murmur 레포도 동일 패턴(별도 키·별도 Host 별칭). **키 1개 = 레포 1개** — 하나가 새도 나머지는 무사하다.
+
+## 3. 원격 연결 (최초 1회)
 ```bash
 cd /root/ClaudeCompany
 git remote add origin <레포 URL>
@@ -37,7 +57,7 @@ git push --force origin master:main
 ```
 **(a)를 기본으로 하라.** 되돌릴 수 있는 선택이 먼저다.
 
-## 3. 상시 감지 — `verify.sh` 6번 항목
+## 4. 상시 감지 — `verify.sh` 6번 항목
 `bash ops/verify.sh`가 매번 백업 상태를 보고한다(차단 아닌 경고):
 ```
 == 6) 원격 백업 신선도 (미푸시 감지) ==
@@ -46,7 +66,7 @@ git push --force origin master:main
 ```
 ⚠가 보이면 그 자리에서 푸시하라. 이번 사고는 **아무 신호도 없었기 때문에** 3주를 갔다.
 
-## 4. 자동 백업 (사람이 잊어도 유지되게)
+## 5. 자동 백업 (사람이 잊어도 유지되게)
 하루 1회 자동 푸시. 두 레포 모두 대상.
 ```bash
 cat > /etc/systemd/system/git-backup.service <<'EOF'
@@ -74,7 +94,7 @@ journalctl -u git-backup.service -n 20          # 결과 확인
 > 인증은 미리 통해 있어야 한다(토큰 저장 또는 SSH 원격). 자동 푸시가 **조용히 실패**하면
 > 이번 사고의 재판이다 — 위 `journalctl`로 주기적으로 확인하거나, verify 6번 경고를 신뢰하라.
 
-## 5. 규율
+## 6. 규율
 1. **커밋했으면 푸시한다.** 로컬 커밋은 저장이 아니라 기록일 뿐이다.
 2. **검증의 6번 경고를 무시하지 않는다.** 그게 유일한 조기 신호다.
 3. **비밀값은 올리지 않는다.** `.dburl`·`.venv`는 `.gitignore`에 있다. `ops/` 문서엔 서버 IP·경로가
