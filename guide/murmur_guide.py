@@ -407,7 +407,7 @@ class MurmurGuide:
         """[내 직원만(2026-07-28)] 이 채널이 부를 수 있는 직원 {bot_id: 직군} — 채널 주인의 소유·추가
         승인분(+채용 직군). 매체가 판정하고 SYS는 받은 대로 쓴다(매체-특화는 Guide 안에서)."""
         try:
-            d = await self._get("guide/roster/", {"channel": int(channel_id)})
+            d = await self._get("/api/guide/roster/", {"channel": int(channel_id)})
         except Exception:
             return {}
         out = {}
