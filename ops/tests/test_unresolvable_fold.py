@@ -31,6 +31,21 @@ def test_e2e_재실증만_남은_막힘은_접힌다(tmp_path):
     assert any("[접음]" in a for a in (b1.activity or []))
 
 
+def test_사유가_활동기록에만_있어도_접는다(tmp_path):
+    """[재시작 뒤 실측] block_reason은 복원에서 비고 본문에 'e2e'가 없을 수 있다 — 무엇에 막혔는지는
+    그 백로그의 활동 기록에 남는다. 세 곳을 함께 읽어야 규칙이 실제로 걸린다."""
+    f = _flow(tmp_path)
+    ms = open_milestone(f, "결함 해소", [{"desc": "동작", "verify": "pytest"}])
+    st = open_subtask(f, ms, "검증", [])
+    r = relay_for(f, st)
+    b = r.submit(12, "아래 명령을 봉인·1회 실행하고 신규 SYS receipt를 남긴다", force=True)
+    b.status = "blocked"
+    b.block_reason = ""
+    b.activity.append("[QA] 💭 e2e_open이 미완 마일스톤 때문에 거절되고 condition:13 target이 없어 봉인 불가")
+    assert drop_unresolvable_blocked(f) == [b.backlog_id]
+    assert b.status == DROPPED
+
+
 def test_보통_막힘은_접지_않는다(tmp_path):
     f = _flow(tmp_path)
     ms = open_milestone(f, "결함 해소", [{"desc": "동작", "verify": "pytest"}])
