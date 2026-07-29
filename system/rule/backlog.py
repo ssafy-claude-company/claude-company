@@ -101,7 +101,12 @@ def drop_unresolvable_blocked(flow) -> list:
         for b in (getattr(store.get(st.st_id), "backlogs", None) or []):
             if getattr(b, "status", "") != BLOCKED:
                 continue
-            why = " ".join(str(x) for x in [getattr(b, "block_reason", ""), getattr(b, "body", "")])
+            # [사유는 재시작을 넘어 살아남지 않는다(2026-07-29, 실측)] block_reason은 스냅샷 복원에서
+            # 비고, 본문에는 'e2e'라는 낱말이 없을 수 있다 — 정작 무엇에 막혔는지는 그 백로그의 활동
+            # 기록(작업자의 💭)에 남는다. 세 곳을 함께 읽어 판정한다.
+            why = " ".join(str(x) for x in [
+                getattr(b, "block_reason", ""), getattr(b, "body", ""),
+                " ".join(str(a) for a in (getattr(b, "activity", None) or [])[-6:])])
             if not (_re.search(r"(condition\s*:\s*\d+|\be2e\b)", why, _re.I)
                     and _re.search(r"(receipt|target|challenge|봉인|seal)", why, _re.I)):
                 continue
