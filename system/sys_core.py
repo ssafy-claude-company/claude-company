@@ -2101,6 +2101,17 @@ class Sys:
             from .rule.milestone import claim_kick_target
             from .rule.backlog import backlog_scope_key
             _ch = int(getattr(flow, "user_channel", 0) or 0)
+            # [막힘 정리는 인계 때만으론 늦다(2026-07-29, 실측)] 접기·되살리기를 인계 경로에만 두니,
+            # **차단으로 끝난 턴은 인계를 타지 않아**(status가 done/dropped가 아니면 조기 반환) 규칙이
+            # 한 번도 돌지 못했다 — 판은 막힌 채 회의만 다시 열렸다. 릴레이를 미는 이 관문에서 먼저 판다.
+            from .rule.backlog import (drop_unresolvable_blocked as _dropU,
+                                       revive_blocked_when_pool_exhausted as _reviveB)
+            _f0 = _dropU(flow)
+            if _f0:
+                self._log("backlog_unresolvable_folded", backlogs=list(_f0)[:8])
+            _r0 = _reviveB(flow)
+            if _r0:
+                self._log("backlog_unblocked_by_exhaustion", backlogs=list(_r0)[:8])
             # ① 진행 중 백로그를 이어-구동 (단일 활성)
             active = self._backlog_in_progress(flow)
             if active is not None:
