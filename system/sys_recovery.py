@@ -696,4 +696,13 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         pass
     sys._log("open_task_restored", project=proj.get("id"), task=snap["task_id"],
              owner=int(snap.get("owner") or 0))
+    # [이어가기 표식(2026-07-29, 사용자 지적)] 이 요청은 새 Task가 아니라 기존 Task의 이어가기다 —
+    # 매체에 그 사실을 남겨 화면이 카드를 새로 만들지 않게 한다(판은 하나인데 Task가 여러 개로 보이던 것).
+    try:
+        _mk = getattr(sys.guide, "mark_continuation", None)
+        _root = int(getattr(flow, "root_id", 0) or 0)
+        if _mk and _root:
+            await _mk(_root, snap["task_id"])
+    except Exception:
+        pass
     return snap
