@@ -2483,7 +2483,11 @@ async def request(flow, me_id, role, args):
         # 방지. **ORGANT_REPORT_REASK 미설정=off(기존동작 불변)** — 워커 턴을 늘리는 행동 변화라 플래그
         # 뒤에 둔다(default-OFF + 이중수용 관례). 되묻기·크래시·턴한도 미완은 보고가 아니므로 제외.
         if (kind == Kind.WORK and not was_clarify and not failed and _stash is None
-                and (os.environ.get("ORGANT_REPORT_REASK") or "").strip().lower() in ("1", "true", "yes", "on")
+                # [보고 표식 누락은 반려한다(2026-07-29, 사용자: '표시 없는건 봇 실수로 값 안넣은거지
+                # 반려로 다시 받는게 맞아')] 종전엔 이 재요청이 기본 off라, 표식 없는 응답이 그대로
+                # 판에 남고 화면은 그것을 무엇으로 부를지 스스로 정해야 했다(보고인지 아닌지 불명).
+                # 기본을 on으로 돌린다 — 형식이 빠지면 봇에게 한 번 다시 받는다(끄려면 =0).
+                and (os.environ.get("ORGANT_REPORT_REASK") or "1").strip().lower() in ("1", "true", "yes", "on")
                 and "턴 한도 도달" not in (result or "")
                 and not re.search(r"\[\s*(결과|직군밖|경험|직무기준)\s*\]", result or "")):
             if flow.log:

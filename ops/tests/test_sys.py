@@ -2608,8 +2608,10 @@ def test_정밀복구_위임원문_영속_완료잠금_replay():
         seen = {}
 
         async def wake2(to, b, k):
+            if "보고 형식 재요청" in b:      # SYS 반려는 위임 replay가 아니다 — 대상에서 제외
+                return "[결과] 완료 — 이어서 마무리(run 검증)"
             seen["body"] = b; f2.act_count += 1; f2.current.owner_incomplete = False
-            return "[12] 이어서 완료(run 검증)"
+            return "[결과] 완료 — 이어서 마무리(run 검증)"
         f2.wake = wake2
         await s._auto_continue_owner(f2, 11, limit=1)
         assert "delta 인코딩" in seen.get("body", "")                       # ⑤ 재작문 아닌 원문 replay
@@ -3264,7 +3266,7 @@ def test_미완게이트는_크래시나_무작업응답으로_안풀림():
 
     async def wake_done(to, b, k):
         f.act_count += 1                                    # owner가 실작업으로 마저 끝냄
-        return "남은 부분 구현·검증 완료"
+        return "[결과] 완료 — 남은 부분 구현·검증"
 
     f.wake = wake_done
     asyncio.run(tools["request"].handler({"to_id": "12", "kind": "Work", "body": "이어서 끝내기"}))
@@ -3424,7 +3426,7 @@ def test_SYS_자동이어가기_미완위임을_시스템이_완주시킴():
             return "절반 구현 (⚠ 턴 한도 도달 — 작업이 미완일 수 있음)"   # 1차: 구조적 미완
         f.act_count += 1
         assert "SYS 자동 이어가기" in b                                  # SYS가 보낸 이어가기 본문
-        return "남은 부분 구현·검증 완료"
+        return "[결과] 완료 — 남은 부분 구현·검증"
 
     f.wake = wake
     s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "M"})
@@ -3509,7 +3511,7 @@ def test_SYS_자동위임_리더가_위임0건_헛돌면_owner에게_직접발�
     async def wake(to, b, k):
         st["n"] += 1; st["body"] = b
         f.act_count += 1
-        return "남은 부분 구현·검증 완료"
+        return "[결과] 완료 — 남은 부분 구현·검증"
 
     f.wake = wake
     s = Sys(g, guild_id=1, organt_builder=None, bot_info={11: "L", 12: "M"})
@@ -6319,11 +6321,11 @@ def test_검증위임에_owner도메인_루브릭_자동주입():
     f.current.owner = 12
     f.current.owner_delivered = True                   # owner(백엔드) 인도 완료
     asyncio.run(t["request"].handler({"to_id": "13", "kind": "Work", "body": "검증해줘"}))   # 검증 위임(QA에게)
-    body13 = [b for to, b in waked if to == 13][-1]
+    body13 = [b for to, b in waked if to == 13 and '보고 형식 재요청' not in b][-1]
     assert "산출물 품질 기준" in body13 and "엣지·경계값을 시뮬로" in body13   # owner(백엔드) 도메인 기준 주입(검증/후속구현 양쪽 커버)
     waked.clear()
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "보완"}))        # owner 본인 재위임
-    body12 = [b for to, b in waked if to == 12][-1]
+    body12 = [b for to, b in waked if to == 12 and '보고 형식 재요청' not in b][-1]
     assert "산출물 품질 기준" not in body12             # owner 자신에겐 안 붙음
 
 
@@ -6349,12 +6351,12 @@ def test_회귀보존_경고_이미검증통과_산출물에만_주입():
     f.current.owner_delivered = True
     # cross_checks=0 (아직 검증 전) → 회귀 경고 무발동
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "고쳐"}))
-    assert "회귀 보존" not in [b for to, b in waked if to == 12][-1]
+    assert "회귀 보존" not in [b for to, b in waked if to == 12 and '보고 형식 재요청' not in b][-1]
     # 교차검증 발생(cross_checks>0) 후 재위임 → 회귀-보존 경고 발동
     waked.clear()
     f.current.cross_checks = 2
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "또 고쳐"}))
-    body = [b for to, b in waked if to == 12][-1]
+    body = [b for to, b in waked if to == 12 and '보고 형식 재요청' not in b][-1]
     assert "회귀 보존" in body and "2회 교차검증" in body and "반쪽수정" in body
 
 
@@ -6382,11 +6384,11 @@ def test_배포신선도_경고_미배포변경시_위임에_주입():
     f._deploy_writes = 3
     f.writes_by_role = {"프론트": 3}                      # 배포 후 변경 0 → 무발동
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "검증"}))
-    assert "배포 신선도" not in [b for to, b in waked if to == 12][-1]
+    assert "배포 신선도" not in [b for to, b in waked if to == 12 and '보고 형식 재요청' not in b][-1]
     waked.clear()
     f.writes_by_role = {"프론트": 5}                      # 배포 후 변경 2건 → 경고 주입
     asyncio.run(t["request"].handler({"to_id": "12", "kind": "Work", "body": "재검증"}))
-    body = [b for to, b in waked if to == 12][-1]
+    body = [b for to, b in waked if to == 12 and '보고 형식 재요청' not in b][-1]
     assert "배포 신선도 경고" in body and "2건" in body and "재작성 금지" in body
 
 
