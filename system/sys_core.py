@@ -4203,6 +4203,16 @@ class Sys:
         else:
             self._log("flow_done", project=flow.project_channel is not None,
                       tasks=len(flow.tasks), comm_done=flow.comm.done)
+        # [흐름이 끝날 때 남은 마커를 반드시 내보낸다(2026-07-29, 실측으로 발견)] 파이프라인
+        # 마커(마일스톤 시작·완수·보고)는 봇의 도구 호출 뒤에만 flush된다. 크레딧 정지·중단처럼
+        # 도구 호출 없이 흐름이 끝나면 그 마커가 통째로 사라진다 — U-079에서 2세대 완수·보고와
+        # 3세대 시작 3건이 채널에 없어 화면에서 세대가 한 덩어리로 뭉쳤다. 끝나는 자리에서 비운다.
+        try:
+            if getattr(flow, "_pipeline_notes", None):
+                from .rule.milestone import flush_pipeline_notes as _flush_end
+                await _flush_end(flow)
+        except Exception:
+            pass
         self.active_flows.pop(scope_key, None)
         # [전역 점유 해제 안전망] 이 흐름의 모든 점유를 일괄 해제 — 정상 경로는 respond/escalate가
         # 대칭으로 풀지만, 예외·강제 종료로 남은 점유가 있어도 여기서 회사 풀로 돌려보낸다.

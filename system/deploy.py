@@ -333,7 +333,10 @@ def _apps_dir() -> Path:
 
 
 def _apps_base_url() -> str:
-    return (os.environ.get("ORGANT_APPS_BASE_URL") or "https://murmur-ai.duckdns.org/apps").rstrip("/")
+    # [서버 이전(2026-07-28)] 기본값이 구 VPS(murmur-ai.duckdns.org)를 가리켜, 봇 보고에 실린
+    # 산출물 링크가 은퇴한 호스트로 갔다(실측: 1세대 보고의 works 링크). env 미설정 시 현 라이브
+    # 도메인을 쓴다 — 링크는 눌러서 열리는 것이 사실이어야 한다.
+    return (os.environ.get("ORGANT_APPS_BASE_URL") or "https://murmur.dojin-mini.shop/apps").rstrip("/")
 
 
 def _registry_path() -> Path:
