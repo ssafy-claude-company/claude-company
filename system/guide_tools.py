@@ -743,12 +743,12 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                                          st=str(_tgt.st_id), by=int(me_id), why=_why[:160])
                         except Exception:
                             pass
-                        # 근거는 원장뿐 아니라 화면에도 남긴다 — 사용자가 '왜 지금 이걸 집었나'를
-                        # 볼 수 없으면 자기착수는 그냥 목록 순서로 보인다(2026-07-29 사용자 지적).
+                        # 근거는 **그 백로그 안에** 남긴다 — 채널 마커로 띄우면 공통 흐름을 어지럽히고,
+                        # 정작 '이 일감을 왜 지금 집었나'는 그 일감 옆에 있어야 읽힌다(2026-07-29 사용자 지적).
                         try:
-                            await flow.guide.post(
-                                int(getattr(flow, "user_channel", 0) or 0), 0,
-                                f"[자기착수] {b.backlog_id} · {flow._info(me_id) or me_id} — 근거: {_why[:180]}")
+                            _ln = f"[자기착수] {flow._info(me_id) or me_id} — 근거: {_why[:140]}"
+                            if not getattr(b, "activity", None) or b.activity[-1] != _ln:
+                                b.activity.append(_ln)
                         except Exception:
                             pass
                     r.pick(int(me_id), b.backlog_id, _assn)      # relay가 배분권(마무리자)·순차 잠금 검증
