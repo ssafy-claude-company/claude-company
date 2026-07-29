@@ -94,7 +94,9 @@ class MurmurGuide:
         """[확인 링크(2026-07-20, 사용자: '마일스톤 끝날 때마다 확인할 수 있는 자료')] 이 판 산출물의
         사용자-열람 주소(완성작 인앱 실행 엔드포인트). 공개 도메인은 env(MURMUR_PUBLIC_URL) 우선 —
         러너의 base(로컬 직결 127.0.0.1)는 사용자용 주소가 아니다. SYS는 duck-typing으로만 묻는다."""
-        pub = (os.environ.get("MURMUR_PUBLIC_URL") or "https://murmur-ai.duckdns.org").rstrip("/")
+        # [서버 이전(2026-07-28)] 기본값이 구 VPS(murmur-ai.duckdns.org)라 봇 보고의 산출물 링크가
+        # 은퇴한 호스트를 가리켰다(사용자 제보). env 미설정 시 현 라이브 도메인을 쓴다.
+        pub = (os.environ.get("MURMUR_PUBLIC_URL") or "https://murmur.dojin-mini.shop").rstrip("/")
         return f"{pub}/api/projects/{project_id}/works/"
 
     def set_origin(self, channel_id):
