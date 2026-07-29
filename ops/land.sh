@@ -16,6 +16,21 @@ echo "착지 큐 대기(다른 세션 착지 중이면 기다림)…"
 flock 9
 echo "════ '$S' 착지 시작 ════"
 
+# 0) 정본 브랜치 고정 가드 (2026-07-29 추가)
+#    세션이 정본 체크아웃을 feature 브랜치로 돌려세우면 이후 모든 착지가 그 브랜치로
+#    흘러들고 main이 뒤처진다(07-29 실사고: feat/tenant-usage 전환 후 착지 5건 유실 위기).
+#    정본은 항상 main이어야 한다 — 브랜치 작업은 자기 worktree에서.
+for spec in "claude-company:$MS" "murmur:$MS/murmur"; do
+  name="${spec%%:*}"; path="${spec#*:}"
+  cur=$(git -C "$path" branch --show-current 2>/dev/null)
+  if [ "$cur" != "main" ]; then
+    echo "⛔ $name 정본이 '$cur' 브랜치에 서 있음 — 착지 중단."
+    echo "   정본 브랜치를 바꾼 세션이 정리(자기 worktree로 이동) 후 main 복귀해야 함:"
+    echo "   git -C $path checkout main   (미커밋·미병합 확인 후!)"
+    exit 1
+  fi
+done
+
 # 1) 미커밋 변경 체크
 for spec in $REPOS; do
   name="${spec%%:*}"; rest="${spec#*:}"; wt="${rest#*:}"
