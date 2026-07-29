@@ -1643,11 +1643,16 @@ def wrapup_done(flow, obj) -> str:
                     setattr(flow, _k, {})
             except Exception:
                 pass
+    _was_done = (getattr(obj, "status", "") == "done")
     obj.status = "done"
     _ckpt(flow)
     if flow.log:
         _oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
-        _pnote(flow, f"[{'마일스톤 완수' if isinstance(obj, Milestone) else 'SubTask 완수'}] ({_oid}) {getattr(obj, 'goal', '')[:120]}")
+        # [완수 마커 중복(2026-07-29, 사용자 지적: '보고는 왜 2개고')] 재개·재검증으로 이 경로를 다시
+        # 지나면 같은 주기의 '완수' 줄이 또 게시돼 화면에 같은 제목이 두 번 뜬다(실측: 6998·7017).
+        # 이미 done인 대상은 완수를 다시 알리지 않는다 — 상태 전이가 아니라 재확인이기 때문이다.
+        if not _was_done:
+            _pnote(flow, f"[{'마일스톤 완수' if isinstance(obj, Milestone) else 'SubTask 완수'}] ({_oid}) {getattr(obj, 'goal', '')[:120]}")
         flow.log("ms_done" if isinstance(obj, Milestone) else "subtask_done",
                  id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""))
     if isinstance(obj, Milestone):
