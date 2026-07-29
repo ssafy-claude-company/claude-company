@@ -140,9 +140,9 @@ def test_B14_REPORTS에_구조화필드_동봉(tmp_path):
     assert "[report 도구 — 구조화 필드]" in doc and "[변경] server.js" in doc
 
 
-def test_B14_재요청훅_기본off_플래그로만_1회(monkeypatch):
-    """도구 미호출 AND regex 미검출 응답 — 기본(플래그 미설정)은 재요청 없음(기존동작 불변),
-    ORGANT_REPORT_REASK=1이면 정확히 1회 재요청."""
+def test_B14_재요청훅_기본on_보고계약없으면_1회반려(monkeypatch):
+    """[표식 없음 = 반려(2026-07-29, 사용자: '봇 실수로 값 안넣은거지 반려로 다시 받는게 맞아')]
+    도구 미호출 AND 보고 계약 미검출 응답은 **기본으로** 1회 반려(재요청)한다. =0으로만 끈다."""
     def _run(expect_wakes):
         g = FakeGuide()
         f = _flow3(g)
@@ -158,10 +158,10 @@ def test_B14_재요청훅_기본off_플래그로만_1회(monkeypatch):
         return calls
 
     monkeypatch.delenv("ORGANT_REPORT_REASK", raising=False)
-    _run(1)                                            # 기본 off — 동작 불변
-    monkeypatch.setenv("ORGANT_REPORT_REASK", "1")
-    calls = _run(2)                                    # on — 1회만 재요청
+    calls = _run(2)                                    # 기본 on — 1회만 반려
     assert "보고 형식 재요청" in calls[1]
+    monkeypatch.setenv("ORGANT_REPORT_REASK", "0")
+    _run(1)                                            # 명시적으로만 끈다
 
 
 def test_B14_경험_스태시_흡수_regex폴백_존치():
