@@ -2746,9 +2746,13 @@ def test_같은_단계_반복_개설도_상한에_걸린다():
 
     src = inspect.getsource(Sys)
     assert "_stage_reopen_cap" in src, "같은 단계 재개설 횟수를 안 센다"
-    i = src.index("_stage_open_n")
+    i = src.index("_seen_st = getattr(flow, \"_stage_open_n\"")
     seg = src[i:i + 900]
     assert "stage_stall_break" in seg, "반복 개설이 상한에 안 걸린다"
+    # [진척이 있으면 계수를 턴다(2026-07-29, U-079 실측)] 상한이 판 수명 전체에 누적되면 오래 도는
+    # 판은 어떤 단계 회의도 못 열고 재개할 때마다 즉시 파킹된다 — 막을 것은 헛도는 재개설뿐이다.
+    j = src.index("if status == \"done\":")
+    assert "_stage_open_n = {}" in src[j:j + 800], "백로그 완료가 반복 계수를 초기화하지 않는다"
 
 
 def test_파킹_신호는_같은_바퀴에서_소비된다():

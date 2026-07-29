@@ -2076,6 +2076,16 @@ class Sys:
         self._log("backlog_turn_done", st=str(st_id), backlog=str(b.backlog_id),
                   by=int(who), status=status, drives=int(getattr(b, "_drive_n", 0) or 0))
         if status == "done":
+            # [진척이 있으면 '같은 자리 반복' 계수는 0으로(2026-07-29, U-079 실측)] 단계 회의 재개설
+            # 상한(기본 4회)은 **판이 사는 동안 누적**돼, 오래 도는 판은 결국 어떤 단계 회의도 못 열고
+            # 재개할 때마다 곧바로 파킹됐다(실측: 재개 → 회의 1회 → stage_stall_break → 중지 반복).
+            # 막으려던 것은 '헛도는 재개설'이지 '오래 사는 판'이 아니다 — 백로그가 실제로 하나
+            # 끝났다는 것은 그 자리를 벗어났다는 증거이므로, 그때 계수를 턴다.
+            try:
+                if getattr(flow, "_stage_open_n", None):
+                    flow._stage_open_n = {}
+            except Exception:
+                pass
             try:
                 await flow.guide.post(
                     int(getattr(flow, "user_channel", 0) or 0), 0,
