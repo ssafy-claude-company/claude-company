@@ -2787,6 +2787,15 @@ class Sys:
         # 에이전트가 죽으면(SDK 메시지리더 크래시·서브프로세스 SIGTERM 등) 같은 세션으로 되살려 재시도.
         # State는 organt_id별 파일에 영속되므로 새 인스턴스가 세션을 이어간다(전체 워크플로우 보호).
         flow.last_activity = time.monotonic()   # 진행 신호(턴 시작) — 무진행 워치독 갱신
+        # [소속은 턴 시작에 정한다(2026-07-29, 사용자: '아직도 잔여가 있고')] 소속 태깅은 도구를 부를 때만
+        # 세팅돼, 도구 없이 나가는 게시(위임 요청·응답·의견)는 태그 0으로 판에 남았다 — 어느 주기의
+        # 말인지도 모른 채 Task 층에 떠, 화면이 그 줄들을 통짜 말풍선으로 그렸다(U-079: 12:20~13:04
+        # 5건). 턴이 시작될 때 한 번 세팅하면 그 턴의 모든 게시가 같은 소속을 물고 나간다.
+        try:
+            from .rule.milestone import _set_pipeline_ctx as _spc
+            _spc(flow, organt_id)
+        except Exception:
+            pass
         self._stage_inbound(flow)               # [파일 전송] 사용자 첨부를 작업공간 inbox/로(워크스페이스 준비됐으면, 멱등)
         # [일로 직업 획득 — Discord 역할 비동기 부여] 첫 실작업으로 '획득'된 직군을 Discord 역할로 영속한다
         # (jobs.json은 권한 훅이 이미 동기로 박음; Discord는 리클레임 복원용 — 비동기라 여기 턴 경계에서 드레인).
