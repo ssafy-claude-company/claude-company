@@ -1898,6 +1898,32 @@ class Sys:
                     bids, key=lambda x: (x[0], -order.get(x[1], 10**9)))
             else:
                 selected = next(b.backlog_id for b in rem if b.backlog_id in valid)
+        # [선정이 순서도 함께 정한다(2026-07-29, 사용자 지시)] 응찰 점수는 '지금 착수 가능한 정도'다.
+        # 그 값을 한 번 쓰고 버리지 않고 **남은 백로그의 순서**에 반영한다 — 준비된 것이 앞으로 오면
+        # 다음 회차의 폴백(제출순)도 자연히 실행 가능 순서가 되고, 선행 미충족 항목을 집었다가
+        # 되돌리는 헛턴(=문맥 재전송 비용)이 줄어든다. 상대 순서만 바꾸며 항목을 더하거나 빼지 않는다.
+        try:
+            if bids:
+                _score_of = {}
+                for _sc, _bid, _own, _rsn in bids:
+                    _score_of[_bid] = max(int(_sc or 0), _score_of.get(_bid, 0))
+                for _r in (getattr(flow, "backlog_relays", None) or {}).values():
+                    _open = [b for b in (getattr(_r, "backlogs", None) or [])
+                             if getattr(b, "status", "") in ("open", "blocked")]
+                    if len(_open) < 2:
+                        continue
+                    _pos = {id(b): i for i, b in enumerate(_r.backlogs)}
+                    _sorted = sorted(_open, key=lambda b: (-_score_of.get(b.backlog_id, 0),
+                                                           _pos[id(b)]))
+                    if [b.backlog_id for b in _open] != [b.backlog_id for b in _sorted]:
+                        _slots = [i for i, b in enumerate(_r.backlogs) if b in _open]
+                        for _slot, _b in zip(_slots, _sorted):
+                            _r.backlogs[_slot] = _b
+                        if getattr(flow, "log", None):
+                            flow.log("backlog_reordered_by_readiness",
+                                     order=[b.backlog_id for b in _sorted][:8])
+        except Exception:
+            pass
         owner = valid[selected]
         # [선정도 그 백로그 안에(2026-07-29, 사용자 지적)] 누가 왜 이 일을 가져갔는지는 그 일감의
         # 기록이다. 선택 태그(`[선정: B7]`)는 사유가 아니므로 걷어내고, 남는 게 없으면 그 사실을 적는다.
