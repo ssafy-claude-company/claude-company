@@ -2127,6 +2127,32 @@ class Sys:
             if active is not None:
                 who, b, st_id = active
                 b._drive_n = getattr(b, "_drive_n", 0) + 1
+                # [끝나지 않는 일감은 판 전체를 세운다(2026-07-29, U-079 실측: ST-9/B1을 41번 이어-구동
+                # 하다 판이 '무진전'으로 중단)] 같은 항목을 무한히 다시 밀면, 못 끝내는 한 사람 때문에
+                # 순차 1활성 규칙에 걸린 나머지 갈래가 통째로 굶는다. 상한을 넘으면 그 항목만 차단으로
+                # 보존하고(사유·횟수 기록) 릴레이는 다음으로 간다 — 차단은 폐기가 아니라 '지금은 못 한다'다.
+                _cap = max(4, int(os.environ.get("ORGANT_BACKLOG_DRIVE_CAP", "12") or 12))
+                if b._drive_n > _cap:
+                    try:
+                        r_ = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
+                        _why = (f"이어-구동 {b._drive_n}회에도 완료 표식이 없어 보존합니다 — 선행이 "
+                                f"필요하거나 범위가 큽니다. 보충 작업 뒤 다시 집습니다.")
+                        if r_ is not None and hasattr(r_, "block"):
+                            r_.block(int(who), b.backlog_id, _why)
+                        else:
+                            b.status, b.block_reason = "blocked", _why
+                    except Exception:
+                        b.status = "blocked"
+                    try:
+                        if not getattr(b, "activity", None) or b.activity[-1] != f"[보존] {_why}":
+                            b.activity.append(f"[보존] {_why}")
+                    except Exception:
+                        pass
+                    self._log("backlog_drive_cap_blocked", backlog=str(b.backlog_id),
+                              st=str(st_id), by=int(who), drives=int(b._drive_n))
+                    from .rule.milestone import _ckpt as _ck2
+                    _ck2(flow)
+                    return True
                 result = await self.run_turn(
                     flow, who,
                     f"[작업중 — 이어서] 백로그 {b.backlog_id}(\"{(b.body or '')[:70]}\")가 아직 당신 손에 "
