@@ -262,6 +262,14 @@ def _set_pipeline_ctx(flow, me_id=None):
         # 밑으로 접었다(U-037 실측: 백로그 회의가 ST-1 아래). 단계 회의 동안은 ms까지만 태깅한다.
         if getattr(flow, "_stage_meeting", None):
             st, bl = None, None
+        # [백로그 없는 발화는 단계에 붙이지 않는다(2026-07-29, 사용자: '잘못된 데이터는 막아야지')]
+        # 소속 태깅의 근거는 '지금 물고 있는 백로그'다. 그 백로그가 없을 때(막힘·파킹·인계 사이)
+        # st만 남겨 보내면, 화면은 그 발화를 단계 폴더 안 백로그 행들 옆에 그린다 — 어떤 일감의
+        # 기록도 아닌 대화가 백로그 아래 채팅으로 남는다(U-079 4세대 실측: ST-2 아래 발화 5건,
+        # 전부 bl=None). 귀속이 없는 것은 없는 대로 보내고(공통 흐름), 단계 태그는 백로그가 있을
+        # 때만 붙인다. 이 판정은 SYS 한 곳에서만 하므로 표면은 고칠 것이 없다.
+        if bl is None:
+            st = None
         PIPELINE_CTX.set({"ms": ms.ms_id, "st": (st.st_id if st else None), "bl": bl} if ms else None)
     except Exception:
         pass

@@ -529,7 +529,10 @@ def test_전역회의는_SubTask태깅_생략_공통흐름_소속(monkeypatch, t
     f.milestones = [Milestone(ms_id="MS-1", goal="최소버전",
                               criteria=[Criterion("30턴 완주", "run 재현")], subtasks=[st])]
     _set_pipeline_ctx(f, 12)
-    assert (PIPELINE_CTX.get() or {}).get("st") == "ST-1"        # 작업 국면 = 단계 태깅(종전)
+    # [백로그 없는 발화는 단계에도 안 붙는다(2026-07-29, 사용자: '잘못된 데이터는 막아야지')]
+    # 종전엔 작업 국면이면 백로그가 없어도 ST를 달아, 어떤 일감의 기록도 아닌 대화가 단계 폴더
+    # 안 백로그 행들 옆에 채팅으로 남았다. 귀속의 근거는 '지금 물고 있는 백로그'다.
+    assert (PIPELINE_CTX.get() or {}).get("st") is None           # 진행 중 백로그 없음 → 주기까지만
     seen = {}
 
     async def wake(to, b, k):
