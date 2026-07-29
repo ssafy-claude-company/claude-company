@@ -3082,8 +3082,26 @@ def stage_context(flow, stage):
             if _blocked:
                 _waiting = " · ".join(
                     f"{scope}({(b.block_reason or b.body)[:36]})" for scope, b in _blocked[:7])
+                # [보충으로 풀 수 없는 막힘은 그렇게 말한다(2026-07-29, 사용자: '막힘 안 풀렸어')]
+                # e2e 항목(condition:N) 재실증은 Task 경계에서만 가능한데, 그걸 요구하는 원본에
+                # 보충을 계속 붙이면 백로그만 늘고 막힘은 그대로다(U-079 4세대: 보충 8건, 원본 여전히
+                # blocked). 그 원본은 이번 주기에 어떤 보충으로도 풀리지 않는다 — 사실을 안건에 적는다.
+                import re as _re_b
+                _unfixable = [
+                    scope for scope, b in _blocked
+                    if _re_b.search(r"(condition\s*:\s*\d+|\be2e\b)",
+                                   str(b.block_reason or b.body or ""), _re_b.I)
+                    and _re_b.search(r"(receipt|target|challenge|봉인)",
+                                    str(b.block_reason or b.body or ""), _re_b.I)
+                ]
+                _note = ""
+                if _unfixable:
+                    _note = (f" ※ {' · '.join(_unfixable[:3])}은(는) e2e 장부 재실증을 요구합니다 — "
+                             f"e2e는 **Task 경계에서만** 열리므로 이번 주기엔 어떤 보충으로도 풀 수 "
+                             f"없습니다. 원인 수정 작업으로 다시 쓰거나(원본을 drop_backlog) 두고, "
+                             f"재실증은 주기 종료 후 자동으로 열리는 e2e에 맡기세요.")
                 return (f" [선행 대기 원본: {_waiting} — 새 항목 본문 앞에 각 대상의 "
-                        "`[해결: ST::Bn]`을 붙이세요]")
+                        f"`[해결: ST::Bn]`을 붙이세요{_note}]")
             _es = [st for st in _open.subtasks if st.status not in ("done", "superseded")
                    and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)]
             if _es:
