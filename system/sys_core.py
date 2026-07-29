@@ -1795,7 +1795,19 @@ class Sys:
             relay = store.get(st.st_id)
             all_scoped_rows.extend((st, row) for row in (getattr(relay, "backlogs", None) or []))
         all_rows = [row for _st, row in all_scoped_rows]
-        rem = [b for b in r.backlogs if getattr(b, "status", "") == "open"]
+        # [백로그는 전체에서 고른다(2026-07-29, 사용자 지시)] 순차 1활성 잠금은 **마일스톤 전체**인데
+        # 다음 일감 후보는 그 서브태스크 릴레이 안에서만 모았다 — 제약은 전역, 선택지는 지역이라
+        # '전체를 보고 선행이 준비된 것부터'가 구조적으로 불가능했다(실측: 단계 사이 순서는 등록순 고정).
+        # 서브태스크는 관리 틀일 뿐 백로그는 동급이므로, 열린 마일스톤의 모든 릴레이를 후보로 본다.
+        _relay_of = {}                      # backlog_id → 그 항목을 소유한 릴레이(선정 시 pick 대상)
+        rem = []
+        for _st_x, _row in all_scoped_rows:
+            _rl = store.get(_st_x.st_id)
+            if _rl is None:
+                continue
+            if getattr(_row, "status", "") == "open" and _row not in rem:
+                rem.append(_row)
+                _relay_of[_row.backlog_id] = _rl
         from .rule.backlog import backlog_scope_key
         relay_st = next((st for st, row in all_scoped_rows
                          if any(row is item for item in r.backlogs)), None)
@@ -1961,7 +1973,11 @@ class Sys:
             self._log("backlog_handoff_preempted", st=str(ast.st_id),
                       backlog=str(ab.backlog_id), requested=str(selected))
             return None
-        r.pick(int(holder), selected, int(owner))
+        # 선정된 항목이 다른 서브태스크의 릴레이 소유일 수 있다 — 그 릴레이에 배분한다.
+        _rt = _relay_of.get(selected) or r
+        if getattr(_rt, "turn_holder", None) is not None and int(_rt.turn_holder) != int(holder):
+            _rt.turn_holder = int(holder)   # 배분권은 방금 마무리한 사람 — 릴레이가 달라도 같다
+        _rt.pick(int(holder), selected, int(owner))
         from .rule.milestone import _ckpt
         _ckpt(flow)
         self._log("backlog_handoff_selected", by=int(holder), backlog=selected,
