@@ -416,6 +416,22 @@ def register_scope(flow, surfaces=None, arcs=None, item_verifiers=None) -> list:
             added.append(it)
     if added:
         _checkpoint(flow)
+    if added:
+        # [분모는 Task 경계에서 한 번만 선다(2026-07-29, U-079 실측)] 재개·재주기마다 봇이 표면·경로를
+        # 다시 등록해 분모가 6 → 11 → 22로 불어났고, 늘어난 항목을 그 주기 안에 전부 실증하지 못해
+        # **전건 실패**로 끝났다(결함 수 = 항목 수). 실제로 새 항목이 붙는 확장만 센다 — 중복뿐인
+        # 호출은 종전대로 빈 목록이다. 상한을 넘으면 확장을 거부하고 남은 항목 실증으로 보낸다.
+        _cap = int(os.environ.get("ORGANT_E2E_SCOPE_ROUNDS", "1") or 1)
+        _rounds = int(getattr(flow, "_e2e_scope_rounds", 0) or 0)
+        if _rounds >= _cap:
+            raise WrapupError(
+                f"분모 확장 거부 — 이 Task의 e2e 분모는 이미 확정됐습니다(확장 {_rounds}회). "
+                f"현재 {len(cl)}항목을 실증(run→e2e_result)해 마무리하세요. 새 표면·경로가 정말 "
+                f"필요하면 그건 다음 주기의 마일스톤 조건이지 이번 e2e 분모가 아닙니다.")
+        try:
+            flow._e2e_scope_rounds = _rounds + 1
+        except Exception:
+            pass
     return added
 
 
