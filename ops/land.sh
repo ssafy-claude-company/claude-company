@@ -62,8 +62,29 @@ git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.emai
 
 # 4) 정본 전체 검증
 echo "════ 정본 전체 검증 ════"
-if MURMUR_ROOT="$MS" bash "$MS/ops/verify.sh"; then
-  echo "✅ '$S' 착지 완료 — 정본 ALL_GREEN. 라이브 반영은 사용자 승인 후 서비스 재시작."
-else
+if ! MURMUR_ROOT="$MS" bash "$MS/ops/verify.sh"; then
   echo "❌ 착지 후 검증 실패 — 위 확인. (되돌리기: git -C $MS reset --hard / git -C $MS/murmur reset --hard)"; exit 1
 fi
+
+# 5) 라이브 반영 — 착지의 마지막 단계 (2026-07-28 추가, 현준-1 스큐 분석)
+#    프론트 dist는 디스크 서빙이라 착지 즉시 라이브인데 백엔드는 gunicorn 메모리라 재시작
+#    전까지 옛 상태 — "새 화면이 부르는 주소를 서버만 모르는" 스큐 창을 여기서 닫는다.
+#    웹·러너 모두 상시 허가(STATE 2026-07-21 웹 / 2026-07-18 러너, 2026-07-28 사용자 재확인
+#    "둘다 해도 되겠는데") + 판 진행 중 웹 재시작은 guide 3회 재시도가 흡수(현준-1 실측).
+#    판 한복판임을 아는 세션은 LAND_SKIP_RUNNER=1 로 러너만 건너뛸 수 있다(사후 직접 재시작).
+echo "════ 라이브 반영 ════"
+# 2026-07-28 SSE 도입으로 웹은 2프로세스(murmur-web :8000 + murmur-sse :8002) — 둘 다 재시작.
+for svc in murmur-web murmur-sse; do
+  systemctl restart "$svc" && echo "  $svc 재시작 — 반영 완료" \
+    || echo "  ⚠ $svc 재시작 실패 — systemctl status $svc 확인"
+done
+if git -C "$MS" diff --name-only "HEAD@{1}..HEAD" 2>/dev/null | grep -qE '^(system|organt|guide)/'; then
+  if [ "${LAND_SKIP_RUNNER:-}" = "1" ]; then
+    echo "  ⚠ 러너 재시작 건너뜀(LAND_SKIP_RUNNER=1) — 브레인 반영 전. 잊지 말 것:"
+    echo "     systemctl restart organt-runner"
+  else
+    systemctl restart organt-runner && echo "  organt-runner 재시작 — 브레인 반영 완료" \
+      || echo "  ⚠ organt-runner 재시작 실패 — systemctl status organt-runner 확인"
+  fi
+fi
+echo "✅ '$S' 착지 완료 — 정본 ALL_GREEN + 라이브 반영."
