@@ -548,7 +548,19 @@ def _pnote(flow, text):
     notes = getattr(flow, "_pipeline_notes", None)
     if notes is None:
         notes = flow._pipeline_notes = []
-    notes.append(str(text))
+    t = str(text)
+    # [같은 마디를 두 번 알리지 않는다(2026-07-29, 사용자 지적)] 주기가 재검증으로 열렸다 닫히면
+    # 완수·보고·시작 마커가 같은 문구로 다시 게시돼 화면에 같은 줄이 둘로 보였다(실측 7167/7173).
+    # 상태 전이 자체는 정상이므로 막을 수 없다 — 대신 이 흐름에서 이미 알린 마디는 다시 알리지 않는다.
+    if t.startswith(("[마일스톤 시작]", "[마일스톤 완수]", "[마일스톤 보고]", "[SubTask 완수]")):
+        seen = getattr(flow, "_pnote_seen", None)
+        if seen is None:
+            seen = flow._pnote_seen = set()
+        key = t[:120]
+        if key in seen:
+            return
+        seen.add(key)
+    notes.append(t)
 
 
 def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
