@@ -72,6 +72,17 @@ for _r in "$R" "$R/murmur"; do
     else echo "  $_n  ✓ 원격 백업 최신"; fi
   fi
 done
+echo "== 6-1) 라이브 프로세스 (배포가 두 프로세스가 됐다 — 2026-07-28) =="
+# 웹만 재시작하고 스트림(murmur-sse)을 잊으면, 화면은 멀쩡한데 실시간만 조용히 낡는다.
+# 오류가 아니라 '아무 일도 안 일어남'으로 나타나는 종류라 사람이 못 잡는다 — 게이트가 잡는다.
+for _u in murmur-web murmur-sse; do
+  if systemctl is-active --quiet "$_u" 2>/dev/null; then echo "  $_u ✓"
+  else echo "  $_u ⚠ 죽어 있음"; fail=1; fi
+done
+_sse=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8002/api/stream/ 2>/dev/null)
+if [ "$_sse" = "401" ]; then echo "  /api/stream/ 인증 게이트 ✓"
+elif [ -z "$_sse" ] || [ "$_sse" = "000" ]; then echo "  /api/stream/ ⚠ 응답 없음(:8002)"; fail=1
+else echo "  /api/stream/ ⚠ 예상 밖 응답 $_sse"; fail=1; fi
 echo "== 7) 비밀값 유출 검사 (원격 백업 = 외부 공개 가능성) =="
 # [2026-07-28] ops/가 git에 올라가는 이유는 tests(41)·verify·land·wt·contracts가 '검증의 단일
 # 진실원'이라 버전 관리가 필수이기 때문이다. 그러나 그 대가로 레포가 외부(원격)로 나가므로,
