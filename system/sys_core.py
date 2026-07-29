@@ -875,6 +875,15 @@ class Sys:
             return self.bot_info
         return {int(k): (v or self.bot_info.get(int(k)) or "예비") for k, v in scoped.items()}
 
+    @staticmethod
+    def _find_backlog_obj(flow, backlog_id):
+        """백로그 id로 장부 객체를 찾는다 — 응찰·선정 기록을 그 일감 안에 남기기 위한 접점."""
+        for r in (getattr(flow, "backlog_relays", None) or {}).values():
+            for b in (getattr(r, "backlogs", None) or []):
+                if str(getattr(b, "backlog_id", "")) == str(backlog_id):
+                    return b
+        return None
+
     async def _elect_proposer(self, channel_id, body):
         """[발제자 응찰 — 갭5, 사용자 설계 2026-07-09] 무지정 새 요청의 발제자를 is_leader 폴백(지정)이
         아니라 **봇들의 자기선택**으로 정한다. 채용 공고·1층 발언권 응찰의 '발제자판' — 4입구 문법 통일.
@@ -1850,13 +1859,17 @@ class Sys:
             sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
                               for score, bid_id, owner, reason in bids)
             valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
-            # [응찰이 화면에 없었다(2026-07-29, 사용자 지적)] 인계 응찰 14건이 원장에만 남고 채널엔
-            # 한 줄도 없어, 사용자는 **누가 왜 그 일을 가져갔는지** 볼 수 없었다(다음 사람이 그냥
-            # 이어받는 것처럼 보인다). 응찰표를 그대로 채널에 남긴다 — 선정 근거의 공개 기록.
+            # [응찰·선정은 그 백로그 안에 남는다(2026-07-29, 사용자 지적: '각 백로그마다 백로그 안에')]
+            # 채널 마커로 띄웠더니 공통 흐름에 마일스톤 행으로 끼어들어 작업 생각 표시를 흐트러뜨렸다.
+            # 응찰은 **그 일감의 활동**이다 — 해당 백로그 장부에 붙이면 백로그 행을 펼칠 때 그 자리에 보인다.
             try:
-                await self.guide.post(
-                    int(getattr(flow, "user_channel", 0) or 0), 0,
-                    "[다음 백로그 응찰]\n" + sheet[:1200])
+                for _sc, _bid, _own, _rsn in bids:
+                    _b = self._find_backlog_obj(flow, _bid)
+                    if _b is None:
+                        continue
+                    _line = f"[응찰] {flow._info(_own) or _own} {_sc}점 — {str(_rsn or '').strip()[:120]}"
+                    if not getattr(_b, "activity", None) or _b.activity[-1] != _line:
+                        _b.activity.append(_line)
             except Exception:
                 pass
         else:
@@ -1886,19 +1899,19 @@ class Sys:
             else:
                 selected = next(b.backlog_id for b in rem if b.backlog_id in valid)
         owner = valid[selected]
-        # [선정 사유도 화면에(2026-07-29, 사용자 지적)] 종전엔 선정 '사실'만 남고 왜 그를 골랐는지가
-        # 화면에 없었다. 배분권자의 응답에서 사유를 실어 남긴다(폴백이면 그 사실을 밝힌다).
+        # [선정도 그 백로그 안에(2026-07-29, 사용자 지적)] 누가 왜 이 일을 가져갔는지는 그 일감의
+        # 기록이다. 선택 태그(`[선정: B7]`)는 사유가 아니므로 걷어내고, 남는 게 없으면 그 사실을 적는다.
         try:
-            # 선정 응답에서 선택 태그(`[선정: B7]`)를 걷어낸 **실제 사유**만 싣는다 — 종전엔 태그가
-            # 그대로 사유 자리에 들어가 "사유: [선정: B7]"처럼 아무것도 알려주지 않았다(2026-07-29 실측).
             _why = re.sub(r"\[선정\s*:\s*B\d+\s*\]", " ", str(choice or ""))
-            _why = " ".join(_why.split())[:180]
-            await self.guide.post(
-                int(getattr(flow, "user_channel", 0) or 0), 0,
-                f"[다음 백로그 선정] {selected} → {flow._info(owner) or owner}"
-                + (f" · 사유: {_why}" if (_why and not fallback)
-                   else " · (사유 없이 선택함)" if not fallback
-                   else " · (응답 없음 — 점수·제출순 폴백)"))
+            _why = " ".join(_why.split())[:160]
+            _bsel = self._find_backlog_obj(flow, selected)
+            if _bsel is not None:
+                _sl = (f"[선정] → {flow._info(owner) or owner} · "
+                       + (f"사유: {_why}" if (_why and not fallback)
+                          else "사유 없이 선택함" if not fallback
+                          else "응답 없음 — 점수·제출순 폴백"))
+                if not getattr(_bsel, "activity", None) or _bsel.activity[-1] != _sl:
+                    _bsel.activity.append(_sl)
         except Exception:
             pass
         # [담당자 생존 확인(2026-07-28, 사용자 지적)] 담당은 백로그 제출자 id에서 온다. 그 사이 그
