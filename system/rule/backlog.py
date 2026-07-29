@@ -273,8 +273,10 @@ class BacklogRelay:
                 and int(picker) == int(self.turn_holder)
                 and int(b0.submitter or 0) == 0):
             raise BacklogError(
-                "방금 마무리한 사람이 다음 것을 곧바로 집을 수 없습니다 — 무주 항목은 응찰로 정합니다. "
-                "동료들에게 응찰(지금 착수 가능한 정도와 사유)을 받아 선정하세요.")
+                "방금 마무리했으니 다음 것은 곧바로 집지 말고 **응찰로 정합니다** — 이 턴을 끝내면 "
+                "구조가 팀 전원에게 '지금 착수 가능한 정도와 사유'를 묻고, 그 표를 당신에게 보여 "
+                "선정하게 합니다. **당신도 그 응찰에 포함됩니다** — 당신이 최고 응찰이면 그대로 "
+                "당신이 이어받습니다. 아무도 응찰하지 않으면 종전대로 당신이 지정합니다.")
         # 순차 잠금 — 이미 누가 작업 중이면 새 착수 불가(그 완료/중단 후 다음).
         _active = next((x for x in self.backlogs if x.status == IN_PROGRESS and x.backlog_id != backlog_id), None)
         if _active is not None:
