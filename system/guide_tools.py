@@ -336,6 +336,31 @@ def _verification_record(flow, evidence_for):
     return None, None, ""
 
 
+def _target_dead_end_hint(flow, target) -> str:
+    """[막힘이 안 풀리는 이유를 말해준다(2026-07-29, U-079 4세대 실측)] 종전 문구는 '정확한 target id가
+    아닙니다'로 끝나, e2e 항목(`condition:N`)을 주기 안에서 재실증하려던 QA가 무엇이 잘못인지도,
+    지금 무엇을 해야 하는지도 알 수 없었다 — 같은 시도를 반복하다 백로그를 blocked로 두고, 그
+    막힘은 주기 내내 풀리지 않았다(MS-298888112-4/ST-2 B1). e2e 장부는 **Task 경계**에서만 열린다.
+    지금 주기 안이라면 이 target으로는 영영 봉인할 수 없다는 사실과 두 출구를 함께 준다."""
+    t = str(target or "").strip()
+    if not t.lower().startswith(("condition:", "surface:", "flow:", "origin:")):
+        return ""
+    from .rule.wrapup import _boundary_gap
+    try:
+        gap = _boundary_gap(flow)
+    except Exception:
+        gap = ""
+    if not gap:
+        return ("\n이 id는 e2e 장부 항목입니다 — 장부가 열려 있지 않거나(e2e_open 미개시) "
+                "항목 id가 장부와 다릅니다. e2e_open 응답의 체크리스트에 있는 id를 그대로 쓰세요.")
+    return ("\ne2e 항목(`" + t + "`)은 **Task 경계에서만** 실증합니다 — 지금은 주기가 열려 있어"
+            "(" + str(gap)[:60] + ") 이 target으로는 봉인·receipt 발급이 불가능합니다. "
+            "이번 주기에 할 일은 **결함의 원인을 고치고 이 마일스톤의 완수조건을 그 조건의 "
+            "verifier로 실증**하는 것까지입니다. 주기가 닫히면 e2e 장부가 자동으로 다시 열리고 "
+            "그때 이 항목을 재실증합니다. 지금 이 백로그가 e2e 재실증만을 요구한다면 그 백로그는 "
+            "이번 주기에 완료할 수 없습니다 — 원인 수정 백로그로 바꿔 쓰거나 drop_backlog 하세요.")
+
+
 def _seal_verifier_command(flow, actor, evidence_for, command) -> str:
     """검증 명령을 현재 target/spec/artifact에 봉인한다. 실행은 다음 exact run 한 번만 허용."""
     from .rule.milestone import workspace_artifact_stamp, write_revision
@@ -344,7 +369,8 @@ def _seal_verifier_command(flow, actor, evidence_for, command) -> str:
     target = str(evidence_for or "").strip()
     cmd = normalize_verifier_command(command)
     if record is None:
-        return "verifier 봉인 불가 — 현재 release/e2e challenge의 정확한 target id가 아닙니다."
+        return ("verifier 봉인 불가 — 현재 release/e2e challenge의 정확한 target id가 아닙니다."
+                + _target_dead_end_hint(flow, target))
     fixed = bool(record.get("verifier_fixed"))
     existing = normalize_verifier_command(record.get("verifier_command"))
     if (kind == "release"
@@ -392,7 +418,8 @@ def _authorize_sealed_verifier_run(flow, actor, evidence_for, command):
     target = str(evidence_for or "").strip()
     cmd = normalize_verifier_command(command)
     if record is None:
-        return None, "SYS receipt 실행 불가 — 현재 challenge의 정확한 evidence_for가 아닙니다."
+        return None, ("SYS receipt 실행 불가 — 현재 challenge의 정확한 evidence_for가 아닙니다."
+                      + _target_dead_end_hint(flow, target))
     expected = normalize_verifier_command(record.get("verifier_command"))
     command_hash = verifier_command_hash(cmd)
     spec_hash = verifier_spec_hash(target, spec)
