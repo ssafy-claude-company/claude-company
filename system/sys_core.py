@@ -1889,11 +1889,16 @@ class Sys:
         # [선정 사유도 화면에(2026-07-29, 사용자 지적)] 종전엔 선정 '사실'만 남고 왜 그를 골랐는지가
         # 화면에 없었다. 배분권자의 응답에서 사유를 실어 남긴다(폴백이면 그 사실을 밝힌다).
         try:
-            _why = str(choice or "").strip().replace("\n", " ")[:180]
+            # 선정 응답에서 선택 태그(`[선정: B7]`)를 걷어낸 **실제 사유**만 싣는다 — 종전엔 태그가
+            # 그대로 사유 자리에 들어가 "사유: [선정: B7]"처럼 아무것도 알려주지 않았다(2026-07-29 실측).
+            _why = re.sub(r"\[선정\s*:\s*B\d+\s*\]", " ", str(choice or ""))
+            _why = " ".join(_why.split())[:180]
             await self.guide.post(
                 int(getattr(flow, "user_channel", 0) or 0), 0,
                 f"[다음 백로그 선정] {selected} → {flow._info(owner) or owner}"
-                + (f" · 사유: {_why}" if (_why and not fallback) else " · (응답 없음 — 점수·제출순 폴백)"))
+                + (f" · 사유: {_why}" if (_why and not fallback)
+                   else " · (사유 없이 선택함)" if not fallback
+                   else " · (응답 없음 — 점수·제출순 폴백)"))
         except Exception:
             pass
         # [담당자 생존 확인(2026-07-28, 사용자 지적)] 담당은 백로그 제출자 id에서 온다. 그 사이 그
