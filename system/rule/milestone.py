@@ -3083,6 +3083,16 @@ def stage_context(flow, stage):
                 for st in _open.subtasks if st.status not in ("done", "superseded")
                 for b in (getattr(store.get(st.st_id), "backlogs", None) or [])
             ]
+            # [보충으로 풀 수 없는 것은 안건에 올리지 않는다(2026-07-29, 실측)] 접기 규칙을 릴레이
+            # 관문에만 뒀더니, 판이 회의 루프에 들어가면 관문을 지나지 않아 규칙이 돌지 못했다 —
+            # 같은 원본을 두고 보충 회의만 4번 열렸다. 안건을 만들기 직전에 먼저 접는다.
+            try:
+                from .backlog import drop_unresolvable_blocked as _dropU
+                _folded = _dropU(flow)
+                if _folded and getattr(flow, "log", None):
+                    flow.log("backlog_unresolvable_folded", backlogs=list(_folded)[:8])
+            except Exception:
+                pass
             _blocked = [
                 (f"{st.st_id}::{b.backlog_id}", b)
                 for st, b in blocked_supplement_targets(_scoped)
