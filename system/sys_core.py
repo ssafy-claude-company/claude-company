@@ -1850,6 +1850,15 @@ class Sys:
             sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
                               for score, bid_id, owner, reason in bids)
             valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
+            # [응찰이 화면에 없었다(2026-07-29, 사용자 지적)] 인계 응찰 14건이 원장에만 남고 채널엔
+            # 한 줄도 없어, 사용자는 **누가 왜 그 일을 가져갔는지** 볼 수 없었다(다음 사람이 그냥
+            # 이어받는 것처럼 보인다). 응찰표를 그대로 채널에 남긴다 — 선정 근거의 공개 기록.
+            try:
+                await self.guide.post(
+                    int(getattr(flow, "user_channel", 0) or 0), 0,
+                    "[다음 백로그 응찰]\n" + sheet[:1200])
+            except Exception:
+                pass
         else:
             # 전원이 패스했거나 형식 응답이 깨져도 최근 작업자의 배분권은 사라지지 않는다. 실제 남은
             # 보유 목록을 그대로 보여 직접 선택하게 하고, 그 응답마저 깨질 때만 제출순을 안전망으로 쓴다.
@@ -1877,6 +1886,16 @@ class Sys:
             else:
                 selected = next(b.backlog_id for b in rem if b.backlog_id in valid)
         owner = valid[selected]
+        # [선정 사유도 화면에(2026-07-29, 사용자 지적)] 종전엔 선정 '사실'만 남고 왜 그를 골랐는지가
+        # 화면에 없었다. 배분권자의 응답에서 사유를 실어 남긴다(폴백이면 그 사실을 밝힌다).
+        try:
+            _why = str(choice or "").strip().replace("\n", " ")[:180]
+            await self.guide.post(
+                int(getattr(flow, "user_channel", 0) or 0), 0,
+                f"[다음 백로그 선정] {selected} → {flow._info(owner) or owner}"
+                + (f" · 사유: {_why}" if (_why and not fallback) else " · (응답 없음 — 점수·제출순 폴백)"))
+        except Exception:
+            pass
         # [담당자 생존 확인(2026-07-28, 사용자 지적)] 담당은 백로그 제출자 id에서 온다. 그 사이 그
         # 직원이 해고되거나 로스터에서 빠지면(특히 '내 직원만' 스코프처럼 로스터가 좁아진 뒤) 없는
         # 사람에게 일이 배정되고, 그 갈래는 깨우지 못한 채 활성으로 남아 **단일 활성 규칙 때문에 판
