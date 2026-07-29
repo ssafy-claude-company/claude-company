@@ -2131,7 +2131,10 @@ class Sys:
                 # 하다 판이 '무진전'으로 중단)] 같은 항목을 무한히 다시 밀면, 못 끝내는 한 사람 때문에
                 # 순차 1활성 규칙에 걸린 나머지 갈래가 통째로 굶는다. 상한을 넘으면 그 항목만 차단으로
                 # 보존하고(사유·횟수 기록) 릴레이는 다음으로 간다 — 차단은 폐기가 아니라 '지금은 못 한다'다.
-                _cap = max(4, int(os.environ.get("ORGANT_BACKLOG_DRIVE_CAP", "12") or 12))
+                # [상한은 사이클보다 낮아야 한다(2026-07-29, 실측)] 12로 뒀더니 한 번도 못 걸렸다 —
+                # 한 픽 사이클이 대략 7회 구동에서 끝나고, 그 사이클이 무진전이면 판이 먼저 '무진전
+                # 중단'으로 닫힌다. 상한이 사이클보다 늦으면 없는 것과 같다.
+                _cap = max(3, int(os.environ.get("ORGANT_BACKLOG_DRIVE_CAP", "5") or 5))
                 if b._drive_n > _cap:
                     try:
                         r_ = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
