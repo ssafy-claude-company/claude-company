@@ -3299,6 +3299,17 @@ class Sys:
                 resumed = await self._restore_open_task(flow, proj)
             except Exception:
                 resumed = None   # 복원 실패는 흐름 자체를 막지 않는다(스코프 유령화 방지)
+            # [이어가기 표식(2026-07-29, 사용자 지적)] 기존 Task를 복원해 이어가는 요청은 새 Task가
+            # 아니다 — 매체에 알려 화면이 카드를 새로 만들지 않게 한다. 복원 함수 안에서 부르면
+            # flow.root_id가 아직 비어 있어(그 시점엔 start_root 전) 실측에서 안 걸렸다 — 요청
+            # 식별자가 손에 있는 이 자리에서 부른다.
+            if resumed:
+                try:
+                    _mk = getattr(self.guide, "mark_continuation", None)
+                    if _mk and root_id:
+                        await _mk(root_id, str(resumed.get("task_id") or ""))
+                except Exception:
+                    pass
             # [회로차단기 해제 — 사람이 방향을 줬을 때만(2026-06-23 S1a)] 수렴 경보로 검증이 멈춘(loop_escalated)
             # Task에 *사람의 새 개입*이 오면 그게 곧 '② 방향 제시'다 — 경보를 풀어 검증을 재개한다. 단 *부팅 복구
             # 자동 이어가기*([부팅 복구/[SYS 마커)는 사람 판정이 아니므로 풀지 않는다(리클레임마다 풀려 다시 밤새
