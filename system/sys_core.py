@@ -1810,6 +1810,13 @@ class Sys:
                 _relay_of[_row.backlog_id] = _rl
         # [막힘은 판이 비면 자동 복귀(2026-07-29, 사용자 지시)] 실행 가능한 일이 하나도 안 남았는데
         # blocked만 남아 있으면 판은 그대로 멈춘다 — 후보를 세기 전에 되돌린다.
+        # [보충으로 풀 수 없는 막힘은 접는다(2026-07-29, U-079 4세대 실측: 보충 8건·회의 4회 뒤
+        # 새 백로그 0건으로 파킹)] 되살리기보다 먼저 — e2e 재실증만 남은 원본은 이번 주기에 어떤
+        # 보충으로도 완료될 수 없다. 접어야 주기가 검증까지 가고, 그 항목은 Task 경계 e2e가 다시 건다.
+        from .rule.backlog import drop_unresolvable_blocked as _drop_unres
+        _folded = _drop_unres(flow)
+        if _folded:
+            self._log("backlog_unresolvable_folded", backlogs=list(_folded)[:8])
         from .rule.backlog import revive_blocked_when_pool_exhausted as _revive
         _revived = _revive(flow)
         if _revived:

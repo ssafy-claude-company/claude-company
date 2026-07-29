@@ -79,6 +79,45 @@ def blocked_ready_for_revisit(backlog, all_backlogs, blocked_scope) -> bool:
     ) and any(getattr(x, "status", "") == DONE for x in linked)
 
 
+def drop_unresolvable_blocked(flow) -> list:
+    """[주기 안에서 풀 수 없는 막힘은 접는다(2026-07-29, U-079 4세대 실측)]
+
+    e2e 장부 항목(condition:N)의 재실증을 요구하는 백로그는 **Task 경계에서만** 가능하다. 그런데
+    장부는 그 사실을 모르고 '막힘 → 보충 회의 → 보충 백로그' 사이클을 돌린다. 실측: 보충 8건이
+    다 끝나도 원본은 그대로 막혔고, 회의가 4번 열려 마지막엔 새 백로그 0건으로 판이 파킹됐다.
+    이 원본은 이번 주기에 어떤 보충으로도 완료될 수 없다 — 사유를 남기고 접어, 주기가 검증까지
+    갈 수 있게 한다. 접힌 일감의 실증은 사라지지 않는다: Task 경계에서 e2e가 그 항목을 다시 건다.
+    """
+    import re as _re
+    ms = next((m for m in (getattr(flow, "milestones", None) or [])
+               if m.status not in (DONE, "superseded")), None)
+    if ms is None:
+        return []
+    store = getattr(flow, "backlog_relays", None) or {}
+    dropped = []
+    for st in (getattr(ms, "subtasks", None) or []):
+        if st.status in (DONE, "superseded"):
+            continue
+        for b in (getattr(store.get(st.st_id), "backlogs", None) or []):
+            if getattr(b, "status", "") != BLOCKED:
+                continue
+            why = " ".join(str(x) for x in [getattr(b, "block_reason", ""), getattr(b, "body", "")])
+            if not (_re.search(r"(condition\s*:\s*\d+|\be2e\b)", why, _re.I)
+                    and _re.search(r"(receipt|target|challenge|봉인|seal)", why, _re.I)):
+                continue
+            b.status = DROPPED
+            b.ts_done = time.time()
+            try:
+                line = ("[접음] e2e 장부 재실증은 Task 경계에서만 가능해 이번 주기에서는 완료할 수 "
+                        "없습니다 — 주기가 닫히면 e2e가 이 항목을 다시 겁니다.")
+                if not getattr(b, "activity", None) or b.activity[-1] != line:
+                    b.activity.append(line)
+            except Exception:
+                pass
+            dropped.append(b.backlog_id)
+    return dropped
+
+
 def revive_blocked_when_pool_exhausted(flow) -> list:
     """[막힘은 판이 비면 되돌아온다(2026-07-29, 사용자: '백로그 다 끝나면 막힘이 다시 –로')]
 
