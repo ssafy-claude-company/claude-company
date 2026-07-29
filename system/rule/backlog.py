@@ -714,9 +714,13 @@ def handoff_note(flow, r, actor, verb) -> None:
                      f"접으세요 — 혼자 판단 말고 팀 표결로.")
         return
     cand = " · ".join(f"{b.backlog_id}({_info(b.submitter)}: {b.body[:24]})" for b in rem[:8])
-    notes.append(f"[다음 선정] {_info(actor)}의 백로그가 {verb} — 남은 백로그 보유자는 '내가 다음이어야 "
-                 f"하는 이유' 한 줄을 담당자({_info(actor)})에게 알리세요. 담당자가 pick_backlog(id)로 "
-                 f"다음 수행을 선정합니다(선정되면 그 백로그의 제출자가 착수). 남은 백로그: {cand}")
+    # [등록 순서가 실행 순서(2026-07-29, 사용자 지시)] 종전 안내는 '내가 다음이어야 하는 이유를 알리라'는
+    # 로비를 요구했다 — 순서가 이미 회의에서 정해졌다면 그 라운드는 낭비이고, 순서를 흔들기까지 한다.
+    # 기본은 등재 순서대로 자동 인계이고, pick_backlog(id)는 그 순서를 **벗어나야 할 때**의 장치다.
+    notes.append(f"[다음 선정] {_info(actor)}의 백로그가 {verb} — 다음은 **등재 순서대로** "
+                 f"{rem[0].backlog_id}({_info(rem[0].submitter)})에게 넘어갑니다. 순서를 바꿔야 할 사유가 "
+                 f"있을 때만 담당자({_info(actor)})가 pick_backlog(id)로 다른 항목을 지정하세요. "
+                 f"남은 백로그(순서대로): {cand}")
 
 
 def sync_completion(flow, worker) -> None:

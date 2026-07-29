@@ -1842,66 +1842,88 @@ class Sys:
         _idle = [m for m in bots if m not in by_owner]
         for _m in _idle[:6]:                      # wake 비용 상한 — 한 판돌이에 최대 6명
             by_owner.setdefault(_m, list(rem))
-        bids = []
-        for owner, owned in by_owner.items():
-            opts = " · ".join(f"{b.backlog_id}:{(b.body or '')[:55]}" for b in owned)
+        # [등록 순서가 곧 실행 순서(2026-07-29, 사용자 지시)] 회의는 백로그를 순서까지 정해 등록한다
+        # (B1·B2·… = 제출 순 = 선행 순). 그 순서가 정본이면 인계마다 응찰을 돌 이유가 없다 —
+        # 다음 항목이 열려 있으면 그대로 넘긴다. 봇 N명을 깨우는 응찰 라운드와 선정 턴이 통째로
+        # 사라지고(인계당 최대 7턴의 문맥 재전송이 준다), 순서는 회의 결정 그대로 지켜진다.
+        # 응찰은 '순서대로 갈 수 없을 때'의 장치로 남는다: 열린 다음 항목이 없을 때만 연다.
+        _seq = sorted(rem, key=lambda b: float(getattr(b, "ts_submit", 0) or 0))
+        _head = next((b for b in _seq if getattr(b, "status", "") == "open"
+                      and b.backlog_id in candidate_owner), None)
+        bids, choice, selected, fallback = [], "", "", False
+        _in_order = _head is not None
+        if _head is not None:
+            selected = _head.backlog_id
+            valid = {selected: candidate_owner[selected]}
+            self._log("backlog_next_in_order", backlog=selected,
+                      to=int(valid[selected]), skipped_bidding=True)
             try:
-                ans = await self.run_turn(
-                    flow, owner,
-                    f"[다음 백로그 응찰] 지금 남아 있는 백로그: {opts}\n"
-                    f"지금 다음으로 할 자기 백로그 하나를 골라 `[응찰: N, {owned[0].backlog_id}] 이유` "
-                    f"형식으로 답하세요. 지금 순서가 아니면 `[패스]`. 도구·작업 없이 즉답.\n"
-                    # [점수의 뜻을 구조가 정한다(2026-07-28, U-079 실측: 응찰 10건 중 9건이 9점 —
-                    # N이 무엇을 재는 값인지 아무 데도 없어 '하겠다'는 의사표시가 됐고, 그래서 동점
-                    # 폴백(=제출 순서)이 실질 규칙이 됐다.] 재는 것은 의욕이 아니라 **지금 실행 가능한가**다.
-                    f"N(1~9)은 **지금 바로 실행 가능한 정도**입니다 — 이 백로그가 필요로 하는 입력·선행 "
-                    f"산출물이 **이미 작업공간에 있으면 높게**, 다른 갈래의 결과를 기다려야 하면 낮게. "
-                    f"하고 싶은 마음이 아니라 착수 가능성을 적으세요(선행이 안 끝났으면 `[패스]`).",
-                    Kind.INFO, "worker", micro=True)
-            except Exception:
-                ans = ""
-            m = re.search(r"\[응찰\s*:\s*([1-9])\s*,\s*(B\d+)\s*\]", str(ans or ""), re.I)
-            if m:
-                bid_id = m.group(2).upper()
-                if any(b.backlog_id == bid_id for b in owned):
-                    bids.append((int(m.group(1)), bid_id, owner, str(ans)[:180]))
-            self._log("backlog_handoff_bid", by=owner,
-                      score=(int(m.group(1)) if m else 0), backlog=(m.group(2).upper() if m else ""))
-        if bids:
-            sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
-                              for score, bid_id, owner, reason in bids)
-            valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
-            # [응찰·선정은 그 백로그 안에 남는다(2026-07-29, 사용자 지적: '각 백로그마다 백로그 안에')]
-            # 채널 마커로 띄웠더니 공통 흐름에 마일스톤 행으로 끼어들어 작업 생각 표시를 흐트러뜨렸다.
-            # 응찰은 **그 일감의 활동**이다 — 해당 백로그 장부에 붙이면 백로그 행을 펼칠 때 그 자리에 보인다.
-            try:
-                for _sc, _bid, _own, _rsn in bids:
-                    _b = self._find_backlog_obj(flow, _bid)
-                    if _b is None:
-                        continue
-                    _line = f"[응찰] {flow._info(_own) or _own} {_sc}점 — {str(_rsn or '').strip()[:120]}"
-                    if not getattr(_b, "activity", None) or _b.activity[-1] != _line:
-                        _b.activity.append(_line)
+                _l0 = "[순서] 회의가 정한 등록 순서대로 이어받음 — 응찰 없이 다음 차례"
+                if not getattr(_head, "activity", None) or _head.activity[-1] != _l0:
+                    _head.activity.append(_l0)
             except Exception:
                 pass
         else:
-            # 전원이 패스했거나 형식 응답이 깨져도 최근 작업자의 배분권은 사라지지 않는다. 실제 남은
-            # 보유 목록을 그대로 보여 직접 선택하게 하고, 그 응답마저 깨질 때만 제출순을 안전망으로 쓴다.
-            sheet = "\n".join(
-                f"- {b.backlog_id} / {flow._info(candidate_owner[b.backlog_id]) or candidate_owner[b.backlog_id]}"
-                f" / 패스·응답 없음: {(b.body or '')[:70]}" for b in rem if b.backlog_id in candidate_owner)
-            valid = dict(candidate_owner)
-        try:
-            choice = await self.run_turn(
-                flow, int(holder),
-                f"[다음 백로그 선정] 당신이 방금 작업을 마쳐 배분권을 가집니다. 보유자 응찰표:\n{sheet}\n"
-                f"다음 하나를 직접 골라 `[선정: B번호]`로 답하세요. 도구 없이 즉답.",
-                Kind.INFO, "worker", micro=True)
-        except Exception:
-            choice = ""
-        cm = re.search(r"\[선정\s*:\s*(B\d+)\s*\]", str(choice or ""), re.I)
-        selected = cm.group(1).upper() if cm else ""
-        fallback = selected not in valid
+            bids = []
+            for owner, owned in by_owner.items():
+                opts = " · ".join(f"{b.backlog_id}:{(b.body or '')[:55]}" for b in owned)
+                try:
+                    ans = await self.run_turn(
+                        flow, owner,
+                        f"[다음 백로그 응찰] 지금 남아 있는 백로그: {opts}\n"
+                        f"지금 다음으로 할 자기 백로그 하나를 골라 `[응찰: N, {owned[0].backlog_id}] 이유` "
+                        f"형식으로 답하세요. 지금 순서가 아니면 `[패스]`. 도구·작업 없이 즉답.\n"
+                        # [점수의 뜻을 구조가 정한다(2026-07-28, U-079 실측: 응찰 10건 중 9건이 9점 —
+                        # N이 무엇을 재는 값인지 아무 데도 없어 '하겠다'는 의사표시가 됐고, 그래서 동점
+                        # 폴백(=제출 순서)이 실질 규칙이 됐다.] 재는 것은 의욕이 아니라 **지금 실행 가능한가**다.
+                        f"N(1~9)은 **지금 바로 실행 가능한 정도**입니다 — 이 백로그가 필요로 하는 입력·선행 "
+                        f"산출물이 **이미 작업공간에 있으면 높게**, 다른 갈래의 결과를 기다려야 하면 낮게. "
+                        f"하고 싶은 마음이 아니라 착수 가능성을 적으세요(선행이 안 끝났으면 `[패스]`).",
+                        Kind.INFO, "worker", micro=True)
+                except Exception:
+                    ans = ""
+                m = re.search(r"\[응찰\s*:\s*([1-9])\s*,\s*(B\d+)\s*\]", str(ans or ""), re.I)
+                if m:
+                    bid_id = m.group(2).upper()
+                    if any(b.backlog_id == bid_id for b in owned):
+                        bids.append((int(m.group(1)), bid_id, owner, str(ans)[:180]))
+                self._log("backlog_handoff_bid", by=owner,
+                          score=(int(m.group(1)) if m else 0), backlog=(m.group(2).upper() if m else ""))
+            if bids:
+                sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
+                                  for score, bid_id, owner, reason in bids)
+                valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
+                # [응찰·선정은 그 백로그 안에 남는다(2026-07-29, 사용자 지적: '각 백로그마다 백로그 안에')]
+                # 채널 마커로 띄웠더니 공통 흐름에 마일스톤 행으로 끼어들어 작업 생각 표시를 흐트러뜨렸다.
+                # 응찰은 **그 일감의 활동**이다 — 해당 백로그 장부에 붙이면 백로그 행을 펼칠 때 그 자리에 보인다.
+                try:
+                    for _sc, _bid, _own, _rsn in bids:
+                        _b = self._find_backlog_obj(flow, _bid)
+                        if _b is None:
+                            continue
+                        _line = f"[응찰] {flow._info(_own) or _own} {_sc}점 — {str(_rsn or '').strip()[:120]}"
+                        if not getattr(_b, "activity", None) or _b.activity[-1] != _line:
+                            _b.activity.append(_line)
+                except Exception:
+                    pass
+            else:
+                # 전원이 패스했거나 형식 응답이 깨져도 최근 작업자의 배분권은 사라지지 않는다. 실제 남은
+                # 보유 목록을 그대로 보여 직접 선택하게 하고, 그 응답마저 깨질 때만 제출순을 안전망으로 쓴다.
+                sheet = "\n".join(
+                    f"- {b.backlog_id} / {flow._info(candidate_owner[b.backlog_id]) or candidate_owner[b.backlog_id]}"
+                    f" / 패스·응답 없음: {(b.body or '')[:70]}" for b in rem if b.backlog_id in candidate_owner)
+                valid = dict(candidate_owner)
+            try:
+                choice = await self.run_turn(
+                    flow, int(holder),
+                    f"[다음 백로그 선정] 당신이 방금 작업을 마쳐 배분권을 가집니다. 보유자 응찰표:\n{sheet}\n"
+                    f"다음 하나를 직접 골라 `[선정: B번호]`로 답하세요. 도구 없이 즉답.",
+                    Kind.INFO, "worker", micro=True)
+            except Exception:
+                choice = ""
+            cm = re.search(r"\[선정\s*:\s*(B\d+)\s*\]", str(choice or ""), re.I)
+            selected = cm.group(1).upper() if cm else ""
+            fallback = selected not in valid
         if fallback:
             if bids:
                 # 응답 장애 안전망: 점수 우선, 동률은 원래 백로그 제출 순서.
@@ -1942,7 +1964,7 @@ class Sys:
         try:
             _why = re.sub(r"\[선정\s*:\s*B\d+\s*\]", " ", str(choice or ""))
             _why = " ".join(_why.split())[:160]
-            _bsel = self._find_backlog_obj(flow, selected)
+            _bsel = None if _in_order else self._find_backlog_obj(flow, selected)
             if _bsel is not None:
                 _sl = (f"[선정] → {flow._info(owner) or owner} · "
                        + (f"사유: {_why}" if (_why and not fallback)

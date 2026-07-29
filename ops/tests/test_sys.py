@@ -111,8 +111,9 @@ def test_Task참여응찰은_병렬_무도구_micro로만_수집():
     assert any(c[0] == "post" and "[참여 확정]" in c[3] for c in g.calls)
 
 
-def test_SYS_정상작업턴완료뒤_보유자응찰을_최근작업자가_선정(monkeypatch):
-    """정상 종료한 작업 턴은 relay.done을 지나며, 보유자들이 응찰하고 최근 작업자의 선택이 우선한다."""
+def test_SYS_작업턴완료뒤_다음백로그는_등록순서대로_응찰없이_인계(monkeypatch):
+    """[등록 순서가 실행 순서(2026-07-29, 사용자 지시)] 회의가 순서까지 정해 등록하므로, 다음 항목이
+    열려 있으면 응찰·선정 턴을 돌리지 않고 그대로 넘긴다(봇 N명 wake가 통째로 사라진다)."""
     from system.rule.backlog import relay_for
     from system.rule.milestone import open_milestone, open_subtask
 
@@ -128,26 +129,65 @@ def test_SYS_정상작업턴완료뒤_보유자응찰을_최근작업자가_선�
     r.pick(11, b1.backlog_id, 11)
     s = Sys(g, 1, None, bot_info={11: "L", 12: "M", 13: "VFX"})
 
+    asked = []
+
     async def scripted(_flow, who, body, kind, role, micro=False):
         if "작업중 — 이어서" in body:
             return "기본 화면 구현과 실행 검증을 완료했습니다.\n[백로그 완료]"
-        if "응찰" in body and who == 12:
-            return f"[응찰: 9, {b2.backlog_id}] 기반 작업이라 우선"
-        if "응찰" in body and who == 13:
-            return f"[응찰: 4, {b3.backlog_id}] 화면 흐름상 지금 적절"
-        if "선정" in body:
-            return f"[선정: {b3.backlog_id}]"       # 최고점보다 최근 작업자의 명시 선택이 우선
+        if "응찰" in body or "선정" in body:
+            asked.append(who)                     # 등록 순서대로면 아무도 깨우지 않는다
         return ""
     s.run_turn = scripted
 
     progressed = asyncio.run(s._claim_kick(f))
     assert progressed is True
     assert b1.status == "done" and r.turn_holder == 11
-    assert b2.status == "open"
-    assert b3.status == "in_progress" and b3.assignee == 13
-    assert any(e["event"] == "backlog_handoff_selected"
-               and e["backlog"] == b3.backlog_id and not e["fallback"] for e in s.flow_log)
+    assert asked == []
+    assert b2.status == "in_progress" and b2.assignee == 12   # 등록 순서상 다음
+    assert b3.status == "open"
+    assert any(e["event"] == "backlog_next_in_order" and e["backlog"] == b2.backlog_id
+               for e in s.flow_log)
+    assert any("[순서]" in a for a in (b2.activity or []))
 
+
+def test_SYS_열린다음항목이_없으면_응찰로_돌아간다(monkeypatch):
+    """순서대로 갈 수 없을 때(남은 것이 차단 재개뿐)만 응찰이 열린다 — 응찰은 예외 장치로 남는다."""
+    import time as _t
+
+    from system.rule.backlog import relay_for
+    from system.rule.milestone import open_milestone, open_subtask
+
+    g = FakeGuide()
+    f = _flow(g)
+    ms = open_milestone(f, "프로토타입", [{"desc": "동작", "verify": "pytest"}])
+    st = open_subtask(f, ms, "화면", [])
+    r = relay_for(f, st)
+    b1 = r.submit(11, "기본 화면 구현", force=True)
+    b2 = r.submit(12, "입력 로직 구현", force=True)
+    b2.status = "blocked"
+    b2.ts_done = _t.time() - 60
+    sup = r.submit(12, "입력 장치 규격 확정", force=True)      # 차단 뒤 태어난 보충 단위
+    sup.supplement_for = [f"{st.st_id}::{b2.backlog_id}"]
+    sup.status, sup.ts_done = "done", _t.time()
+    r.pick(11, b1.backlog_id, 11)
+    s = Sys(g, 1, None, bot_info={11: "L", 12: "M"})
+
+    asked = []
+
+    async def scripted(_flow, who, body, kind, role, micro=False):
+        if "작업중 — 이어서" in body:
+            return "기본 화면 구현과 실행 검증을 완료했습니다.\n[백로그 완료]"
+        if "응찰" in body:
+            asked.append(who)
+            return f"[응찰: 7, {b2.backlog_id}] 보충이 끝나 재개 가능"
+        if "선정" in body:
+            return f"[선정: {b2.backlog_id}]"
+        return ""
+    s.run_turn = scripted
+
+    asyncio.run(s._claim_kick(f))
+    assert asked, "열린 항목이 없으면 응찰이 열려야 한다"
+    assert any(e["event"] == "backlog_handoff_selected" for e in s.flow_log)
 
 def test_SYS_첫백로그는_작업중미러뒤_정상턴완료가_원장에남음(monkeypatch):
     """첫 킥은 r.pick으로 ▶를 먼저 미러하고, 정상 작업 턴 종료는 done+체크포인트로 남긴다."""
