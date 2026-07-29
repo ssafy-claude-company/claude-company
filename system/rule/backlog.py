@@ -263,6 +263,18 @@ class BacklogRelay:
         # 무주 항목은 self-claim 불가 + 선정 시 수행자=제출자(0=SYS)로 배분이 깨졌다(회의→릴레이 접합 결함).
         _self_claim = (int(picker) == int(assignee)
                        and int(b0.submitter or 0) in (0, int(picker)))
+        # [연속 자기착수는 응찰을 건너뛴다(2026-07-28, U-079 실측)] 무주 항목(회의 수렴안, submitter=0)은
+        # '집는 사람이 한다'로 열어뒀는데, **방금 끝낸 사람이 곧바로 다음 것을 자기착수**하면 배분권도
+        # 응찰도 거치지 않는다. 실측: relay_pick 4건 중 3건이 by==to, relay_bid 0건 — 설계된 '응찰값과
+        # 사유로 마지막 작업자가 선정' 경로가 통째로 우회되고 목록 다음 항목이 그대로 집혀 판이 위에서
+        # 아래로 흘렀다. 선행이 안 끝났다고 말할 자리(패스·blocked)도 함께 사라진다.
+        # 방금 마무리한 사람의 연속 자기착수만 막는다 — 다른 사람의 자기선택은 종전대로 열려 있다.
+        if (_self_claim and self.turn_holder is not None
+                and int(picker) == int(self.turn_holder)
+                and int(b0.submitter or 0) == 0):
+            raise BacklogError(
+                "방금 마무리한 사람이 다음 것을 곧바로 집을 수 없습니다 — 무주 항목은 응찰로 정합니다. "
+                "동료들에게 응찰(지금 착수 가능한 정도와 사유)을 받아 선정하세요.")
         # 순차 잠금 — 이미 누가 작업 중이면 새 착수 불가(그 완료/중단 후 다음).
         _active = next((x for x in self.backlogs if x.status == IN_PROGRESS and x.backlog_id != backlog_id), None)
         if _active is not None:
