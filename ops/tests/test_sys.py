@@ -150,8 +150,9 @@ def test_SYS_작업턴완료뒤_다음백로그는_등록순서대로_응찰없�
     assert any("[순서]" in a for a in (b2.activity or []))
 
 
-def test_SYS_열린다음항목이_없으면_응찰로_돌아간다(monkeypatch):
-    """순서대로 갈 수 없을 때(남은 것이 차단 재개뿐)만 응찰이 열린다 — 응찰은 예외 장치로 남는다."""
+def test_SYS_실행가능한_백로그가_다_끝나면_막힘이_다시_열린다(monkeypatch):
+    """[사용자 지시(2026-07-29): '백로그 다 끝나면 막힘이 다시 –로 돌아오도록'] blocked는 폐기가
+    아니라 '지금은 못 한다'는 표시다 — 열린·진행 중 백로그가 하나도 안 남으면 자동으로 되돌린다."""
     import time as _t
 
     from system.rule.backlog import relay_for
@@ -165,10 +166,8 @@ def test_SYS_열린다음항목이_없으면_응찰로_돌아간다(monkeypatch)
     b1 = r.submit(11, "기본 화면 구현", force=True)
     b2 = r.submit(12, "입력 로직 구현", force=True)
     b2.status = "blocked"
+    b2.block_reason = "선행 산출물 대기"
     b2.ts_done = _t.time() - 60
-    sup = r.submit(12, "입력 장치 규격 확정", force=True)      # 차단 뒤 태어난 보충 단위
-    sup.supplement_for = [f"{st.st_id}::{b2.backlog_id}"]
-    sup.status, sup.ts_done = "done", _t.time()
     r.pick(11, b1.backlog_id, 11)
     s = Sys(g, 1, None, bot_info={11: "L", 12: "M"})
 
@@ -177,17 +176,18 @@ def test_SYS_열린다음항목이_없으면_응찰로_돌아간다(monkeypatch)
     async def scripted(_flow, who, body, kind, role, micro=False):
         if "작업중 — 이어서" in body:
             return "기본 화면 구현과 실행 검증을 완료했습니다.\n[백로그 완료]"
-        if "응찰" in body:
+        if "응찰" in body or "선정" in body:
             asked.append(who)
-            return f"[응찰: 7, {b2.backlog_id}] 보충이 끝나 재개 가능"
-        if "선정" in body:
-            return f"[선정: {b2.backlog_id}]"
         return ""
     s.run_turn = scripted
 
     asyncio.run(s._claim_kick(f))
-    assert asked, "열린 항목이 없으면 응찰이 열려야 한다"
-    assert any(e["event"] == "backlog_handoff_selected" for e in s.flow_log)
+    assert b1.status == "done"
+    assert b2.status == "in_progress" and b2.assignee == 12   # 되살아나 등록 순서대로 인계
+    assert not b2.block_reason
+    assert any("[막힘 해제]" in a for a in (b2.activity or []))
+    assert any(e["event"] == "backlog_unblocked_by_exhaustion" for e in s.flow_log)
+    assert asked == []                                        # 응찰 라운드 없이
 
 def test_SYS_첫백로그는_작업중미러뒤_정상턴완료가_원장에남음(monkeypatch):
     """첫 킥은 r.pick으로 ▶를 먼저 미러하고, 정상 작업 턴 종료는 done+체크포인트로 남긴다."""

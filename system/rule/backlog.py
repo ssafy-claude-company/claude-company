@@ -79,6 +79,47 @@ def blocked_ready_for_revisit(backlog, all_backlogs, blocked_scope) -> bool:
     ) and any(getattr(x, "status", "") == DONE for x in linked)
 
 
+def revive_blocked_when_pool_exhausted(flow) -> list:
+    """[막힘은 판이 비면 되돌아온다(2026-07-29, 사용자: '백로그 다 끝나면 막힘이 다시 –로')]
+
+    blocked는 '지금은 선행이 없어 못 한다'는 표시지 폐기가 아니다. 그런데 종전엔 원본을 다시
+    후보로 올리는 조건이 보충 백로그와의 `[해결: ST::Bn]` 링크에 달려 있어, 링크가 없거나 표기가
+    어긋나면 실행 가능한 일이 하나도 안 남은 뒤에도 원본이 blocked로 굳어 판이 멈췄다
+    (U-079 4세대: 보충 8건이 다 끝나도 원본 B1은 ⛔ 그대로).
+
+    규칙은 판 상태 하나로 충분하다 — **열린·진행 중 백로그가 하나도 안 남으면** 그 사이 팀이
+    할 수 있는 일은 다 한 것이므로, 남은 blocked를 open으로 되돌려 다시 집을 수 있게 한다.
+    막힘 사유는 활동 기록에 남겨 왜 한 번 멈췄는지가 사라지지 않게 한다.
+    """
+    ms = next((m for m in (getattr(flow, "milestones", None) or [])
+               if m.status not in (DONE, "superseded")), None)
+    if ms is None:
+        return []
+    store = getattr(flow, "backlog_relays", None) or {}
+    rows = [b for st in (getattr(ms, "subtasks", None) or [])
+            if st.status not in (DONE, "superseded")
+            for b in (getattr(store.get(st.st_id), "backlogs", None) or [])]
+    if any(getattr(b, "status", "") in (OPEN, IN_PROGRESS) for b in rows):
+        return []
+    revived = []
+    for b in rows:
+        if getattr(b, "status", "") != BLOCKED:
+            continue
+        why = str(getattr(b, "block_reason", "") or "").strip()
+        b.status = OPEN
+        b.ts_done = 0
+        b.block_reason = ""
+        try:
+            line = ("[막힘 해제] 실행 가능한 백로그가 모두 끝나 다시 집을 수 있습니다"
+                    + (f" · 당시 사유: {why[:90]}" if why else ""))
+            if not getattr(b, "activity", None) or b.activity[-1] != line:
+                b.activity.append(line)
+        except Exception:
+            pass
+        revived.append(b.backlog_id)
+    return revived
+
+
 def blocked_supplement_targets(scoped_rows):
     """이번 보충 회의가 직접 풀어야 할 blocked 잎 노드만 돌려준다.
 

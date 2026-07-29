@@ -1808,6 +1808,21 @@ class Sys:
             if getattr(_row, "status", "") == "open" and _row not in rem:
                 rem.append(_row)
                 _relay_of[_row.backlog_id] = _rl
+        # [막힘은 판이 비면 자동 복귀(2026-07-29, 사용자 지시)] 실행 가능한 일이 하나도 안 남았는데
+        # blocked만 남아 있으면 판은 그대로 멈춘다 — 후보를 세기 전에 되돌린다.
+        from .rule.backlog import revive_blocked_when_pool_exhausted as _revive
+        _revived = _revive(flow)
+        if _revived:
+            self._log("backlog_unblocked_by_exhaustion", backlogs=list(_revived)[:8])
+            rem = []
+            _relay_of = {}
+            for _st_x, _row in all_scoped_rows:
+                _rl = store.get(_st_x.st_id)
+                if _rl is None:
+                    continue
+                if getattr(_row, "status", "") == "open" and _row not in rem:
+                    rem.append(_row)
+                    _relay_of[_row.backlog_id] = _rl
         from .rule.backlog import backlog_scope_key
         relay_st = next((st for st, row in all_scoped_rows
                          if any(row is item for item in r.backlogs)), None)
