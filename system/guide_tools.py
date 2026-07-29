@@ -722,6 +722,27 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     # [무주=자기선택(2026-07-16)] 회의 산물(submitter=0)은 '집는 사람이 한다' — 수행자=나.
                     # 제출자 있는 항목은 종전대로 수행자=제출자(전담 불변 — 남이 채갈 수 없음).
                     _assn = int(b.submitter) or int(me_id)
+                    # [무주 자기착수엔 착수 근거를 세운다(2026-07-29, U-079 실측)] 무주 항목(회의
+                    # 수렴안, submitter=0)은 '집는 사람이 한다'로 열려 있어, 아무나 목록의 다음 것을
+                    # 그대로 집으면 응찰·선정이 통째로 건너뛰어진다(실측: relay_bid 0 · 자기착수 다수 →
+                    # 판이 위에서 아래로 흐르고 '선행이 안 끝나 못 한다'고 말할 자리가 사라진다).
+                    # 막으면 교착 위험이 있으므로(응찰 수집이 아직 도구로 배선되지 않았다) 막지 않고,
+                    # **왜 지금 이것이 착수 가능한지**를 적게 한다 — 선행 충족 판단이 기록에 남고,
+                    # 못 적으면 그 자체가 '아직 아니다'라는 신호다.
+                    if int(b.submitter or 0) == 0 and _assn == int(me_id):
+                        _why = str(args.get("why") or args.get("reason") or "").strip()
+                        if len(_why) < 10:
+                            return _ok(
+                                f"선점 보류: {b.backlog_id}는 무주 항목입니다 — 집기 전에 **지금 착수 "
+                                "가능한 근거**를 why 인자로 한 줄 적으세요(필요한 선행 산출물이 이미 "
+                                "있는지, 무엇을 근거로 지금인지). 선행이 안 끝났으면 집지 말고 그 선행 "
+                                "백로그를 먼저 진행하세요.")
+                        try:
+                            if getattr(flow, "log", None):
+                                flow.log("relay_self_claim", backlog=b.backlog_id,
+                                         st=str(_tgt.st_id), by=int(me_id), why=_why[:160])
+                        except Exception:
+                            pass
                     r.pick(int(me_id), b.backlog_id, _assn)      # relay가 배분권(마무리자)·순차 잠금 검증
                     _ck(flow)                                     # [갭#1] 선정 즉시 영속(크래시 내구)
                     _who = flow._info(_assn) if hasattr(flow, "_info") else _assn
