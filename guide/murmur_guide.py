@@ -403,6 +403,14 @@ class MurmurGuide:
                 self._claim_tokens.pop(mid, None)
         return bool(out.get("ok", True))
 
+    async def mark_continuation(self, msg_id, task_id=""):
+        """이 요청은 기존 Task의 이어가기임을 매체에 남긴다(화면이 새 Task 카드로 그리지 않게)."""
+        try:
+            await self._post("/api/guide/ingest/", {"op": "mark_continuation",
+                                                    "msg_id": int(msg_id), "task": str(task_id or "")})
+        except Exception:
+            pass
+
     async def channel_roster(self, channel_id):
         """[내 직원만(2026-07-28)] 이 채널이 부를 수 있는 직원 {bot_id: 직군} — 채널 주인의 소유·추가
         승인분(+채용 직군). 매체가 판정하고 SYS는 받은 대로 쓴다(매체-특화는 Guide 안에서)."""
