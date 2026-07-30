@@ -82,12 +82,40 @@ def set_default_audit(audit) -> None:
     _DEFAULT_AUDIT = audit
 
 
+_FALLBACK_AUDIT = "미해결"
+
+
+def _fallback_audit():
+    """기록기를 아무도 안 정했을 때 쓰는 기본 - 러너와 같은 자리에 남긴다.
+
+    [반쪽 착지 대비(2026-07-30, 현준-4)] 기록기 지정은 러너(murmur 레포)에 있고 도구는 여기
+    (claude-company)에 있다. 두 레포가 따로 착지하므로 한쪽만 반영된 순간이 실제로 생긴다 -
+    그때 감사가 조용히 비면 이전보다 나빠진다.
+
+    자리를 추측하지 않고 ORGANT_AUDIT_LOG가 가리킬 때만 연다. 경로를 코드가 짐작하면
+    테스트가 프로덕션 감사 파일에 쓰게 된다 - 관측 장치가 관측 대상을 오염시키면 안 된다.
+    명시적 set_default_audit이 있으면 그쪽이 이긴다.
+    """
+    global _FALLBACK_AUDIT
+    if _FALLBACK_AUDIT != "미해결":
+        return _FALLBACK_AUDIT
+    _FALLBACK_AUDIT = None
+    try:
+        import os
+        path = os.environ.get("ORGANT_AUDIT_LOG")
+        if path:
+            _FALLBACK_AUDIT = AuditLog(path)
+    except Exception:
+        _FALLBACK_AUDIT = None      # 못 열면 기록을 포기한다 - 도구는 계속 돈다
+    return _FALLBACK_AUDIT
+
+
 def record_tool_use(actor=None, role=None, tool=None, tool_input=None) -> None:
     """도구 한 번의 실행을 공용 기록기에 남긴다. 기록기가 없으면 조용히 넘어간다.
 
     기록 실패가 도구 실행을 막지 않는다 - 기록은 관측이지 관문이 아니다.
     """
-    a = _DEFAULT_AUDIT
+    a = _DEFAULT_AUDIT or _fallback_audit()
     if a is None:
         return
     try:
