@@ -18,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 
 import anyio
 
@@ -83,9 +84,32 @@ def _is_secret_env(name: str) -> bool:
     return u in _SECRET_ENV_EXACT or any(s in u for s in _SECRET_ENV_SUBSTR)
 
 
+def _free_port() -> int:
+    """지금 비어 있는 TCP 포트 하나 — 커널이 고르게 하고(0번 바인딩) 바로 돌려준다."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
 def _scrubbed_run_env() -> dict:
-    """봇 run 셸용 환경 — 부모 env 복사본에서 배포·인증 비밀만 제거(PATH·HOME 등 빌드 필수 env는 유지)."""
-    return {k: v for k, v in os.environ.items() if not _is_secret_env(k)}
+    """봇 run 셸용 환경 — 부모 env 복사본에서 배포·인증 비밀만 제거(PATH·HOME 등 빌드 필수 env는 유지).
+
+    [실행 격리(2026-07-30, 사용자: '충돌을 안정적으로 설계해서 병렬로')] 검증 실행이 판 시간의
+    22%다(U-079 실측 5.3h/24.1h). 동시에 돌리려면 두 가지가 겹치지 않아야 한다: **포트**와
+    **산출물 경로**. 실행마다 빈 포트와 고유 산출물 폴더를 환경으로 준다 —
+    명령이 `$PORT`·`$ARTIFACT_DIR`를 쓰면 서로를 밟지 않고, 안 쓰면 종전 그대로 동작한다
+    (라이브 명령을 깨지 않는 점진 도입). `$RUN_ID`는 영수증·증거 추적용.
+    """
+    env = {k: v for k, v in os.environ.items() if not _is_secret_env(k)}
+    try:
+        rid = f"{int(time.time() * 1000) % 10**9:09d}"
+        env.setdefault("RUN_ID", rid)
+        env["PORT"] = str(_free_port())
+        env["ARTIFACT_DIR"] = f"artifacts/run-{rid}"
+    except Exception:
+        pass
+    return env
 
 
 def _run_drop_creds():
@@ -973,6 +997,12 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
           "sync_playwright 페이지 로드→로드시간·콘솔에러·스크린샷 확인('실행됨'과 '사용할 만함'은 다르다). "
           "출력 반환. 서버 구동은 'node server.js & sleep 1; curl -s localhost:3000/'처럼 백그라운드+점검으로 "
           "묶으면 됨 — run이 끝나면 백그라운드 프로세스까지 자동 정리하므로 kill 불필요(다음 run의 포트 충돌 없음). "
+          # [동시 실행 격리(2026-07-30)] 검증이 판 시간의 22%다. 여럿이 동시에 돌 수 있으려면
+          # 포트와 산출물 경로가 겹치지 않아야 한다 — SYS가 실행마다 빈 포트·고유 폴더를 준다.
+          "**동시 실행 안전**: 매 실행에 `$PORT`(빈 포트)·`$ARTIFACT_DIR`(이 실행 전용 폴더)·`$RUN_ID`가 "
+          "환경변수로 주어진다. 서버는 `PORT=$PORT node server.js`처럼 그 포트로 띄우고 점검도 "
+          "`curl -s localhost:$PORT/`로, 증거는 `$ARTIFACT_DIR/…`에 남겨라 — 그러면 다른 검증과 "
+          "같은 시각에 돌아도 서로를 밟지 않는다(고정 포트·고정 경로를 쓰면 동시 실행 시 충돌한다). "
           "파괴·git·시스템경로 명령은 차단. GOAL 잠금 검증 중에는 evidence_for=조건 desc 원문, e2e 중에는 "
           "evidence_for=검사 항목 id를 함께 쓴다. 먼저 seal='yes'로 SYS가 target+spec+현재 artifact에 "
           "exact command를 봉인하고, 다음 호출에서 seal을 비운 채 **동일 명령을 1회** 실행해야 receipt가 "
