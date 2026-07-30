@@ -158,3 +158,54 @@ def test_어느_뿌리에도_없으면_여전히_거부한다(tmp_path):
     other = tmp_path / "other"; other.mkdir()
     with pytest.raises(GuardError):
         validated_workspace(str(other), [(str(ws), "parent"), (str(leaf), "leaf")])
+
+
+def test_동시등록이_서로의_항목을_덮지_않는다(tmp_path):
+    """[경합 결함 수선] 잠금이 없으면 둘 다 같은 빈 uid를 골라 하나가 사라진다.
+
+    실측 근거: p-078이 파일 29,828개를 300002로 소유하는데 대장에 항목이 없었다.
+    """
+    import concurrent.futures as cf
+    import json
+    from system.sandbox_guard import uid_for
+
+    m = str(tmp_path / "uidmap.json")
+    keys = [f"p-{i:03d}" for i in range(24)]
+    with cf.ThreadPoolExecutor(max_workers=12) as ex:
+        uids = list(ex.map(lambda k: uid_for(k, m), keys))
+
+    got = json.load(open(m, encoding="utf-8"))
+    assert set(got) == set(keys), "잃어버린 항목이 있다"
+    assert len(set(uids)) == len(keys), "같은 uid가 두 판에 배정됐다"
+    assert sorted(got.values()) == sorted(uids)
+
+
+def test_대장이_항목을_잃어도_쓰던_uid를_되찾는다(tmp_path):
+    """디스크가 사실을 안다 - 살아 있는 uid를 다른 판에 다시 주지 않는다."""
+    import json
+    from system.sandbox_guard import UID_MIN, uid_for
+
+    m = str(tmp_path / "uidmap.json")
+    json.dump({"다른판": UID_MIN}, open(m, "w", encoding="utf-8"))
+    got = uid_for("잃어버린판", m, observed_uid=UID_MIN + 2)
+    assert got == UID_MIN + 2                       # 가장 낮은 빈 uid(+1)가 아니라 쓰던 것
+    assert json.load(open(m, encoding="utf-8"))["잃어버린판"] == UID_MIN + 2
+
+
+def test_남이_쓰는_uid는_되찾지_않는다(tmp_path):
+    """소유자가 이미 대장에 잡힌 uid면 회수하지 않는다 - 두 판이 겹치면 격리가 뚫린다."""
+    import json
+    from system.sandbox_guard import UID_MIN, uid_for
+
+    m = str(tmp_path / "uidmap.json")
+    json.dump({"다른판": UID_MIN}, open(m, "w", encoding="utf-8"))
+    got = uid_for("새판", m, observed_uid=UID_MIN)   # 남이 쓰는 uid를 들고 왔다
+    assert got != UID_MIN
+
+
+def test_범위_밖_소유자는_무시한다(tmp_path):
+    """65534(nobody) 같은 옛 산출물 소유자를 판별 uid로 삼지 않는다."""
+    from system.sandbox_guard import UID_MIN, uid_for
+
+    m = str(tmp_path / "uidmap.json")
+    assert uid_for("판", m, observed_uid=65534) == UID_MIN

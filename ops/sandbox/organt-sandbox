@@ -37,7 +37,12 @@ def main(argv):
             raise GuardError("root로 실행돼야 한다(sudoers 경유)")
         ws, cmd = parse_args(argv[1:])
         real, root, kind = validated_workspace(ws, WS_ROOTS)
-        uid = uid_for(project_key(real, root, kind), UIDMAP)
+        # 작업공간의 실제 소유자를 함께 넘긴다 - 대장이 항목을 잃어도 쓰던 uid를 되찾는다.
+        try:
+            _own = os.stat(real).st_uid
+        except OSError:
+            _own = None
+        uid = uid_for(project_key(real, root, kind), UIDMAP, observed_uid=_own)
     except GuardError as e:
         sys.stderr.write(f"organt-sandbox: {e}\n")
         return 90
