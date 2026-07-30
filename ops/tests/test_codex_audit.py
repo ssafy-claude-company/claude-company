@@ -78,3 +78,31 @@ def test_브리지는_신원을_모른다():
     b._audit("mcp__guide__complete_task", {})
     assert got == ["mcp__guide__complete_task"]
     assert not hasattr(b, "actor")
+
+
+def test_감사_인자에서_비밀키가_가려진다():
+    """감사를 켜면서 비밀이 새는 경로를 같이 열면 안 된다 - audit.jsonl은 other 읽기 가능."""
+    from system.audit import redact_tool_input
+    out = redact_tool_input({
+        "cmd": "npm test",
+        "TOKEN": "s3cr3t",
+        "env": {"DATABASE_URL": "postgres://u:p@h/db", "PATH": "/usr/bin"},
+    })
+    assert out["cmd"] == "npm test"          # 사실은 남는다
+    assert out["TOKEN"] == "<가림>"
+    assert out["env"]["DATABASE_URL"] == "<가림>"
+    assert out["env"]["PATH"] == "/usr/bin"  # 비밀 아닌 것은 그대로
+
+
+def test_비밀이_아닌_KEY이름은_안_가린다():
+    """판정은 guide_tools 하나만 쓴다 - 목록이 갈라지면 한쪽만 막힌다."""
+    from system.audit import redact_tool_input
+    assert redact_tool_input({"KEYBOARD": "us"})["KEYBOARD"] == "us"
+
+
+def test_파일내용_생략은_그대로다():
+    """기존 계약(긴 content 생략)이 비밀 가림 때문에 깨지지 않는다."""
+    from system.audit import redact_tool_input
+    out = redact_tool_input({"file_path": "/a.py", "content": "x" * 200})
+    assert out["file_path"] == "/a.py"
+    assert "생략" in out["content"]
