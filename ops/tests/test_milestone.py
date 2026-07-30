@@ -1186,7 +1186,7 @@ def test_GOAL_marker는_final확정전에_주입되지않고_해소된_구시스
     first_cycle = (
         "# DRAFT [stage:milestone] — 로드맵\n"
         "## 결정\n"
-        "단계: 구현 → 완성\n"
+        "단계: 혼자 쓰는 최소판 → 둘이 겨루는 확장판\n"   # 공정(구현→완성)이 아니라 탈 것으로
         "이번 주기: 상태 머신 구현\n"
         "- 최소 구현 로드 | 실증: node test_state_machine.js\n\n"
         "## 참고 (자유 — 판정 대상 아님)\n"
@@ -1194,18 +1194,18 @@ def test_GOAL_marker는_final확정전에_주입되지않고_해소된_구시스
     assert ensure_goal_ratification_scaffold(f, first_cycle) == first_cycle
     assert stage_preflight("milestone", first_cycle, f) == []
 
-    unresolved = first_cycle.replace("단계: 구현 → 완성", "단계: ⟦최대 3단계⟧")
+    unresolved = first_cycle.replace("단계: 혼자 쓰는 최소판 → 둘이 겨루는 확장판", "단계: ⟦최대 3단계⟧")
     assert ensure_goal_ratification_scaffold(f, unresolved) == unresolved
 
     final_cycle = first_cycle.replace(
-        "단계: 구현 → 완성\n이번 주기: 상태 머신 구현\n"
+        "단계: 혼자 쓰는 최소판 → 둘이 겨루는 확장판\n이번 주기: 상태 머신 구현\n"
         "- 최소 구현 로드 | 실증: node test_state_machine.js",
         "단계: 완성\n이번 주기: 상태 머신 최종 인수",
     )
     resolved = ensure_goal_ratification_scaffold(f, final_cycle)
     expanded_nonfinal = resolved.replace(
         "단계: 완성\n이번 주기: 상태 머신 최종 인수",
-        "단계: 구현 → 완성\n이번 주기: 상태 머신 구현\n"
+        "단계: 혼자 쓰는 최소판 → 둘이 겨루는 확장판\n이번 주기: 상태 머신 구현\n"
         "- 최소 구현 로드 | 실증: node test_state_machine.js",
     )
     expanded_nonfinal = ensure_goal_ratification_scaffold(f, expanded_nonfinal)
