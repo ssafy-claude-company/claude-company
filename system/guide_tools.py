@@ -220,6 +220,21 @@ def _prepare_run_exec(workspace, command):
     # 하지 않는다 — userns 안에서 host nobody uid가 매핑되지 않아 실패하고(실측), 이미 비특권이라
     # 강등할 특권도 없다. bwrap이 없는 환경(개발 머신)은 종전대로 통과시킨다.
     unpriv = os.geteuid() != 0
+    # [판별 격리 도우미 경유(2026-07-30, 설계문서 7절 (나))] 비특권 러너는 봇 셸을 판별 uid로
+    # 내릴 수 없다(bwrap 비setuid → userns uid 1개, setpriv엔 특권 필요 — 실측). 특권이 필요한
+    # 그 한 조각만 도우미가 맡고, 여기서는 도우미를 부르는 argv로 바꿔 준다. 나머지 실행·타임아웃·
+    # 로그 경로는 종전과 같다.
+    # 기본 off — 도우미가 설치되고 플래그가 켜진 때만 경유한다(설치 전 무영향).
+    if unpriv and os.environ.get("ORGANT_SANDBOX_HELPER", "0") not in ("0", "", "false", "False"):
+        helper = os.environ.get("ORGANT_SANDBOX_HELPER_PATH") or "/usr/local/sbin/organt-sandbox"
+        sudo = shutil.which("sudo")
+        if not sudo or not os.path.exists(helper):
+            return None, None, ("판별 격리 도우미를 찾을 수 없습니다 "
+                                f"({helper}) — ops/sandbox/INSTALL.md 참조.")
+        # 명령은 셸을 거치지 않고 argv 원소로 넘긴다(도우미가 샌드박스 *안*에서만 sh -c로 해석).
+        # uid는 넘기지 않는다 — 도우미가 작업공간에서 도출한다(호출자가 고르면 교차 오염).
+        return ([sudo, "-n", helper, "--workspace", ws, "--command", cmd],
+                _scrubbed_run_env(), "")
     if unpriv and not bwrap:
         exec_cmd = _rewrite_workspace_paths(cmd, ws)
         return ["/bin/sh", "-c", exec_cmd], env, ""

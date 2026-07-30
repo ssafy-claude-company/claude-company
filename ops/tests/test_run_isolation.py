@@ -107,3 +107,53 @@ def test_스크러빙된_env에_시크릿성_이름이_없다():
     leaked = [k for k in env
               if any(s in k.upper() for s in ("KEY", "TOKEN", "SECRET", "PASSWORD", "DATABASE_URL"))]
     assert leaked == [], f"봇 셸 env에 남은 시크릿성 이름: {leaked}"
+
+
+# ── [판별 격리 도우미 경유(2026-07-30, 설계문서 7절 (나))] ─────────────────────
+# 비특권 러너는 봇 셸을 판별 uid로 내릴 수 없다(실측: bwrap 비setuid → userns uid 1개).
+# 특권이 필요한 그 한 조각만 도우미가 맡는다. 기본 off — 설치 전에는 지금 동작 그대로.
+def _prep(euid, monkeypatch, tmp_path, **env):
+    import os as _os
+    from system import guide_tools as gt
+    monkeypatch.setattr(_os, "geteuid", lambda: euid)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    return gt._prepare_run_exec(str(ws), "echo hi"), str(ws)
+
+
+def test_플래그가_꺼져_있으면_도우미를_안_거친다(monkeypatch, tmp_path):
+    (argv, _e, err), _ws = _prep(1000, monkeypatch, tmp_path)
+    assert err == ""
+    assert "organt-sandbox" not in " ".join(argv)
+    assert argv[0].endswith("bwrap")          # 종전 동작 그대로
+
+
+def test_플래그가_켜지면_도우미_경유_argv가_나온다(monkeypatch, tmp_path):
+    helper = tmp_path / "organt-sandbox"
+    helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (argv, _e, err), ws = _prep(1000, monkeypatch, tmp_path,
+                                ORGANT_SANDBOX_HELPER="1",
+                                ORGANT_SANDBOX_HELPER_PATH=str(helper))
+    assert err == ""
+    assert argv[0].endswith("sudo") and str(helper) in argv
+    # uid는 넘기지 않는다 — 호출자가 고르면 판 A의 트리를 판 B uid로 넘길 수 있다
+    assert "--uid" not in argv
+    assert argv[argv.index("--workspace") + 1] == ws
+    assert argv[argv.index("--command") + 1] == "echo hi"   # 셸을 거치지 않고 argv 원소로
+
+
+def test_도우미가_없으면_통과시키지_않는다(monkeypatch, tmp_path):
+    """fail-closed — 격리를 켰다고 해 놓고 조용히 맨몸으로 돌면 안 된다."""
+    (argv, env, err), _ws = _prep(1000, monkeypatch, tmp_path,
+                                  ORGANT_SANDBOX_HELPER="1",
+                                  ORGANT_SANDBOX_HELPER_PATH=str(tmp_path / "없는파일"))
+    assert argv is None and env is None and "도우미를 찾을 수 없습니다" in err
+
+
+def test_root는_플래그와_무관하게_종전_경로다(monkeypatch, tmp_path):
+    """root는 이미 setpriv로 내려갈 수 있다 — 도우미를 거칠 이유가 없다."""
+    (argv, _e, err), _ws = _prep(0, monkeypatch, tmp_path, ORGANT_SANDBOX_HELPER="1")
+    assert err == "" and "organt-sandbox" not in " ".join(argv)
+    assert any(a.endswith("setpriv") for a in argv)
