@@ -1095,9 +1095,10 @@ async def meet(flow, me_id, args):
                     pass
             _passed0 = (len(_dissents) == 0 and _yes >= 1)
             try:
+                from .._util import clip as _clip
                 _vsum = (f"결론 확정 표결 — 찬성 {_yes} · 반대 {len(_dissents)}"
                          + (" → 확정" if _passed0 else
-                            " / 반대 요지: " + " · ".join(d[:60] for d in _dissents[:3])))
+                            " / 반대 요지: " + " · ".join(_clip(d, 200) for d in _dissents[:3])))
                 # [표결 서사 동봉(2026-07-21)] 집계 줄 아래 전 투표자의 표·사유를 구조 표기로 붙인다 —
                 # feed_assembly가 '투표: 이름 | 표 | 사유' 줄을 파싱해 펼침 렌더의 원료로 승격(본문
                 # 스크래핑 아님 — 정본 표기). 사유 없는 표는 표만.
@@ -1892,7 +1893,11 @@ async def meet(flow, me_id, args):
         # 열렸나(안건)+무엇으로 맺었나(결론)'로 읽히게 한다(collab_kind가 [회의 마무리]=meeting이라 같은 블록).
         if _landed and _conclusion:
             try:
-                _concl = f"결론 ({_agenda}) — " + str(_conclusion).replace("[표결 확정] ", "").strip()
+                # [안건 에코는 제목까지만(2026-07-30, U-442 실측)] 기계 안건 전문을 괄호에 넣어
+                # "[이번 주기: … 예산 1,00])"처럼 숫자 한가운데서 끊긴 머리가 화면에 남았다.
+                from .._util import clip as _clip
+                _head = _clip(str(_agenda or "").split(" [")[0].strip(), 60)
+                _concl = f"결론 ({_head}) — " + str(_conclusion).replace("[표결 확정] ", "").strip()
                 await _say_speech(flow, me_id, "[회의 마무리]", _concl)
                 minutes.append(f"[회의 마무리] {flow._info(me_id) or me_id}: {_concl}")
             except Exception as _e:

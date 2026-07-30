@@ -126,3 +126,18 @@ def dossier_read(flow, filename, task_id=None):
         return text if text.strip() else None
     except Exception:
         return None
+
+
+def clip(text, limit) -> str:
+    """[문장 한가운데서 끊지 않는다(2026-07-30, 사용자 지적)] 사람이 읽는 문장을 하드 컷하면
+    끊긴 표시가 없어 그게 결론 전부인 줄 읽힌다(U-442 실측: '…1명을 채용하고'에서 멈춘 주기 목표,
+    '반대 요지: … 두 명령의 exi'에서 멈춘 표결 요약). 낱말 경계에서 끊고 '…'로 줄었음을 남긴다.
+    """
+    raw = str(text or "")
+    if len(raw) <= int(limit):
+        return raw
+    cut = raw[:int(limit)]
+    sp = max(cut.rfind(" "), cut.rfind("·"), cut.rfind(","), cut.rfind("."))
+    if sp >= int(limit) * 0.6:
+        cut = cut[:sp]
+    return cut.rstrip() + "…"

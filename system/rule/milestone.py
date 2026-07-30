@@ -15,6 +15,8 @@ import hashlib
 import json
 import os
 import re
+
+from .._util import clip as _clip
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -358,24 +360,24 @@ def _ms_one(flow, ms, relays):
                 sub = str(_fmt(b.submitter) or "") if b.submitter else ""
             except Exception:
                 sub = ""
-            bl.append({"id": b.backlog_id, "d": (b.body or "")[:60], "s": b.status, "a": a,
+            bl.append({"id": b.backlog_id, "d": _clip(b.body, 160), "s": b.status, "a": a,
                        "aid": (str(b.assignee) if b.assignee else None),
                        "sub": sub, "sid": (str(b.submitter) if b.submitter else None),
                        "t0": b.ts_pick or None, "t1": b.ts_done or None,
                        "act": list(getattr(b, "activity", None) or [])[-200:]})
         # [백로그=계획 목록(2026-07-10, 사용자: '미리 만들어 두는 건데')] ST 완수조건 = 등록 순간부터
         # 존재하는 계획 단위 — 전 목록을 표면에 준다(passed=✓). 릴레이 bl은 담당·진행의 보강 데이터.
-        cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
-               "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in st.criteria[:15]]
-        sts.append({"g": st.goal[:80], "id": st.st_id, "s": st.status, "met": st_met, "total": st_total, "bl": bl, "cr": cr})
+        cr = [{"d": str(c.desc or ""), "p": bool(c.passed), "w": c.status == "waived",
+               "v": str(c.verify or ""), "e": _clip(c.evidence, 400)} for c in st.criteria[:15]]
+        sts.append({"g": _clip(st.goal, 300), "id": st.st_id, "s": st.status, "met": st_met, "total": st_total, "bl": bl, "cr": cr})
     # [완수조건 표면화(2026-07-13, 사용자: '뭐 완수했는지 보이게')] ms레벨 조건도 ✓체크리스트로
-    ms_cr = [{"d": c.desc[:80], "p": bool(c.passed), "w": c.status == "waived",
-              "v": (c.verify or "")[:160], "e": (c.evidence or "")[:240]} for c in ms.criteria[:15]]
+    ms_cr = [{"d": str(c.desc or ""), "p": bool(c.passed), "w": c.status == "waived",
+              "v": str(c.verify or ""), "e": _clip(c.evidence, 400)} for c in ms.criteria[:15]]
     # 상위 GOAL 계약은 관측용 별도 필드 — met/total 분모에는 절대 합치지 않는다.
-    locked_cr = [{"d": c.desc[:80], "v": (c.verify or "")[:160], "p": bool(c.passed),
-                  "e": (c.evidence or "")[:240]}
+    locked_cr = [{"d": str(c.desc or ""), "v": str(c.verify or ""), "p": bool(c.passed),
+                  "e": _clip(c.evidence, 400)}
                  for c in (getattr(ms, "locked_criteria", None) or [])[:15]]
-    return {"goal": ms.goal[:140], "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
+    return {"goal": str(ms.goal or ""), "ms": ms.ms_id, "met": met, "total": total, "iter": ms.iter_n, "status": ms.status,
             "cr": ms_cr, "locked_cr": locked_cr, "sts": sts}
 
 
@@ -573,9 +575,9 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
         flow.log("ms_open", ms=ms.ms_id, goal=ms.goal[:80], criteria=len(ms.criteria),
                  locked_criteria=len(ms.locked_criteria), replan=bool(origin.startswith("e2e:")))
     # [조건 상세 동봉(2026-07-10)] 피드가 '조건 N' 칩에서 목록을 보여줄 수 있게 마커에 싣는다.
-    crit_lines = "\n".join(f"· {c.desc[:96]}" for c in ms.criteria[:30])
+    crit_lines = "\n".join(f"· {_clip(c.desc, 300)}" for c in ms.criteria[:30])
     # [ID 동봉(2026-07-10)] 표면이 제목 절두 매칭(추측) 대신 ID로 정확히 부착·완수 매칭한다.
-    _pnote(flow, f"[마일스톤 시작] ({ms.ms_id}) {ms.goal[:120]} · 완수조건 {len(ms.criteria)}개"
+    _pnote(flow, f"[마일스톤 시작] ({ms.ms_id}) {ms.goal} · 완수조건 {len(ms.criteria)}개"
                  + (f"\n{crit_lines}" if crit_lines else ""))
     return ms
 
@@ -619,7 +621,7 @@ def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
     _ckpt(flow)
     if flow.log:
         flow.log("subtask_open", ms=ms.ms_id, st=st.st_id, goal=st.goal[:80])
-    _pnote(flow, f"[SubTask 개설] ({st.st_id}) {st.goal[:120]}")
+    _pnote(flow, f"[SubTask 개설] ({st.st_id}) {_clip(st.goal, 300)}")
     return st
 
 
