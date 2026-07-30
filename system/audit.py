@@ -66,6 +66,37 @@ def capability_of(tool_name, tool_input):
     return None
 
 
+_DEFAULT_AUDIT = None
+
+
+def set_default_audit(audit) -> None:
+    """이 프로세스의 공용 감사 기록기를 정한다(러너가 부팅 때 한 번).
+
+    [경로별 감사 갈림 봉합(2026-07-30, 현준-4 실측)] 도구를 실행하는 길이 셋이었다 -
+    Claude SDK 훅, codex MCP 브리지, 그리고 러너가 make_guide_tools 결과를 직접 부르는 길
+    (리더 판단·e2e 판정). 앞의 둘만 막으면 셋째로 샌다. 호출부마다 붙이는 대신 도구 자체가
+    남기게 하려면 도구가 기록기를 알아야 하는데, guide_tools는 Config를 못 본다 - 그래서
+    프로세스 하나에 기록기 하나를 둔다.
+    """
+    global _DEFAULT_AUDIT
+    _DEFAULT_AUDIT = audit
+
+
+def record_tool_use(actor=None, role=None, tool=None, tool_input=None) -> None:
+    """도구 한 번의 실행을 공용 기록기에 남긴다. 기록기가 없으면 조용히 넘어간다.
+
+    기록 실패가 도구 실행을 막지 않는다 - 기록은 관측이지 관문이 아니다.
+    """
+    a = _DEFAULT_AUDIT
+    if a is None:
+        return
+    try:
+        a.record("tool_use", actor=actor, role=role, tool=tool,
+                 tool_input=redact_tool_input(tool_input))
+    except Exception:
+        pass
+
+
 def redact_tool_input(tool_input):
     """감사에 파일 *내용 전체*를 남기지 않는다 — Write/Edit의 content/new_string/old_string을 길이 요약으로
     대체(경로·도구명은 보존). 민감 내용 유출·audit 비대화 방지(보안 핫픽스 2026-06). 다른 필드는 그대로."""

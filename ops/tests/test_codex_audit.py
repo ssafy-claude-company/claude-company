@@ -106,3 +106,45 @@ def test_파일내용_생략은_그대로다():
     out = redact_tool_input({"file_path": "/a.py", "content": "x" * 200})
     assert out["file_path"] == "/a.py"
     assert "생략" in out["content"]
+
+
+def test_도구가_스스로_감사에_남긴다(tmp_path):
+    """호출부가 셋(Claude 훅·codex 브리지·러너 직접)이라 도구 자신이 유일한 길목이다."""
+    import asyncio, json
+    from system.audit import AuditLog, set_default_audit, record_tool_use
+    from system.guide_tools import _audited
+
+    a = AuditLog(tmp_path / "audit.jsonl")
+    set_default_audit(a)
+    try:
+        class T:
+            name = "run"
+            async def handler(self, args):
+                return {"ok": True}
+
+        t = _audited([T()], me_id=7, role="백엔드")[0]
+        asyncio.run(t.handler({"cmd": "npm test", "TOKEN": "s3cr3t"}))
+        rows = [json.loads(x) for x in open(a.path, encoding="utf-8")]
+        assert len(rows) == 1
+        assert rows[0]["tool"] == "run" and rows[0]["actor"] == 7
+        assert rows[0]["tool_input"]["TOKEN"] == "<가림>"
+        assert rows[0]["tool_input"]["cmd"] == "npm test"
+    finally:
+        set_default_audit(None)
+
+
+def test_기록기가_없으면_도구는_그냥_돈다():
+    """부팅 전이나 테스트에서 기록기가 없어도 도구 실행은 막히지 않는다."""
+    import asyncio
+    from system.audit import set_default_audit
+    from system.guide_tools import _audited
+
+    set_default_audit(None)
+
+    class T:
+        name = "run"
+        async def handler(self, args):
+            return {"ok": True}
+
+    t = _audited([T()], me_id=1, role="r")[0]
+    assert asyncio.run(t.handler({})) == {"ok": True}

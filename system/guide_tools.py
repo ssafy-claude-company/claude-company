@@ -752,6 +752,34 @@ def _active_scoped_backlog(flow, subtasks):
     return None
 
 
+def _audited(tools, me_id, role):
+    """도구 실행을 공용 감사에 남기도록 감싼다.
+
+    [경로별 감사 갈림 봉합(2026-07-30, 현준-4)] 도구를 실행하는 길이 셋(Claude 훅·codex 브리지·
+    러너 직접 호출)이라 호출부마다 붙이면 반드시 하나가 빠진다. 도구가 스스로 남기면
+    길이 몇 개든 상관없다 - 여기가 유일한 길목이다.
+    """
+    from .audit import record_tool_use
+    out = []
+    for t in tools:
+        name = getattr(t, "name", None)
+        inner = getattr(t, "handler", None)
+        if inner is None:
+            out.append(t)
+            continue
+
+        async def _wrapped(args, _inner=inner, _name=name):
+            record_tool_use(actor=me_id, role=role, tool=_name, tool_input=args)
+            return await _inner(args)
+
+        try:
+            t.handler = _wrapped        # 도구 객체는 그대로 두고 손잡이만 바꾼다
+        except Exception:
+            pass                        # 못 바꾸면 원본 그대로 - 기록이 도구를 막지 않는다
+        out.append(t)
+    return out
+
+
 def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     # [G3 — 캐주얼 도구 미장착(B-06)] mode="casual"이면 협업·제작 도구(request·recruit·리더도구)를 아예
     # 장착하지 않고 run만 준다(일상 대화 턴의 오발 프로젝트를 프롬프트가 아니라 구조로 차단 — 스키마 토큰도
@@ -1595,7 +1623,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return _res
         tools.append(complete_task)
 
-    return tools
+    return _audited(tools, me_id, role)
 
 
 def build_guide_server(flow: Flow, me_id: int, role: str, mode: str = "collab"):
