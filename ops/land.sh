@@ -45,8 +45,11 @@ done
 #     '0 커밋'으로 삼켜 조용히 병합 0건이 되던 결함 수선, 2026-07-09 이현준-3.)
 # [P1 수선 2026-07-30] 병합 전 두 정본의 HEAD를 기록 — verify 실패 시 자동 롤백해
 # "정본은 새 코드·라이브는 옛 코드"인 반쪽 상태를 사람 손에 남기지 않는다(현준-4 실측).
+# [수선 2026-07-30 2차] 롤백은 ①이번에 병합한 레포만 ②HEAD가 아직 우리 병합 결과일 때만.
+# 무조건 pre-HEAD 리셋은 검증 중 끼어든 남의 커밋을 고아로 만든다(459a87a 실사고 — 복구됨).
 pre_cc=$(git -C "$MS" rev-parse HEAD)
 pre_mm=$(git -C "$MS/murmur" rev-parse HEAD)
+merged_cc=0; merged_mm=0
 
 merged=0
 for spec in $REPOS; do
@@ -70,6 +73,7 @@ for spec in $REPOS; do
       echo "     ALLOW_CANON_COMMIT=1 git -C $main commit  (사유를 메시지에) 하고 다시 land.sh"; exit 1
     fi
     merged=$((merged+1))
+    [ "$name" = "claude-company" ] && merged_cc=1 || merged_mm=1
   fi
 done
 [ "$merged" = 0 ] && { echo "병합할 커밋 없음(브랜치가 정본과 같음)."; exit 0; }
@@ -82,13 +86,24 @@ m=$(git -C "$MS/murmur" rev-parse --short HEAD)
 sed -i -E "0,/^(murmur[[:space:]]+)[0-9a-f]+/s//\1$m/" "$MS/ops/STATE.md"
 git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" 2>/dev/null || true
 
-# 4) 정본 전체 검증 — 실패 시 자동 롤백(병합 전 HEAD로), 라이브는 옛 코드 그대로 유지
+# 4) 정본 전체 검증 — 실패 시 자동 롤백. 단 ①이번에 병합한 레포만 ②HEAD가 아직 우리
+#    결과(post_*)일 때만 되돌린다. 검증 중 끼어든 남의 커밋은 절대 리셋하지 않는다.
+post_cc=$(git -C "$MS" rev-parse HEAD)          # 스탬프 커밋 포함 시점
+post_mm=$(git -C "$MS/murmur" rev-parse HEAD)
 echo "════ 정본 전체 검증 ════"
 if ! MURMUR_ROOT="$MS" bash "$MS/ops/verify.sh"; then
-  echo "❌ 검증 실패 — 병합 전 상태로 자동 롤백한다(브랜치 s/$S 는 그대로 남음)."
-  git -C "$MS" reset --hard -q "$pre_cc"
-  git -C "$MS/murmur" reset --hard -q "$pre_mm"
-  echo "   롤백 완료: claude-company=$pre_cc murmur=$pre_mm"
+  echo "❌ 검증 실패 — 자동 롤백 판단(브랜치 s/$S 는 그대로 남음)."
+  rollback_one() { # <이름> <경로> <merged?> <pre> <post>
+    [ "$3" = 1 ] || { echo "   $1: 이번 착지에서 병합 없음 — 손대지 않음"; return; }
+    cur=$(git -C "$2" rev-parse HEAD)
+    if [ "$cur" = "$5" ]; then
+      git -C "$2" reset --hard -q "$4"; echo "   $1: 롤백 완료 → $4"
+    else
+      echo "   $1: ⚠ 검증 중 HEAD가 또 움직임($cur) — 자동 롤백 불가, 수동 확인 필요"
+    fi
+  }
+  rollback_one claude-company "$MS"        "$merged_cc" "$pre_cc" "$post_cc"
+  rollback_one murmur         "$MS/murmur" "$merged_mm" "$pre_mm" "$post_mm"
   echo "   원인 확인 후 다시 land.sh — verify가 비결정 의심이면 같은 트리에서 재실행해 볼 것."
   exit 1
 fi
