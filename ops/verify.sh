@@ -84,7 +84,7 @@ done
 echo "== 6-1) 라이브 프로세스 (배포가 두 프로세스가 됐다 — 2026-07-28) =="
 # 웹만 재시작하고 스트림(murmur-sse)을 잊으면, 화면은 멀쩡한데 실시간만 조용히 낡는다.
 # 오류가 아니라 '아무 일도 안 일어남'으로 나타나는 종류라 사람이 못 잡는다 — 게이트가 잡는다.
-for _u in murmur-web murmur-sse; do
+for _u in murmur-web murmur-sse murmur-voice; do
   if systemctl is-active --quiet "$_u" 2>/dev/null; then echo "  $_u ✓"
   else echo "  $_u ⚠ 죽어 있음"; fail=1; fi
 done
