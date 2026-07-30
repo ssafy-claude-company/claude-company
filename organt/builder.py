@@ -191,6 +191,9 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         _org = Organt(cfg, build_options(cfg, **_bopts),
                       state_path=str(state_path), on_activity=heartbeat, narrate=narrate, on_turn=on_turn)
         _org._organt_turn_record = turn_record
+        # [서버 단위 상한(2026-07-29)] 봇풀이 '어느 채널의 턴인가'를 알아야 테넌트별 슬롯을 건다.
+        # scope는 흐름의 세션 스코프(= 프로젝트 id)라 채널 단위와 일치한다.
+        _org._organt_tenant = scope
         # [GPT 봇(2026-07-22, 사용자: 'gpt로 봇들 지능 바꿔')] 모델이 gpt-*면 Claude SDK 대신 codex 경로로
         # 돈다 — 원 guide 도구를 그대로 심어 CodexBackend가 HTTP 브리지로 codex에 물린다(Claude 봇은 불변).
         if _m and str(_m).startswith("gpt-") and flow is not None:
