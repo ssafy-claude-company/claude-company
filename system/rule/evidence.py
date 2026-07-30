@@ -19,6 +19,15 @@ def normalize_verifier_command(command) -> str:
     raw = str(command or "").strip()
     if len(raw) >= 2 and raw.startswith("`") and raw.endswith("`") and raw.count("`") == 2:
         return raw[1:-1].strip()
+    # [명령 뒤에 붙는 설명(2026-07-30, ch263 실측)] 회의가 지시대로 명령을 backtick으로 적고 뒤에
+    # 설명을 달았다: `` `python3 verify_ui.py` (exit code 0 required; …) ``. 종전 정규형은 전체가
+    # 감싸였을 때만 벗겨, 설명까지 명령으로 읽고 거부했다 — 판이 밀스톤 회의에서 4회 막혀 파킹됐다.
+    # 명령이 맨 앞 inline-code 한 쌍이고 뒤가 설명뿐이면 그 안쪽만 명령으로 읽는다(설명은 버려지므로
+    # 실행 대상이 되지 않는다). 뒤가 쉘 연결자로 시작하면 명령이 이어지는 뜻이라 손대지 않는다.
+    if raw.startswith("`") and raw.count("`") == 2:
+        inner, _, tail = raw[1:].partition("`")
+        if inner.strip() and not tail.lstrip().startswith(("&", "|", ";", ">", "<")):
+            return inner.strip()
     return raw
 
 
