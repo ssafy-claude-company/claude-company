@@ -391,7 +391,10 @@ async def meet(flow, me_id, args):
                         flow.log("panel_topfit_passed", who=int(_top))
             except Exception:
                 pass
-            if len(_sel) >= 2:
+            # [응찰한 사람들끼리 정한다(2026-07-30, 사용자 지시)] 종전엔 2명 이상일 때만 심의단이
+            # 서고, 한 명만 응찰하면 전원 체제로 돌아갔다 — 그 한 명의 도메인 판단이 판단 근거 없는
+            # 다수의 찬반에 묻힌다. 한 명이면 그 한 명이 정한다(독식). 아무도 응찰 안 하면 전원.
+            if len(_sel) >= 1:
                 members = _sel
                 try:
                     _chp = (flow.current.thread_id if flow.current else None) or flow.user_channel
@@ -926,15 +929,18 @@ async def meet(flow, me_id, args):
                         f"금지 — 지금 이 텍스트만 보고 즉답. 전원 찬성이어야 확정, 반대는 병합 후 재표결. "
                         f"찬성이어도 마지막 줄에 `[실패한다면: 한 줄]`을 덧붙이세요(사전부검 — 이 결론이 "
                         f"실패한다면 가장 그럴듯한 이유. 표에는 영향 없고 위험 기록으로만 남습니다).")
-            # [확정 표결 = 전원(2026-07-21, U-039 실측 — 사용자: '의견은 못 했어도 찬반은 전체가
-            # 참여해야지')] 종전엔 심의단(축소 후 members — 2~3명)만 표결해 '찬성 2 → 확정'으로 모호한
-            # 결론이 쉽게 가결됐다. 발언(비용 큰 턴)은 심의단이 맡되, 찬반(마이크로 즉답)은 팀 전원 —
-            # 비참여 도메인이 결론의 구멍(장르 미정 등)을 막을 표면을 갖는다. 반대=병합 원료(종전 동일).
-            _voters = list(dict.fromkeys(list(_team_full) + list(members)))
+            # [말하는 사람과 정하는 사람을 일치시킨다(2026-07-30, 사용자 지시)] 종전엔 심의는
+            # 응찰자가 하고 확정 표결은 팀 전원이었다(2026-07-21 결정). 실측(U-079 GOAL 회의):
+            # 응찰 5명이 심의했는데 게임 기획자가 「별빛 회피」를 먼저 써 넣자 나머지는 그 위에
+            # 조건만 덧붙였고, 도메인이 안 걸린 사람들은 판단 근거 없이 찬성했다 — 결정의 무게가
+            # 발언과 어긋나 한 사람의 첫 안이 사실상 독식했다. 응찰한 사람들끼리 정한다.
+            # 심의단이 안 섰을 때(무응찰)만 종전처럼 전원이 유권자다.
+            _voters = list(dict.fromkeys(list(members)))
             _yes, _dissents, _premortems, _against_ids = 0, [], [], []
             try:
-                flow._meet_stage_note = f"표결 진행 중 — 전원 {len(_voters)}명"
-                flow.note_activity(0, f"🗳 결론 확정 표결 진행 — 전원 {len(_voters)}명 응답 수집", force=True)
+                _vlabel = "단독 결정" if len(_voters) == 1 else f"응찰 {len(_voters)}명"
+                flow._meet_stage_note = f"표결 진행 중 — {_vlabel}"
+                flow.note_activity(0, f"🗳 결론 확정 표결 — {_vlabel} 응답 수집", force=True)
             except Exception:
                 pass
             _ballots = []   # [표결 서사(2026-07-21, 사용자: '찬성·반대 이유 서사가 잘 보이게')] 전 투표자 (이름·표·사유)

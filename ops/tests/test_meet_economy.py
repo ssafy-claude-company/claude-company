@@ -894,11 +894,12 @@ def test_DRAFT쓰기실패_wakecap경계_사람개입은_등록보류하고_큐�
     assert not str(f.current.status.goal or "").strip()
 
 
-def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
-    """[U-039 실측(2026-07-21, 사용자: '왜 회의는 3명만 — 의견은 못 했어도 찬반은 전체가 참여해야')]
-    심의단 축소(발언 비용 처방) 후 확정 표결까지 심의단만 돌아 '찬성 2 → 확정'으로 모호한 결론이
-    쉽게 가결됐다. 발언 = 심의단, 찬반(마이크로 즉답) = 팀 전원 — 비참여 도메인이 결론의 구멍
-    (장르 미정 등)을 막을 표면을 갖는다."""
+def test_확정표결은_응찰한_사람들끼리(monkeypatch, tmp_path):
+    """[2026-07-30, 사용자 지시 — 종전 U-039(2026-07-21) 결정을 뒤집는다]
+    종전엔 발언=심의단, 찬반=팀 전원이었다. 실측(U-079 GOAL 회의): 응찰 5명이 심의했는데 게임
+    기획자가 「별빛 회피」를 먼저 써 넣자 나머지는 조건만 덧붙였고, 도메인이 안 걸린 사람들은
+    판단 근거 없이 찬성했다 — 한 사람의 첫 안이 사실상 독식했다. 말하는 사람과 정하는 사람을
+    일치시킨다: 응찰한 사람들끼리 정하고, 혼자 응찰했으면 그 한 명이 정한다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
                                       15: "PM", 16: "데이터"})
@@ -925,7 +926,7 @@ def test_확정표결은_심의단이_아니라_전원(monkeypatch, tmp_path):
     asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
     asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
                                    "my_opinion": "여는 의견"}))
-    assert {12, 13, 14, 15, 16} <= voters              # 심의단 밖(14·15·16)도 찬반 참여
+    assert voters == {12, 13}, "응찰한 사람들끼리 정한다 — 심의단 밖은 표결에 안 들어온다"
 
 
 def test_반대우세_소진은_확정안됨_다수결바닥(monkeypatch, tmp_path):
