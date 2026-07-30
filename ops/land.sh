@@ -90,8 +90,39 @@ git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.emai
 #    결과(post_*)일 때만 되돌린다. 검증 중 끼어든 남의 커밋은 절대 리셋하지 않는다.
 post_cc=$(git -C "$MS" rev-parse HEAD)          # 스탬프 커밋 포함 시점
 post_mm=$(git -C "$MS/murmur" rev-parse HEAD)
-echo "════ 정본 전체 검증 ════"
-if ! MURMUR_ROOT="$MS" bash "$MS/ops/verify.sh"; then
+# [P2 수선 2026-07-30] 검증은 정본 트리가 아니라 **그 순간의 스냅샷**에서 돈다.
+#   왜: verify가 정본을 대상으로 도는데 다른 세션이 같은 트리를 계속 고친다(STATE.md 쓰기·자기
+#   착지). flock은 착지끼리만 직렬화하고 일반 편집은 막지 않아, 검증이 무작위로 red가 됐다
+#   (현준-4 실측 2건: 브레인 테스트 1건이 떴다가 같은 트리 3회 재실행에서 965/965 통과 /
+#   게이트 5가 STATE 갱신 필요로 떴다가 즉시 재판정에서 통과). red면 배포가 멈추므로 남의 편집이
+#   내 착지를 떨어뜨렸다. 스냅샷은 우리가 병합한 커밋에 고정돼 검증이 결정론이 된다.
+#   .venv·node_modules는 트리 밖 자산이라 심링크로 빌려준다(복사는 수 GB·수 분).
+#   스냅샷을 못 만들면 종전대로 정본에서 검증한다(검증 자체를 못 하게 만들지 않는다).
+snap=""; snap_ok=""
+_snap_make() {
+  snap="$(mktemp -d /tmp/land-verify-XXXXXX)/t"
+  git -C "$MS" worktree add --detach -q "$snap" "$post_cc" 2>/dev/null || return 1
+  git -C "$MS/murmur" worktree add --detach -q "$snap/murmur" "$post_mm" 2>/dev/null || return 1
+  ln -s "$MS/.venv" "$snap/.venv" || return 1
+  ln -s "$MS/murmur/frontend/node_modules" "$snap/murmur/frontend/node_modules" || return 1
+  return 0
+}
+_snap_drop() {
+  [ -n "$snap" ] || return 0
+  git -C "$MS/murmur" worktree remove --force "$snap/murmur" 2>/dev/null
+  git -C "$MS" worktree remove --force "$snap" 2>/dev/null
+  rm -rf "$(dirname "$snap")" 2>/dev/null
+  git -C "$MS" worktree prune 2>/dev/null; git -C "$MS/murmur" worktree prune 2>/dev/null
+}
+trap _snap_drop EXIT
+if _snap_make; then
+  snap_ok=1; VR="$snap"
+  echo "════ 검증(스냅샷 — 남의 동시 편집에 흔들리지 않게) ════"
+else
+  _snap_drop; snap=""; VR="$MS"
+  echo "════ 정본 전체 검증 (⚠ 스냅샷 실패 — 동시 편집에 흔들릴 수 있음) ════"
+fi
+if ! MURMUR_ROOT="$VR" bash "$VR/ops/verify.sh"; then
   echo "❌ 검증 실패 — 자동 롤백 판단(브랜치 s/$S 는 그대로 남음)."
   rollback_one() { # <이름> <경로> <merged?> <pre> <post>
     [ "$3" = 1 ] || { echo "   $1: 이번 착지에서 병합 없음 — 손대지 않음"; return; }
@@ -115,6 +146,16 @@ fi
 #    "둘다 해도 되겠는데") + 판 진행 중 웹 재시작은 guide 3회 재시도가 흡수(현준-1 실측).
 #    판 한복판임을 아는 세션은 LAND_SKIP_RUNNER=1 로 러너만 건너뛸 수 있다(사후 직접 재시작).
 echo "════ 라이브 반영 ════"
+# [P2 수선의 짝] 검증이 스냅샷에서 돌면 그 빌드 결과도 스냅샷에 남는다 — 라이브가 읽는 dist는
+# 정본에 있으므로 여기서 정본을 빌드한다. 이 단계는 게이트가 아니라 산출물 만들기다(검증은 이미
+# 끝났다). 실패하면 옛 dist가 그대로 서비스되어 화면만 낡으므로, 경고를 크게 남긴다.
+_snap_drop; snap=""              # 검증 끝 — 스냅샷은 여기서 치운다(디스크·worktree 목록 정리)
+if ( cd "$MS/murmur/frontend" && npm run build >/tmp/land-build.log 2>&1 ); then
+  echo "  프론트 dist 재빌드 — 정본 반영"
+else
+  echo "  ⚠ 프론트 빌드 실패 — 화면이 낡은 채 남는다. /tmp/land-build.log 확인 후 수동 빌드:"
+  echo "     cd $MS/murmur/frontend && npm run build"
+fi
 # 2026-07-28 SSE 도입으로 웹은 2프로세스(murmur-web :8000 + murmur-sse :8002) — 둘 다 재시작.
 for svc in murmur-web murmur-sse; do
   systemctl restart "$svc" && echo "  $svc 재시작 — 반영 완료" \

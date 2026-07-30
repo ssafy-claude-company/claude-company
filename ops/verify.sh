@@ -64,6 +64,13 @@ echo "== 6) 원격 백업 신선도 (미푸시 감지) =="
 for _r in "$R" "$R/murmur"; do
   _n=$([ "$_r" = "$R" ] && echo claude-company || echo murmur)
   _u=$(git -C "$_r" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+  # [스냅샷 검증 대응 2026-07-30] land.sh는 정본이 아니라 detached 스냅샷에서 이 검증을 돌린다
+  # (남의 동시 편집에 흔들리지 않게 — P2). detached HEAD엔 upstream이 없어 @{u}가 비고, 종전엔
+  # 그걸 '원격 미연결(백업 없음)'로 읽어 실제 미푸시 상태를 가렸다. 백업 대상은 origin/main이니
+  # 그 ref와 직접 대조한다 — 정본에서도 결과가 같고, 스냅샷에서도 참이 된다.
+  if [ -z "$_u" ] && git -C "$_r" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    _u=origin/main
+  fi
   if [ -z "$_u" ]; then
     echo "  $_n  ⚠ 원격 미연결 — 이 디스크가 유일본(백업 없음)"
   else
