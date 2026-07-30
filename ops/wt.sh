@@ -31,6 +31,10 @@ case "$CMD" in
     echo "  [브랜치] murmur"
     ln -s "$MS/.venv" "$W/.venv"
     ln -sfn "$MS/murmur/frontend/node_modules" "$W/murmur/frontend/node_modules" 2>/dev/null || true
+    # [P2 수선 2026-07-30] dist 스냅샷 복사 — 없으면 CSP 자산 테스트 2건이 워크트리에서
+    # 항상 red라 착지 전 green 확인이 불가했다(현준-4 실측). 심링크는 금지: 워크트리
+    # 빌드가 심링크를 타고 정본 dist(=라이브 서빙 파일)를 덮는다.
+    [ -d "$MS/murmur/frontend/dist" ] && cp -r "$MS/murmur/frontend/dist" "$W/murmur/frontend/dist" 2>/dev/null || true
     echo "✓ 스택: $W"
     echo "  워커 진입:  MURMUR_ROOT=$W bash $W/ops/verify.sh --only <레포>" ;;
   rm)

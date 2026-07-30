@@ -12,6 +12,8 @@
 - 세션 시작: **`bash ops/wt.sh new <세션이름>`** → `/root/wt/<세션이름>`에서 개발·커밋 → **`bash ops/land.sh <세션이름>`**(검증+정본 병합).
 - 정본 직접 커밋은 pre-commit 훅이 **차단**한다(worktree는 통과). 비상 탈출구는 훅 메시지 참조.
 - dojin 계정 세션은 `sudo -n` 접두(트리가 root 소유). 예: `sudo -n bash ops/wt.sh new 현준-1`.
+- **`ops/STATE.md`도 자기 worktree에서 편집해 착지하라.** 정본 STATE.md 직접 편집은 모든 세션의 착지를 막는다(정본 dirty 가드) — 2026-07-29 실측: 13시간 dirty로 착지 3회 전부 차단.
+- **origin 직접 push 금지** — 푸시는 land.sh가 착지 끝에 한다. 직접 푸시는 정본-원격을 가르고 남의 착지에 가짜 경고를 띄운다(2026-07-29 b8cb45c 실사고).
 - 상세·경위: `ops/STATE.md` "세션 격리 재실효화" 절.
 
 ## 구조 (정본 = `/root/ClaudeCompany`, 편집은 자기 worktree에서)

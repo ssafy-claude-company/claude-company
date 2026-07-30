@@ -43,6 +43,11 @@ done
 # 2) 자기 브랜치(s/$S)를 정본에 병합 — 정본 브랜치는 그 체크아웃이 실제로 서 있는 브랜치.
 #    (claude-company 정본은 main이 아니라 **master**다 — 하드코딩 'main'이 rev-list 실패를
 #     '0 커밋'으로 삼켜 조용히 병합 0건이 되던 결함 수선, 2026-07-09 이현준-3.)
+# [P1 수선 2026-07-30] 병합 전 두 정본의 HEAD를 기록 — verify 실패 시 자동 롤백해
+# "정본은 새 코드·라이브는 옛 코드"인 반쪽 상태를 사람 손에 남기지 않는다(현준-4 실측).
+pre_cc=$(git -C "$MS" rev-parse HEAD)
+pre_mm=$(git -C "$MS/murmur" rev-parse HEAD)
+
 merged=0
 for spec in $REPOS; do
   name="${spec%%:*}"; rest="${spec#*:}"; main="${rest%%:*}"
@@ -71,14 +76,21 @@ done
 
 # 3) murmur 스탬프 갱신(claude-company는 STATE 동거라 신선도 info)
 #    LAND_OK=1: 정본 직접 커밋을 막는 pre-commit 훅의 착지 전용 통과로.
+#    [P0 수선 2026-07-30] 첫 매치(← HEAD 줄)만 — 종전엔 모든 'murmur <해시>' 줄을 덮어
+#    과거 착지 기록의 해시가 매번 최신으로 밀렸다(현준-4 실측, 9e3b108 diff).
 m=$(git -C "$MS/murmur" rev-parse --short HEAD)
-sed -i -E "s/^(murmur[[:space:]]+)[0-9a-f]+/\1$m/" "$MS/ops/STATE.md"
+sed -i -E "0,/^(murmur[[:space:]]+)[0-9a-f]+/s//\1$m/" "$MS/ops/STATE.md"
 git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" 2>/dev/null || true
 
-# 4) 정본 전체 검증
+# 4) 정본 전체 검증 — 실패 시 자동 롤백(병합 전 HEAD로), 라이브는 옛 코드 그대로 유지
 echo "════ 정본 전체 검증 ════"
 if ! MURMUR_ROOT="$MS" bash "$MS/ops/verify.sh"; then
-  echo "❌ 착지 후 검증 실패 — 위 확인. (되돌리기: git -C $MS reset --hard / git -C $MS/murmur reset --hard)"; exit 1
+  echo "❌ 검증 실패 — 병합 전 상태로 자동 롤백한다(브랜치 s/$S 는 그대로 남음)."
+  git -C "$MS" reset --hard -q "$pre_cc"
+  git -C "$MS/murmur" reset --hard -q "$pre_mm"
+  echo "   롤백 완료: claude-company=$pre_cc murmur=$pre_mm"
+  echo "   원인 확인 후 다시 land.sh — verify가 비결정 의심이면 같은 트리에서 재실행해 볼 것."
+  exit 1
 fi
 
 # 5) 라이브 반영 — 착지의 마지막 단계 (2026-07-28 추가, 현준-1 스큐 분석)
@@ -102,4 +114,11 @@ if git -C "$MS" diff --name-only "HEAD@{1}..HEAD" 2>/dev/null | grep -qE '^(syst
       || echo "  ⚠ organt-runner 재시작 실패 — systemctl status organt-runner 확인"
   fi
 fi
-echo "✅ '$S' 착지 완료 — 정본 ALL_GREEN + 라이브 반영."
+# 6) 원격 백업 — 푸시는 land.sh만 한다(세션 직접 푸시 금지: 정본-원격 갈라짐 방지, P3).
+#    실패는 경고만 — 착지·반영은 이미 끝난 상태라 되돌릴 이유가 없다.
+for spec in "claude-company:$MS" "murmur:$MS/murmur"; do
+  name="${spec%%:*}"; path="${spec#*:}"
+  git -C "$path" push origin main -q 2>/dev/null && echo "  $name → origin 푸시" \
+    || echo "  ⚠ $name origin 푸시 실패(다음 착지나 자정 백업이 재시도)"
+done
+echo "✅ '$S' 착지 완료 — 정본 ALL_GREEN + 라이브 반영 + 원격 백업."
