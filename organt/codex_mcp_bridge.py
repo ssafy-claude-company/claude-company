@@ -73,13 +73,16 @@ class CodexToolBridge:
             # 기간). 봇이 무엇을 실행했는지 기록이 없으면 사후 추적이 불가능하고, 오늘 만든 통제의
             # 근거(도구 사용 통계)도 절반만 보게 된다. 알 수 없는 도구도 '부르려 했다'는 사실이라
             # 함께 남긴다. 기록 실패가 도구 실행을 막지 않는다.
-            if self._audit is not None:
-                try:
-                    self._audit(name, arguments or {})
-                except Exception:
-                    pass
             tool = next((x for x in self._tools if x.name == name), None)
             if tool is None:
+                # 실행된 도구는 도구 자신이 남긴다(guide_tools._audited) - 여기서 또 남기면
+                # 같은 호출이 두 줄이 된다. 브리지만 볼 수 있는 사실은 '없는 도구를 부르려
+                # 했다'는 것 하나뿐이라, 그것만 남긴다(오발·탐색 시도의 유일한 흔적).
+                if self._audit is not None:
+                    try:
+                        self._audit(name, arguments or {})
+                    except Exception:
+                        pass
                 return [_mt.TextContent(type="text", text=f"(알 수 없는 도구: {name})")]
             res = await tool.handler(arguments or {})
             out = []
