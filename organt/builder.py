@@ -111,7 +111,25 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                         error=str(rec.get("error") or "")[:300],
                     )
                     if getattr(flow, "log", None):
-                        flow.log("turn_done", bot=organt_id, role=label, **rec)
+                        # [무엇을 하던 턴인가(2026-07-30, U-079 정밀검사)] 종전 turn_done엔 목적이 없어
+                        # 구간별 원가를 '주변 이벤트로 추정'할 수밖에 없었다 — 그 추정이 틀리면 최적화
+                        # 설계 전체가 틀린 지도 위에 선다. SYS가 턴을 걸 때 붙여둔 목적을 그대로 싣는다.
+                        _pp = (getattr(flow, "_turn_purpose", None) or {}).get(organt_id)
+                        # [물리적으로 불가능한 결산은 표시한다] 3초 턴에 출력 2.6만 토큰 같은 값은
+                        # 그 턴의 소비가 아니라 스레드 누계가 새어든 것이다. 조용히 지나가면 원가
+                        # 지도가 통째로 왜곡되므로, 관측 가능한 신호로 남긴다.
+                        _ms = int(rec.get("duration_ms") or 0)
+                        _out = int(rec.get("tokens_out") or 0)
+                        _rate = (_out / max(_ms / 1000.0, 0.001)) if _out else 0.0
+                        _bad = bool(_ms > 0 and _rate > 400)
+                        flow.log("turn_done", bot=organt_id, role=label,
+                                 **({"purpose": _pp} if _pp else {}),
+                                 **({"usage_suspect": round(_rate)} if _bad else {}), **rec)
+                        if _bad:
+                            flow.log("usage_implausible", bot=organt_id, role=label,
+                                     out_per_s=round(_rate), duration_ms=_ms,
+                                     tokens_out=_out, tokens_in=int(rec.get("tokens_in") or 0),
+                                     sid=str(rec.get("sid") or "")[:16])
                 except Exception:
                     pass
                 # [사용량 귀속(2026-07-18, 운영/과금)] 턴 비용을 채널 단위로 웹에 보고 → 보드 주인 원장 적립.
