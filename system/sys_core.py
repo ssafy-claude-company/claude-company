@@ -2101,6 +2101,49 @@ class Sys:
             await self._backlog_handoff(flow, r, int(who))
         return True
 
+    async def _drive_one_backlog(self, flow, who, b, st_id) -> bool:
+        """진행 중 백로그 하나를 이어-구동한다(구동 상한·완료 판정 포함) — 병렬 구동의 단위."""
+        b._drive_n = getattr(b, "_drive_n", 0) + 1
+        # [끝나지 않는 일감은 판 전체를 세운다(2026-07-29, U-079 실측: ST-9/B1을 41번 이어-구동
+        # 하다 판이 '무진전'으로 중단)] 같은 항목을 무한히 다시 밀면, 못 끝내는 한 사람 때문에
+        # 순차 1활성 규칙에 걸린 나머지 갈래가 통째로 굶는다. 상한을 넘으면 그 항목만 차단으로
+        # 보존하고(사유·횟수 기록) 릴레이는 다음으로 간다 — 차단은 폐기가 아니라 '지금은 못 한다'다.
+        # [상한은 사이클보다 낮아야 한다(2026-07-29, 실측)] 12로 뒀더니 한 번도 못 걸렸다 —
+        # 한 픽 사이클이 대략 7회 구동에서 끝나고, 그 사이클이 무진전이면 판이 먼저 '무진전
+        # 중단'으로 닫힌다. 상한이 사이클보다 늦으면 없는 것과 같다.
+        _cap = max(3, int(os.environ.get("ORGANT_BACKLOG_DRIVE_CAP", "5") or 5))
+        if b._drive_n > _cap:
+            try:
+                r_ = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
+                _why = (f"이어-구동 {b._drive_n}회에도 완료 표식이 없어 보존합니다 — 선행이 "
+                        f"필요하거나 범위가 큽니다. 보충 작업 뒤 다시 집습니다.")
+                if r_ is not None and hasattr(r_, "block"):
+                    r_.block(int(who), b.backlog_id, _why)
+                else:
+                    b.status, b.block_reason = "blocked", _why
+            except Exception:
+                b.status = "blocked"
+            try:
+                if not getattr(b, "activity", None) or b.activity[-1] != f"[보존] {_why}":
+                    b.activity.append(f"[보존] {_why}")
+            except Exception:
+                pass
+            self._log("backlog_drive_cap_blocked", backlog=str(b.backlog_id),
+                      st=str(st_id), by=int(who), drives=int(b._drive_n))
+            from .rule.milestone import _ckpt as _ck2
+            _ck2(flow)
+            return True
+        result = await self.run_turn(
+            flow, who,
+            f"[작업중 — 이어서] 백로그 {b.backlog_id}(\"{(b.body or '')[:70]}\")가 아직 당신 손에 "
+            f"있습니다 — **바로 이어서 완성**(파일·코드·실행)하세요. 선행 작업이 꼭 필요하면 "
+            f"block_backlog로 보존하세요. 끝냈으면 한 일·핵심 결정·파일 경로를 3~5줄로 요약한 "
+            f"뒤 **마지막 독립 줄에 정확히 `[백로그 완료]`**를 쓰세요. 이 표식은 품질 증거가 "
+            f"아니라 상태 전이 선언이며 품질은 마일스톤 검증이 맡습니다. 못 끝냈으면 표식을 "
+            f"쓰지 마세요. 회의·의견이 아니라 작업입니다.",
+            Kind.INFO, "worker")
+        return bool(await self._finish_backlog_turn(
+            flow, who, b, st_id, result))
     async def _claim_kick(self, flow):
         """[구조적 백로그 릴레이(2026-07-23, 사용자: '계획처럼 실행도 구조로 강제')] 봇의 자발적
         pick_backlog/report_iter 호출에 기대지 않고 **구조가 릴레이를 민다** — 계획 단계 게이트와 대칭.
@@ -2126,51 +2169,24 @@ class Sys:
             _r0 = _reviveB(flow)
             if _r0:
                 self._log("backlog_unblocked_by_exhaustion", backlogs=list(_r0)[:8])
-            # ① 진행 중 백로그를 이어-구동 (단일 활성)
+            # ① 진행 중 백로그를 이어-구동
+            # [겹치지 않으면 함께 민다(2026-07-30, 사용자 지시)] 쓰기 영역이 겹치지 않아 동시에 착수된
+            # 일감들은 구동도 함께여야 의미가 있다 — 하나씩 밀면 병렬 착수가 직렬 대기로 되돌아간다.
+            # 서로 다른 봇이 서로 다른 파일을 만지므로 같은 시각에 돌아도 충돌하지 않는다.
+            from .rule.backlog import active_backlog_rows as _act_rows
+            _rows = [x for x in _act_rows(flow) if int(getattr(x[2], "assignee", 0) or 0)]
+            if len(_rows) > 1:
+                import asyncio as _aio
+                self._log("backlog_parallel_drive", n=len(_rows),
+                          backlogs=[str(x[2].backlog_id) for x in _rows][:6])
+                _res = await _aio.gather(
+                    *[self._drive_one_backlog(flow, int(x[2].assignee), x[2], x[0].st_id)
+                      for x in _rows], return_exceptions=True)
+                return any(r is True for r in _res)
             active = self._backlog_in_progress(flow)
             if active is not None:
                 who, b, st_id = active
-                b._drive_n = getattr(b, "_drive_n", 0) + 1
-                # [끝나지 않는 일감은 판 전체를 세운다(2026-07-29, U-079 실측: ST-9/B1을 41번 이어-구동
-                # 하다 판이 '무진전'으로 중단)] 같은 항목을 무한히 다시 밀면, 못 끝내는 한 사람 때문에
-                # 순차 1활성 규칙에 걸린 나머지 갈래가 통째로 굶는다. 상한을 넘으면 그 항목만 차단으로
-                # 보존하고(사유·횟수 기록) 릴레이는 다음으로 간다 — 차단은 폐기가 아니라 '지금은 못 한다'다.
-                # [상한은 사이클보다 낮아야 한다(2026-07-29, 실측)] 12로 뒀더니 한 번도 못 걸렸다 —
-                # 한 픽 사이클이 대략 7회 구동에서 끝나고, 그 사이클이 무진전이면 판이 먼저 '무진전
-                # 중단'으로 닫힌다. 상한이 사이클보다 늦으면 없는 것과 같다.
-                _cap = max(3, int(os.environ.get("ORGANT_BACKLOG_DRIVE_CAP", "5") or 5))
-                if b._drive_n > _cap:
-                    try:
-                        r_ = (getattr(flow, "backlog_relays", None) or {}).get(st_id)
-                        _why = (f"이어-구동 {b._drive_n}회에도 완료 표식이 없어 보존합니다 — 선행이 "
-                                f"필요하거나 범위가 큽니다. 보충 작업 뒤 다시 집습니다.")
-                        if r_ is not None and hasattr(r_, "block"):
-                            r_.block(int(who), b.backlog_id, _why)
-                        else:
-                            b.status, b.block_reason = "blocked", _why
-                    except Exception:
-                        b.status = "blocked"
-                    try:
-                        if not getattr(b, "activity", None) or b.activity[-1] != f"[보존] {_why}":
-                            b.activity.append(f"[보존] {_why}")
-                    except Exception:
-                        pass
-                    self._log("backlog_drive_cap_blocked", backlog=str(b.backlog_id),
-                              st=str(st_id), by=int(who), drives=int(b._drive_n))
-                    from .rule.milestone import _ckpt as _ck2
-                    _ck2(flow)
-                    return True
-                result = await self.run_turn(
-                    flow, who,
-                    f"[작업중 — 이어서] 백로그 {b.backlog_id}(\"{(b.body or '')[:70]}\")가 아직 당신 손에 "
-                    f"있습니다 — **바로 이어서 완성**(파일·코드·실행)하세요. 선행 작업이 꼭 필요하면 "
-                    f"block_backlog로 보존하세요. 끝냈으면 한 일·핵심 결정·파일 경로를 3~5줄로 요약한 "
-                    f"뒤 **마지막 독립 줄에 정확히 `[백로그 완료]`**를 쓰세요. 이 표식은 품질 증거가 "
-                    f"아니라 상태 전이 선언이며 품질은 마일스톤 검증이 맡습니다. 못 끝냈으면 표식을 "
-                    f"쓰지 마세요. 회의·의견이 아니라 작업입니다.",
-                    Kind.INFO, "worker")
-                return bool(await self._finish_backlog_turn(
-                    flow, who, b, st_id, result))
+                return bool(await self._drive_one_backlog(flow, who, b, st_id))
             # ③ 진행 중 없음 → 다음 open을 구조적으로 착수(즉시 in_progress로 세워 화면에 띄운다)
             t = claim_kick_target(flow)
             if not t:

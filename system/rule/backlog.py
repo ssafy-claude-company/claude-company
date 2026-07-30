@@ -46,6 +46,48 @@ def backlog_scope_key(subtask_id, backlog_id) -> str:
     return f"{str(subtask_id)}::{str(backlog_id)}"
 
 
+_WRITE_MARK = re.compile(r"\[\s*쓰기\s*[:：]\s*([^\]]{1,200})\]")
+
+
+def declared_write_scope(text) -> list:
+    """[병렬의 전제(2026-07-30, 사용자: '충돌을 안정적으로 설계해서 병렬로')] 두 일감이 같은
+    파일을 동시에 고치면 서로를 덮어쓴다. 그래서 병렬은 '무엇을 쓸 것인가'를 먼저 말한 일감에만
+    연다 — 본문의 `[쓰기: public/, scripts/foo.mjs]` 표식이 그 선언이다.
+
+    선언이 없으면 빈 목록 = **알 수 없음**이고, 알 수 없는 것은 모든 것과 겹친다고 본다
+    (fail-closed — 지금까지의 순차 동작이 그대로 남는다).
+    """
+    m = _WRITE_MARK.search(str(text or ""))
+    if not m:
+        return []
+    out = []
+    for part in m.group(1).replace(";", ",").split(","):
+        p = part.strip().strip("`'\"").lstrip("./")
+        if p:
+            out.append(p.rstrip("*"))
+    return out[:8]
+
+
+def write_scopes_conflict(a, b) -> bool:
+    """두 쓰기 영역이 겹치는가. 선언이 없는 쪽(빈 목록)은 항상 겹친다고 본다(보수)."""
+    if not a or not b:
+        return True
+    for x in a:
+        for y in b:
+            if x == y or x.startswith(y) or y.startswith(x):
+                return True
+    return False
+
+
+def backlog_parallel_width() -> int:
+    """동시에 진행할 수 있는 백로그 수. 1이면 종전 순차 1활성 그대로."""
+    import os as _os
+    try:
+        return max(1, int(_os.environ.get("ORGANT_BACKLOG_PARALLEL", "3")))
+    except (TypeError, ValueError):
+        return 3
+
+
 def blocked_ready_for_revisit(backlog, all_backlogs, blocked_scope) -> bool:
     """선행 보충 작업이 실제로 끝난 뒤에만 blocked 원본을 재개할 수 있다.
 
@@ -348,10 +390,23 @@ class BacklogRelay:
         # 무주 항목은 self-claim 불가 + 선정 시 수행자=제출자(0=SYS)로 배분이 깨졌다(회의→릴레이 접합 결함).
         _self_claim = (int(picker) == int(assignee)
                        and int(b0.submitter or 0) in (0, int(picker)))
-        # 순차 잠금 — 이미 누가 작업 중이면 새 착수 불가(그 완료/중단 후 다음).
-        _active = next((x for x in self.backlogs if x.status == IN_PROGRESS and x.backlog_id != backlog_id), None)
-        if _active is not None:
-            raise BacklogError(f"{_active.backlog_id}가 작업 중입니다(순차 1활성) — 그 완료/중단 뒤 다음이 선정됩니다.")
+        # [겹칠 때만 순차(2026-07-30, 사용자 지시)] 종전엔 무조건 1활성이었다 — 안전하지만 판 시간의
+        # 28%를 한 줄로 세운다. 쓰기 영역을 선언한 일감끼리 **겹치지 않으면** 동시에 간다.
+        # 선언이 없으면 종전처럼 순차(알 수 없는 것은 모두와 겹친다고 본다 — fail-closed).
+        _actives = [x for x in self.backlogs
+                    if x.status == IN_PROGRESS and x.backlog_id != backlog_id]
+        if _actives:
+            _mine = declared_write_scope(self.get(backlog_id).body)
+            _blocked_by = next(
+                (x for x in _actives
+                 if write_scopes_conflict(_mine, declared_write_scope(x.body))), None)
+            if _blocked_by is not None:
+                raise BacklogError(
+                    f"{_blocked_by.backlog_id}가 같은 영역을 작업 중입니다 — 그 완료/중단 뒤 다음이 "
+                    f"선정됩니다. 겹치지 않는 일감은 본문에 `[쓰기: 경로]`를 선언하면 동시에 갑니다.")
+            if len(_actives) + 1 > backlog_parallel_width():
+                raise BacklogError(
+                    f"동시 진행 상한({backlog_parallel_width()})에 도달했습니다 — 하나가 끝나면 이어집니다.")
         if not _self_claim and self.turn_holder is not None and int(picker) != self.turn_holder:
             raise BacklogError(
                 f"배분권은 마지막 작업자({self.turn_holder})에게 있습니다 — 지명은 마무리한 사람의 몫.")
