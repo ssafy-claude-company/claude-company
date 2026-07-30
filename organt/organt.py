@@ -507,7 +507,9 @@ class Organt:
                                             else await self._run_once(prompt))
             except Exception as e:                       # 전송/스트림 예외도 일시오류로 간주해 재시도
                 final_text, captured_sid = f"API Error: {e}", None
-                _err = str(e)[:150]
+                # [진단 문자열은 잘리면 쓸모없다(2026-07-30, 실측)] 150자에서 잘려 실패 원인이
+                # 붙는 꼬리(stdout 이벤트)가 통째로 사라졌다 — 실패 조사에서 눈이 먼 이유였다.
+                _err = str(e)[:400]
             if attempt > 0:
                 _retries = attempt
             if captured_sid and not (micro and os.environ.get("ORGANT_MICRO_FRESH", "1") != "0"):

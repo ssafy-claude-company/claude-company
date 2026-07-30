@@ -495,6 +495,7 @@ async def _run_codex_process(
     # Claude 경로는 SDK가 결산(total_cost_usd)을 주지만 codex 경로는 아무도 안 봤다 → GPT 봇의
     # 판은 원장에 0원으로 남아 무제한이었다. 여기서 이 턴의 토큰을 모아 상위(Organt)에 넘긴다.
     usage_turn, usage_sum, api_error = {}, {}, ""
+    _seen_events = []          # stdout 이벤트 종류 꼬리 — 실패 진단의 유일한 단서일 때가 있다
     try:
         try:
             proc.stdin.write((prompt or "").encode("utf-8"))
@@ -514,6 +515,9 @@ async def _run_codex_process(
             except Exception:
                 continue
             typ = ev.get("type")
+            if typ:                      # 실패 진단용 꼬리(종류만 — 본문은 이미 다른 경로로 남는다)
+                _seen_events.append(str(typ)[:24])
+                del _seen_events[:-6]
             _uk, _u = _usage_from_event(ev)
             if _uk == "turn":
                 usage_turn = _u or usage_turn
@@ -573,9 +577,14 @@ async def _run_codex_process(
         except Exception:
             pass
     if proc.returncode not in (0, None):
+        # [실패를 눈멀게 두지 않는다(2026-07-30, 실측)] rc=1인데 stderr에는 무해한 경고 두 줄만
+        # 남는 실패가 422회 있었다 — 그 문자열로는 원인(한도·인증·모델)을 가릴 수 없다.
+        # 마지막 stdout 이벤트(오류는 보통 여기로 온다)와 마지막 이벤트 종류를 함께 싣는다.
+        _tail_out = " | ".join(_seen_events[-3:]) if _seen_events else "이벤트 없음"
         raise RuntimeError(
             f"codex exec 실패(rc={proc.returncode}) "
-            f"{api_error or _err.decode('utf-8', 'replace')[-500:]}")
+            f"{api_error or _err.decode('utf-8', 'replace')[-400:]} "
+            f"[stdout 마지막: {_tail_out}]")
     if api_error and not final_text:
         # rc=0인데 모델이 한 마디도 못 한 경우(스트림 안 오류) — 조용한 빈 턴 대신 사유를 올린다.
         raise RuntimeError(f"codex 턴 실패: {api_error}")
