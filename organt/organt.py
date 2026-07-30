@@ -322,7 +322,9 @@ class Organt:
                 _raw_usage.clear()
                 _raw_usage.update(u)
 
-        async with botpool.slot():
+        # [테넌트 상한 누락 봉합(2026-07-30)] Claude 경로에만 tenant를 넘겨, gpt 봇은 채널별 상한을
+        # 타지 않고 전역 8만 받았다 — 한 채널이 슬롯을 독식하는 것을 막으려던 취지가 절반만 섰다.
+        async with botpool.slot(tenant=getattr(self, "_organt_tenant", None)):
             _text, _sid = await run_codex_turn(
                 prompt=prompt, cwd=_cwd, session_id=self._resume_sid(micro),
                 tools=([] if micro else (getattr(self, "_codex_tools", None) or [])),
@@ -333,7 +335,10 @@ class Organt:
                 on_usage=_take_usage,
                 # [턴 예산(2026-07-28)] 호출이 곧 일인 턴(마감·e2e)에서만 침묵 턴을 이어 붙인다 —
                 # SYS가 그 턴에 표식을 단다. 회의 발언 턴은 종전 그대로 한 판에 끝난다.
-                expect_tool=bool(getattr(self, "_codex_expect_tool", False)) and not micro)
+                expect_tool=bool(getattr(self, "_codex_expect_tool", False)) and not micro,
+                # [감사 공백 봉합(2026-07-30)] gpt 봇의 도구 호출을 audit에 남긴다 — 종전엔
+                # PostToolUse 훅이 Claude 경로에만 있어 codex 봇은 무엇을 했는지 기록이 없었다.
+                on_tool=getattr(self, "_codex_on_tool", None))
 
         # 누계 → 이 턴 몫으로 환산해 결산에 싣는다. handle()의 on_turn이 그대로 실어
         # 러너 → 웹(report_usage) → UsageLedger로 흘려보낸다.

@@ -19,6 +19,8 @@ CONTRACT = {
     "organt.builder._make_builder": ["guide", "murmur"],
     "system.audit.AuditLog": ["guide", "murmur", "organt"],
     "system.audit.make_post_tool_use_hook": ["organt"],
+    # codex 경로 감사(2026-07-30) - 브리지가 넘긴 도구 인자를 남기기 전에 비밀을 가린다.
+    "system.audit.redact_tool_input": ["organt"],
     "system.config.Config": ["murmur", "organt"],
     "system.config.ROOT": ["guide", "organt"],
     "system.config.load_config": ["guide"],

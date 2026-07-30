@@ -307,12 +307,17 @@ def test_Codex_포트lease는_AB격리_C대기_턴마다새bridge(monkeypatch, t
             self.port = port
             self.url = f"http://127.0.0.1:{port}/mcp"
             self.tools = []
+            self.audit = "미설정"
             self.started = False
             self.stopped = False
             instances.append(self)
 
         def set_tools(self, tools):
             self.tools = list(tools or [])
+
+        def set_audit(self, fn):
+            # 실제 브리지가 가진 계약 - 턴마다 새 bridge에 그 턴의 감사 콜백이 실린다.
+            self.audit = fn
 
         async def start(self):
             self.started = True
@@ -444,6 +449,10 @@ def test_Codex_bridge는_완전JSONschema와_receipt_run을_보존(monkeypatch, 
         def set_tools(self, tools):
             self.tools = list(tools or [])
 
+        def set_audit(self, fn):
+            # 실제 브리지 계약 - 턴마다 새 bridge에 그 턴의 감사 콜백이 실린다.
+            self.audit = fn
+
         async def start(self):
             pass
 
@@ -536,6 +545,10 @@ def test_Codex_substantive비정상도_bridge정지_clear_port반환(monkeypatch
         def set_tools(self, tools):
             self.tools = list(tools or [])
 
+        def set_audit(self, fn):
+            # 실제 브리지 계약 - 턴마다 새 bridge에 그 턴의 감사 콜백이 실린다.
+            self.audit = fn
+
         async def start(self):
             pass
 
@@ -592,6 +605,10 @@ def test_Codex_substantive취소도_bridge정지후_port반환(monkeypatch, tmp_
 
         def set_tools(self, tools):
             self.tools = list(tools or [])
+
+        def set_audit(self, fn):
+            # 실제 브리지 계약 - 턴마다 새 bridge에 그 턴의 감사 콜백이 실린다.
+            self.audit = fn
 
         async def start(self):
             pass

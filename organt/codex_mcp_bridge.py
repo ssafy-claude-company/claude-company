@@ -48,6 +48,7 @@ class CodexToolBridge:
     def __init__(self, host: str = "127.0.0.1", port: int = 0):
         self._tools: List = []
         self._calls = 0
+        self._audit = None             # 턴마다 교체되는 감사 기록 콜백(set_audit)
         self._host = host
         self._port = port or int(os.environ.get("ORGANT_CODEX_MCP_PORT", "8791"))
         self._server = None            # uvicorn.Server
@@ -66,6 +67,17 @@ class CodexToolBridge:
             # [턴 예산(2026-07-28)] 이 턴에 도구가 실제로 불렸는가 — '말만 하고 끝난 턴'을 판별하는
             # 유일한 사실. 알 수 없는 도구 이름이어도 '부르려 했다'는 행동이므로 함께 센다.
             self._calls += 1
+            # [감사 공백 봉합(2026-07-30, 현준-4 실측)] Claude 경로는 PostToolUse 훅이 모든 도구
+            # 호출을 audit에 남기는데, codex 경로는 이 브리지를 타서 아무것도 안 남았다. 실측:
+            # flow.jsonl은 1분 전까지 쓰이는데 audit.jsonl은 192시간째 멈춰 있었다(gpt 봇만 돌던
+            # 기간). 봇이 무엇을 실행했는지 기록이 없으면 사후 추적이 불가능하고, 오늘 만든 통제의
+            # 근거(도구 사용 통계)도 절반만 보게 된다. 알 수 없는 도구도 '부르려 했다'는 사실이라
+            # 함께 남긴다. 기록 실패가 도구 실행을 막지 않는다.
+            if self._audit is not None:
+                try:
+                    self._audit(name, arguments or {})
+                except Exception:
+                    pass
             tool = next((x for x in self._tools if x.name == name), None)
             if tool is None:
                 return [_mt.TextContent(type="text", text=f"(알 수 없는 도구: {name})")]
@@ -80,6 +92,11 @@ class CodexToolBridge:
         """이번 봇 턴의 guide 도구로 교체(make_guide_tools 결과). 도구 호출 계수도 함께 리셋."""
         self._tools = list(tools or [])
         self._calls = 0
+
+    def set_audit(self, fn) -> None:
+        """이번 턴의 감사 기록 콜백 — fn(도구이름, 인자). 누가 부르는지는 호출부가 안다.
+        브리지는 신원을 모른 채 사실만 넘긴다(계층을 지킨다)."""
+        self._audit = fn
 
     @property
     def tool_calls(self) -> int:
@@ -663,7 +680,7 @@ async def _run_codex_budgeted(bridge, process_args, *, mcp_url, budget=0):
 
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None,
-                         read_only=False, on_usage=None, expect_tool=False):
+                         read_only=False, on_usage=None, expect_tool=False, on_tool=None):
     """GPT 봇 한 턴. guide 도구가 있을 때만 전용 port/bridge를 턴 수명 동안 임대한다."""
     tool_names = {
         getattr(tool, "name", None)
@@ -693,6 +710,7 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
     async with get_port_pool().lease() as port:
         bridge = _new_bridge(port)
         bridge.set_tools(turn_tools)
+        bridge.set_audit(on_tool)      # [감사 공백 봉합] 이 턴의 도구 호출을 audit에 남긴다
         # [도구 표면 관측(2026-07-27)] GPT 경로는 도구가 MCP로 붙어 눈에 안 보인다 — 봇이 도구를
         # 안 부를 때 '없어서'인지 '안 해서'인지 구분할 수 없어 추정으로 판을 태웠다. 턴마다 실제
         # 실린 도구 수·핵심 도구 유무를 남긴다(이름 전체는 소음이라 개수 + 관심 도구만).
