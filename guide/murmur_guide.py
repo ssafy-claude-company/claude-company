@@ -187,7 +187,8 @@ class MurmurGuide:
         except Exception:
             pass
 
-    async def report_usage(self, channel_id, cost_usd, tokens_out):
+    async def report_usage(self, channel_id, cost_usd, tokens_out,
+                           tokens_in=0, tokens_cached=0, purpose=""):
         """[사용량 귀속(2026-07-18, 운영/과금)] 봇 턴 비용을 채널 단위로 웹에 보고(HTTP) → 웹이 보드 주인
         원장에 적립. 실패는 무해(flow.jsonl에 원본 남아 후속 대사 가능). 비용 0이면 스킵.
         [판 크레딧 캡(2026-07-20)] 웹 응답({over, enforce, remaining_credits})을 그대로 반환 —
@@ -197,7 +198,10 @@ class MurmurGuide:
         try:
             return await self._post("/api/guide/ingest/", {
                 "op": "usage", "channel_id": int(channel_id),
-                "cost_usd": float(cost_usd), "tokens_out": int(tokens_out or 0)})
+                "cost_usd": float(cost_usd), "tokens_out": int(tokens_out or 0),
+                # [원가 지도(2026-07-30)] 입력·캐시·목적까지 보내 원장이 "어디서 나갔는가"를 답하게.
+                "tokens_in": int(tokens_in or 0), "tokens_cached": int(tokens_cached or 0),
+                "purpose": str(purpose or "")[:24]})
         except Exception:
             return None
 

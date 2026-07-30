@@ -695,6 +695,9 @@ class Sys:
         try:
             # [증류 경량화(2026-07-20, 실측 $0.241/회)] 증류는 원석→기준 텍스트의 즉답 생성 — 도구가
             # 필요 없는데 guide 도구 스키마가 매회 실렸다. micro(무도구)로 스키마 제거(인격·본문 유지).
+            # [목적 표기(2026-07-30)] 이 경로는 run_turn을 거치지 않아 결산에 목적이 비었다 —
+            # 증류도 돈을 쓰는 턴이므로 원장에 제 이름으로 잡혀야 한다.
+            self._mark_purpose(flow, mid, "수면 증류")
             out = await organt.handle(prompt, micro=True)
         except TypeError:
             out = await organt.handle(prompt)            # 구형 빌더/스텁 호환(테스트 등)
@@ -958,6 +961,7 @@ class Sys:
                     f"응찰자 전원이 팀이 되고, 최고 응찰이 첫 주자(앵커)를 맡습니다. "
                     f"맞지 않으면 [패스] 한 줄. 도구 쓰지 말고 텍스트로만.")
                 try:
+                    self._mark_purpose(None, mid, "참여 응찰")
                     out = await organt.handle(prompt)
                 except Exception:
                     out = ""
@@ -2826,6 +2830,17 @@ class Sys:
         ("[e2e", "경계 e2e"), ("[마감", "마감"),
     )
 
+    def _mark_purpose(self, flow, bot_id, purpose) -> None:
+        """이 턴의 목적을 결산에 실리게 표기한다. flow가 없으면(판 개시 전 참여 공고) 무해하게 넘긴다."""
+        try:
+            if flow is None:
+                return
+            if getattr(flow, "_turn_purpose", None) is None:
+                flow._turn_purpose = {}
+            flow._turn_purpose[int(bot_id)] = str(purpose)
+        except Exception:
+            pass
+
     @classmethod
     def _purpose_of(cls, body, kind, micro=False) -> str:
         t = str(body or "").lstrip()
@@ -4374,6 +4389,23 @@ class Sys:
             self._log("flow_no_deliverable", project=flow.project_channel is not None,
                       tasks=len(flow.tasks), directed_work=bool(_root_is_work))
         else:
+            # [판이 끝나면 원가 지도를 한 줄로(2026-07-30, U-079 정밀검사)] 종전엔 판별 원가를 알려면
+            # flow.jsonl 수만 줄을 사후에 캐야 했고, 그 집계가 목적을 '주변 이벤트로 추정'해 틀렸다.
+            # 판이 이고 다닌 목적별 누계를 그대로 낸다 — 이 한 줄이 그 판의 정산서다.
+            try:
+                _cbp = getattr(flow, "_cost_by_purpose", None)
+                if _cbp:
+                    _tot = round(sum(float(v.get("cost_usd") or 0) for v in _cbp.values()), 4)
+                    self._log("flow_cost_map", total_usd=_tot,
+                              turns=sum(int(v.get("turns") or 0) for v in _cbp.values()),
+                              tokens_in=sum(int(v.get("tokens_in") or 0) for v in _cbp.values()),
+                              tokens_out=sum(int(v.get("tokens_out") or 0) for v in _cbp.values()),
+                              by={k: {"turns": v["turns"], "usd": round(v["cost_usd"], 4),
+                                      "in": v["tokens_in"], "out": v["tokens_out"]}
+                                  for k, v in sorted(_cbp.items(),
+                                                     key=lambda kv: -kv[1]["cost_usd"])})
+            except Exception:
+                pass
             self._log("flow_done", project=flow.project_channel is not None,
                       tasks=len(flow.tasks), comm_done=flow.comm.done)
         # [흐름이 끝날 때 남은 마커를 반드시 내보낸다(2026-07-29, 실측으로 발견)] 파이프라인
