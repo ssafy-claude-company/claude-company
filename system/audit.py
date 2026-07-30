@@ -76,7 +76,29 @@ def redact_tool_input(tool_input):
         v = out.get(k)
         if isinstance(v, str) and len(v) > 80:
             out[k] = f"<{len(v)} chars 생략>"
-    return out
+    return _mask_secrets(out)
+
+
+def _mask_secrets(value, _depth=0):
+    """비밀로 보이는 키의 값을 가린다.
+
+    [codex 경로 감사(2026-07-30, 현준-4)] Claude 도구는 인자 스키마가 고정이라 넘어갔지만,
+    guide 도구 인자는 임의 키다(예: env 사전). 감사를 켜면서 비밀이 로그로 새는 경로를 같이
+    열면 안 된다 - audit.jsonl은 other 읽기 가능이고 오래 남는다. 판정은 guide_tools의
+    _is_secret_env 하나만 쓴다(목록이 갈라지면 한쪽만 막힌다).
+    """
+    if _depth > 4:
+        return value
+    try:
+        from .guide_tools import _is_secret_env
+    except Exception:
+        return value
+    if isinstance(value, dict):
+        return {k: ("<가림>" if isinstance(k, str) and _is_secret_env(k)
+                    else _mask_secrets(v, _depth + 1)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_secrets(v, _depth + 1) for v in value]
+    return value
 
 
 class AuditLog:
