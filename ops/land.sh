@@ -105,6 +105,11 @@ _snap_make() {
   git -C "$MS/murmur" worktree add --detach -q "$snap/murmur" "$post_mm" 2>/dev/null || return 1
   ln -s "$MS/.venv" "$snap/.venv" || return 1
   ln -s "$MS/murmur/frontend/node_modules" "$snap/murmur/frontend/node_modules" || return 1
+  # dist는 git 밖(무시 대상)이라 스냅샷에 없다. 그런데 sns 테스트(게이트 1)가 dist가 있는 상태를
+  # 전제로 응답 경로를 재는데 프론트 빌드는 게이트 4다 — 빈 스냅샷에서는 게이트 1이 먼저 깨졌다
+  # (실측: CSP 검사 2건). 심링크가 아니라 복사다(1.7MB) — 게이트 4의 빌드가 정본 dist를 반쯤
+  # 덮어써 라이브가 낡은 조각을 섞어 서비스하는 일을 만들지 않는다.
+  [ -d "$MS/murmur/frontend/dist" ] && cp -a "$MS/murmur/frontend/dist" "$snap/murmur/frontend/dist"
   return 0
 }
 _snap_drop() {
