@@ -169,14 +169,23 @@ class Organt:
         # (create_project의 폴더 카빙) resume가 깨지지 않는 구조적 근거.
         self._state_write(session_id=sid, cwd=str(self.options.cwd or ""))
 
+    # [계측 장부 용량(2026-07-30, U-079 정밀검사)] 종전 4칸. micro 턴은 매번 **새 스레드**라
+    # 응찰·표결이 몇 번만 지나가도 본 스레드의 기준선이 밀려났고, 그러면 다음 작업 턴이 누계
+    # 전액을 그 턴 몫으로 기록한다(실측: 입력·출력이 턴마다 단조 증가 — 3초 턴에 출력 2.6만).
+    # 활성 세션은 절대 밀어내지 않고, 나머지는 최근 사용 순으로 넉넉히 보관한다.
+    _USAGE_BOOK_CAP = 64
+
     def _codex_usage_delta(self, sid, usage) -> dict:
         """codex가 준 **스레드 누계**를 이 턴 몫(차분)으로 바꾼다.
 
         [과금 수리(2026-07-28, U-074 실측)] `turn.completed.usage`는 그 턴이 쓴 양이 아니라
         **스레드 전체 누계**다(실측: 같은 세션에 짧은 프롬프트 3연속 → 11,556 → 24,671 → 37,805).
         누계를 그대로 청구하면 이어가는 턴마다 과거를 다시 청구한다 — 턴 N개면 대략 N/2배 과다.
-        실판에서 168턴이 3,000크레딧을 태운 원인이 이것이다. 직전 누계를 세션과 함께 영속해
-        차분만 청구한다(새 세션·세션 교체면 그 턴 전액 = 정확히 그 스레드의 첫 청구).
+        직전 누계를 세션과 함께 영속해 차분만 청구한다(새 세션이면 그 턴 전액 = 그 스레드 첫 청구).
+
+        [기준선 유실 관측(2026-07-30)] 기준선이 없어 전액을 청구하는 것은 '새 스레드'일 때만
+        정상이다. 이미 본 적 있는 세션인데 기준선이 없으면 그건 장부 결함이다 — 조용히 과금하지
+        말고 `usage_baseline_lost`로 드러낸다. 감사용으로 누계·차분·세션을 함께 돌려준다.
         """
         u = usage if isinstance(usage, dict) else {}
         if not u:
@@ -187,18 +196,34 @@ class Organt:
         st = self._state_read()
         book = st.get("codex_usage") if isinstance(st.get("codex_usage"), dict) else {}
         key = str(sid or "")
-        # 세션별 누계 장부 — 마이크로 턴(응찰·표결)은 매번 **새 스레드**라, 한 칸만 두면 그 값이
-        # 본세션 기준선을 덮어써 다음 실질 턴이 다시 전액 청구된다(과다청구 재발). sid별로 둔다.
         prev = book.get(key) if isinstance(book.get(key), dict) else {}
+        seen = st.get("codex_seen_sids") if isinstance(st.get("codex_seen_sids"), list) else []
+        first_time = key not in seen
         delta = {}
         for k, v in now.items():
             base = float(prev.get(k) or 0)
             # 누계가 줄어드는 일은 없어야 하지만(세션 재생성 등), 나면 음수 대신 이번 값을 청구.
             delta[k] = int(v - base) if v >= base else int(v)
         book[key] = {k: int(v) for k, v in now.items()}
-        if len(book) > 4:                       # 장부는 최근 4스레드만(파일 무한 증식 방지)
-            book = {k: book[k] for k in list(book)[-4:]}
-        self._state_write(codex_usage=book)
+        book[key]["_ts"] = int(time.time())
+        # 활성 세션은 남기고, 나머지를 최근 사용 순으로 정리한다(삽입 순서가 아니라 사용 시각).
+        if len(book) > self._USAGE_BOOK_CAP:
+            _live = {key, str(self.session_id or "")}
+            _rest = sorted((k for k in book if k not in _live),
+                           key=lambda k: int((book.get(k) or {}).get("_ts") or 0), reverse=True)
+            keep = set(_rest[: max(0, self._USAGE_BOOK_CAP - len(_live))]) | _live
+            book = {k: v for k, v in book.items() if k in keep}
+        if key and first_time:
+            seen = (seen + [key])[-512:]
+        self._state_write(codex_usage=book, codex_seen_sids=seen)
+        if not prev and not first_time and any(v for v in delta.values()):
+            # 이미 본 세션인데 기준선이 없다 = 장부에서 밀려났다는 뜻. 청구는 하되 기록으로 남긴다.
+            self._usage_anomaly = {"why": "baseline_lost", "sid": key,
+                                   "cum_input": int(now.get("input_tokens") or 0)}
+        # 감사 필드 — 러너가 turn_done에 그대로 실어 사후 검산이 가능하게 한다.
+        self._usage_audit = {"sid": key, "first_turn_of_thread": bool(first_time),
+                             "cum_input": int(now.get("input_tokens") or 0),
+                             "cum_output": int(now.get("output_tokens") or 0)}
         return delta
 
     def _reset_session(self) -> None:
@@ -301,6 +326,13 @@ class Organt:
         from .gpt_pricing import usage_record
         rec = usage_record(_model, self._codex_usage_delta(_sid or self.session_id, _raw_usage))
         if rec:
+            # [사후 검산 가능하게(2026-07-30)] 청구값만 남기면 그 값이 맞는지 나중에 확인할 방법이
+            # 없다 — 어느 스레드의 몇 번째 턴인지, 그 시점 누계가 얼마인지를 함께 싣는다.
+            rec = {**rec, **(getattr(self, "_usage_audit", None) or {})}
+            _an = getattr(self, "_usage_anomaly", None)
+            if _an:
+                rec["usage_anomaly"] = _an
+                self._usage_anomaly = None
             self._last_result = {**(getattr(self, "_last_result", None) or {}), **rec}
         return _text, _sid
 

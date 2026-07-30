@@ -2812,6 +2812,28 @@ class Sys:
             self._log("task_close_turn", by=actor, turn=turn_no)
         return True
 
+    # [턴의 목적을 기록한다(2026-07-30, U-079 정밀검사)] 원가를 구간별로 나누려면 그 턴이 무엇을
+    # 하던 턴인지가 결산에 있어야 한다. 종전엔 없어서 주변 이벤트로 추정했고, 추정이 어긋나면
+    # 최적화 지도가 통째로 틀렸다. 본문 머리표는 SYS가 붙인 것이라 안정적인 분류 근거다.
+    _PURPOSE_MARKS = (
+        ("[회의", "회의 발언"), ("[발제]", "회의 발언"), ("[여는 의견]", "회의 발언"),
+        ("[소집자 의견]", "회의 발언"), ("[회의록]", "회의 기록"),
+        ("[표", "표결"), ("[확정 표결", "표결"),
+        ("[참여 응찰]", "참여 응찰"), ("[다음 백로그 응찰]", "인계 응찰"),
+        ("[다음 백로그 선정]", "인계 선정"), ("[발언권", "발언권 응찰"),
+        ("[작업중 — 이어서]", "백로그 작업"), ("[위임", "위임 작업"),
+        ("[SYS — 마감 전 독립 검증]", "독립 검증"), ("[SYS — 보고 형식 재요청", "보고 반려"),
+        ("[e2e", "경계 e2e"), ("[마감", "마감"),
+    )
+
+    @classmethod
+    def _purpose_of(cls, body, kind, micro=False) -> str:
+        t = str(body or "").lstrip()
+        for mark, name in cls._PURPOSE_MARKS:
+            if t.startswith(mark):
+                return name
+        return "짧은 상호작용" if micro else "작업"
+
     async def run_turn(
         self, flow: Flow, organt_id, body, kind, role, micro=False, tool_mode=None,
     ) -> str:
@@ -2844,6 +2866,12 @@ class Sys:
         # 에이전트가 죽으면(SDK 메시지리더 크래시·서브프로세스 SIGTERM 등) 같은 세션으로 되살려 재시도.
         # State는 organt_id별 파일에 영속되므로 새 인스턴스가 세션을 이어간다(전체 워크플로우 보호).
         flow.last_activity = time.monotonic()   # 진행 신호(턴 시작) — 무진행 워치독 갱신
+        try:                                     # 이 턴의 목적 — builder가 결산(turn_done)에 싣는다
+            if getattr(flow, "_turn_purpose", None) is None:
+                flow._turn_purpose = {}
+            flow._turn_purpose[organt_id] = self._purpose_of(body, kind, micro)
+        except Exception:
+            pass
         # [소속은 턴 시작에 정한다(2026-07-29, 사용자: '아직도 잔여가 있고')] 소속 태깅은 도구를 부를 때만
         # 세팅돼, 도구 없이 나가는 게시(위임 요청·응답·의견)는 태그 0으로 판에 남았다 — 어느 주기의
         # 말인지도 모른 채 Task 층에 떠, 화면이 그 줄들을 통짜 말풍선으로 그렸다(U-079: 12:20~13:04
