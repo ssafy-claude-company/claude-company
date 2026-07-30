@@ -438,11 +438,20 @@ class Organt:
                         _u = getattr(msg, "usage", None) or {}
                         if not isinstance(_u, dict):
                             _u = getattr(_u, "__dict__", {}) or {}
+                        # [캐시 축이 빠지면 지도가 반쪽(2026-07-30, U-079 정밀검사)] Anthropic은
+                        # 캐시 읽기·쓰기를 input_tokens와 **별도 필드**로 준다 — 종전엔 그 둘을
+                        # 버려, Claude 봇의 입력 총량이 실제보다 작게 잡혔다(비용의 대부분이 입력인데).
+                        # codex 경로와 같은 축(입력=신선+캐시)으로 맞춘다.
+                        _cache_r = int(_u.get("cache_read_input_tokens") or 0)
+                        _cache_w = int(_u.get("cache_creation_input_tokens") or 0)
+                        _in = int(_u.get("input_tokens") or _u.get("prompt_tokens") or 0)
                         self._last_result = {
                             "cost_usd": getattr(msg, "total_cost_usd", None),
                             "duration_ms": getattr(msg, "duration_ms", None),
                             "num_turns": getattr(msg, "num_turns", None),
-                            "tokens_in": _u.get("input_tokens") or _u.get("prompt_tokens"),
+                            "tokens_in": (_in + _cache_r + _cache_w) or None,
+                            "tokens_cached": _cache_r or None,
+                            "tokens_cache_write": _cache_w or None,
                             "tokens_out": _u.get("output_tokens") or _u.get("completion_tokens"),
                         }
         except asyncio.CancelledError:
