@@ -362,7 +362,11 @@ async def _fork_collect(flow, me_id, members, body_of, kind=Kind.INFO, micro=Fal
     병렬 도구 호출을 내도(vote+request 등) 가지와 같은 동료를 이중으로 깨우는 일이 구조적으로 없다.
     반환: 멤버 순서 보존 [(member, res|None, 제외/실패 사유)]."""
     eng, scope = flow.comm.engagement, flow.comm.scope
-    sem = asyncio.Semaphore(max(1, int(os.environ.get("ORGANT_FORK_FAN", "3"))))
+    # [수집 폭(2026-07-30, 사용자: '단일적인게 커')] 응찰·표결은 텍스트만 오가는 수집이라 동시에
+    # 돌아도 서로를 깨뜨리지 않는다(가지는 comm 프레임을 안 열고, 점유는 Engagement가 배타로 잡는다).
+    # 폭 3은 9~13명 판에서 한 라운드를 4~5묶음으로 쪼갰다 — 실측 floor_bid 1,365회·표결 400회가
+    # 전부 그 대기를 탔다. 기본을 6으로 올린다(1이면 직렬 — 되돌릴 수 있는 노브).
+    sem = asyncio.Semaphore(max(1, int(os.environ.get("ORGANT_FORK_FAN", "6"))))
 
     async def _branch(m):
         if flow.comm.is_busy(m):
