@@ -270,8 +270,19 @@ def make_floor(mode: Optional[str] = None, *, allocator=None) -> FloorPolicy:
     return RequestResponseFloor()
 
 
+def parallel_floor_width() -> int:
+    """[동시 발언 폭(2026-07-30, 사용자: '단일적인게 커')] 발언권을 한 명씩만 주면 회의가 판
+    벽시계의 39%를 먹는다(U-079 실측 9.5h/24.1h). 발언은 파일을 만들지 않는 행위라 동시에 해도
+    충돌이 없다 — 같은 라운드에서 응찰이 선 사람들을 함께 말하게 한다. 1이면 종전 동작(직렬)."""
+    try:
+        return max(1, int(os.environ.get("ORGANT_FLOOR_PARALLEL", "3")))
+    except (TypeError, ValueError):
+        return 3
+
+
 async def run_conversation(policy: FloorPolicy, state: FloorState, opening: Turn, speak,
-                           bid=None, max_turns: int = 64, on_alloc=None) -> List[Turn]:
+                           bid=None, max_turns: int = 64, on_alloc=None,
+                           speak_many=None) -> List[Turn]:
     """대화 엔진 — 배분은 정책에, IO(깨우기·응찰 수집)는 콜백에 위임하는 순수 루프(매체·내용 불가지).
 
       speak(speaker_id, alloc) -> Turn|None : 배분받은 화자의 턴 실행. None=화자 실행 불가 → 종결.
@@ -294,8 +305,10 @@ async def run_conversation(policy: FloorPolicy, state: FloorState, opening: Turn
         alloc = policy.next_after(state, turn)
         if on_alloc:
             on_alloc(alloc)
+        _bids_seen = []
         if alloc.kind == OPEN:
             bids = (await bid(alloc.candidates, OPEN)) if bid is not None else []
+            _bids_seen = list(bids or [])
             alloc = policy.resolve_open(state, turn, list(bids or []))   # ② 승자 선정 / ③ / 종결
             if on_alloc:
                 on_alloc(alloc)
@@ -306,6 +319,24 @@ async def run_conversation(policy: FloorPolicy, state: FloorState, opening: Turn
                 on_alloc(alloc)
         if alloc.kind == CLOSE:
             break
+        # [동시 발언(2026-07-30)] ②자기선택(SELF)으로 낙찰된 라운드는, 같은 응찰에서 필요를 밝힌
+        # 다른 후보들도 함께 말하게 한다 — 그들은 어차피 다음 라운드에 같은 말을 할 사람들이고,
+        # 발언은 산출물이 텍스트뿐이라 동시에 해도 서로를 깨뜨리지 않는다. 낙찰자만 종전 권한
+        # (초안 편집·지명)을 갖고, 동행 발언자는 의견만 낸다 — 편집 충돌 없이 라운드 수만 준다.
+        _extra = []
+        if (speak_many is not None and alloc.kind == SELF and _bids_seen
+                and parallel_floor_width() > 1):
+            _extra = [m for m, sc in sorted(_bids_seen, key=lambda x: -x[1])
+                      if m != alloc.next and sc > 0][: parallel_floor_width() - 1]
+        if _extra:
+            _batch = await speak_many(alloc.next, _extra, alloc)
+            if not _batch:
+                break
+            for _t in _batch:
+                state.record(_t)
+                turns.append(_t)
+            turn = _batch[0]
+            continue
         turn = await speak(alloc.next, alloc)      # ①지명 / ②낙찰자 / 종결반대 / 사회자 / LIFO 복귀
         if turn is None:
             break                                              # 화자 실행 불가 → 교착 대신 종결

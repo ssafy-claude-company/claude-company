@@ -841,7 +841,8 @@ def test_DRAFT쓰기실패_wakecap경계_사람개입은_등록보류하고_큐�
     # 닿게 해, 그 표결 중 들어온 pending_info가 실질 슬롯 없이 등록되는지를 정확히 겨눈다.
     from system.rule import floor
 
-    async def fill_to_cap(policy, state, opening, speak, bid=None, max_turns=64, on_alloc=None):
+    async def fill_to_cap(policy, state, opening, speak, bid=None, max_turns=64,
+                          on_alloc=None, speak_many=None):   # [동시 발언] 엔진 시그니처 확장 수용
         alloc = floor.Allocation(floor.SELF, next=12, reason="wake_cap 경계 대본")
         for _ in range(24):
             await speak(12, alloc)
