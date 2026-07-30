@@ -186,21 +186,34 @@ def _prepare_run_exec(workspace, command):
     ws = str(workspace or "").strip()
     cmd = normalize_verifier_command(command)
     env = _scrubbed_run_env()
-    if os.geteuid() != 0:
+    bwrap = shutil.which("bwrap")
+    # [비특권 러너도 격리한다(2026-07-30, 현준-4 보안 감사)] 종전엔 geteuid()!=0이면 격리를 통째로
+    # 건너뛰고 `/bin/sh -c`로 직행했다. "root가 아니면 이미 안전하다"는 전제인데, 여러 봇이 한 계정을
+    # 공유하는 배치에서는 틀리다 — 그 계정이 읽을 수 있는 모든 것(다른 채널 작업공간·world-readable
+    # 설정)에 `cd ..` 한 번으로 닿는다. 러너를 비특권으로 내리려면 이 구멍을 먼저 막아야 하고,
+    # 안 막으면 강등이 격리를 오히려 없앤다.
+    # 비특권에서는 --unshare-user로 userns를 열어 같은 파일시스템 경계를 세운다. setpriv 강등은
+    # 하지 않는다 — userns 안에서 host nobody uid가 매핑되지 않아 실패하고(실측), 이미 비특권이라
+    # 강등할 특권도 없다. bwrap이 없는 환경(개발 머신)은 종전대로 통과시킨다.
+    unpriv = os.geteuid() != 0
+    if unpriv and not bwrap:
         exec_cmd = _rewrite_workspace_paths(cmd, ws)
         return ["/bin/sh", "-c", exec_cmd], env, ""
-    drop = _run_drop_creds()
-    if not drop:
-        return None, None, "root run의 비특권 사용자(ORGANT_RUN_USER)를 찾을 수 없습니다."
-    bwrap = shutil.which("bwrap")
     if not bwrap:
         return None, None, "root run 격리·권한강등 도구 bwrap을 찾을 수 없습니다."
-    setpriv = shutil.which("setpriv")
-    if not setpriv:
-        return None, None, "root run 최종 권한강등 도구 setpriv를 찾을 수 없습니다."
-    uid, gid = drop
+    setpriv = ""
+    uid = gid = None
+    if not unpriv:
+        drop = _run_drop_creds()
+        if not drop:
+            return None, None, "root run의 비특권 사용자(ORGANT_RUN_USER)를 찾을 수 없습니다."
+        setpriv = shutil.which("setpriv")
+        if not setpriv:
+            return None, None, "root run 최종 권한강등 도구 setpriv를 찾을 수 없습니다."
+        uid, gid = drop
     real_ws = os.path.realpath(ws)
-    _chown_tree(real_ws, uid, gid)
+    if not unpriv:
+        _chown_tree(real_ws, uid, gid)
     sandbox_ws = "/tmp/workspace"
     exec_cmd = _rewrite_workspace_paths(cmd, ws, sandbox_ws)
     env["HOME"] = sandbox_ws
@@ -254,6 +267,8 @@ def _prepare_run_exec(workspace, command):
     argv.extend([
         "--chdir", sandbox_ws,
         "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+        # 비특권에서는 userns를 함께 열어야 bind/tmpfs 자체가 허용된다(root면 불필요).
+        *(["--unshare-user"] if unpriv else []),
         "--die-with-parent",
         "--setenv", "HOME", sandbox_ws,
         "--setenv", "PATH", sandbox_path,
@@ -261,12 +276,18 @@ def _prepare_run_exec(workspace, command):
         "--setenv", "XDG_CACHE_HOME", "/tmp/npm-cache",
         *(["--setenv", "PLAYWRIGHT_BROWSERS_PATH", playwright_cache]
           if os.path.isdir(playwright_cache) else []),
-        setpriv,
-        "--reuid", str(uid), "--regid", str(gid), "--clear-groups",
-        "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all",
-        "--bounding-set=-all",
-        "--", "/bin/sh", "-c", exec_cmd,
     ])
+    if unpriv:
+        # 강등할 특권이 없다 — 파일시스템 경계만 세우고 바로 실행한다.
+        argv.extend(["--", "/bin/sh", "-c", exec_cmd])
+    else:
+        argv.extend([
+            setpriv,
+            "--reuid", str(uid), "--regid", str(gid), "--clear-groups",
+            "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all",
+            "--bounding-set=-all",
+            "--", "/bin/sh", "-c", exec_cmd,
+        ])
     return argv, env, ""
 
 
