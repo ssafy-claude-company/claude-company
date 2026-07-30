@@ -75,12 +75,25 @@ _SECRET_ENV_EXACT = {
     "RENDER_KEY", "RENDER_API_KEY", "RENDER_OWNER", "GH_PAT", "GH_USER",
     "GITHUB_TOKEN", "GITHUB_PAT", "ORGANT_GUIDE_TOKEN", "ORGANT_GUIDE_TOKENS",
 }
-_SECRET_ENV_SUBSTR = ("SECRET", "TOKEN", "PASSWORD", "PASSWD", "_API_KEY", "APIKEY",
-                      "PRIVATE_KEY", "RENDER_KEY", "GH_PAT")
+# [규칙 구멍 봉합(2026-07-30, 현준-4 실측)] 종전 목록은 `_API_KEY`처럼 좁아서 이름에 KEY가 있어도
+# 새는 것이 있었다: ORGANT_VAULT_KEY(전 테넌트 시크릿 복호 키)·DATABASE_URL(DB 자격증명)·OPENAI_KEY가
+# 전부 통과했다. 지금 러너 env엔 그 값들이 없어 무해하지만, 누가 하나만 넣으면 그대로 봇 셸에 실린다
+# — '무해한 이유'가 목록이 아니라 우연이면 안 된다. KEY로 끝나거나 KEY를 품은 이름을 통째로 막고,
+# 접속 문자열(URL·DSN·URI)도 자격증명을 품는 형태라 함께 막는다.
+# 일반 빌드 env를 잡지 않도록 화이트리스트를 둔다 — 이름에 KEY가 들어가도 비밀이 아닌 것들.
+_SECRET_ENV_SUBSTR = ("SECRET", "TOKEN", "PASSWORD", "PASSWD", "APIKEY", "KEY",
+                      "CREDENTIAL", "DATABASE_URL", "_DSN", "_URI")
+# KEY를 품지만 비밀이 아닌 이름(빌드·터미널 환경). 여기 없는 KEY* 는 전부 비밀로 취급한다.
+_SECRET_ENV_ALLOW = {
+    "KEYBOARD", "TERM_KEYS", "SSH_AUTH_SOCK",      # 환경·터미널
+    "npm_config_keyfile".upper(),                  # npm 설정 이름(값은 경로)
+}
 
 
 def _is_secret_env(name: str) -> bool:
     u = (name or "").upper()
+    if u in _SECRET_ENV_ALLOW:
+        return False
     return u in _SECRET_ENV_EXACT or any(s in u for s in _SECRET_ENV_SUBSTR)
 
 

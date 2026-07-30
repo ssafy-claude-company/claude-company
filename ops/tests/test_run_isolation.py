@@ -80,3 +80,30 @@ def test_bwrap이_없으면_비특권은_종전대로_통과한다(monkeypatch, 
     ws.mkdir()
     argv, _env, err = gt._prepare_run_exec(str(ws), "echo hi")
     assert err == "" and argv[0] == "/bin/sh"
+
+
+# ── [스크러빙 규칙 구멍 봉합(2026-07-30, 현준-4 실측)] ─────────────────────────
+# 종전 목록은 `_API_KEY`처럼 좁아서 ORGANT_VAULT_KEY·DATABASE_URL·OPENAI_KEY가 전부 통과했다.
+# 그 값들이 러너 env에 없어 무해했을 뿐이라 — 무해한 이유가 목록이 아니라 우연이면 안 된다.
+def test_금고키와_DB자격증명이_지워진다():
+    from system.guide_tools import _is_secret_env
+    for name in ("ORGANT_VAULT_KEY", "DATABASE_URL", "OPENAI_KEY", "ANTHROPIC_API_KEY",
+                 "REDIS_URI", "SENTRY_DSN", "AWS_CREDENTIALS", "GH_PAT"):
+        assert _is_secret_env(name), f"{name} 이 비밀로 안 잡힌다"
+
+
+def test_빌드에_필요한_env는_남는다():
+    """전부 막으면 npm·빌드가 죽는다 — PATH·HOME 같은 일반 env는 보존한다."""
+    from system.guide_tools import _is_secret_env, _scrubbed_run_env
+    for name in ("PATH", "HOME", "PORT", "LANG", "npm_config_cache", "KEYBOARD"):
+        assert not _is_secret_env(name), f"{name} 이 비밀로 잘못 잡힌다"
+    env = _scrubbed_run_env()
+    assert "PATH" in env and "HOME" in env
+
+
+def test_스크러빙된_env에_시크릿성_이름이_없다():
+    from system.guide_tools import _scrubbed_run_env
+    env = _scrubbed_run_env()
+    leaked = [k for k in env
+              if any(s in k.upper() for s in ("KEY", "TOKEN", "SECRET", "PASSWORD", "DATABASE_URL"))]
+    assert leaked == [], f"봇 셸 env에 남은 시크릿성 이름: {leaked}"
