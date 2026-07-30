@@ -37,6 +37,70 @@ def test_상한_0이면_무제한_통과(monkeypatch):
     assert asyncio.run(run()) == 20         # 비활성 = 종전 무제한 동작
 
 
+def _reset_pool():
+    botpool._sem = None
+    botpool._tenant_state.update(size=None, loop=None, sems={})
+
+
+def test_테넌트별_상한이_한_채널의_독식을_막는다(monkeypatch):
+    """[서버 단위 상한(2026-07-29)] 전역 8이어도 한 채널은 제 상한까지만 동시에 돈다."""
+    monkeypatch.setenv("ORGANT_MAX_SUBPROCS", "8")
+    monkeypatch.setenv("ORGANT_MAX_SUBPROCS_PER_TENANT", "2")
+    monkeypatch.setenv("ORGANT_MEM_FLOOR_MB", "0")
+    _reset_pool()
+
+    async def run():
+        active, peak = {}, {}
+        async def w(t):
+            async with botpool.slot(tenant=t):
+                active[t] = active.get(t, 0) + 1
+                peak[t] = max(peak.get(t, 0), active[t])
+                await asyncio.sleep(0.02)
+                active[t] -= 1
+        await asyncio.gather(*(w("P-1") for _ in range(8)),
+                             *(w("P-2") for _ in range(8)))
+        return peak
+    peak = asyncio.run(run())
+    assert peak["P-1"] <= 2 and peak["P-2"] <= 2      # 채널마다 따로 상한
+    assert peak["P-2"] >= 1                           # 다른 채널이 굶지 않는다
+
+
+def test_테넌트_상한_0이면_종전동작(monkeypatch):
+    """기본값 0 = 비활성. 켜기 전까지 전역 상한만 걸린다(라이브 무변경 보장)."""
+    monkeypatch.setenv("ORGANT_MAX_SUBPROCS", "5")
+    monkeypatch.setenv("ORGANT_MAX_SUBPROCS_PER_TENANT", "0")
+    monkeypatch.setenv("ORGANT_MEM_FLOOR_MB", "0")
+    _reset_pool()
+
+    async def run():
+        active, peak = [0], [0]
+        async def w():
+            async with botpool.slot(tenant="P-1"):
+                active[0] += 1; peak[0] = max(peak[0], active[0])
+                await asyncio.sleep(0.02); active[0] -= 1
+        await asyncio.gather(*(w() for _ in range(12)))
+        return peak[0]
+    assert asyncio.run(run()) == 5        # 한 채널이어도 전역 상한까지 쓴다
+
+
+def test_테넌트_미지정은_전역상한만_받는다(monkeypatch):
+    """분류 불가한 턴이 서버 상한을 켠 뒤에도 막히지 않는다."""
+    monkeypatch.setenv("ORGANT_MAX_SUBPROCS", "4")
+    monkeypatch.setenv("ORGANT_MAX_SUBPROCS_PER_TENANT", "1")
+    monkeypatch.setenv("ORGANT_MEM_FLOOR_MB", "0")
+    _reset_pool()
+
+    async def run():
+        active, peak = [0], [0]
+        async def w():
+            async with botpool.slot():          # tenant 없음
+                active[0] += 1; peak[0] = max(peak[0], active[0])
+                await asyncio.sleep(0.02); active[0] -= 1
+        await asyncio.gather(*(w() for _ in range(10)))
+        return peak[0]
+    assert asyncio.run(run()) == 4          # 테넌트 상한 1에 걸리지 않는다
+
+
 def test_메모리_바닥이면_지연되다_상한후_진행(monkeypatch):
     monkeypatch.setenv("ORGANT_MAX_SUBPROCS", "4")
     monkeypatch.setenv("ORGANT_MEM_FLOOR_MB", "999999999")   # 항상 바닥 취급

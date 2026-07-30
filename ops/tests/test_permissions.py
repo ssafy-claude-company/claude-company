@@ -64,6 +64,35 @@ def test_작업공간_안_상대경로는_허용():
     assert out == {}
 
 
+def test_새_네이티브_파일도구도_경계에_걸린다():
+    """[잔여 표면 봉합(2026-07-29)] 허용 목록에 새 파일 도구가 늘어도 경계 검사가 비껴가지
+    않는다. 이름이 아니라 '경로 인자를 들고 왔는가'로 막는다."""
+    a = FakeAudit()
+    allowed = [*ALLOWED, "NotebookEdit"]
+    out = _run(make_pre_tool_use_hook(a, allowed), "NotebookEdit",
+               {"notebook_path": "/etc/murmur-web.env"})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert a.records[0][1]["reason"] == "작업공간 밖 경로(인자 검사)"
+
+
+def test_새_네이티브_파일도구_작업공간_안은_허용():
+    a = FakeAudit()
+    allowed = [*ALLOWED, "NotebookEdit"]
+    out = _run(make_pre_tool_use_hook(a, allowed), "NotebookEdit",
+               {"notebook_path": "sub/nb.ipynb"})
+    assert out == {}
+    assert a.records == []
+
+
+def test_MCP_흐름도구는_인자검사에_안_걸린다():
+    """guide 흐름 도구는 자체 게이트가 있고 경로 의미가 달라 기존 동작을 건드리지 않는다."""
+    a = FakeAudit()
+    allowed = [*ALLOWED, "mcp__guide__run"]
+    out = _run(make_pre_tool_use_hook(a, allowed), "mcp__guide__run",
+               {"path": "/etc", "cmd": "ls"})
+    assert out == {}
+
+
 def test_within_판정():
     assert _within("/ws", "a.txt") is True
     assert _within("/ws", "/ws/sub/x") is True

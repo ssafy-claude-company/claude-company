@@ -28,6 +28,15 @@ def _within(cwd, target) -> bool:
         return False
 
 
+# [잔여 표면 봉합(2026-07-29)] 아래 두 상수는 2.9) 인자 기반 경계 검사가 쓴다.
+# _PATH_CHECKED_TOOLS = 이미 이름으로 경계를 거는 도구(중복 검사·메시지 중복을 피한다).
+# _PATH_ARG_KEYS = 네이티브 파일 도구가 경로를 싣는 인자 이름들. 모르는 이름이 오면 못 막으므로
+# 새 도구를 붙일 때 이 목록을 함께 본다(그래도 이름 목록보다는 덜 새는 그물이다).
+_PATH_CHECKED_TOOLS = ("Read", "Glob", "Grep", "Write", "Edit")
+_PATH_ARG_KEYS = ("file_path", "path", "notebook_path", "target_file",
+                  "dir_path", "directory", "filename")
+
+
 def _deny(reason: str) -> dict:
     return {"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
@@ -201,6 +210,25 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
                                  reason=".collab 시스템 소유 문서 쓰기", path=path, tool_use_id=tool_use_id)
                     return _deny("협의 기록(.collab/)은 시스템 소유 — 회의 결론 초안 DRAFT.md만 Edit로 직접 편집 가능하고, 나머지는 meet/vote/보고로만  "
                                  "기록됩니다(봇은 Read로 열람만).")
+
+        # 2.9) [이름이 아니라 인자로 막는다(2026-07-29, 서버 단위 격리 감사)] 위 2.0/2)의 경계 검사는
+        #      도구 '이름'(Read/Glob/Grep/Write/Edit)에 걸려 있다. 허용 목록(WORKER_BASE_TOOLS)에 새
+        #      네이티브 파일 도구가 추가되면 1)의 화이트리스트는 통과하는데 경계 검사만 조용히 비껴간다
+        #      — 그때 봇 파일 도구는 러너 인프로세스 root라 작업공간 밖 비밀·타 채널 산출물에 닿는다.
+        #      이름 목록을 늘리는 대신 '경로 인자를 들고 왔는가'로 한 겹 더 막아 새 도구에 기본 차단이
+        #      걸리게 한다. 이미 위에서 다룬 도구와 MCP 도구(guide 흐름 도구는 자체 게이트가 있고 경로
+        #      의미가 다르다)는 건드리지 않아 기존 동작은 그대로다.
+        if (isinstance(tool, str) and not tool.startswith("mcp__")
+                and tool not in _PATH_CHECKED_TOOLS):
+            cwd = data.get("cwd") or os.getcwd()
+            for _k in _PATH_ARG_KEYS:
+                _v = tool_input.get(_k)
+                if _v and not _within(cwd, str(_v)):
+                    audit.record("tool_denied", actor=actor, role=role, tool=tool,
+                                 reason="작업공간 밖 경로(인자 검사)", path=str(_v),
+                                 tool_use_id=tool_use_id)
+                    return _deny(f"작업공간 밖 경로에는 접근할 수 없습니다: {_v} — 이 판의 "
+                                 f"워크스페이스 안에서만 작업하세요(비밀·타 채널 파일 보호).")
 
         # 2.5) [쓰기 리스] 리스(flow.write_lease)가 배정된 행위자는 그 샌드박스 안에만 쓴다 — 병렬
         #      가지 간·본 작업물과의 파일 충돌이 구조적으로 불가능. 현재 호출부 없음(휴면 인프라 —
