@@ -10,7 +10,7 @@ import time
 
 from claude_agent_sdk import HookMatcher
 
-from system.audit import AuditLog, make_post_tool_use_hook
+from system.audit import AuditLog, make_post_tool_use_hook, redact_tool_input
 from system.config import Config
 from system.tool_names import FLOW_TOOLS, LEADER_TOOLS
 from system.protocol import Marker
@@ -243,5 +243,13 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
             _org._codex_model = str(_m)
             _org._codex_effort = _ef            # 추론 강도도 codex에 반영(low=하이쿠급 저비용)
             _org._codex_tools = make_guide_tools(flow, organt_id, role)
+            # [감사 공백 봉합(2026-07-30, 현준-4 실측)] Claude 경로는 PostToolUse 훅이 남기는데
+            # codex 경로는 아무것도 안 남았다(실측: audit.jsonl이 192시간 정지, 그 사이 gpt 봇만
+            # 돌았다). 같은 모양으로 남겨 감사가 경로마다 갈리지 않게 한다 — 봇이 무엇을 실행했는지
+            # 기록이 없으면 사후 추적이 불가능하고, 통제의 근거 통계도 절반만 보게 된다.
+            def _codex_audit(_name, _args, _actor=organt_id, _role=label):
+                audit.record("tool_use", actor=_actor, role=_role, tool=_name,
+                             tool_input=redact_tool_input(_args))
+            _org._codex_on_tool = _codex_audit
         return _org
     return organt_builder
