@@ -779,14 +779,42 @@ async def meet(flow, me_id, args):
                          stage=str(_stage))
             return "served"
 
-        async def _speak(speaker, alloc):
+        async def _speak(speaker, alloc, companion=False):
             if tt:
                 _ans = (alloc.reason or "").startswith("2층")   # 종결 블록의 답 슬롯 배분
-                return await _speech(speaker, _mk_body(speaker, None, won=(alloc.kind == SELF),
-                                                       answer=_ans), "토론")
+                _b = _mk_body(speaker, None, won=(alloc.kind == SELF and not companion),
+                              answer=_ans)
+                if companion:
+                    # [동행 발언(2026-07-30)] 같은 라운드를 함께 말하는 사람 — 낙찰자만 초안을 고치고
+                    # 지명을 건다. 동행은 의견만 낸다(같은 파일을 동시에 고치면 서로를 덮어쓴다).
+                    _b += ("\n\n[이번 라운드는 **동시 발언**입니다] 지금 같은 안건을 여럿이 함께 "
+                           "말합니다 — **파일 편집·지명은 하지 마세요**(발언권 낙찰자가 이번 라운드의 "
+                           "편집을 맡습니다). 바꿔야 할 것이 있으면 무엇을 어떻게 바꿔야 하는지 "
+                           "발언으로 적으세요. 보탤 것이 없으면 `[패스]`만.")
+                return await _speech(speaker, _b, "토론")
             r, m2 = schedule[min(sched_i["i"], len(schedule) - 1)]
             sched_i["i"] += 1
             return await _speech(m2, _mk_body(m2, r), f"{r}R")
+
+        async def _speak_many(winner, extra, alloc):
+            """[동시 발언 실행(2026-07-30, 사용자: '단일적인게 커')] 낙찰자와 동행 발언자를 한 번에
+            깨운다. 낙찰자는 종전 그대로(편집·지명 권한 유지), 동행은 의견만 — 파일 충돌이 없다.
+            반환은 [낙찰자 턴, 동행 턴…]; 낙찰자 턴이 없으면(실행 불가) None으로 종결 신호."""
+            import asyncio as _aio
+            if flow.log:
+                flow.log("floor_parallel", surface="meet", winner=int(winner),
+                         companions=[int(x) for x in extra][:6])
+            _res = await _aio.gather(_speak(winner, alloc),
+                                     *[_speak(m, alloc, companion=True) for m in extra],
+                                     return_exceptions=True)
+            _turns = []
+            for _i, _r in enumerate(_res):
+                if isinstance(_r, BaseException) or _r is None:
+                    if _i == 0:
+                        return None                      # 낙찰자가 못 서면 종전처럼 종결
+                    continue
+                _turns.append(_r)
+            return _turns or None
 
         async def _bid(cands, purpose):
             """[②자기선택 = LLM 응찰 / 종결 확인 표결(병렬)] 각 후보 봇이 '지금 내가 발언해야
@@ -1328,7 +1356,8 @@ async def meet(flow, me_id, args):
             if not _skip_discuss:
                 await run_conversation(policy, st, _t0,
                                        _speak, bid=(_bid if tt else None),
-                                       max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc)
+                                       max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc,
+                                       speak_many=(_speak_many if tt else None))
             _skip_discuss = False
             _flush_minutes()
             # [결론 직전 지명 존중(2026-07-21)] 완성 컷에 실려온 지명자에게 답 슬롯 1턴 — 그 편집이
