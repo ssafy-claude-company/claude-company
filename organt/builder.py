@@ -108,7 +108,7 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                     turn_record.clear()
                     turn_record.update(
                         ok=bool(rec.get("ok")),
-                        error=str(rec.get("error") or "")[:300],
+                        error=str(rec.get("error") or "")[:500],
                     )
                     if getattr(flow, "log", None):
                         # [무엇을 하던 턴인가(2026-07-30, U-079 정밀검사)] 종전 turn_done엔 목적이 없어
