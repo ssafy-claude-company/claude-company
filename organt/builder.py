@@ -125,6 +125,21 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                         flow.log("turn_done", bot=organt_id, role=label,
                                  **({"purpose": _pp} if _pp else {}),
                                  **({"usage_suspect": round(_rate)} if _bad else {}), **rec)
+                        # [판별 원가 지도를 판 안에서 집계(2026-07-30)] 로그를 나중에 캐는 대신 목적별
+                        # 누계를 흐름에 이고 다닌다 — 판이 끝날 때 한 줄로 요약을 뽑을 수 있다.
+                        try:
+                            _acc = getattr(flow, "_cost_by_purpose", None)
+                            if _acc is None:
+                                _acc = flow._cost_by_purpose = {}
+                            _slot = _acc.setdefault(_pp or "미분류",
+                                                    {"turns": 0, "cost_usd": 0.0,
+                                                     "tokens_in": 0, "tokens_out": 0})
+                            _slot["turns"] += 1
+                            _slot["cost_usd"] = round(_slot["cost_usd"] + float(rec.get("cost_usd") or 0), 6)
+                            _slot["tokens_in"] += int(rec.get("tokens_in") or 0)
+                            _slot["tokens_out"] += int(rec.get("tokens_out") or 0)
+                        except Exception:
+                            pass
                         if _bad:
                             flow.log("usage_implausible", bot=organt_id, role=label,
                                      out_per_s=round(_rate), duration_ms=_ms,
@@ -142,7 +157,13 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                     if _cost and _rep and _ch is not None:
                         import asyncio as _aio
                         _loop = _aio.get_running_loop()
-                        _t = _loop.create_task(_rep(int(_ch), float(_cost), int(rec.get("tokens_out") or 0)))
+                        # [원가 지도는 원장에(2026-07-30)] 입력·캐시·목적까지 함께 보고 — 로그가
+                        # 로테이션돼도 "무엇에 얼마 썼나"가 과금 진실원에 남는다.
+                        _t = _loop.create_task(_rep(
+                            int(_ch), float(_cost), int(rec.get("tokens_out") or 0),
+                            tokens_in=int(rec.get("tokens_in") or 0),
+                            tokens_cached=int(rec.get("tokens_cached") or 0),
+                            purpose=str((getattr(flow, "_turn_purpose", None) or {}).get(organt_id) or "")))
                         _USAGE_BG.add(_t)
 
                         def _quota_check(t, _flow=flow):
