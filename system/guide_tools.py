@@ -25,6 +25,7 @@ import anyio
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from ._util import _dbg, _looks_transient, _ok, _speech_clip  # noqa: F401  [_speech_clip: sys_core + PJT/tests(test_sys)가 파사드에서 직접 import — 유지, _looks_transient: system/tests(test_misc)가 파사드에서 import — 유지]
+from ._util import clip as _clip
 from .rule.evidence import (
     command_matches_spec, looks_like_verification_command as _evidence_command,
     direct_verifier_command, normalize_verifier_command,
@@ -802,7 +803,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                         # 근거는 **그 백로그 안에** 남긴다 — 채널 마커로 띄우면 공통 흐름을 어지럽히고,
                         # 정작 '이 일감을 왜 지금 집었나'는 그 일감 옆에 있어야 읽힌다(2026-07-29 사용자 지적).
                         try:
-                            _ln = f"[자기착수] {flow._info(me_id) or me_id} — 근거: {_why[:140]}"
+                            _ln = f"[자기착수] {flow._info(me_id) or me_id} — 근거: {_clip(_why, 240)}"
                             if not getattr(b, "activity", None) or b.activity[-1] != _ln:
                                 b.activity.append(_ln)
                         except Exception:
@@ -836,7 +837,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                         _tgt = next((x for x in _sts if int(me_id) in (getattr(x, "participants", None) or set())), _sts[0])
                     r = relay_for(flow, _tgt)
                     try:
-                        b = r.submit(int(me_id), desc[:140])   # 풀에 등재(OPEN)
+                        b = r.submit(int(me_id), _clip(desc, 240))   # 풀에 등재(OPEN)
                     except DuplicateBacklog as e:
                         return _ok(str(e))
                     _tgt.participants.add(int(me_id))

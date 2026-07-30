@@ -560,7 +560,7 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
     for _old in flow.milestones:
         if _old.status not in ("done", "superseded"):
             _old.status = "superseded"
-            _pnote(flow, f"[마일스톤 대체] ({_old.ms_id}) {_old.goal[:80]}")
+            _pnote(flow, f"[마일스톤 대체] ({_old.ms_id}) {_clip(_old.goal, 300)}")
             if flow.log:
                 flow.log("ms_superseded", ms=_old.ms_id, by=ms.ms_id)
     flow.milestones.append(ms)
@@ -1509,7 +1509,7 @@ def defer_criterion(flow, obj, c, reason: str):
     oid = getattr(obj, "ms_id", "")
     if flow.log:
         flow.log("criterion_deferred", id=oid, target=c.desc[:60], reason=str(reason or "")[:80])
-    _pnote(flow, f"[조건 이월] '{c.desc[:60]}' → 다음 주기 — 이번 주기 범위 밖(사람 개입 없이 자체 해소)")
+    _pnote(flow, f"[조건 이월] '{_clip(c.desc, 200)}' → 다음 주기 — 이번 주기 범위 밖(사람 개입 없이 자체 해소)")
     _ckpt(flow)
     return (f"조건 '{c.desc[:40]}' 다음 주기로 이월했습니다 — 사람 승인 불요(로드맵 후속 단계가 받아,"
             f" 다음 주기 잣대로 자동 합류). 이번 주기는 남은 조건으로 진행하세요.")
@@ -1654,7 +1654,7 @@ def approve_waiver(flow, obj, target: str, approve: bool = True) -> str:
     c.status = "waived" if approve else "active"
     oid = getattr(obj, "ms_id", None) or getattr(obj, "st_id", "")
     if flow.log:
-        if approve: _pnote(flow, f"[조건 조정] '{c.desc[:40]}' 환경 제약으로 조정(사람 승인)")
+        if approve: _pnote(flow, f"[조건 조정] '{_clip(c.desc, 200)}' 환경 제약으로 조정(사람 승인)")
         flow.log("criterion_waiver", id=oid, target=c.desc[:60], approved=bool(approve))
     # [사람 대기 해제(2026-07-18, 감사)] 흐름에 남은 blocked_pending 조건이 없으면 awaiting_human 해제 —
     # HUD의 '사람 대기'가 사라지고 교착 출구가 닫힌다(자기완결, 호출자 무관).
@@ -1704,7 +1704,7 @@ def wrapup_done(flow, obj) -> str:
         # 지나면 같은 주기의 '완수' 줄이 또 게시돼 화면에 같은 제목이 두 번 뜬다(실측: 6998·7017).
         # 이미 done인 대상은 완수를 다시 알리지 않는다 — 상태 전이가 아니라 재확인이기 때문이다.
         if not _was_done:
-            _pnote(flow, f"[{'마일스톤 완수' if isinstance(obj, Milestone) else 'SubTask 완수'}] ({_oid}) {getattr(obj, 'goal', '')[:120]}")
+            _pnote(flow, f"[{'마일스톤 완수' if isinstance(obj, Milestone) else 'SubTask 완수'}] ({_oid}) {_clip(getattr(obj, 'goal', ''), 300)}")
         flow.log("ms_done" if isinstance(obj, Milestone) else "subtask_done",
                  id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""))
     if isinstance(obj, Milestone):
@@ -1725,7 +1725,7 @@ def wrapup_done(flow, obj) -> str:
                 except Exception:
                     _url = ""
         _chk = (f"바로 열어 확인: {_url}" if _url else "채널 상단 '완성작' 버튼에서 바로 실행해 확인하세요")
-        _pnote(flow, f"[마일스톤 보고] ({obj.ms_id}) {obj.goal[:100]}\n{_ev}\n"
+        _pnote(flow, f"[마일스톤 보고] ({obj.ms_id}) {_clip(obj.goal, 300)}\n{_ev}\n"
                      f"→ 사용자 확인 단위입니다 — {_chk}")
         # [진척 표기도 같은 눈으로(2026-07-27, 전수감사)] 여기만 정규화 안 한 raw roadmap을 써서
         # ①한 줄 화살표 로드맵("최소버전 → 확장")이면 len=1이라 **안내가 아예 안 떴고**
@@ -1734,7 +1734,7 @@ def wrapup_done(flow, obj) -> str:
         _rm = roadmap_phases(flow)
         _done_n = roadmap_done_count(flow)
         if _done_n < len(_rm):
-            _pnote(flow, f"[다음 단계] 로드맵 {_done_n}/{len(_rm)} 완수 — 다음: **{_rm[_done_n][:60]}**. "
+            _pnote(flow, f"[다음 단계] 로드맵 {_done_n}/{len(_rm)} 완수 — 다음: **{_clip(_rm[_done_n], 200)}**. "
                          f"meet 회의를 열어 다음 주기 수렴안([수렴안] 목표/조건/단위)을 확정하세요"
                          f"(사용자 보고·목표 확인 후).")
     return "done"
@@ -2080,7 +2080,7 @@ def register_consensus(flow, prop: str, origin: str = ""):
         return err, 0
     if stages:
         flow.roadmap = stages          # 전체 구조(로드맵) — ckpt 동승(sys_recovery), 주기 완수마다 다음 단계 코칭
-        _pnote(flow, "[로드맵] " + " → ".join(s[:40] for s in stages[:8]) + " (순차 1주기 — 각 주기 완수 시 보고 후 다음 단계 회의)")
+        _pnote(flow, "[로드맵] " + " → ".join(_clip(s, 120) for s in stages[:8]) + " (순차 1주기 — 각 주기 완수 시 보고 후 다음 단계 회의)")
     ms = open_milestone(flow, goal, parse_criteria_lines(crit), origin=f"회의 가결: {origin[:60]}")
     if isinstance(ms, str):
         return ms, 0
@@ -3483,7 +3483,7 @@ def register_stage(flow, stage, prop, origin=""):
             flow.roadmap = stages
             _k = sum(1 for m in (getattr(flow, "milestones", None) or [])
                      if getattr(m, "status", "") == "done") + 1
-            _road = ("\n계획: " + " → ".join(s[:40] for s in stages[:8])
+            _road = ("\n계획: " + " → ".join(_clip(s, 120) for s in stages[:8])
                      + f" (이번 주기 = {_k}단계)")
         ms = open_milestone(flow, cyc or "이번 주기", milestone_entries,
                             origin=f"마일스톤 회의: {origin[:50]}")
