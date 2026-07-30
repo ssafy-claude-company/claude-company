@@ -48,3 +48,14 @@ def test_회의_골격이_보여주는_예시_로드맵은_관문을_통과한�
                 continue
             ex = re.sub(r".*예:\s*", "", line).rstrip("⟧ ")
             assert not roadmap_process_errors([p.strip() for p in ex.split("→")]), ex
+
+
+def test_빼는_말_없이_규모만_줄인_목표도_반려된다():
+    """[ch263 실측] "브라우저에서 즉시 실행되는 1인용 별 수집 미니게임 … 한 세션 60초 이내"."""
+    e = goal_narrowing_error("브라우저에서 즉시 실행되는 1인용 별 수집 미니게임을 만든다. "
+                             "한 세션은 60초 이내이며 키보드·터치로 이동", "게임 만들어줘")
+    assert e and "갈 수 있는 곳까지" in e
+
+
+def test_사용자가_미니게임을_요청하면_통과한다():
+    assert not goal_narrowing_error("별 수집 미니게임을 만든다", "미니게임 하나 만들어줘")
