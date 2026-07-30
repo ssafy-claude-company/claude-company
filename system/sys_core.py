@@ -27,6 +27,7 @@ import logging
 from typing import Dict, Optional
 
 from ._util import doc_collab_on, dossier_read, dossier_rel
+from ._util import clip as _clip
 from .audit import CAP_MIN   # noqa: F401 — 재수출(파사드 보존: 기존 소비자는 sys_core 이름을 봄)
 from .rule.communication import CommError, Engagement, _bid_score as _bid_of
 from .rule.comm_helpers import (
@@ -2035,7 +2036,7 @@ class Sys:
             await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
                                   f"[다음 선정] {flow._info(holder) or holder} → "
                                   f"{flow._info(owner) or owner} · "
-                                  f"{(getattr(picked, 'body', '') or '')[:70]}")
+                                  f"{_clip(getattr(picked, 'body', ''), 160)}")
         except Exception:
             pass
         return selected
