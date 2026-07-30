@@ -61,7 +61,19 @@ for spec in $REPOS; do
   if [ "$ahead" -gt 0 ]; then
     # [안전] 정본 체크아웃이 더러우면(타 세션이 그 트리에서 작업 중) 브랜치 전환·병합 금지 —
     # 여긴 라이브 러너의 import 소스다. 남의 미커밋 위에서 checkout/merge 하지 않는다.
-    if [ -n "$(git -C "$main" status --porcelain 2>/dev/null)" ]; then
+    dirty="$(git -C "$main" status --porcelain 2>/dev/null)"
+    # [반복 차단 해소 2026-07-30, 현준-4] 더러운 것이 ops/STATE.md 하나뿐이면 그것만 커밋하고
+    #   나아간다. 세션이 착지 뒤 정본 STATE.md에 기록을 덧쓰는데 훅이 정본 직접 커밋을 막아
+    #   더러운 채 남고, 그게 다음 세션의 착지를 전부 막았다(하루 네 번 손으로 대신 커밋했다).
+    #   STATE.md는 착지 기록 자체라 커밋이 정상 귀결이다 - 남의 '작업 중 코드'가 아니다.
+    if [ -n "$dirty" ] && [ -z "$(echo "$dirty" | sed -E 's/^.{3}//' | grep -v '^ops/STATE\.md$')" ]; then
+      echo "  $name 정본에 STATE.md 기록만 미커밋 - 착지 기록으로 함께 커밋합니다."
+      git -C "$main" add ops/STATE.md 2>/dev/null \
+        && LAND_OK=1 git -C "$main" -c user.email=o@l -c user.name="$S" \
+           commit -q -m "state: 착지 기록 미커밋분 커밋(land.sh, $S 착지 중)" 2>/dev/null || true
+      dirty="$(git -C "$main" status --porcelain 2>/dev/null)"
+    fi
+    if [ -n "$dirty" ]; then
       echo "  ⚠ $name 정본 체크아웃($main)에 미커밋 변경(타 세션 작업 중일 수 있음) — 병합 보류."
       echo "     그 트리가 정리된 뒤 다시 land.sh 하거나, 통합 담당에게 브랜치($br)를 맡기세요."
       exit 1
