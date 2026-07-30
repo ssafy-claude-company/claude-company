@@ -2392,13 +2392,12 @@ def stage_draft_template(stage, agenda=""):
         "criteria": ("완수조건:\n- ⟦조건⟧ | 실증: ⟦실행할 exact command 또는 측정 가능한 검사⟧\n"
                      "- ⟦조건⟧ | 실증: ⟦…⟧\n"),
         "goal": ("목표: ⟦이 Task로 정확히 무엇을 만드는지 — 구체적으로⟧\n"
-                 # [구성 점검 경로 평등(2026-07-21, U-038 실측: 팀 밖 게임 기획자에게 후속 담당을 걸고
-                 # 가결)] set_goal 도구 경로에만 있던 '[구성 점검]'(2026-07-13 설계)을 회의 골격에도 —
-                 # 자리표시라 안 채우면 초안이 완성되지 않고, 부족 직군의 정경로(recruit·후보 대기)가
-                 # 그 자리에서 상기된다.
+                 # [이 회의는 '무엇을 만들지'만 정한다(2026-07-30, 사용자 지적)] 골격에 완수조건 칸이
+                 # 남아 있어, 단계를 쪼갠 뒤에도 봇들이 그 칸을 채우느라 이 회의에서 검증 명령·수치
+                 # (150ms·exit 0·verify_ui.py)를 확정했다(U-436 실측). 끝의 기준은 다음 회의 몫이다.
+                 # 여기서는 만들 것과, 그걸 만들 사람이 팀에 있는지만 본다.
                  "구성 점검: ⟦원문에 필요한 직군이 이 팀에 다 있는가 — 부족하면 그 직군과 recruit 계획, "
-                 "충분하면 '충분' 판단 근거 한 줄⟧\n\n완수조건:\n"
-                 "- ⟦조건⟧ | 실증: ⟦run으로 확인하는 절차⟧\n- ⟦조건⟧ | 실증: ⟦절차⟧\n"),
+                 "충분하면 '충분' 판단 근거 한 줄⟧\n"),
         # [완수조건 = 이번 주기 범위(2026-07-20, U-035 rung1)] 최소버전 주기에 모션 타이밍·디자인
         # 토큰 등 완제품 전량이 조건으로 실려 met이 영구 미달(1/4 고정) → 재협상 dead-end로 빠지던
         # 상류 방아쇠 — 회의 골격이 스코프를 못박는다(뒤 단계 몫은 그 단계 주기의 조건).
@@ -2992,11 +2991,17 @@ def stage_preflight(stage, text, flow=None):
                 errs.append(_proc_err)
     if stage == "milestone" and not (_val("이번 주기") or _val("목표")):
         errs.append("'이번 주기: ⟦이번에 보여줄 딱 하나⟧' 줄이 필요합니다(줄 시작, 장식 없이).")
-    if stage in ("goal", "milestone"):
+    # [회의 하나에 결론 하나(2026-07-30, 사용자 지시) — 전수 정합] goal 회의는 '무엇을 만들지'만
+    # 정한다. 종전엔 여기(사전검사)가 완수조건을 요구해, 골격·등록에서 조건을 뺀 뒤에도 표결 전
+    # 관문이 계속 조건을 요구했다 — 회의가 영영 안 닫히는 잔재. 조건 검사는 criteria·milestone 몫.
+    if stage in ("criteria", "milestone"):
         _ct = "\n".join(l for l in lines if _crit_delim().search(l)
                         and not l.strip().startswith(("단위:", "단계:", "백로그:")))
         _entries = parse_criteria_lines(_ct)
         _proposed_phases = _proposal_roadmap_phases(lines) if stage == "milestone" else []
+        if stage == "criteria" and not _entries:
+            errs.append("'조건: ⟦완수조건⟧ | 실증: ⟦실행할 명령 또는 측정 가능한 검사⟧' 줄이 "
+                        "1개 이상 필요합니다 — 이 회의가 정할 하나입니다.")
         if stage == "milestone":
             _entries, _marker_errs = _resolve_goal_ratification_entries(
                 flow, _entries, _proposed_phases)

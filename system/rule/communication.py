@@ -461,8 +461,10 @@ async def meet(flow, me_id, args):
                     _dwrite(flow, "DRAFT.md", _scaffolded)  # 기존 진행분 additive 보존 + final일 때만 정본 행
                 if _dread(flow, "DRAFT.md") is not None:    # 쓰기 실패(워크스페이스 없음)면 폴백 유지
                     _draft_path = f"{dossier_rel(flow.current.task_id)}/DRAFT.md"
-                    _stlbl = {"goal": "① GOAL", "milestone": "② 마일스톤", "subtask": "③ 서브태스크",
-                              "backlog": "④ 백로그"}.get(str(_stage), str(_stage))
+                    # [회의 하나에 결론 하나(2026-07-30)] 단계가 늘었다 — 라벨도 같이 늘려야
+                    # 화면이 "criteria"라는 내부 값을 그대로 보여주지 않는다.
+                    _stlbl = {"goal": "① 목표", "criteria": "② 완수 기준", "milestone": "③ 이번 주기",
+                              "subtask": "④ 작업 영역", "backlog": "⑤ 일감"}.get(str(_stage), str(_stage))
                     flow._meet_stage_note = f"{_stlbl} 회의 — DRAFT 함께 채우는 중"
                     try:
                         flow.note_activity(0, "🗳 회의 — 공동 결론 DRAFT 개설(함께 채우는 중)", force=True)
@@ -644,6 +646,27 @@ async def meet(flow, me_id, args):
                     _dwrite(flow, "DRAFT.md", _scaffolded)
                     _dtxt = _scaffolded
                 _h = _hl.md5(_dregion(_dtxt).encode()).hexdigest()   # 안정 판정 = 결정 구획만
+                # [무엇이 바뀌었는지 보이게(2026-07-30, 사용자: '이의 제출했습니다 이러고 그게 뭔지는
+                # 안 보이니깐')] 봇의 발언은 "세 이의를 해소했습니다"처럼 결과만 말하고, 실제로 무엇이
+                # 결론에 들어갔는지는 파일 안에만 있다 — 사람은 파일을 안 본다. 이 턴에 결정 구획에서
+                # **새로 생기거나 사라진 줄**을 채널에 한 덩이로 붙인다(회의록에도 남는다).
+                try:
+                    _now_all = [l.strip() for l in _dregion(_dtxt).splitlines() if l.strip()]
+                    _prev_all = _dstate.get("region_lines")
+                    if _prev_all is not None:
+                        _added = [l for l in _now_all if l not in _prev_all][:4]
+                        _gone = [l for l in _prev_all if l not in _now_all][:2]
+                        if _added or _gone:
+                            _chg = ""
+                            if _added:
+                                _chg += "\n".join(f"+ {l[:110]}" for l in _added)
+                            if _gone:
+                                _chg += ("\n" if _chg else "") + "\n".join(f"− {l[:80]}" for l in _gone)
+                            await _say_speech(flow, m, "[결론 변경]", _chg)
+                            minutes.append(f"[변경] {flow._info(m) or m}:\n{_chg}")
+                    _dstate["region_lines"] = _now_all
+                except Exception:
+                    pass
                 # [발제 귀속 — 턴별 diff(2026-07-16, 사용자: '발제한 애가 주인, 누가 발제했는지 남아야')]
                 # 이 턴에 새로 나타난(또는 고쳐 쓴) '백로그:' 줄은 이 화자의 발제 — 봇 규약(태그) 없이
                 # SYS가 구조적으로 추적한다. 마지막 실질 저자가 주인(고쳐 쓴 사람이 새 주인).
