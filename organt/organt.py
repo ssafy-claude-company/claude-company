@@ -286,9 +286,23 @@ class Organt:
             # 되돌리기: ORGANT_MICRO_FRESH=0.
             if os.environ.get("ORGANT_MICRO_FRESH", "1") != "0":
                 return o
-        if self.session_id:
-            return dataclasses.replace(o, resume=self.session_id)
+        _sid = self._resume_sid(micro)
+        if _sid:
+            return dataclasses.replace(o, resume=_sid)
         return o
+
+    def _resume_sid(self, micro: bool):
+        """[짧은 상호작용은 세션을 물지 않는다(2026-07-30, U-079 실측)] 응찰·표결 한 줄에도 그 봇의
+        작업 스레드 전체가 다시 실렸다 — 168토큰 말하려고 12만~25만 토큰을 읽는 구조였다. 세션의
+        '기억'은 서버 상태가 아니라 대화 기록이고, 매 호출마다 전량이 다시 전송되기 때문이다.
+
+        micro 프롬프트는 이미 자족적이다(역할 + 본문 두 줄). 작업 턴은 종전대로 세션을 잇고,
+        micro만 새 스레드로 띄운다 — 기억이 필요 없는 곳에서만 끊는다. ORGANT_MICRO_FRESH=0이면
+        종전 동작(세션 이어감).
+        """
+        if micro and os.environ.get("ORGANT_MICRO_FRESH", "1") != "0":
+            return None
+        return self.session_id
 
     async def _run_codex(self, prompt: str, micro: bool = False):
         """[GPT 봇(2026-07-22)] codex(bwrap 외부 샌드박스) 한 턴 — guide 도구는 HTTP 브리지로 물린다.
@@ -310,7 +324,7 @@ class Organt:
 
         async with botpool.slot():
             _text, _sid = await run_codex_turn(
-                prompt=prompt, cwd=_cwd, session_id=self.session_id,
+                prompt=prompt, cwd=_cwd, session_id=self._resume_sid(micro),
                 tools=([] if micro else (getattr(self, "_codex_tools", None) or [])),
                 model=_model,
                 effort=getattr(self, "_codex_effort", None),

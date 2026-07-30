@@ -552,7 +552,7 @@ async def meet(flow, me_id, args):
                     f"[발언권 규약] 특정 동료의 답이 꼭 필요하면 발언 마지막 줄에 `[지명: <봇id>]` "
                     f"(참여자: {_ros0}) — 더 보탤 것이 없으면 `[패스]`만.{_l2_rule}")
 
-        async def _speech(m, body, label):
+        async def _speech(m, body, label, micro=False):
             """발언 1회 — 정책 불문 단일 실행 경로. 반환 Turn(지명·패스 신호) / None=회의 중단."""
             nonlocal last_full
             if flow.comm.done or flow.comm.alive != me_id or wakes["n"] >= wake_cap:
@@ -572,7 +572,10 @@ async def meet(flow, me_id, args):
                     return None
             wakes["n"] += 1
             try:
-                res = await flow.wake(m, body, Kind.INFO)
+                # [동행 발언은 짧은 상호작용(2026-07-30)] 편집·지명 권한이 없는 동행은 도구도 세션도
+                # 필요 없다 — 안건과 못 본 발언이 본문에 다 있다(실측: 못 본 발언 중앙 105자).
+                _wk = (getattr(flow, "wake_micro", None) or flow.wake) if micro else flow.wake
+                res = await _wk(m, body, Kind.INFO)
             except Exception as e:
                 res = f"(발언 실패: {e})"
             if not _self_turn:
@@ -791,7 +794,7 @@ async def meet(flow, me_id, args):
                            "말합니다 — **파일 편집·지명은 하지 마세요**(발언권 낙찰자가 이번 라운드의 "
                            "편집을 맡습니다). 바꿔야 할 것이 있으면 무엇을 어떻게 바꿔야 하는지 "
                            "발언으로 적으세요. 보탤 것이 없으면 `[패스]`만.")
-                return await _speech(speaker, _b, "토론")
+                return await _speech(speaker, _b, "토론", micro=companion)
             r, m2 = schedule[min(sched_i["i"], len(schedule) - 1)]
             sched_i["i"] += 1
             return await _speech(m2, _mk_body(m2, r), f"{r}R")
