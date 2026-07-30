@@ -132,14 +132,25 @@ def _run_drop_creds():
     600 root 파일·root 프로세스 environ을 *권한 자체로* 못 읽는다(node·npm 빌드는 HOME·캐시를
     작업공간으로 잡아주면 정상). 루트가 아니면(로컬 개발) None — 이미 비특권. 사용자명은
     ORGANT_RUN_USER로 교체 가능(기본 nobody). root에서 사용자/강등 도구를 못 찾으면 호출자가
-    fail-closed한다."""
+    fail-closed한다.
+
+    [판별 uid 지원(2026-07-30)] ORGANT_RUN_USER가 숫자면 계정 없이 그 uid/gid로 내린다.
+    판이 늘어날 때마다 /etc/passwd에 계정을 만들지 않고 판별 경계를 세우려는 것 — setpriv·chown은
+    숫자 uid를 그대로 받는다. 판별 uid 할당은 특권 도우미(organt-sandbox)가 정하고, 이 함수는
+    받은 값을 해석만 한다."""
     try:
         if os.geteuid() != 0:
             return None
+        want = (os.environ.get("ORGANT_RUN_USER") or "nobody").strip()
+        if want.isdigit():
+            n = int(want)
+            if n <= 0:                      # 0(root)으로는 내려가지 않는다 — 강등의 의미가 사라진다
+                return None
+            return (n, n)
         import pwd
-        r = pwd.getpwnam(os.environ.get("ORGANT_RUN_USER") or "nobody")
+        r = pwd.getpwnam(want)
         return (r.pw_uid, r.pw_gid)
-    except (KeyError, AttributeError, OSError):
+    except (KeyError, AttributeError, OSError, ValueError):
         return None
 
 

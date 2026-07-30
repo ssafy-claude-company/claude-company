@@ -1,0 +1,50 @@
+#!/root/ClaudeCompany/.venv/bin/python
+# -*- coding: utf-8 -*-
+"""판별 격리 도우미 — 특권이 필요한 한 조각만 root로 실행한다(2026-07-30, 현준-4).
+
+[왜 이 프로그램이 있나]
+봇 셸을 판(작품)별 uid로 내리는 일에만 특권이 필요하다. 그것 때문에 러너 전체를 root로 돌리면
+러너의 인프로세스 파일 도구(Read/Write/Edit)까지 root가 된다. 그 한 조각만 여기로 떼어내면
+러너는 비특권을 유지하면서 판 격리를 얻는다. 러너는 sudo로 이 프로그램만 부를 수 있다.
+
+[신뢰 경계]
+검증은 전부 system.sandbox_guard에 있다(시험 가능하게 분리). 이 파일은 얇게 유지한다.
+호출자(러너)는 비특권이고 침해됐을 수 있다고 가정한다 — uid를 인자로 받지 않는 이유다.
+
+[설치]  ops/sandbox/INSTALL.md 참조. 설치 전에는 아무 영향이 없다.
+"""
+import os
+import sys
+
+REPO = "/root/ClaudeCompany"
+WS_ROOT = os.path.join(REPO, "ops/var/organt_sns_workspace")
+UIDMAP = "/var/lib/organt-sandbox/uidmap.json"
+
+
+def main(argv):
+    sys.path.insert(0, REPO)
+    from system.sandbox_guard import (GuardError, parse_args, project_key,
+                                      uid_for, validated_workspace)
+    try:
+        if os.geteuid() != 0:
+            raise GuardError("root로 실행돼야 한다(sudoers 경유)")
+        ws, cmd = parse_args(argv[1:])
+        real, root = validated_workspace(ws, WS_ROOT)
+        uid = uid_for(project_key(real, root), UIDMAP)
+    except GuardError as e:
+        sys.stderr.write(f"organt-sandbox: {e}\n")
+        return 90
+
+    # 강등 대상을 숫자 uid로 지정하면 _run_drop_creds가 계정 없이 해석한다.
+    os.environ["ORGANT_RUN_USER"] = str(uid)
+    from system.guide_tools import _prepare_run_exec   # root 소유 코드 — 호출자가 못 고친다
+    exec_argv, env, err = _prepare_run_exec(real, cmd)
+    if err:
+        sys.stderr.write(f"organt-sandbox: 샌드박스 구성 실패: {err}\n")
+        return 91
+    os.execve(exec_argv[0], exec_argv, env)
+    return 92                                          # execve 성공 시 도달하지 않는다
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
