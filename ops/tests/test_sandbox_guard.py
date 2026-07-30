@@ -23,7 +23,7 @@ def test_뿌리_밖_경로는_거부한다(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     with pytest.raises(GuardError):
-        validated_workspace(str(outside), root)
+        validated_workspace(str(outside), [(root, "parent")])
 
 
 def test_심링크로_뿌리를_벗어나면_거부한다(tmp_path):
@@ -34,26 +34,26 @@ def test_심링크로_뿌리를_벗어나면_거부한다(tmp_path):
     link = os.path.join(root, "escape")
     os.symlink(str(secret), link)
     with pytest.raises(GuardError):
-        validated_workspace(link, root)
+        validated_workspace(link, [(root, "parent")])
 
 
 def test_상대경로는_거부한다(tmp_path):
     with pytest.raises(GuardError):
-        validated_workspace("ops/var/x", _root(tmp_path))
+        validated_workspace("ops/var/x", [(_root(tmp_path), "parent")])
 
 
 def test_없는_디렉터리는_거부한다(tmp_path):
     root = _root(tmp_path)
     with pytest.raises(GuardError):
-        validated_workspace(os.path.join(root, "nope"), root)
+        validated_workspace(os.path.join(root, "nope"), [(root, "parent")])
 
 
 def test_뿌리_자체는_판이_아니다(tmp_path):
     """뿌리에서 돌면 전 판이 한 uid를 공유해 경계가 사라진다."""
     root = _root(tmp_path)
-    real, r = validated_workspace(root, root)
+    real, r, k = validated_workspace(root, [(root, "parent")])
     with pytest.raises(GuardError):
-        project_key(real, r)
+        project_key(real, r, k)
 
 
 def test_uid는_인자로_받지_않는다(tmp_path):
@@ -77,10 +77,10 @@ def test_판_폴더는_통과하고_하위폴더도_같은_판이다(tmp_path):
     root = _root(tmp_path)
     proj = os.path.join(root, "p-001-작품")
     os.makedirs(os.path.join(proj, "src"))
-    real, r = validated_workspace(proj, root)
-    assert project_key(real, r) == "p-001-작품"
-    real2, r2 = validated_workspace(os.path.join(proj, "src"), root)
-    assert project_key(real2, r2) == "p-001-작품"   # 하위에서 불려도 같은 판
+    real, r, k = validated_workspace(proj, [(root, "parent")])
+    assert project_key(real, r, k) == "p-001-작품"
+    real2, r2, k2 = validated_workspace(os.path.join(proj, "src"), [(root, "parent")])
+    assert project_key(real2, r2, k2) == "p-001-작품"   # 하위에서 불려도 같은 판
 
 
 def test_판마다_다른_uid가_배정된다(tmp_path):
@@ -122,3 +122,39 @@ def test_대장은_소유자만_읽게_저장된다(tmp_path):
     m = str(tmp_path / "uidmap.json")
     uid_for("p-001", m)
     assert oct(os.stat(m).st_mode & 0o777) == "0o600"
+
+
+# ── leaf 뿌리 (증류·수면 흐름의 고정 빈 cwd) ─────────────────────────────
+# 실측에서 나온 필요다: sys_core._distill_workspace가 판 폴더가 아닌 고정 폴더를 cwd로 준다.
+# leaf를 안 두면 그 흐름의 run이 '뿌리 밖'으로 거부돼 조용히 실패한다 — 봇은 원인을 모른다.
+def test_leaf_뿌리는_그_폴더_자체가_한_단위다(tmp_path):
+    leaf = tmp_path / "state" / ".distill_cwd"
+    leaf.mkdir(parents=True)
+    real, root, kind = validated_workspace(str(leaf), [(str(leaf), "leaf")])
+    assert kind == "leaf"
+    assert project_key(real, root, kind) == "_.distill_cwd"   # 뿌리 자체여도 거부되지 않는다
+
+
+def test_leaf_단위는_판과_다른_uid를_받는다(tmp_path):
+    """증류 cwd가 어느 판의 uid도 물려받지 않는다."""
+    m = str(tmp_path / "uidmap.json")
+    assert uid_for("_.distill_cwd", m) != uid_for("p-001", m)
+
+
+def test_여러_뿌리_중_맞는_것을_고른다(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    proj = ws / "p-001"; proj.mkdir()
+    leaf = tmp_path / ".distill_cwd"; leaf.mkdir()
+    roots = [(str(ws), "parent"), (str(leaf), "leaf")]
+    r1, root1, k1 = validated_workspace(str(proj), roots)
+    assert (k1, project_key(r1, root1, k1)) == ("parent", "p-001")
+    r2, root2, k2 = validated_workspace(str(leaf), roots)
+    assert (k2, project_key(r2, root2, k2)) == ("leaf", "_.distill_cwd")
+
+
+def test_어느_뿌리에도_없으면_여전히_거부한다(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    leaf = tmp_path / ".distill_cwd"; leaf.mkdir()
+    other = tmp_path / "other"; other.mkdir()
+    with pytest.raises(GuardError):
+        validated_workspace(str(other), [(str(ws), "parent"), (str(leaf), "leaf")])

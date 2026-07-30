@@ -22,22 +22,36 @@ class GuardError(Exception):
     """검증 실패 — 도우미는 이걸 받으면 아무것도 실행하지 않고 끝낸다."""
 
 
-def validated_workspace(raw, ws_root):
-    """작업공간을 검증해 (실경로, 뿌리실경로)를 준다. 뿌리 밖·비디렉터리는 거부."""
+def validated_workspace(raw, ws_roots):
+    """작업공간을 검증해 (실경로, 맞은 뿌리, 뿌리종류)를 준다. 허용 뿌리 밖·비디렉터리는 거부.
+
+    ws_roots는 (경로, 종류) 목록이다. 종류를 둘로 나눈 이유는 실측에서 나왔다.
+      "parent" — 그 밑 첫 단계 폴더가 각각 하나의 판이다(판별 작업공간 뿌리)
+      "leaf"   — 그 폴더 자체가 하나의 단위다(증류 워커의 격리 빈 cwd 같은 고정 경로)
+
+    leaf를 두지 않으면 그런 흐름이 '뿌리 자체'로 거부돼 조용히 실패한다 — 봇은 run이 막힌 것을
+    오류로만 보고 원인을 모른 채 약한 명령으로 우회한다(가장 나쁜 실패 형태).
+    """
     if not raw or not str(raw).startswith("/"):
         raise GuardError("작업공간은 절대경로여야 한다")
     real = os.path.realpath(str(raw))
-    root = os.path.realpath(str(ws_root))
-    if real != root and not real.startswith(root + os.sep):
-        raise GuardError(f"작업공간이 허용 뿌리 밖이다: {real}")
-    if not os.path.isdir(real):
-        raise GuardError("작업공간이 디렉터리가 아니다")
-    return real, root
+    for root_raw, kind in ws_roots:
+        root = os.path.realpath(str(root_raw))
+        if real == root or real.startswith(root + os.sep):
+            if not os.path.isdir(real):
+                raise GuardError("작업공간이 디렉터리가 아니다")
+            return real, root, kind
+    raise GuardError(f"작업공간이 허용 뿌리 밖이다: {real}")
 
 
-def project_key(real, root):
-    """판을 가리키는 첫 단계 폴더 이름. 하위 폴더로 불려도 같은 판으로 묶는다.
-    뿌리 자체는 판이 아니다 — 거기서 돌면 전 판이 한 uid를 공유하게 된다."""
+def project_key(real, root, kind="parent"):
+    """이 작업공간이 속한 단위의 이름. 같은 단위는 항상 같은 uid를 받는다.
+
+    parent 뿌리에서는 첫 단계 폴더가 단위다(하위에서 불려도 같은 판으로 묶는다). 뿌리 자체는
+    단위가 아니다 — 거기서 돌면 전 판이 한 uid를 공유해 경계가 사라진다.
+    leaf 뿌리에서는 그 폴더 자체가 단위다(판이 아니므로 이름 앞에 _를 붙여 판과 섞이지 않게)."""
+    if kind == "leaf":
+        return "_" + os.path.basename(root.rstrip(os.sep))
     rel = os.path.relpath(real, root)
     if rel in (".", "") or rel.startswith(".."):
         raise GuardError("판 폴더를 지정해야 한다(뿌리 자체는 안 된다)")

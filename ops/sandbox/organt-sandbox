@@ -17,7 +17,13 @@ import os
 import sys
 
 REPO = "/root/ClaudeCompany"
-WS_ROOT = os.path.join(REPO, "ops/var/organt_sns_workspace")
+# 허용 뿌리 — (경로, 종류). parent는 그 밑 첫 단계 폴더가 판, leaf는 그 폴더 자체가 한 단위.
+# .distill_cwd를 leaf로 두는 이유: 증류·수면 흐름의 cwd가 판 폴더가 아닌 고정 빈 폴더다
+# (sys_core._distill_workspace). 빠뜨리면 그 흐름의 run이 '뿌리 밖'으로 거부돼 조용히 실패한다.
+WS_ROOTS = [
+    (os.path.join(REPO, "ops/var/organt_sns_workspace"), "parent"),
+    (os.path.join(REPO, "ops/var/organt_sns_state/.distill_cwd"), "leaf"),
+]
 UIDMAP = "/var/lib/organt-sandbox/uidmap.json"
 EGRESS_PROXY = "http://127.0.0.1:8118"
 
@@ -30,8 +36,8 @@ def main(argv):
         if os.geteuid() != 0:
             raise GuardError("root로 실행돼야 한다(sudoers 경유)")
         ws, cmd = parse_args(argv[1:])
-        real, root = validated_workspace(ws, WS_ROOT)
-        uid = uid_for(project_key(real, root), UIDMAP)
+        real, root, kind = validated_workspace(ws, WS_ROOTS)
+        uid = uid_for(project_key(real, root, kind), UIDMAP)
     except GuardError as e:
         sys.stderr.write(f"organt-sandbox: {e}\n")
         return 90
