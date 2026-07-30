@@ -120,7 +120,9 @@ for svc in murmur-web murmur-sse; do
   systemctl restart "$svc" && echo "  $svc 재시작 — 반영 완료" \
     || echo "  ⚠ $svc 재시작 실패 — systemctl status $svc 확인"
 done
-if git -C "$MS" diff --name-only "HEAD@{1}..HEAD" 2>/dev/null | grep -qE '^(system|organt|guide)/'; then
+# 브레인 변경 감지는 병합 전 HEAD(pre_cc) 기준 — HEAD@{1}은 스탬프 커밋에 가려
+# 병합분을 못 본다(2026-07-30 실사고: 브레인 착지에 러너 재시작 누락).
+if git -C "$MS" diff --name-only "$pre_cc..HEAD" 2>/dev/null | grep -qE '^(system|organt|guide)/'; then
   if [ "${LAND_SKIP_RUNNER:-}" = "1" ]; then
     echo "  ⚠ 러너 재시작 건너뜀(LAND_SKIP_RUNNER=1) — 브레인 반영 전. 잊지 말 것:"
     echo "     systemctl restart organt-runner"
