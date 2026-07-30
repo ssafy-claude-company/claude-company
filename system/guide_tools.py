@@ -257,6 +257,19 @@ def _prepare_run_exec(workspace, command):
     exec_cmd = _rewrite_workspace_paths(cmd, ws, sandbox_ws)
     env["HOME"] = sandbox_ws
     env["npm_config_cache"] = "/tmp/npm-cache"
+    # [egress 관문(2026-07-30, 현준-4)] 봇의 직접 외부 연결은 방화벽이 막는다(봇 uid 범위).
+    # 나가는 길은 관문 하나이고 목적지는 허용 목록으로만 통과한다. 도구가 알아서 쓰도록 관례
+    # 변수를 심는다 — 안 쓰는 도구는 방화벽에 막혀 실패하고, 그것이 기본 거부의 의도다.
+    # 관문 주소가 없으면(설정 안 된 배치) 아무것도 심지 않는다 — 종전 동작 불변.
+    _gw = os.environ.get("ORGANT_EGRESS_PROXY", "").strip()
+    if _gw:
+        for _k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+            env[_k] = _gw
+        env["npm_config_proxy"] = _gw
+        env["npm_config_https_proxy"] = _gw
+        # 관문을 거치면 안 되는 곳 — 자기 판이 띄운 개발 서버 검증(실측: curl 목적지 최다).
+        for _k in ("no_proxy", "NO_PROXY"):
+            env[_k] = "127.0.0.1,localhost,::1,0.0.0.0"
     env["XDG_CACHE_HOME"] = "/tmp/npm-cache"
     argv = [
         bwrap,

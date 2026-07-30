@@ -1,0 +1,37 @@
+#!/usr/sbin/nft -f
+# 봇 egress 통제 (2026-07-30, 현준-4)
+#
+# 왜: 봇이 임의 IP로 작품 파일을 내보낼 수 있었다(실측: 외부 IP 301, POST 통함). 판별 uid가
+# 생기기 전에는 러너와 봇이 같은 계정이라 봇만 가릴 수 없었다 — 러너 자신은 모델 API로 나가야
+# 하므로 계정을 막으면 러너가 죽는다. 이제 봇은 300000번대이므로 봇만 막을 수 있다.
+#
+# 범위를 좁게 잡는다: 봇 uid 범위에만 규칙을 걸고 그 밖은 손대지 않는다(policy accept).
+# 잘못돼도 프로덕션·러너·세션은 영향받지 않는다.
+#
+# 봇에게 남기는 길:
+#   · loopback — 자기 판이 띄운 개발 서버 검증(실측: run curl 목적지의 최다 항목)과 관문
+#   · 그 외 외부는 전부 거부 → 나가려면 관문(127.0.0.1:8118)의 허용 목록을 통과해야 한다
+#
+# 되돌리기:  nft delete table inet organt_egress
+
+table inet organt_egress {
+    chain output {
+        type filter hook output priority 0; policy accept;
+
+        # 봇이 아닌 트래픽은 즉시 통과 — 러너(999)·웹(root)·세션(dojin)은 규칙 대상이 아니다.
+        meta skuid < 300000 accept
+        meta skuid > 300999 accept
+
+        # 여기부터는 봇(300000-300999)만 온다.
+        oif "lo" accept
+        ip daddr 127.0.0.0/8 accept
+        ip6 daddr ::1 accept
+
+        # 이미 맺어진 연결은 유지(관문 경유 응답 등).
+        ct state established,related accept
+
+        # 나머지 외부는 거부한다. drop이 아니라 reject — 봇이 '막혔다'를 즉시 알아야
+        # 타임아웃으로 오래 매달리지 않고, 그래서 원인을 사람에게 보고할 수 있다.
+        reject with icmpx type admin-prohibited
+    }
+}

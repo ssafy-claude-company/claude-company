@@ -19,6 +19,7 @@ import sys
 REPO = "/root/ClaudeCompany"
 WS_ROOT = os.path.join(REPO, "ops/var/organt_sns_workspace")
 UIDMAP = "/var/lib/organt-sandbox/uidmap.json"
+EGRESS_PROXY = "http://127.0.0.1:8118"
 
 
 def main(argv):
@@ -37,6 +38,10 @@ def main(argv):
 
     # 강등 대상을 숫자 uid로 지정하면 _run_drop_creds가 계정 없이 해석한다.
     os.environ["ORGANT_RUN_USER"] = str(uid)
+    # [egress 관문] sudo가 env를 초기화하므로 관문 주소는 여기서 정한다. 봇의 직접 외부 연결은
+    # 방화벽이 막고(봇 uid 범위), 나가는 길은 이 관문 하나다 — 목적지는 허용 목록으로만 통과한다.
+    # 관문을 끄려면 이 파일이 아니라 방화벽·프록시를 내린다(코드는 주소만 알려 준다).
+    os.environ.setdefault("ORGANT_EGRESS_PROXY", EGRESS_PROXY)
     from system.guide_tools import _prepare_run_exec   # root 소유 코드 — 호출자가 못 고친다
     exec_argv, env, err = _prepare_run_exec(real, cmd)
     if err:

@@ -1,0 +1,42 @@
+# 봇 egress 허용 목록 (tinyproxy Filter, 도메인 정규식·행 단위)
+# 2026-07-30 현준-4. 근거: 감사 로그 run 11,327건 실측 — 외부 임의 호스트는 URL 53건뿐이었고
+# 그 전 목록에서 도출했다. 설계는 ops/2026-07-30-판격리-설계.md 4.2절.
+# 기본은 거부(FilterDefaultDeny Yes)다. 여기 없는 목적지로는 나가지 못한다.
+# 넓힐 때는 왜 필요한지 한 줄 적고 추가한다 — 목록이 곧 정책이다.
+
+# ── 우리 것 ────────────────────────────────────────────────
+^murmur\.dojin-mini\.shop$
+^atelier\.dojin-mini\.shop$
+^murmur-ai\.duckdns\.org$
+\.onrender\.com$
+
+# ── 패키지·저장소 (실측: npm 336 · pip 176 · git 442 · apt 5) ──
+^registry\.npmjs\.org$
+\.npmjs\.org$
+^pypi\.org$
+^files\.pythonhosted\.org$
+^github\.com$
+^codeload\.github\.com$
+\.githubusercontent\.com$
+^ports\.ubuntu\.com$
+^archive\.ubuntu\.com$
+^security\.ubuntu\.com$
+\.launchpad\.net$
+
+# ── 브라우저 검증 (실측: playwright 1058) ──────────────────
+^playwright\.azureedge\.net$
+^playwright-akamai\.azureedge\.net$
+^playwright-verizon\.azureedge\.net$
+^cdn\.playwright\.dev$
+
+# ── 정적 자산 (실측: jsdelivr 8 · cdnjs 2 · fonts 2) ───────
+^cdn\.jsdelivr\.net$
+^cdnjs\.cloudflare\.com$
+^fonts\.googleapis\.com$
+^fonts\.gstatic\.com$
+^unpkg\.com$
+
+# ── 조사 (실측: notion 16 · google 3) ──────────────────────
+^www\.notion\.so$
+^www\.google\.com$
+^kenney\.nl$
