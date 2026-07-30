@@ -148,3 +148,22 @@ def test_기록기가_없으면_도구는_그냥_돈다():
 
     t = _audited([T()], me_id=1, role="r")[0]
     assert asyncio.run(t.handler({})) == {"ok": True}
+
+
+def test_지정이_없으면_환경변수가_가리킬_때만_연다(tmp_path, monkeypatch):
+    """경로를 코드가 짐작하면 테스트가 프로덕션 감사 파일에 쓴다 - 관측이 대상을 오염시키면 안 된다."""
+    import json
+    import system.audit as A
+
+    monkeypatch.setattr(A, "_DEFAULT_AUDIT", None)
+    monkeypatch.setattr(A, "_FALLBACK_AUDIT", "미해결")
+    monkeypatch.delenv("ORGANT_AUDIT_LOG", raising=False)
+    A.record_tool_use(actor=1, role="r", tool="run", tool_input={})   # 아무 데도 안 쓴다
+
+    monkeypatch.setattr(A, "_FALLBACK_AUDIT", "미해결")
+    target = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("ORGANT_AUDIT_LOG", str(target))
+    A.record_tool_use(actor=1, role="r", tool="run", tool_input={"TOKEN": "x"})
+    rows = [json.loads(x) for x in open(target, encoding="utf-8")]
+    assert len(rows) == 1 and rows[0]["tool"] == "run"
+    assert rows[0]["tool_input"]["TOKEN"] == "<가림>"
