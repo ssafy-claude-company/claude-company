@@ -2355,6 +2355,25 @@ _STAGE_META = {
 }
 
 
+# [회의에는 이름이 있다(2026-07-30, 사용자 지적)] 종전엔 지시문 한 문장이 그대로 제목이 됐다
+# ("이 Task로 무엇을 만들지와 무엇이 되면 끝인지를 정한다"). 피드에서 회의를 구분·검색·인용하려면
+# 짧은 고유명이 필요하다 — 안건 설명은 본문이 들고, 제목은 이 표가 준다.
+_STAGE_TITLE = {
+    "goal": "Task 목표 정의",
+    "criteria": "완수 기준 정의",
+    "milestone": "이번 주기 정의",
+    "subtask": "작업 영역 분해",
+    "backlog": "일감 정의",
+}
+
+
+def stage_title(stage, scope="") -> str:
+    """그 단계 회의의 제목. scope(영역명 등)가 있으면 뒤에 붙인다 — 같은 단계가 여러 번 열리므로."""
+    base = _STAGE_TITLE.get(str(stage or ""), "회의")
+    s = str(scope or "").strip()
+    return f"{base} — {s[:40]}" if s else base
+
+
 def stage_agenda(stage):
     """meet()가 쓰는 (안건 설명, 수렴안 템플릿). 알 수 없으면 (None, None)."""
     m = _STAGE_META.get(stage)

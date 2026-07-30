@@ -10,7 +10,15 @@ docs(Rule/Communication.md):
 - Work Response 불만족 시 Redo, 한계 초과 시 위로 상신(escalate).
 
 [병렬 — docs Communication.md 13–14행 "여럿(병렬)은 이 제약을 완화하는 Feature로 둔다"]
-완화는 '서로 다른 흐름의 동시 진행'뿐이고, 흐름 '안'의 단일활성(베턴)은 불변이다. 흐름 간
+완화 지점은 셋이고, 셋 다 **베턴을 나누지 않는다**:
+  ① 서로 다른 흐름의 동시 진행(원래 조항)
+  ② 흐름 '안'의 의견 수집 가지(_fork_collect) — 응찰·표결·동시 발언. 가지는 comm 프레임을 열지
+     않으므로 베턴은 여전히 하나다(2026-07-30: 동시 발언이 이 경로로 들어왔다).
+  ③ 백로그 병렬 실행(2026-07-30, 사용자 지시) — 쓰기 영역이 겹치지 않는 일감은 서로 다른 봇이
+     동시에 진행한다. 이것은 **작업 축의 완화**이고 대화 축(베턴)의 완화가 아니다: 각 작업 턴은
+     comm 프레임 없이 run_turn으로 돌고, 충돌 안전은 베턴이 아니라 선언된 쓰기 영역이 보장한다
+     (rule/backlog.declared_write_scope). 겹치면 종전처럼 순차다.
+흐름 '안'의 대화 단일활성(베턴)은 위 셋 어디에서도 깨지지 않는다. 흐름 간
 안전은 흐름 수 상한(임의 숫자) 같은 가드가 아니라 **점유의 배타성**으로 보장한다: 전역 점유
 장부(Engagement)에 의해 한 직원(봇)은 한 시점에 한 흐름에만 참여한다(현실의 '한 사람은 한
 회의에만'). 동시 작업량의 자연 한도 = 직원 수. 장부는 SYS가 소유하고 흐름의 comm에
@@ -803,24 +811,47 @@ async def meet(flow, me_id, args):
             return await _speech(m2, _mk_body(m2, r), f"{r}R")
 
         async def _speak_many(winner, extra, alloc):
-            """[동시 발언 실행(2026-07-30, 사용자: '단일적인게 커')] 낙찰자와 동행 발언자를 한 번에
-            깨운다. 낙찰자는 종전 그대로(편집·지명 권한 유지), 동행은 의견만 — 파일 충돌이 없다.
-            반환은 [낙찰자 턴, 동행 턴…]; 낙찰자 턴이 없으면(실행 불가) None으로 종결 신호."""
-            import asyncio as _aio
+            """[동시 발언 실행(2026-07-30, 사용자: '단일적인게 커')] 낙찰자가 말하는 동안 같은 응찰에서
+            필요를 밝힌 동행들도 함께 말한다.
+
+            [교리 정합(Communication.md)] 흐름 '안'의 단일활성(베턴)은 불변이다 — 동행은 베턴을 받지
+            않는다. 그래서 comm 프레임을 여는 `_speech` 경로가 아니라, 교리가 허용한 병렬 수집
+            경로(`_fork_collect`: 가지는 프레임을 안 열고 점유만 Engagement가 배타로 잡는다)로
+            깨운다. 베턴은 낙찰자 하나뿐이고, 동행은 '의견 수집'과 같은 성격의 가지다.
+            반환 [낙찰자 턴, 동행 턴…]; 낙찰자가 못 서면 None(종결 신호).
+            """
             if flow.log:
                 flow.log("floor_parallel", surface="meet", winner=int(winner),
                          companions=[int(x) for x in extra][:6])
-            _res = await _aio.gather(_speak(winner, alloc),
-                                     *[_speak(m, alloc, companion=True) for m in extra],
-                                     return_exceptions=True)
-            _turns = []
-            for _i, _r in enumerate(_res):
-                if isinstance(_r, BaseException) or _r is None:
-                    if _i == 0:
-                        return None                      # 낙찰자가 못 서면 종전처럼 종결
+
+            def _cbody(m):
+                _b = _mk_body(m, None, won=False, answer=False)
+                return _b + ("\n\n[이번 라운드는 **동시 발언**입니다] 지금 같은 안건을 여럿이 함께 "
+                             "말합니다 — **파일 편집·지명은 하지 마세요**(발언권 낙찰자가 이번 라운드의 "
+                             "편집을 맡습니다). 바꿔야 할 것이 있으면 무엇을 어떻게 바꿔야 하는지 "
+                             "발언으로 적으세요. 보탤 것이 없으면 `[패스]`만.")
+
+            _win = await _speak(winner, alloc)            # 베턴은 여기 하나뿐(종전 경로 그대로)
+            if _win is None:
+                return None
+            _turns = [_win]
+            for _m, _res, _note in await _fork_collect(flow, me_id, list(extra), _cbody, micro=True):
+                wakes["n"] += 1
+                _txt = str(_res or "").strip()
+                if not _txt:
                     continue
-                _turns.append(_r)
-            return _turns or None
+                _who = flow._info(_m) or _m
+                if _txt.startswith("[패스]"):
+                    minutes.append(f"[동시] {_who}: (패스)")
+                    _turns.append(Turn(speaker=_m, passed=True, body=_txt))
+                    continue
+                minutes.append(f"[동시] {_who}: {_speech_clip(_txt)}")
+                block["items"].append((_who, _txt))
+                await _say_speech(flow, _m, "[회의]", _txt)
+                if _m in flow.current.team and _m != flow.leader:
+                    flow.current.participated.add(_m)
+                _turns.append(Turn(speaker=_m, body=_txt))
+            return _turns
 
         async def _bid(cands, purpose):
             """[②자기선택 = LLM 응찰 / 종결 확인 표결(병렬)] 각 후보 봇이 '지금 내가 발언해야
