@@ -2343,7 +2343,7 @@ _STAGE_META = {
              "나누지 마세요. 각 조건은 마지막에 **실행하면 통과/실패가 갈리는 명령 한 줄**로 증명해야 "
              "합니다 — 그 명령이 그려지지 않는 조건이면 지금 다시 쓰세요.\n"),
     "milestone": ("이번에 **완성해서 사용자에게 보여줄 딱 하나**를 정한다(전체 말고 이번 것)",
-             "[수렴안]\n단계: ⟦마일스톤 주기 목록 — 예: 최소버전 → 확장 → 완성⟧\n"
+             "[수렴안]\n단계: ⟦마일스톤 주기 목록 — 예: 혼자 써보는 최소판 → 여럿이 쓰는 확장판 → 남에게 내놓는 판⟧\n"
              "이번 주기: ⟦이번에 완성해 사용자가 실제로 써볼 수 있는 딱 하나⟧\n"
              "⟦완수조건 | 실증절차⟧\n[/수렴안]\n"
              "★이 회의가 답할 질문 하나: **'이번에 완성해서 사용자에게 보여줄 하나는 무엇인가?'** "
@@ -2431,7 +2431,7 @@ def stage_draft_template(stage, agenda=""):
         # [완수조건 = 이번 주기 범위(2026-07-20, U-035 rung1)] 최소버전 주기에 모션 타이밍·디자인
         # 토큰 등 완제품 전량이 조건으로 실려 met이 영구 미달(1/4 고정) → 재협상 dead-end로 빠지던
         # 상류 방아쇠 — 회의 골격이 스코프를 못박는다(뒤 단계 몫은 그 단계 주기의 조건).
-        "milestone": ("단계: ⟦마일스톤 주기 목록 — 예: 최소버전 → 확장⟧\n"
+        "milestone": ("단계: ⟦마일스톤 주기 목록 — 예: 혼자 써보는 최소판 → 여럿이 쓰는 확장판⟧\n"
                       "이번 주기: ⟦이번에 완성해 사용자에게 보여줄 딱 하나⟧\n\n완수조건:\n"
                       "(주의: **'이번 주기' 범위의 조건만** — 뒤 단계 몫(모션 세부·디자인 토큰 등 완제품 "
                       "사양)을 넣으면 이번 주기가 영영 안 끝납니다. 그건 그 단계 주기에서.)\n"
@@ -2617,6 +2617,74 @@ def parse_units(lines):
         if u:
             out.append(u)
     return out
+
+
+# [주기는 공정이 아니라 탈 것이다(2026-07-30, 사용자 지적)] 규칙 문구는 "각 항목은 그것만으로
+# 사용자가 써볼 수 있는 완성물(달구지 → 자동차 → 스포츠카)"이라고 말하는데 검사가 없어, 실측에서
+# `로컬 기능 완성본 → 입력·뷰포트 완성본 → 시각 피드백 완성본 → 배포 완성본`이 그대로 통과했다
+# (U-436). 그건 같은 달구지를 다듬는 공정이다 — 뒤 항목만으로는 사용자가 새로 써볼 것이 없다.
+# 공정 어휘로만 이루어진 항목을 반려한다(내용 판단이 아니라 어휘 신호).
+_PROCESS_WORDS = ("구현", "개발", "설계", "검증", "테스트", "QA", "리팩터", "리팩토링", "최적화",
+                  "배포", "인프라", "세팅", "셋업", "환경", "빌드", "정리", "안정화", "버그",
+                  "수정", "보완", "개선", "고도화", "입력", "뷰포트", "시각", "피드백", "연출",
+                  "성능", "접근성", "문서", "기능")
+
+
+_NARROW_RE = re.compile(r"(없음|없이|제외|미포함|하지\s*않는다|안\s*한다|최소한의|MVP|최소\s*버전|"
+                        r"1차\s*범위|범위\s*축소|간단한\s*수준)", re.I)
+
+
+def goal_narrowing_error(goal, origin="") -> str:
+    """[Task는 갈 수 있는 곳까지(2026-07-30, 사용자 지적)] 프롬프트는 '요청을 좁히지 마라'고 말하는데
+    검사가 없어, 열린 요청("게임 만들어줘")이 '화면 1개 · 로그인·서버·멀티플레이 없음'으로 등록됐다
+    (U-436). 좁히는 것은 **주기(달구지→자동차→스포츠카)의 몫**이고 Task는 목적지를 잡는 자리다.
+
+    원문에 없던 축소·제외 표현이 목표에 들어오면 반려한다(원문이 스스로 좁힌 경우는 존중).
+    """
+    g, o = str(goal or ""), str(origin or "")
+    m = _NARROW_RE.search(g)
+    if not m:
+        return ""
+    tok = m.group(1)
+    if tok and tok in o:
+        return ""                       # 사용자가 직접 그렇게 말했다면 그대로 따른다
+    return (f"목표에 축소·제외 표현('{tok}')이 있습니다 — 원문에는 그런 제한이 없습니다. "
+            f"**Task는 이 요청으로 갈 수 있는 곳까지** 잡고, 작게 시작하는 것은 다음 회의의 "
+            f"주기가 맡습니다(달구지 → 자동차 → 스포츠카). 지금 못 만들 것 같아도 목적지로 "
+            f"적으세요 — 이번에 어디까지 낼지는 주기가 정합니다.")
+
+
+def roadmap_phase_is_process(phase) -> str:
+    """이 주기 이름이 '한 산출물의 공정'으로만 읽히면 사유를 돌려준다(정상이면 빈 문자열)."""
+    import re as _re
+    t = str(phase or "").strip()
+    if not t:
+        return ""
+    # '완성본·완성·버전' 같은 꼬리를 떼고 남는 알맹이가 공정 어휘뿐인가
+    core = _re.sub(r"(완성본|완성|버전|단계|주기|판|본)\s*$", "", t).strip()
+    if not core:
+        return "이름이 '완성본'뿐이라 무엇을 써볼 수 있는지 알 수 없습니다."
+    toks = [w for w in _re.split(r"[\s·,/]+", core) if w]
+    if toks and all(any(pw in w for pw in _PROCESS_WORDS) for w in toks):
+        return (f"'{t}'는 한 산출물의 공정입니다 — 그 주기만으로 사용자가 새로 써볼 것이 없습니다.")
+    return ""
+
+
+def roadmap_process_errors(phases) -> list:
+    """로드맵 전체 검사 — 공정 항목이 있으면 그 목록과 고치는 법을 돌려준다.
+
+    [나눴을 때만 따진다] 항목이 하나면 '공정으로 쪼갠 것'이 아니다 — 한 주기짜리 계획은 이름이
+    무엇이든 그 자체가 이번에 낼 완성물이다. 검사는 둘 이상으로 나눈 로드맵에만 건다.
+    """
+    if len(phases or []) < 2:
+        return []
+    bad = [(p, why) for p in (phases or []) if (why := roadmap_phase_is_process(p))]
+    if not bad:
+        return []
+    return [("주기 계획이 '공정 쪼개기'입니다 — " + " · ".join(w for _p, w in bad[:3])
+             + " 각 주기는 **그것만으로 사용자가 열어서 써볼 수 있는 것**이어야 합니다"
+               "(달구지 → 자동차 → 스포츠카). 다듬기·검증·배포는 그 주기의 백로그·완수조건으로 "
+               "넣고, 주기는 '이번엔 사용자가 무엇을 새로 할 수 있게 되는가'로 나누세요.")]
 
 
 def _proposal_roadmap_phases(lines):
@@ -3019,6 +3087,10 @@ def stage_preflight(stage, text, flow=None):
             _proc_err = _goal_procedure_error(_goal)
             if _proc_err:
                 errs.append(_proc_err)
+            _narrow = goal_narrowing_error(
+                _goal, str(getattr(flow, "origin_request", "") or "") if flow is not None else "")
+            if _narrow:
+                errs.append(_narrow)
     if stage == "milestone" and not (_val("이번 주기") or _val("목표")):
         errs.append("'이번 주기: ⟦이번에 보여줄 딱 하나⟧' 줄이 필요합니다(줄 시작, 장식 없이).")
     # [회의 하나에 결론 하나(2026-07-30, 사용자 지시) — 전수 정합] goal 회의는 '무엇을 만들지'만
@@ -3042,6 +3114,7 @@ def stage_preflight(stage, text, flow=None):
         if stage == "milestone":
             errs.extend(_milestone_verifier_errors(
                 flow, _entries, _proposed_phases))
+            errs.extend(roadmap_process_errors(_proposed_phases))
     if stage == "subtask":
         _units = parse_units(lines)
         if not _units:
