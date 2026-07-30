@@ -2241,8 +2241,18 @@ def meeting_stage(flow):
         # 선행 필요로 멈춘 원 백로그만 남았다. 원본을 버리거나 완료 참칭하지 않고, 전 영역 보충 회의가
         # 선행 백로그를 추가하도록 연다. 선행 완료 뒤 blocked 원본을 재개해야 마일스톤이 닫힌다.
         return "backlog"
-    if any(store.get(st.st_id) is None or not store.get(st.st_id).backlogs for st in _alive):
-        return "backlog"                                # ④ 백로그 회의 — 소진/전무: 다음 iter 일감 일괄 충전
+    _empty = [st for st in _alive
+              if store.get(st.st_id) is None or not store.get(st.st_id).backlogs]
+    if _empty:
+        # [회의 하나에 목표 하나(2026-07-30, 사용자 지시)] 종전엔 한 회의가 미충원 영역 **전부**의
+        # 일감을 한꺼번에 등록했다(실측: 한 회의에 26개). 그러면 참여자는 자기 영역 칸만 채우고
+        # 표결은 그 묶음 전체에 대한 찬반이 된다 — "내 영역 하나 반영됐으니 찬성"이 구조적으로 나온다.
+        # 영역 하나씩 연다: 그 회의의 결론은 '이 영역에서 할 일들' 하나다.
+        try:
+            flow._stage_target_st = _empty[0].st_id
+        except Exception:
+            pass
+        return "backlog"                                # ④ 백로그 회의 — 이 영역의 일감
     # [백로그 소진 = 회의 트리거(2026-07-16, 잔재 감사 ①)] 전 단위의 백로그가 소진(전부 done/dropped)
     # 됐는데 주기가 아직 열려 있으면(조건 미충족) 추가 분해 회의 — 종전엔 handoff 코칭('meet를 열어라')
     # 만 있고 stage가 None이라, 봇이 meet를 불러도 결론 경로가 없었다(수렴 소진 낭비). 체인이 자동 개설.
@@ -3139,7 +3149,10 @@ def stage_context(flow, stage):
                    and (store.get(st.st_id) is None or not store.get(st.st_id).backlogs)]
             if _es:
                 _names = " · ".join(str(st.goal or "").split(" — ")[0].split(" | ")[0][:24] for st in _es[:7])
-                return f" [미충원 영역: {_names}]"
+                _tgt = str(getattr(flow, "_stage_target_st", "") or "")
+                _one = next((x for x in _es if x.st_id == _tgt), None) or _es[0]
+                _lbl = str(_one.goal or "").split(" — ")[0].split(" | ")[0][:40]
+                return f" [이 회의가 채울 영역: {_lbl}]"
     except Exception:
         pass
     return ""
@@ -3166,9 +3179,9 @@ _STAGE_FRAME = {
             "단계입니다(한 회의 — 별도 백로그 회의 없음). 영역은 개인 배정이 아니라 순수 작업 분리(예: 저장 "
             "계층·게임 로직·화면 UI), 일감은 '백로그: [영역명] ⟦작업⟧' 줄로 열거하세요. 담당은 회의가 아니라 "
             "각자 pick_backlog 선점.",
-    "backlog": "지금은 미충원 작업 영역들의 **다음 일감 전부를 한 번에 열거**하는 단계입니다. "
-            "**'미충원 영역들 완수에 필요한 작업 항목 전부는?'** 에만 답하세요 — 항목마다 [영역명]을 "
-            "달고, 한두 개로 끝내지 말고 목록을 채우세요(처리는 나중에 하나씩 선점). 안건에 "
+    "backlog": "지금은 **안건에 적힌 그 영역 하나**의 일감을 정하는 단계입니다(다른 영역은 각자의 "
+            "회의에서 정합니다). **'이 영역을 완수하려면 무슨 작업들이 필요한가?'** 에만 답하세요 — "
+            "한두 개로 끝내지 말고 목록을 채우세요(처리는 나중에 하나씩 선점). 안건에 "
             "각 항목에 **`[쓰기: 경로]`로 그 일이 고칠 파일·폴더를 선언**하세요 — 영역이 겹치지 않는 "
             "일감끼리는 동시에 진행됩니다(선언이 없으면 하나씩 순서대로). "
             "`선행 대기 원본`이 있으면 각 새 항목은 `[영역명] [해결: ST::Bn] 실제 작업` 형식으로 "
@@ -3434,6 +3447,18 @@ def register_stage(flow, stage, prop, origin=""):
         import re as _re3
 
         def _dest_of(_it):
+            # [이 회의는 한 영역만 채운다(2026-07-30, 사용자 지시)] 회의가 영역 하나로 열렸으면
+            # 그 회의의 일감은 전부 그 영역 몫이다 — 라벨 어휘를 단위 제목과 대조해 배정하던
+            # 방식(겹침 34% 임계·안 맞으면 빈 영역으로 폴백)이 통째로 필요 없어진다.
+            # 실측에서 그 매칭이 어긋나 엉뚱한 영역으로 간 사례가 backlog_dest_fallback으로 남았다.
+            _tgt0 = str(getattr(flow, "_stage_target_st", "") or "") if flow is not None else ""
+            if _tgt0:
+                _hit0 = next((x for x in _alive_sts if x.st_id == _tgt0), None)
+                if _hit0 is not None:
+                    _m0 = _re3.match(r"^\[([^\]]{1,40})\]\s*(.*)$", _it)
+                    _body0 = (_m0.group(2) if _m0 else _it).strip()
+                    if _body0:
+                        return _hit0, _body0
             m3 = _re3.match(r"^\[([^\]]{1,40})\]\s*(.*)$", _it)
             if m3:
                 _ht = set(_re3.findall(r"[A-Za-z가-힣0-9]{2,}", m3.group(1)))

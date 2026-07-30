@@ -1632,7 +1632,9 @@ def test_iter주기_정본_집을것있으면_작업_충전은_일괄배분(monk
     store = f.backlog_relays
     by = {st.goal: len((store.get(st.st_id).backlogs if store.get(st.st_id) else []))
           for st in ms.subtasks}
-    assert by["게임 규칙"] >= 1 and by["판정 로직"] >= 1   # [영역명] 배분
+    # [회의 하나에 목표 하나(2026-07-30, 사용자 지시)] 백로그 회의는 영역 하나로 열린다 —
+    # 그 회의의 일감은 전부 그 영역 몫이다(라벨 어휘 대조 배정은 대상 영역이 없을 때의 폴백).
+    assert by["게임 규칙"] == 3 and by["판정 로직"] == 0
     # [무주 출생 금지] 귀속 실패분도 적임 지정으로 주인을 갖고 태어난다
     assert all(int(b.submitter or 0) in (11, 12, 13)
                for st in ms.subtasks for b in ((store.get(st.st_id).backlogs if store.get(st.st_id) else [])))
