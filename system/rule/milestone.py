@@ -126,6 +126,28 @@ class Milestone:
 _WISHFUL = ("잘 동작", "잘 작동", "완벽", "훌륭", "만족스럽", "좋아야", "문제없", "이상 없")
 
 
+_SERVE_ONLY = re.compile(
+    r"(http\.server|python3?\s+-m\s+http|\bserve\b|npm\s+(run\s+)?(start|dev)|"
+    r"yarn\s+(start|dev)|pnpm\s+(start|dev)|vite(\s|$)|next\s+dev|node\s+server\.js|"
+    r"flask\s+run|uvicorn|gunicorn|php\s+-S)", re.I)
+_JUDGES = re.compile(
+    r"(curl|wget|pytest|npm\s+test|jest|vitest|playwright|assert|grep|diff|exit\s*[01]|"
+    r"\.py\b|\.mjs\b|\.js\b\s|test|verify|check|&&|\|\|)", re.I)
+
+
+def verify_is_serve_only(v) -> bool:
+    """[띄우기만 하는 명령은 실증이 아니다(2026-07-30, U-436 실측)] 서버를 기동하는 명령은
+    '실행 가능'하지만 **통과/실패를 가르지 않는다** — 관문 문구는 그렇게 쓰라고 말하면서 검사는
+    실행 가능성만 봐서 통과시켰다. 그 조건이 GOAL에 박히자 뒤 회의가 "기동만으로는 pass가 아니다"
+    ↔ "그럼 무슨 명령이냐"로 3패스를 돌다 판이 파킹됐다(교착의 뿌리).
+
+    기동 명령이면서 판정 신호(요청·테스트·비교·스크립트·exit 코드)가 하나도 없으면 실증이 아니다.
+    기동 + 점검(`… & sleep 1; curl -f localhost:PORT/`)은 정상이다.
+    """
+    t = str(v or "")
+    return bool(_SERVE_ONLY.search(t)) and not _JUDGES.search(t)
+
+
 def gate_criteria(entries) -> Optional[str]:
     """완수조건 등록 게이트 — 에러 문자열(거부 사유+처방) 또는 None(통과).
     형태 요건: desc(무엇이 충족인가) + verify(run으로 실증 가능한 절차) 둘 다. 소망형 desc 거부."""
@@ -166,6 +188,14 @@ def gate_criteria(entries) -> Optional[str]:
                         f"스크립트를 만들어 그 명령을 쓰세요(예: `python3 verify_ui.py`). 스크립트가 아직 "
                         f"없어도 됩니다 — 만드는 일을 이번 주기 백로그에 넣으세요. 서버를 띄우기만 하는 "
                         f"명령이나 계획 문서를 grep하는 명령은 산출물을 판정하지 않아 실증이 아닙니다.")
+            continue
+        if verify_is_serve_only(v):
+            errs.append(f"조건 '{d[:40]}'의 실증이 **서버를 띄우기만 하는 명령**입니다: '{v[:50]}' — "
+                        f"기동은 통과/실패를 가르지 않습니다. 그 뒤에 판정을 붙이세요"
+                        f"(예: `python3 -m http.server 4173 --directory public & sleep 1; "
+                        f"curl -fsS localhost:4173/ >/dev/null`), 또는 화면 조건이면 headless "
+                        f"브라우저로 판정하는 스크립트(통과=exit 0)를 만들어 그 명령을 쓰세요 — "
+                        f"스크립트가 아직 없어도 됩니다(만드는 일을 이번 주기 백로그에).")
             continue
         # [로드맵 오용 차단(2026-07-13, 라이브 U-015: 조건에 M0~M3 로드맵)] 조건은 검증 단위지
         # 하위 마일스톤이 아니다 — 주기 로드맵은 마일스톤 여러 개(계획 큐잉)로.
