@@ -2197,7 +2197,14 @@ def meeting_stage(flow):
     if _cur is None:
         return None
     if not str(getattr(_cur.status, "goal", "") or "").strip():
-        return "goal"                                   # ① Task 회의 — GOAL 미정
+        return "goal"                                   # ① Task 회의 — 무엇을 만들 것인가
+    # [회의 하나에 결론 하나(2026-07-30, 사용자 지시)] 종전 goal 회의는 '무엇을 만들지'와 '무엇이
+    # 되면 끝인지'를 한 번에 정했다 — 두 결정이 한 표결에 묶이면 먼저 쓴 사람의 골격이 통째로
+    # 통과한다(U-079: 「별빛 회피」가 한 사람의 첫 편집으로 굳고 나머지는 조건만 덧붙임).
+    # 만들 것을 정한 다음, 끝의 기준은 **따로 한 회의**로 정한다.
+    _mss0 = getattr(flow, "milestones", None) or []
+    if not str(getattr(_cur, "acceptance", "") or "").strip() and not _mss0:
+        return "criteria"                               # ② 완수조건 회의 — 무엇이 되면 끝인가
     _mss = getattr(flow, "milestones", None) or []
     _open = next((m for m in _mss if m.status not in ("done", "superseded")), None)
     if _open is None:
@@ -2270,9 +2277,8 @@ _MILESTONE_COUNT_COACHING = (
 
 
 _STAGE_META = {
-    "goal": ("이 Task로 **무엇을 만들지**와 **무엇이 되면 끝인지**를 정한다",
-             "[수렴안]\n목표: ⟦이 Task로 정확히 무엇을 만드는지 — '게임'이 아니라 '2인 턴제 카드 대전'처럼 구체적으로⟧\n"
-             "⟦완수조건 | 실증절차(run으로 확인)⟧\n⟦완수조건 | 실증절차⟧\n[/수렴안]\n"
+    "goal": ("이 Task로 **무엇을 만들지**를 정한다",
+             "[수렴안]\n목표: ⟦이 Task로 정확히 무엇을 만드는지 — '게임'이 아니라 '2인 턴제 카드 대전'처럼 구체적으로⟧\n[/수렴안]\n"
              # [요청을 좁히지 마라(2026-07-27, 사용자: 'Task 자체는 할 수 있는 최대한으로')] 종전엔
              # '구체적으로'만 요구해 열린 요청("게임 만들어줘")이 최소 산출물로 수렴했다(실측:
              # "1인용 단일 화면 미니게임 1종"). Task는 목적지고, 작게 가는 것은 마일스톤이 맡는다.
@@ -2290,6 +2296,12 @@ _STAGE_META = {
              "지금은 '무엇을 만들지'만 정합니다. **목표를 ①→②→③ 절차로 쓰지 마세요** — 목표는 "
              "완성 실물 한 문장이고, 순서·절차는 마일스톤의 '단계:'와 백로그가 담습니다(절차형 목표는 "
              "등록이 거부됩니다)."),
+    "criteria": ("**무엇이 되면 이 Task가 끝인가**를 정한다(만들 것은 이미 정해짐)",
+             "[수렴안]\n조건: ⟦완수조건⟧ | 실증: ⟦실행할 exact command 또는 측정 가능한 검사⟧\n"
+             "조건: ⟦완수조건⟧ | 실증: ⟦…⟧\n[/수렴안]\n"
+             "★이 회의가 답할 질문 하나: **'무엇이 되면 끝인가?'** — 만들 것을 다시 정하거나 작업을 "
+             "나누지 마세요. 각 조건은 마지막에 **실행하면 통과/실패가 갈리는 명령 한 줄**로 증명해야 "
+             "합니다 — 그 명령이 그려지지 않는 조건이면 지금 다시 쓰세요.\n"),
     "milestone": ("이번에 **완성해서 사용자에게 보여줄 딱 하나**를 정한다(전체 말고 이번 것)",
              "[수렴안]\n단계: ⟦마일스톤 주기 목록 — 예: 최소버전 → 확장 → 완성⟧\n"
              "이번 주기: ⟦이번에 완성해 사용자가 실제로 써볼 수 있는 딱 하나⟧\n"
@@ -2348,6 +2360,8 @@ def stage_agenda(stage):
 def stage_draft_template(stage, agenda=""):
     """회의 개시 때 SYS가 까는 DRAFT.md 골격. 알 수 없는 단계면 None."""
     body = {
+        "criteria": ("완수조건:\n- ⟦조건⟧ | 실증: ⟦실행할 exact command 또는 측정 가능한 검사⟧\n"
+                     "- ⟦조건⟧ | 실증: ⟦…⟧\n"),
         "goal": ("목표: ⟦이 Task로 정확히 무엇을 만드는지 — 구체적으로⟧\n"
                  # [구성 점검 경로 평등(2026-07-21, U-038 실측: 팀 밖 게임 기획자에게 후속 담당을 걸고
                  # 가결)] set_goal 도구 경로에만 있던 '[구성 점검]'(2026-07-13 설계)을 회의 골격에도 —
@@ -2411,7 +2425,8 @@ def draft_decision_region(text):
     return t[i:j] if j > 0 else t[i:]
 
 
-_STAGE_KEY = {"goal": "목표", "milestone": "이번 주기", "subtask": "단위:", "backlog": "백로그:"}
+_STAGE_KEY = {"goal": "목표", "criteria": "조건", "milestone": "이번 주기",
+              "subtask": "단위:", "backlog": "백로그:"}
 
 
 def deferred_only(v):
@@ -3138,6 +3153,10 @@ _STAGE_FRAME = {
     "goal": "지금은 **이 Task로 무엇을 만들지**를 정하는 단계입니다(사용자 요청을 푸는 파이프라인의 첫 "
             "관문). 딱 그 질문 — **'정확히 무엇을 만들고, 무엇이 되면 끝인가'** — 에만 답하세요. 작업을 "
             "어떻게 나눌지·누가 맡을지·섹션 구성·일정은 **여기서 정하지 마세요**(그건 다음 회의들입니다).",
+    "criteria": "지금은 **무엇이 되면 이 Task가 끝인가**만 정하는 단계입니다 — 만들 것은 이미 "
+            "정해졌습니다(위 목표). 그 목표가 달성됐음을 **어떻게 실제로 확인하는가**에만 답하세요. "
+            "조건마다 `조건 | 실증: 실행할 exact command 또는 측정 가능한 검사`를 씁니다. "
+            "무엇을 만들지 다시 정하거나, 작업을 나누거나, 담당을 정하지 마세요(그건 앞뒤 회의입니다).",
     "milestone": "지금은 **이번에 완성해서 사용자에게 보여줄 딱 하나**를 정하는 단계입니다. 전체를 한 번에 "
             "만들려 하지 말고(달구지부터), **'이번에 완성해 보여줄 하나는?'** 에만 답하세요. 작업 분해·"
             "담당자·일정은 다음 회의. 모든 완수조건의 `실증:`에는 실제 실행할 **exact command**를 "
@@ -3199,6 +3218,28 @@ def register_stage(flow, stage, prop, origin=""):
                           and not l.strip().startswith(("단위:", "단계:", "백로그:")))
     _cur = getattr(flow, "current", None)
 
+    if stage == "criteria":
+        # [무엇이 되면 끝인가 — 이 회의의 결론 하나(2026-07-30, 사용자 지시)] 목표는 앞 회의가 정했다.
+        # 여기서는 그 목표의 달성을 **무엇으로 확인하는가**만 등록한다(Task 완수조건 = GOAL 잠금).
+        if _cur is None:
+            return False, "열린 Task가 없습니다."
+        _crits = parse_criteria_lines(_crit_txt)
+        if not _crits:
+            return False, ("수렴안에 완수조건이 없습니다 — 최소 1개를 "
+                           "'조건 | 실증: 실행 명령 또는 측정 가능한 검사'로 제출하세요.")
+        _err = gate_criteria(_crits)
+        if _err:
+            return False, _err
+        try:
+            _cur.acceptance = "\n".join(f"- {c['desc']} | 실증: {c['verify']}" for c in _crits)
+        except Exception:
+            return False, "완수조건을 장부에 기록하지 못했습니다."
+        try:
+            _goal_doc(flow)
+        except Exception:
+            pass
+        return True, f"완수조건 {len(_crits)}개 등록 — 이제 이번 주기(마일스톤)를 정합니다."
+
     if stage == "goal":
         # [통일 수렴안(가안)] prop = [수렴안]의 '목표:'+조건 줄들. goal 단계는 이 수렴안을 가공해
         # Task GOAL을 세팅하고 GOAL.md를 쓴다(수렴안=통일 산출물, 가공은 이 단계의 몫).
@@ -3221,14 +3262,14 @@ def register_stage(flow, stage, prop, origin=""):
         if _proc_err:
             return False, _proc_err
         if _cur is not None:
+            # [회의 하나에 결론 하나(2026-07-30, 사용자 지시)] 완수조건은 다음 회의(criteria)가 정한다.
+            # 여기서 함께 요구하면 두 결정이 한 표결에 묶여, 먼저 쓴 사람의 골격이 통째로 통과한다.
+            # 같은 수렴안에 조건이 딸려 왔으면 버리지 않고 받아 둔다(형식이 맞을 때만).
             _crits = parse_criteria_lines(_crit_txt)
-            if not _crits:
-                return False, ("GOAL 수렴안에 실행형 완수조건이 없습니다 — 최소 1개를 "
-                               "'조건 | 실증: 실행 명령 또는 측정 가능한 verifier spec'으로 비준해야 "
-                               "최종 release가 열립니다.")
-            _goal_criteria_error = gate_criteria(_crits)
-            if _goal_criteria_error:
-                return False, _goal_criteria_error
+            if _crits:
+                _goal_criteria_error = gate_criteria(_crits)
+                if _goal_criteria_error:
+                    return False, _goal_criteria_error
             try:
                 _cur.status.goal = goal
             except Exception:
