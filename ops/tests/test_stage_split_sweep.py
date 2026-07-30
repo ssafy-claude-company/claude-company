@@ -39,11 +39,15 @@ def test_완수조건회의_사전검사는_조건을_요구한다():
     assert errs and any("조건" in e for e in errs)
 
 
-def test_변경_가시화가_배선돼_있다():
-    """[사용자: '이의 제출했습니다 이러고 그게 뭔지는 안 보이니깐'] 결론이 어떻게 바뀌었는지를
-    채널이 보여야 한다 — 파일 안에만 있으면 사람은 못 본다."""
+def test_변경은_회의록에만_남고_채널을_도배하지_않는다():
+    """[사용자 지적 2026-07-30: '회의 작업이 도배됐어'] 결론이 어떻게 바뀌었는지는 남아야 하지만,
+    매 발언마다 채널 메시지로 띄우면 회의 한 건이 수십 줄로 분다. 기록은 회의록이 진다."""
     import inspect
 
     from system.rule import communication as _c
     src = inspect.getsource(_c)
-    assert "[결론 변경]" in src and "region_lines" in src
+    assert "region_lines" in src, "변경 추적 자체는 유지"
+    i = src.index("region_lines")
+    seg = src[i - 1500:i + 1500]
+    assert '_say_speech(flow, m, "[결론 변경]"' not in seg, "채널 게시는 도배가 된다"
+    assert 'minutes.append(f"[변경]' in seg, "회의록에는 남아야 한다"

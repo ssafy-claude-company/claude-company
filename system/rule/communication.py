@@ -662,7 +662,9 @@ async def meet(flow, me_id, args):
                                 _chg += "\n".join(f"+ {l[:110]}" for l in _added)
                             if _gone:
                                 _chg += ("\n" if _chg else "") + "\n".join(f"− {l[:80]}" for l in _gone)
-                            await _say_speech(flow, m, "[결론 변경]", _chg)
+                            # [채널을 도배하지 않는다(2026-07-30, 사용자 지적: '회의 작업이 도배됐어')]
+                            # 변경을 매 발언마다 채널 메시지로 띄우니 회의 한 건이 수십 줄로 불었다.
+                            # 사람이 볼 자리는 그 회의의 회의록이다 — 채널에는 붙이지 않는다.
                             minutes.append(f"[변경] {flow._info(m) or m}:\n{_chg}")
                     _dstate["region_lines"] = _now_all
                 except Exception:
