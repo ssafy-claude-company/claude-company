@@ -58,3 +58,16 @@ def test_폭이_1이면_종전대로_한_명만(monkeypatch):
 def test_기본폭은_3(monkeypatch):
     monkeypatch.delenv("ORGANT_FLOOR_PARALLEL", raising=False)
     assert parallel_floor_width() == 3
+
+
+def test_동행은_베턴을_받지_않는다():
+    """[교리 정합(Communication.md)] 흐름 안 단일활성(베턴)은 불변 — 동행 발언은 comm 프레임을 여는
+    _speech 경로가 아니라, 교리가 허용한 병렬 수집(_fork_collect: 가지는 프레임을 안 연다)로 간다."""
+    import inspect
+
+    from system.rule import communication as _c
+    src = inspect.getsource(_c)
+    i = src.index("async def _speak_many(")
+    seg = src[i:i + 2600]
+    assert "_fork_collect(flow, me_id, list(extra)" in seg, "동행이 베턴 경로로 가면 경합이 난다"
+    assert "_win = await _speak(winner, alloc)" in seg, "베턴은 낙찰자 하나뿐이어야 한다"

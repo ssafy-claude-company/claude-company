@@ -4031,8 +4031,19 @@ class Sys:
                         flow, flow.anchor,
                         f"다음 회의 안건은 '**{_ag}**'입니다 — 이에 대한 **여는 의견**만 3~5줄으로 "
                         "내세요(**도구 호출 금지, 텍스트로만**).", Kind.INFO, "leader")
+                    # [제목은 이름, 안건은 본문(2026-07-30, 사용자 지적)] 종전엔 지시문 전체가
+                    # 제목이 돼 피드에서 회의를 구분·인용할 수 없었다. 짧은 고유명을 제목으로 준다.
+                    from .rule.milestone import stage_title as _stitle
+                    _scope = ""
+                    if _stg == "backlog":
+                        _tgt = str(getattr(flow, "_stage_target_st", "") or "")
+                        _ms0 = next((m for m in (getattr(flow, "milestones", None) or [])
+                                     if m.status not in ("done", "superseded")), None)
+                        _st0 = next((x for x in (getattr(_ms0, "subtasks", None) or [])
+                                     if x.st_id == _tgt), None)
+                        _scope = str(getattr(_st0, "goal", "") or "").split(" — ")[0][:40]
                     result = await _stage_meet(flow, flow.anchor, {
-                        "topic": f"{_ag} — {(flow.origin_request or body)[:120]}",
+                        "topic": f"{_stitle(_stg, _scope)} — {_ag}",
                         "my_opinion": (str(_op or "").strip() or "여는 의견 없음")[:1500], "_sys_open": True})
                     self._log("stage_meeting_opened", stage=str(_stg), ch=int(flow.user_channel or 0))
                     # 단계가 진행됐으면(다른 단계로) 무진행 아님 — cont 안 올림. 같은 단계면 정체 카운트.
