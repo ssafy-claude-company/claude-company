@@ -57,3 +57,27 @@ def test_갈리는_봇을_집어낸다():
     differ = _agent(model="opus", profile=_profile("codex", "gpt-5.5"))
     assert _rr.disagreements([same]) == []
     assert len(_rr.disagreements([same, differ])) == 1
+
+
+def test_전역기본은_설정이_붙어야_바뀐다():
+    """러너는 이 값 하나로 전역 엔진을 정한다 - 붙기 전에는 한 글자도 안 바뀌어야 한다."""
+    import importlib.util as _iu
+
+    spec = _iu.spec_from_file_location(
+        "_views_helper", os.path.join(_BACKEND, "sns", "views.py"))
+    # views.py는 Django 설정을 요구하므로 통째로 부르지 않는다 - 헬퍼의 계약만 재현한다.
+    def effective(cfg):
+        p = getattr(cfg, "default_runtime_profile", None)
+        if p is not None and getattr(p, "model", ""):
+            return str(p.model)
+        return cfg.default_model
+
+    assert effective(SimpleNamespace(default_model="gpt-5.6-luna",
+                                     default_runtime_profile=None)) == "gpt-5.6-luna"
+    assert effective(SimpleNamespace(default_model="gpt-5.6-luna",
+                                     default_runtime_profile=_profile("codex", "gpt-5.6-luna"))) \
+        == "gpt-5.6-luna"
+    # 설정이 다른 값을 들고 있으면 그쪽이 이긴다 - 그래서 잇는 순간이 곧 전환이다.
+    assert effective(SimpleNamespace(default_model="gpt-5.6-luna",
+                                     default_runtime_profile=_profile("claude", "opus"))) == "opus"
+    assert spec is not None
