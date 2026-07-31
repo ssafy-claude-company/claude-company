@@ -2015,13 +2015,38 @@ class Sys:
             owner = _new
         # 응찰/선정 micro 턴 사이에는 다른 표면이 선점할 수 있다. 최종 변이 직전에 전역 잠금을
         # 다시 읽어, relay-local pick이 다른 SubTask의 active를 보지 못하는 경합을 막는다.
-        from .rule.backlog import active_backlog_rows
+        # [겹치지 않으면 같이 간다(2026-07-31, U-442 실측: 동시 진행 최대 1)] 종전엔 어딘가에
+        # 활성 백로그가 하나라도 있으면 무조건 선정을 접었다 — 병렬 장치(쓰기 영역·드라이브 캡)를
+        # 다 만들어 두고 이 한 줄이 전부를 한 줄로 세웠다(96분 구간에서 평균 동시 0.60).
+        # 순서는 그대로 지킨다(선택은 등록 순서) — 다만 **다른 작업 영역**의 일감이면 동시에 연다.
+        # 같은 영역(같은 SubTask)이거나 선언된 쓰기 영역이 겹치면 종전처럼 기다린다.
+        from .rule.backlog import (active_backlog_rows, backlog_parallel_width,
+                                   declared_write_scope, write_scopes_conflict)
         active_now = active_backlog_rows(flow)
         if active_now:
-            ast, _ar, ab = active_now[0]
-            self._log("backlog_handoff_preempted", st=str(ast.st_id),
-                      backlog=str(ab.backlog_id), requested=str(selected))
-            return None
+            _sel_relay = _relay_of.get(selected) or r
+            _sel_st = str(getattr(_sel_relay, "subtask_id", "") or "")
+            _sel_body = str(getattr(next((b for b in rem if b.backlog_id == selected), None),
+                                    "body", "") or "")
+            _sel_scope = declared_write_scope(_sel_body)
+            _clash = None
+            for _ast, _ar2, _ab in active_now:
+                if str(getattr(_ast, "st_id", "")) == _sel_st:
+                    _clash = (_ast, _ab, "같은 작업 영역")
+                    break
+                _osc = declared_write_scope(str(getattr(_ab, "body", "") or ""))
+                if _sel_scope and _osc and write_scopes_conflict(_sel_scope, _osc):
+                    _clash = (_ast, _ab, "선언된 쓰기 영역 겹침")
+                    break
+            if _clash is None and len(active_now) + 1 > backlog_parallel_width():
+                _clash = (active_now[0][0], active_now[0][2], "동시 진행 상한")
+            if _clash is not None:
+                _ast, _ab, _why_p = _clash
+                self._log("backlog_handoff_preempted", st=str(_ast.st_id),
+                          backlog=str(_ab.backlog_id), requested=str(selected), why=_why_p)
+                return None
+            self._log("backlog_parallel_open", requested=str(selected),
+                      st=_sel_st, active=len(active_now))
         # 선정된 항목이 다른 서브태스크의 릴레이 소유일 수 있다 — 그 릴레이에 배분한다.
         _rt = _relay_of.get(selected) or r
         if getattr(_rt, "turn_holder", None) is not None and int(_rt.turn_holder) != int(holder):
