@@ -164,8 +164,12 @@ async def deploy(flow, args, me_id=None):
     _cc_at0 = int(getattr(flow, "_deploy_cross", -1))
     _peers = ([m for m in getattr(flow.current, "team", []) if m != flow.leader]
               if flow.current is not None else [])
+    # [검증할 라이브가 없으면 맹목이 아니다(2026-07-31, U-442 실측)] 이 보류의 뜻은 "**돌아가는 것**을
+    # 확인도 없이 또 덮어쓰지 마라"다. 그런데 직전 배포가 라이브를 만들지 못했다면 검증할 대상 자체가
+    # 없고, 동료는 확인할 수 없는 것을 확인해야 보류가 풀린다 — 판이 그대로 정지했다
+    # (deploy_blind_held → complete_task_refused → stalled_stopped). 라이브가 선 뒤부터 건다.
     if (getattr(flow, "_deployed_once", False) and _cc_at0 >= 0
-            and _cc_now0 <= _cc_at0 and _peers):
+            and _cc_now0 <= _cc_at0 and _peers and getattr(flow, "_deploy_live", False)):
         if flow.log:
             flow.log("deploy_blind_held", cross=_cc_now0)
         # SYS 강제배포(_ensure_deploy)가 이 보류를 우회하지 않게 — 종전 deploy_capped와 같은 하류 의미.
