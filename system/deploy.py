@@ -576,6 +576,26 @@ def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
     if not static_only:
         served = _local_health(port)
         if served is None:
+            # [실행 CLI가 devDependency인 앱(2026-07-31, U-442 실측)] `--omit=dev`로 깔면 start가
+            # 부르는 도구(vinext·next·vite 등)가 없어 기동이 실패한다("sh: vinext: not found").
+            # 앱을 못 띄우면 배달 자체가 없으므로, 개발 의존까지 포함해 한 번 더 깔고 다시 띄운다.
+            try:
+                _tail0 = (appdir / "app.log").read_text(errors="replace")[-400:]
+            except OSError:
+                _tail0 = ""
+            if pkg.exists() and "not found" in _tail0:
+                r2 = subprocess.run(["npm", "install", "--no-audit", "--no-fund"],
+                                    cwd=str(appdir), capture_output=True, text=True, timeout=600)
+                if r2.returncode == 0:
+                    with _RegistryLock():
+                        reg2 = _load_registry()
+                        _stop_app(reg2.get(name) or {})
+                        pid = _spawn_app(appdir, port, start_cmd)
+                        reg2[name] = {"port": port, "pid": pid, "dir": str(appdir),
+                                      "static": False, "cmd": start_cmd, "ts": time.time()}
+                        _save_registry(reg2)
+                    served = _local_health(port)
+        if served is None:
             tail = ""
             try:
                 tail = (appdir / "app.log").read_text(errors="replace")[-240:]
