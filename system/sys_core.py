@@ -1339,17 +1339,30 @@ class Sys:
             # 하나가 안 끝나면(자식 프로세스 사망·detach 미해소) 흐름 전체가 영구 정지했다(라이브:
             # ch49 await_inflight n=1로 10분+ 멎음, 자식=0). 턴 타임아웃×1.5 상한으로 끊고, 못 끝낸
             # 위임은 실패로 처리해 리더가 재위임/우회하게 한다(무진행 워치독보다 확정적).
-            _cap = int(getattr(self, "turn_timeout", 600) or 600) * 3 // 2
-            try:
-                results = await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True), timeout=_cap)
-            except asyncio.TimeoutError:
-                for _t in tasks:
-                    if not _t.done():
-                        _t.cancel()
-                self._log("inflight_drain_timeout", n=len(tasks), cap=_cap)
-                results = [asyncio.TimeoutError(f"위임 회수 {_cap}s 초과 — 강제 종료")
-                           for _ in tasks]
+            # [일하는 중인 사람을 시계로 자르지 않는다(2026-07-31, U-442 실측)] 상한이 벽시계 720s라
+            # 빌드+배포처럼 정당하게 긴 작업이 **도구를 계속 쓰는 중에** 잘렸다(같은 위임이 12분마다
+            # 타임아웃→재위임을 반복, 판이 앞으로 못 감). 죽은 자식을 잡자던 가드의 뜻은 '아무 일도
+            # 일어나지 않는다'이지 '오래 걸린다'가 아니다 — **무활동**으로 잰다.
+            _idle_cap = int(getattr(self, "turn_timeout", 600) or 600)
+            _hard_cap = int(os.environ.get("ORGANT_DRAIN_HARD_CAP", "7200"))   # 폭주 최후 방어(2시간)
+            _t0 = time.time()
+            results = None
+            while results is None:
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True), timeout=30)
+                except asyncio.TimeoutError:
+                    _idle = time.time() - float(getattr(flow, "last_activity", 0) or _t0)
+                    if _idle < _idle_cap and (time.time() - _t0) < _hard_cap:
+                        continue                      # 아직 손이 움직인다 — 기다린다
+                    for _t in tasks:
+                        if not _t.done():
+                            _t.cancel()
+                    self._log("inflight_drain_timeout", n=len(tasks),
+                              idle=int(_idle), waited=int(time.time() - _t0))
+                    results = [asyncio.TimeoutError(
+                        f"위임 회수 중단 — {int(_idle)}s 동안 아무 활동이 없었습니다")
+                        for _ in tasks]
             # [위임 실패 가시화(2026-06, 사용자)] 인플라이트 위임 턴이 예외로 죽으면 종전엔 gather가
             # 조용히 삼켜(return_exceptions) 리더가 결과도 에러도 못 받고 무진행으로 멎어 잘렸다(라이브:
             # 배승우→진서우 VFX 위임이 세션도 못 만들고 죽은 뒤 흐름 자동중단). 예외를 ① 로그로 남기고
