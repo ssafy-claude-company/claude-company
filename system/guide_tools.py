@@ -470,6 +470,16 @@ def _target_dead_end_hint(flow, target) -> str:
     지금 주기 안이라면 이 target으로는 영영 봉인할 수 없다는 사실과 두 출구를 함께 준다."""
     t = str(target or "").strip()
     if not t.lower().startswith(("condition:", "surface:", "flow:", "origin:")):
+        # [봉인할 대상이 아예 없을 때(2026-07-31, U-442 실측)] release/e2e challenge가 하나도 열려
+        # 있지 않으면 어떤 target도 봉인되지 않는다. 그런데 안내는 "정확한 target id가 아닙니다"로
+        # 끝나서, 팀은 '주기를 닫아야 target이 생긴다 → 닫으려면 영수증이 필요하다'는 순환에 갇혀
+        # 판이 멈췄다(실측: 같은 취지의 [의견] 수십 건 → 중지 표결 → 사용자 대기).
+        if not (getattr(flow, "_release_verify_challenge", None)
+                or getattr(flow, "_e2e_receipt_nonce", None)):
+            return ("\n지금은 **봉인할 대상이 없습니다** — 영수증(receipt)은 주기 잠금(release)이나 "
+                    "Task 경계(e2e)가 열렸을 때만 발급됩니다. 이번 주기의 완수조건은 봉인 없이 그냥 "
+                    "`run`으로 실행하고 그 결과(exit code·stdout 요지)를 `report_iter`에 제출하면 "
+                    "닫힙니다 — evidence_for·seal_verifier 없이 진행하세요.")
         return ""
     from .rule.wrapup import _boundary_gap
     try:
