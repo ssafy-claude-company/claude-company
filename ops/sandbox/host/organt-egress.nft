@@ -15,6 +15,15 @@
 # 되돌리기:  nft delete table inet organt_egress
 
 table inet organt_egress {
+    # 봇이 닿으면 안 되는 내부 서비스 포트. 새 내부 서비스를 띄우면 여기에 더한다.
+    #   5432 postgres · 8000 gunicorn(murmur-web) · 8002 uvicorn(sse)
+    #   8080 nginx(내부) · 8100 python3(voice)
+    # 8118(tinyproxy 관문)은 일부러 뺀다 — 봇의 유일한 바깥길이다.
+    set internal_ports {
+        type inet_service
+        elements = { 5432, 8000, 8002, 8080, 8100 }
+    }
+
     chain output {
         type filter hook output priority 0; policy accept;
 
@@ -23,6 +32,18 @@ table inet organt_egress {
         meta skuid > 300999 accept
 
         # 여기부터는 봇(300000-300999)만 온다.
+
+        # [내부 서비스 봉인(2026-07-31, 현준-4 실측)] loopback을 통째로 열어두니 봇이
+        # 데이터베이스(5432)와 내부 API(8000)에 그대로 닿았다. 실측: DB 연결 성립,
+        # murmur-web 200. 인증은 서 있지만(guide 종단 403, pg는 scram) 봇이 이것들에
+        # 닿을 이유가 없다 — 자격증명이 한 번 새면 곧바로 실행 가능한 공격이 된다.
+        # 문자열 거부 목록(/api/guide 등)은 명령 겉모습만 보므로 우회된다.
+        #
+        # 이 포트들은 이미 시스템 서비스가 점유하고 있어 봇이 자기 서버를 띄울 수도
+        # 없다 — 막아도 봇의 정상 작업에는 값이 없다. 관문(8118)은 목록에 없어 살아 있다.
+        tcp dport @internal_ports ip daddr 127.0.0.0/8 reject with icmpx type admin-prohibited
+        tcp dport @internal_ports ip6 daddr ::1 reject with icmpx type admin-prohibited
+
         oif "lo" accept
         ip daddr 127.0.0.0/8 accept
         ip6 daddr ::1 accept
