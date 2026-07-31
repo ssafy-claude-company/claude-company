@@ -16,3 +16,12 @@ def test_복구가_앱_풀_사실을_흐름에_반영한다():
     i = src.index("deploy_state_synced_from_pool")
     head = src[max(0, i - 700):i]
     assert "_deploy_live = True" in head and "_deployed_once = True" in head
+
+
+def test_세그먼트마다_사실을_다시_본다():
+    """복구 한 번만으로는 경로에 따라 놓친다 — 이어가기 세그먼트마다(캐시) 본다."""
+    from system import sys_core
+    src = inspect.getsource(sys_core.Sys)
+    assert "_sync_pool_deploy" in src
+    body = inspect.getsource(sys_core.Sys._sync_pool_deploy)
+    assert "pool_live_url" in body and "_pool_sync_at" in body

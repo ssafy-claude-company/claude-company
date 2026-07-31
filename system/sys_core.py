@@ -1312,6 +1312,34 @@ class Sys:
             await asyncio.sleep(min(60, period) if _busy else period)
             await self._distill_cycle_once()
 
+    def _sync_pool_deploy(self, flow) -> bool:
+        """앱 풀에 이 판의 앱이 살아 있으면 흐름 상태를 사실에 맞춘다(5분 캐시). 반환=갱신 여부."""
+        if getattr(flow, "_deploy_live", False):
+            return False
+        _now = time.monotonic()
+        if _now - float(getattr(flow, "_pool_sync_at", 0) or 0) < 300:
+            return False
+        flow._pool_sync_at = _now
+        try:
+            from .deploy import pool_live_url
+            from .guide_tools import deploy_service_name
+            name = deploy_service_name(flow)
+            live = pool_live_url(name) if name else ""
+        except Exception as e:
+            self._log("deploy_pool_sync_failed", err=str(e)[:80])
+            return False
+        if not live:
+            return False
+        flow._deploy_live = True
+        flow._deploy_url = live
+        flow._deployed_once = True
+        try:
+            flow._deploy_writes = sum(int(v) for v in (flow.writes_by_role or {}).values())
+        except Exception:
+            pass
+        self._log("deploy_state_synced_from_pool", url=live)
+        return True
+
     async def _drain_inflight(self, flow) -> str:
         """완주 중인 위임(detach 포함)이 있으면 끝까지 기다리고, 도착한 위임 결과를 이어가기 리더에게
         전달할 본문으로 돌려준다(없으면 ''). CLI가 도구 호출을 포기해도 deliver 태스크는 계속 돌므로
@@ -4008,6 +4036,10 @@ class Sys:
                                # 무제한, 연속 12회 헛돌 때만 정체로 종결).
                 acts_seg = flow.act_count
                 flow.leader_segment += 1
+                # [장부보다 사실이 먼저(2026-07-31, U-442 실측)] 도구를 거치지 않고 올라간 배포(운영자
+                # 게시·복구)는 흐름 장부에 없어, 제품이 라이브인데도 마감 관문이 계속 막았다. 복구
+                # 시점 한 번으로는 경로에 따라 놓친다 — 세그먼트마다(5분 캐시) 앱 풀의 사실을 본다.
+                self._sync_pool_deploy(flow)
                 self._log("continue_incomplete",
                           task=(flow.current.task_id if flow.current else None), attempt=cont,
                           seg=flow.leader_segment, progressed=progressed,
