@@ -94,6 +94,23 @@ _sse=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8002
 if [ "$_sse" = "401" ]; then echo "  /api/stream/ 인증 게이트 ✓"
 elif [ -z "$_sse" ] || [ "$_sse" = "000" ]; then echo "  /api/stream/ ⚠ 응답 없음(:8002)"; fail=1
 else echo "  /api/stream/ ⚠ 예상 밖 응답 $_sse"; fail=1; fi
+echo "== 6-2) 프로덕션 DB 마이그레이션 (2026-07-31 사고 재발 방지) =="
+# 모델을 바꾸고 마이그레이션을 프로덕션에 안 걸면, 코드는 새 컬럼을 SELECT하는데 DB엔
+# 없어서 그 모델을 건드리는 종단이 통째로 500이 된다. 실측으로 /api/agents/가 그렇게 죽었다.
+# 화면 첫 페이지는 200이라 사람 눈엔 멀쩡해 보인다 - 게이트가 잡아야 하는 종류다.
+# 개발용 sqlite가 아니라 프로덕션 env로 물어본다(엉뚱한 DB에 걸고 통과하는 것을 막는다).
+if [ -r /etc/murmur-web.env ]; then
+  _mig=$( set -a; . /etc/murmur-web.env; set +a
+          cd "$R/murmur/backend" && PYTHONPATH="$R" "$VENV/python" manage.py migrate --check 2>&1 )
+  if [ $? -eq 0 ]; then echo "  프로덕션 DB 최신 ✓"
+  else
+    echo "  ⚠ 프로덕션 DB에 미적용 마이그레이션이 있다 — 착지 전에 걸어라"
+    echo "$_mig" | tail -3 | sed "s/^/     /"
+    fail=1
+  fi
+else
+  echo "  (프로덕션 env 없음 — 건너뜀)"
+fi
 echo "== 7) 비밀값 유출 검사 (원격 백업 = 외부 공개 가능성) =="
 # [2026-07-28] ops/가 git에 올라가는 이유는 tests(41)·verify·land·wt·contracts가 '검증의 단일
 # 진실원'이라 버전 관리가 필수이기 때문이다. 그러나 그 대가로 레포가 외부(원격)로 나가므로,
