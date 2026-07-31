@@ -1,0 +1,59 @@
+"""실행 판정을 한 곳으로 모은 계약(2026-07-31, 현준-4).
+
+종전 판정은 str(model).startswith("gpt-") 하나였다. 문자열 접두사가 곧 실행 엔진이라
+모델 이름이 바뀌거나 제3자 엔드포인트가 들어오면 곧바로 깨진다.
+"""
+import importlib.util
+import os
+from types import SimpleNamespace
+
+_BACKEND = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "murmur", "backend")
+_spec = importlib.util.spec_from_file_location(
+    "_rr_under_test", os.path.join(_BACKEND, "sns", "runtime_resolve.py"))
+_rr = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_rr)
+
+
+def _agent(model=None, profile=None):
+    return SimpleNamespace(bot_id=1, model=model, runtime_profile=profile)
+
+
+def _profile(kind, model="", endpoint=""):
+    return SimpleNamespace(kind=kind, model=model, endpoint=endpoint)
+
+
+def test_설정이_없으면_옛_판정을_그대로_쓴다():
+    """전환 중에는 두 진실원이 공존한다 - 설정이 없는 봇의 실행이 바뀌면 안 된다."""
+    assert _rr.kind_of(_agent(model="gpt-5.5")) == _rr.CODEX
+    assert _rr.kind_of(_agent(model="opus")) == _rr.CLAUDE
+    assert _rr.kind_of(_agent(model="")) == _rr.CLAUDE
+    assert _rr.kind_of(_agent(model=None)) == _rr.CLAUDE
+
+
+def test_설정이_있으면_설정이_이긴다():
+    a = _agent(model="opus", profile=_profile("codex", "gpt-5.5"))
+    assert _rr.kind_of(a) == _rr.CODEX
+    assert _rr.model_of(a) == "gpt-5.5"
+
+
+def test_openai호환은_codex_경로로_접힌다():
+    """프로토콜이 같다 - 종류는 보존하되 실행 경로 판정에서는 하나로 본다."""
+    a = _agent(profile=_profile("openai_compat", "llama-3", "https://x.example/v1"))
+    assert _rr.kind_of(a) == _rr.CODEX
+    assert _rr.endpoint_of(a) == "https://x.example/v1"
+
+
+def test_우리_엔진은_주소가_비어있다():
+    """호출부는 주소가 비었을 때 종전 경로로 간다."""
+    assert _rr.endpoint_of(_agent(model="opus")) == ""
+    assert _rr.endpoint_of(_agent(profile=_profile("claude", "opus"))) == ""
+
+
+def test_갈리는_봇을_집어낸다():
+    """전환 전에 '동작이 안 바뀐다'를 말이 아니라 수로 보이기 위한 것."""
+    same = _agent(model="gpt-5.5", profile=_profile("codex", "gpt-5.5"))
+    differ = _agent(model="opus", profile=_profile("codex", "gpt-5.5"))
+    assert _rr.disagreements([same]) == []
+    assert len(_rr.disagreements([same, differ])) == 1
