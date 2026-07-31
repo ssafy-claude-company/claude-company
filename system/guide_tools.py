@@ -324,6 +324,14 @@ def _prepare_run_exec(workspace, command):
             argv.extend(["--symlink", os.path.dirname(real_venv), legacy_root])
         sandbox_path = os.path.join(real_venv, "bin") + ":" + sandbox_path
     env["PATH"] = sandbox_path
+    # [협의 기록 봉인(2026-07-31, 현준-4 실측)] 정책은 이미 '.collab/은 시스템 소유'인데
+    # 강제는 run 명령 문자열 검사뿐이었다. 파일시스템은 봇에게 그 폴더의 소유권을 줬다
+    # (_chown_tree가 작업공간을 통째로 넘긴다) - 실측으로 봇 uid가 TEAM.md를 지울 수 있었다.
+    # 문자열은 우회된다(스크립트·빌드도구·경로 조립). 샌드박스 안에서 읽기 전용으로 덮어
+    # 파일시스템이 정책을 강제하게 한다. 러너는 샌드박스 밖이라 종전대로 쓴다.
+    _collab = os.path.join(real_ws, ".collab")
+    if os.path.isdir(_collab):
+        argv.extend(["--ro-bind", _collab, sandbox_ws + "/.collab"])
     playwright_cache = "/root/.cache/ms-playwright"
     if os.path.isdir(playwright_cache):
         argv.extend([

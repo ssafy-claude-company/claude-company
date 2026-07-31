@@ -209,3 +209,37 @@ def test_범위_밖_소유자는_무시한다(tmp_path):
 
     m = str(tmp_path / "uidmap.json")
     assert uid_for("판", m, observed_uid=65534) == UID_MIN
+
+
+def test_협의기록은_샌드박스에서_읽기전용으로_덮인다(tmp_path, monkeypatch):
+    """정책은 '.collab/은 시스템 소유'인데 강제가 문자열 검사뿐이었다 - 파일시스템이 막게 한다.
+
+    실측: 봇 uid가 TEAM.md를 지울 수 있었다(작업공간을 통째로 chown하므로 봇이 소유자).
+    """
+    from system.guide_tools import _prepare_run_exec
+
+    ws = tmp_path / "p-000-판"
+    (ws / ".collab").mkdir(parents=True)
+    (ws / ".collab" / "TEAM.md").write_text("로스터", encoding="utf-8")
+    argv, _env, err = _prepare_run_exec(str(ws), "echo 확인")
+    assert not err and argv
+
+    # --ro-bind <실제.collab> <샌드박스경로>/.collab 가 실려 있어야 한다.
+    pairs = [(argv[i + 1], argv[i + 2]) for i, a in enumerate(argv) if a == "--ro-bind"
+             and i + 2 < len(argv)]
+    assert any(src == str(ws / ".collab") and dst.endswith("/.collab") for src, dst in pairs), \
+        "협의 기록이 읽기 전용으로 덮이지 않았다"
+
+    # 작업공간 자체는 여전히 쓰기 가능해야 한다 - 봇의 산출물이 거기 쌓인다.
+    assert "--bind" in argv
+
+
+def test_협의기록이_없으면_덮지_않는다(tmp_path):
+    """폴더가 없는 판에서 없는 경로를 바인드하면 실행 자체가 죽는다."""
+    from system.guide_tools import _prepare_run_exec
+
+    ws = tmp_path / "p-001-판"
+    ws.mkdir()
+    argv, _env, err = _prepare_run_exec(str(ws), "echo 확인")
+    assert not err and argv
+    assert not any(a.endswith("/.collab") for a in argv)
