@@ -893,6 +893,13 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                         _set_pipeline_ctx(flow, me_id)
                         return _ok(f"백로그 {b.backlog_id}는 이미 당신이 작업 중입니다 — 이어서 하세요.")
                     # [전원 병렬(2026-07-31, 사용자 지시)] 다른 일감이 돈다고 선정을 막지 않는다.
+                    # 단 **한 사람은 한 번에 하나** — 내가 이미 들고 있으면 그것부터 끝낸다.
+                    from .rule.backlog import worker_busy_with as _busy_with
+                    _mine_now = _busy_with(flow, me_id)
+                    if _mine_now and _mine_now != b.backlog_id:
+                        return _ok(f"선점 불가: 당신은 이미 백로그 {_mine_now}를 작업 중입니다 — "
+                                   f"그것을 끝내거나(report_iter) 중단(drop_backlog)한 뒤 집으세요. "
+                                   f"동시에 두 개를 들면 어느 쪽도 끝나지 않습니다.")
                     if b.status == BLOCKED:
                         _rows = backlog_rows(flow)
                         if not blocked_ready_for_revisit(

@@ -2018,7 +2018,14 @@ class Sys:
         # [각자 자기 것을 계속(2026-07-31, 사용자: '다른 작업 공간이고 뭐고 그냥 전체 직원이 계속
         # 자기꺼 하면 되잖아')] 종전엔 활성이 하나라도 있으면 선정을 접었고(1활성), 그다음엔 작업
         # 영역이 다를 때만 열었다. 이제 열려 있는 일감은 그대로 나간다 — 남는 제한은 상한뿐이다.
-        from .rule.backlog import active_backlog_rows, backlog_parallel_width
+        from .rule.backlog import (active_backlog_rows, backlog_parallel_width,
+                                   worker_busy_with)
+        # [한 사람은 한 번에 하나(2026-07-31, 사용자: '개인이 어떻게 2개를 동시에 작업할 수 있지')]
+        _busy_id = worker_busy_with(flow, owner)
+        if _busy_id:
+            self._log("backlog_handoff_owner_busy", to=int(owner), holding=str(_busy_id),
+                      requested=str(selected))
+            return None
         active_now = active_backlog_rows(flow)
         if active_now and len(active_now) + 1 > backlog_parallel_width():
             _ast, _ar2, _ab = active_now[0]

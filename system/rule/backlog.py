@@ -619,8 +619,26 @@ def backlog_rows(flow):
 
 
 def active_backlog_rows(flow):
-    """열린 마일스톤 전체의 실제 작업 중 백로그. 정상 장부라면 길이는 최대 1이다."""
+    """열린 마일스톤 전체의 실제 작업 중 백로그(전원 병렬 이후 여럿일 수 있다 — 사람마다 하나)."""
     return [row for row in backlog_rows(flow) if row[2].status == IN_PROGRESS]
+
+
+def worker_busy_with(flow, worker) -> str:
+    """[한 사람은 한 번에 하나(2026-07-31, 사용자: '개인이 어떻게 2개를 동시에 작업할 수 있지')]
+    일감은 사람마다 병렬로 가지만, **한 사람이 두 개를 동시에 하지는 못한다**. 실측(U-442)에서 같은
+    프론트엔드 봇이 ST-1/B2와 ST-2/B1을 함께 '작업 중'으로 들고 있었다 — 표시 문제가 아니라 장부가
+    실제로 그랬다. 그 사람이 이미 들고 있는 일감 id를 돌려준다(없으면 빈 문자열).
+    """
+    try:
+        w = int(worker or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not w:
+        return ""
+    for _st, _r, b in active_backlog_rows(flow):
+        if int(getattr(b, "assignee", 0) or 0) == w:
+            return str(getattr(b, "backlog_id", "") or "")
+    return ""
 
 
 def normalize_active_backlogs(flow):
