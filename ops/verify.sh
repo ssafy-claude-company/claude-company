@@ -53,6 +53,8 @@ if [ -z "$FAST" ]; then
   ( cd "$R/murmur/frontend" && node tools/check_feed_flat.mjs ) || fail=1
   # [알파 계약(2026-07-30)] 반투명 필름을 면으로 쓰던 254곳·135값을 불투명 사다리와 토큰으로 정리 — 되돌아오지 못하게
   ( cd "$R/murmur/frontend" && node tools/check_alpha.mjs ) || fail=1
+  # [줄 변경 계약(2026-07-31)] 내가 본 뒤 어느 줄이 바뀌었나 — 틀리면 멀쩡한 줄을 의심하게 된다
+  ( cd "$R/murmur/frontend" && node tools/check_linediff.mjs ) || fail=1
 fi
 echo "== 5) STATE.md 신선도 (heads 대조) =="
 # 2레포: claude-company(루트=병합, STATE가 이 안에 있어 순환→정보표시) + murmur(별도→강제)
