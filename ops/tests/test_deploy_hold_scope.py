@@ -7,9 +7,10 @@ from system.rule import project as pj
 def test_보류는_라이브가_선_뒤부터():
     src = inspect.getsource(pj)
     i = src.index("deploy_blind_held")
-    head = src[max(0, i - 1200):i]
-    assert '_deploy_live' in head          # 라이브가 있을 때만 맹목 판정
+    head = src[max(0, i - 2400):i]
     assert "검증할 라이브가 없으면 맹목이 아니다" in head
+    cond = head[head.index("검증할 라이브가 없으면"):]
+    assert 'getattr(flow, "_deploy_live", False)' in cond   # 라이브가 있을 때만 맹목 판정
 
 
 def test_보류_문구는_출구를_제시한다():
