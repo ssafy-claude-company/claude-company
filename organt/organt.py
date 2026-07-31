@@ -324,6 +324,19 @@ class Organt:
 
         # [테넌트 상한 누락 봉합(2026-07-30)] Claude 경로에만 tenant를 넘겨, gpt 봇은 채널별 상한을
         # 타지 않고 전역 8만 받았다 — 한 채널이 슬롯을 독식하는 것을 막으려던 취지가 절반만 섰다.
+        # [제3자 엔진 2026-07-31, 현준-4] 이 턴을 어떤 엔진으로 도는지 웹에 묻는다.
+        # 러너는 금고 열쇠를 갖지 않으므로 자격증명도 여기서 한 번 받아 그 호출에만 쓴다.
+        # 못 물으면 빈 사전이고, 그러면 우리 기본 엔진으로 돈다 - 조용히 남의 주소로
+        # 보내는 것보다 안전한 쪽으로 떨어진다.
+        _eng = {}
+        try:
+            _rv = getattr(getattr(self, "_organt_flow", None), "guide", None)
+            _rv = getattr(_rv, "resolve_engine", None)
+            if _rv is not None:
+                _eng = (await _rv(bot_id=getattr(self, "_organt_bot_id", None),
+                                  channel_id=getattr(self, "_organt_tenant", None))) or {}
+        except Exception:
+            _eng = {}
         async with botpool.slot(tenant=getattr(self, "_organt_tenant", None)):
             _text, _sid = await run_codex_turn(
                 prompt=prompt, cwd=_cwd, session_id=self._resume_sid(micro),
@@ -338,7 +351,9 @@ class Organt:
                 expect_tool=bool(getattr(self, "_codex_expect_tool", False)) and not micro,
                 # [감사 공백 봉합(2026-07-30)] gpt 봇의 도구 호출을 audit에 남긴다 — 종전엔
                 # PostToolUse 훅이 Claude 경로에만 있어 codex 봇은 무엇을 했는지 기록이 없었다.
-                on_tool=getattr(self, "_codex_on_tool", None))
+                on_tool=getattr(self, "_codex_on_tool", None),
+                endpoint=_eng.get("endpoint") or None,
+                credential=_eng.get("credential") or None)
 
         # 누계 → 이 턴 몫으로 환산해 결산에 싣는다. handle()의 on_turn이 그대로 실어
         # 러너 → 웹(report_usage) → UsageLedger로 흘려보낸다.

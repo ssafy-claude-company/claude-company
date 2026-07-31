@@ -477,6 +477,7 @@ async def _run_codex_process(
     mcp_url: str | None,
     read_only: bool = False,
     on_usage=None,
+    extra_env=None,
 ):
     """Codex subprocess 하나를 실행하고 stdout/stderr/프로세스 그룹을 전부 회수한다."""
     ws = str(cwd)
@@ -501,7 +502,7 @@ async def _run_codex_process(
     proc = await asyncio.create_subprocess_exec(
         *args, stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env={"PATH": "/usr/bin:/bin", "HOME": "/root"},
+        env=_codex_env(extra_env),
         start_new_session=True, limit=stream_limit)
     _stderr_task = (
         asyncio.create_task(
@@ -681,9 +682,43 @@ async def _run_codex_budgeted(bridge, process_args, *, mcp_url, budget=0):
     return text, sid
 
 
+def _codex_env(extra=None):
+    """codex 실행 환경 - 최소로 유지하고, 제3자 엔진일 때만 주소·키를 더한다.
+
+    [제3자 엔진 2026-07-31, 현준-4] 부모 환경을 물려주지 않는다(러너의 키가 따라 들어간다).
+    필요한 값만 웹이 해석해 준 것을 여기서 한 번 쓴다 - 러너 env에 영속시키지 않는다.
+    """
+    env = {"PATH": "/usr/bin:/bin", "HOME": "/root"}
+    for k, v in (extra or {}).items():
+        if v:
+            env[str(k)] = str(v)
+    return env
+
+
+def _engine_env(endpoint, credential):
+    """제3자 주소를 쓸 때만 채워지는 환경. 주소가 없으면 빈 사전이다(우리 엔진).
+
+    주소는 여기서 **다시** 검증한다. 웹이 내줄 때 이미 봤지만, 그 사이에 이름이 내부로
+    바뀌었을 수 있다 - 두 곳에서 같은 판정을 하는 것이 DNS rebinding 방어의 전부다.
+    검증에 걸리면 빈 사전을 돌려준다: 남의 주소로 못 가면 우리 엔진으로 돈다.
+    """
+    if not endpoint:
+        return {}
+    try:
+        from .runtime import validate_endpoint
+        validate_endpoint(endpoint)
+    except Exception:
+        return {}
+    env = {"OPENAI_BASE_URL": endpoint}
+    if credential:
+        env["OPENAI_API_KEY"] = credential
+    return env
+
+
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None,
-                         read_only=False, on_usage=None, expect_tool=False, on_tool=None):
+                         read_only=False, on_usage=None, expect_tool=False, on_tool=None,
+                         endpoint=None, credential=None):
     """GPT 봇 한 턴. guide 도구가 있을 때만 전용 port/bridge를 턴 수명 동안 임대한다."""
     tool_names = {
         getattr(tool, "name", None)
@@ -706,6 +741,8 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
         "stderr": stderr,
         "read_only": bool(read_only),
         "on_usage": on_usage,
+        # 도구 없는 턴도 같은 엔진으로 돌아야 한다 - 여기서 한 번만 조립한다.
+        "extra_env": _engine_env(endpoint, credential),
     }
     if not turn_tools:
         return await _run_codex_process(**process_args, mcp_url=None)
@@ -713,7 +750,10 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
     async with get_port_pool().lease() as port:
         bridge = _new_bridge(port)
         bridge.set_tools(turn_tools)
-        bridge.set_audit(on_tool)      # [감사 공백 봉합] 이 턴의 도구 호출을 audit에 남긴다
+        bridge.set_audit(on_tool)
+        # [제3자 엔진 2026-07-31] 주소가 있으면 그쪽으로 나간다. 검증에 걸리면 빈 사전이라
+        # 우리 엔진으로 돈다 - 남의 주소로 못 가는 것이 조용히 가는 것보다 낫다.
+        _engine = _engine_env(endpoint, credential)      # [감사 공백 봉합] 이 턴의 도구 호출을 audit에 남긴다
         # [도구 표면 관측(2026-07-27)] GPT 경로는 도구가 MCP로 붙어 눈에 안 보인다 — 봇이 도구를
         # 안 부를 때 '없어서'인지 '안 해서'인지 구분할 수 없어 추정으로 판을 태웠다. 턴마다 실제
         # 실린 도구 수·핵심 도구 유무를 남긴다(이름 전체는 소음이라 개수 + 관심 도구만).

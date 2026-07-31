@@ -206,6 +206,22 @@ class MurmurGuide:
         except Exception:
             pass
 
+    async def resolve_engine(self, bot_id=None, channel_id=None):
+        """[제3자 엔진 2026-07-31, 현준-4] 이 봇을 이 판에서 어떻게 돌리나를 웹에 묻는다.
+
+        러너는 금고 열쇠를 갖지 않는다 - 자격증명은 웹이 열어 이 응답에 한 번 실어 준다.
+        실패하면 None이고, 호출자는 None을 '우리 기본으로 간다'로 읽는다. 조용히 남의
+        주소로 보내는 것보다 우리 엔진으로 도는 편이 안전하다.
+        """
+        try:
+            return await self._post("/api/guide/ingest/", {
+                "op": "engine",
+                "bot_id": int(bot_id) if bot_id else None,
+                "channel_id": int(channel_id) if channel_id else None,
+            })
+        except Exception:
+            return None
+
     async def report_usage(self, channel_id, cost_usd, tokens_out,
                            tokens_in=0, tokens_cached=0, purpose="", bot_id=None):
         """[사용량 귀속(2026-07-18, 운영/과금)] 봇 턴 비용을 채널 단위로 웹에 보고(HTTP) → 웹이 보드 주인
