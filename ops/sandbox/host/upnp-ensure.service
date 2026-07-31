@@ -1,0 +1,9 @@
+[Unit]
+Description=UPnP 포트 매핑 유지 (murmur 외부 접속)
+Documentation=ops/sandbox/host/upnp-ensure
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/upnp-ensure

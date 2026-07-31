@@ -1,0 +1,40 @@
+#!/bin/bash
+# UPnP 포트 매핑 자동 유지 (2026-07-31, 현준-4)
+#
+# 왜: 공유기가 재시작하면 UPnP 매핑이 통째로 사라진다. 실측으로 07-30 22:53 WAN 재시작 때
+# 그렇게 murmur가 밖에서 끊겼고, 사람이 알아채기까지 한 시간 넘게 걸렸다. 관리 화면의 정적
+# 포워딩이 근본 해결이지만 그건 사람 손이 필요하다 — 그때까지 스스로 되살아나게 한다.
+#
+# 재부팅만이 아니라 주기적으로 확인한다. 끊긴 사례가 '공유기 재시작'이지 '이 서버 재부팅'이
+# 아니었기 때문이다 — 부팅 때만 걸면 그 사고를 못 막는다.
+#
+# 되돌리기: systemctl disable --now upnp-ensure.timer
+set -u
+
+PORTS="${UPNP_PORTS:-80 443}"
+LOG="/var/log/upnp-ensure.log"
+
+# 랜 주소를 박지 않는다 — DHCP로 바뀌면 엉뚱한 곳에 매핑이 걸린다.
+LAN="$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[\d.]+' | head -1)"
+[ -n "$LAN" ] || { echo "$(date -Is) 랜 주소를 못 찾음 — 건너뜀" >> "$LOG"; exit 0; }
+
+MAP="$(timeout 25 upnpc -l 2>/dev/null)" || MAP=""
+[ -n "$MAP" ] || { echo "$(date -Is) 공유기 응답 없음 — 건너뜀" >> "$LOG"; exit 0; }
+
+added=0
+for p in $PORTS; do
+  # 이 포트가 이 서버로 이미 걸려 있으면 건드리지 않는다(멱등).
+  if echo "$MAP" | grep -qE "TCP +${p}->${LAN}:${p}"; then
+    continue
+  fi
+  if timeout 25 upnpc -a "$LAN" "$p" "$p" TCP 0 >/dev/null 2>&1; then
+    echo "$(date -Is) 매핑 재등록 ${p} -> ${LAN}:${p}" >> "$LOG"
+    added=$((added + 1))
+  else
+    echo "$(date -Is) 매핑 실패 ${p} -> ${LAN}:${p}" >> "$LOG"
+  fi
+done
+
+# 조용한 성공은 기록하지 않는다 — 5분마다 도는 것이라 로그가 사실을 덮는다.
+[ "$added" -gt 0 ] && echo "$(date -Is) 완료: ${added}건 재등록" >> "$LOG"
+exit 0
