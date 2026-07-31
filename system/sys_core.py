@@ -2015,38 +2015,18 @@ class Sys:
             owner = _new
         # 응찰/선정 micro 턴 사이에는 다른 표면이 선점할 수 있다. 최종 변이 직전에 전역 잠금을
         # 다시 읽어, relay-local pick이 다른 SubTask의 active를 보지 못하는 경합을 막는다.
-        # [겹치지 않으면 같이 간다(2026-07-31, U-442 실측: 동시 진행 최대 1)] 종전엔 어딘가에
-        # 활성 백로그가 하나라도 있으면 무조건 선정을 접었다 — 병렬 장치(쓰기 영역·드라이브 캡)를
-        # 다 만들어 두고 이 한 줄이 전부를 한 줄로 세웠다(96분 구간에서 평균 동시 0.60).
-        # 순서는 그대로 지킨다(선택은 등록 순서) — 다만 **다른 작업 영역**의 일감이면 동시에 연다.
-        # 같은 영역(같은 SubTask)이거나 선언된 쓰기 영역이 겹치면 종전처럼 기다린다.
-        from .rule.backlog import (active_backlog_rows, backlog_parallel_width,
-                                   declared_write_scope, write_scopes_conflict)
+        # [각자 자기 것을 계속(2026-07-31, 사용자: '다른 작업 공간이고 뭐고 그냥 전체 직원이 계속
+        # 자기꺼 하면 되잖아')] 종전엔 활성이 하나라도 있으면 선정을 접었고(1활성), 그다음엔 작업
+        # 영역이 다를 때만 열었다. 이제 열려 있는 일감은 그대로 나간다 — 남는 제한은 상한뿐이다.
+        from .rule.backlog import active_backlog_rows, backlog_parallel_width
         active_now = active_backlog_rows(flow)
+        if active_now and len(active_now) + 1 > backlog_parallel_width():
+            _ast, _ar2, _ab = active_now[0]
+            self._log("backlog_handoff_preempted", st=str(_ast.st_id),
+                      backlog=str(_ab.backlog_id), requested=str(selected), why="동시 진행 상한")
+            return None
         if active_now:
-            _sel_relay = _relay_of.get(selected) or r
-            _sel_st = str(getattr(_sel_relay, "subtask_id", "") or "")
-            _sel_body = str(getattr(next((b for b in rem if b.backlog_id == selected), None),
-                                    "body", "") or "")
-            _sel_scope = declared_write_scope(_sel_body)
-            _clash = None
-            for _ast, _ar2, _ab in active_now:
-                if str(getattr(_ast, "st_id", "")) == _sel_st:
-                    _clash = (_ast, _ab, "같은 작업 영역")
-                    break
-                _osc = declared_write_scope(str(getattr(_ab, "body", "") or ""))
-                if _sel_scope and _osc and write_scopes_conflict(_sel_scope, _osc):
-                    _clash = (_ast, _ab, "선언된 쓰기 영역 겹침")
-                    break
-            if _clash is None and len(active_now) + 1 > backlog_parallel_width():
-                _clash = (active_now[0][0], active_now[0][2], "동시 진행 상한")
-            if _clash is not None:
-                _ast, _ab, _why_p = _clash
-                self._log("backlog_handoff_preempted", st=str(_ast.st_id),
-                          backlog=str(_ab.backlog_id), requested=str(selected), why=_why_p)
-                return None
-            self._log("backlog_parallel_open", requested=str(selected),
-                      st=_sel_st, active=len(active_now))
+            self._log("backlog_parallel_open", requested=str(selected), active=len(active_now))
         # 선정된 항목이 다른 서브태스크의 릴레이 소유일 수 있다 — 그 릴레이에 배분한다.
         _rt = _relay_of.get(selected) or r
         if getattr(_rt, "turn_holder", None) is not None and int(_rt.turn_holder) != int(holder):
@@ -2201,6 +2181,39 @@ class Sys:
             # 서로 다른 봇이 서로 다른 파일을 만지므로 같은 시각에 돌아도 충돌하지 않는다.
             from .rule.backlog import active_backlog_rows as _act_rows
             _rows = [x for x in _act_rows(flow) if int(getattr(x[2], "assignee", 0) or 0)]
+            # [일하는 사람이 있어도 다음 사람은 시작한다(2026-07-31, 사용자 지시)] 종전엔 활성이
+            # 있으면 그것만 밀고 새 착수는 다음 라운드로 미뤘다 — 라인이 늘지 않아 늘 한 줄이었다.
+            # 여력이 남으면 이번 라운드에서 한 명을 더 세우고, 전부 같은 시각에 민다.
+            if _rows and claim_kick_target(flow) is not None:
+                _t2 = claim_kick_target(flow)
+                _w2, _b2, _st2 = _t2
+                _r2 = self._backlog_relay(flow, _st2)
+                if _r2 is not None:
+                    try:
+                        _kk = getattr(flow, "_claim_kicked", None)
+                        if _kk is None:
+                            _kk = flow._claim_kicked = set()
+                        _kk.add(backlog_scope_key(_st2, _b2.backlog_id))
+                        _r2.pick(int(_w2), _b2.backlog_id, int(_w2))
+                        from .rule.milestone import _ckpt as _ck2
+                        _ck2(flow)
+                        _b2._drive_n = 1
+                        # 라인을 늘려도 '등록 순서대로'는 그대로다 — 고르는 기준이 같으므로
+                        # 인계와 같은 표식을 남긴다(화면·장부가 한 가지 말만 하게).
+                        self._log("backlog_next_in_order", backlog=str(_b2.backlog_id),
+                                  to=int(_w2), skipped_bidding=True)
+                        self._log("backlog_lane_added", st=str(_st2),
+                                  backlog=str(_b2.backlog_id), to=int(_w2), lanes=len(_rows) + 1)
+                        try:
+                            _l2 = "[순서] 회의가 정한 등록 순서대로 이어받음 — 응찰 없이 다음 차례"
+                            if not getattr(_b2, "activity", None) or _b2.activity[-1] != _l2:
+                                _b2.activity.append(_l2)
+                        except Exception:
+                            pass
+                        _rows = [x for x in _act_rows(flow)
+                                 if int(getattr(x[2], "assignee", 0) or 0)]
+                    except Exception as _e:
+                        self._log("backlog_lane_add_failed", err=str(_e)[:80])
             if len(_rows) > 1:
                 import asyncio as _aio
                 self._log("backlog_parallel_drive", n=len(_rows),

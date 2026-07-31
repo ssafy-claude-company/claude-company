@@ -229,35 +229,42 @@ def test_중단_배분권_우회_봉합():
 
 
 def test_차단_배선_선행필요_출구():
-    """[block 배선(2026-07-14, 정합 감사 최대위험 — 무출구 교착)] 정지한 in_progress 하나가 순차
-    릴레이를 막던 것에 '선행 필요' 차단 출구를 준다: block()이 in_progress를 BLOCKED로 보존(버리지
-    않음)하고 순차 잠금을 풀어 다음이 설 수 있게 한다. 2회째 차단이면 deadlock 신호."""
+    """[block 배선(2026-07-14, 정합 감사 최대위험 — 무출구 교착)] 막힌 일감을 버리지 않고 BLOCKED로
+    보존하는 출구. 2회째 차단이면 deadlock 신호(→ renegotiate/vote_stop 라우팅).
+    (2026-07-31: 순차 잠금 자체가 폐기돼 '잠금 풀림' 축은 사라졌고, 보존·재방문·신호만 남는다.)"""
     r = _relay()
     b1 = r.submit(A, "저장 API")
     b2 = r.submit(B, "프론트 카드")
     r.pick(A, "B1", A)                                # A 착수
-    with pytest.raises(BacklogError):
-        r.pick(A, "B2", B)                            # 순차 잠금 — B1 작업 중
     _bl, dl = r.block(A, "B1", next_starter=A, reason="스키마 선행 필요")
-    assert _bl.status == BLOCKED and not dl           # 보존(버리지 않음)
-    assert r.pick(A, "B2", B).status == IN_PROGRESS   # 잠금 풀림 — 다음이 선다
+    assert _bl.status == BLOCKED and not dl           # 보존(버리지 않음 — 차단 출구의 핵심)
+    assert r.pick(A, "B2", B).status == IN_PROGRESS   # 차단된 것과 무관하게 다음이 선다
     r.done(B, "B2")
     r.pick(A, "B1", A)                                # 선행 풀려 재방문
     _, dl2 = r.block(A, "B1", A, "여전히 막힘")        # 2회째 차단
     assert dl2                                        # deadlock 신호(→ renegotiate/vote_stop 라우팅)
 
 
-def test_순차_1활성_잠금():
-    """[순차 돌리기(2026-07-14, 사용자: '백로그든 서브테스크든 순차 돌리기')] 한 번에 한 백로그만
-    in_progress — 하나가 작업 중이면 다른 착수 거부. 완료/중단 후에야 다음이 선다."""
+def test_각자_자기_일감을_동시에_진행한다():
+    """[전원 병렬(2026-07-31, 사용자: '전체 직원이 계속 자기꺼 하면 되잖아')] 종전 '한 번에 한
+    백로그'는 폐기됐다 — 다른 일감이 돈다는 이유로 착수를 막지 않는다(U-442 실측: 96분 내내 동시 1)."""
     r = _relay()
-    b1 = r.submit(A, "저장 API")
-    b2 = r.submit(B, "프론트 카드")
+    r.submit(A, "저장 API")
+    r.submit(B, "프론트 카드")
     r.pick(A, "B1", A)                                # A 착수(self-claim)
-    with pytest.raises(BacklogError):
-        r.pick(A, "B2", B)                            # 이미 B1 작업 중 → 순차 잠금
-    r.done(A, "B1")                                   # 완료 후엔
-    assert r.pick(A, "B2", B).status == IN_PROGRESS   # 다음 선정 가능(A=마무리자)
+    assert r.pick(A, "B2", B).status == IN_PROGRESS   # B도 곧바로 착수 — 기다리지 않는다
+    assert [b.status for b in r.backlogs] == [IN_PROGRESS, IN_PROGRESS]
+
+
+def test_동시_진행_상한만_남는다(monkeypatch):
+    """남는 제한은 자원 보호용 상한 하나뿐이다."""
+    monkeypatch.setenv("ORGANT_BACKLOG_PARALLEL", "1")
+    r = _relay()
+    r.submit(A, "저장 API")
+    r.submit(B, "프론트 카드")
+    r.pick(A, "B1", A)
+    with pytest.raises(BacklogError, match="동시 진행 상한"):
+        r.pick(A, "B2", B)
 
 
 def test_완료는_수행자만():

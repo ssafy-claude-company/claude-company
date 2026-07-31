@@ -159,7 +159,8 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag, tmp_path):
 def test_claim_kick_target_작업단계_선점킥_규칙(onflag):
     """[ch79/P-032 라이브 실측 수리 — 2026-07-19] 회의가 백로그를 등록하고 작업 단계로 전이했는데
     아무도 선점하지 않던 교착: SYS가 깨울 대상을 규칙으로 고른다 — 제출자에게 백로그당 1회,
-    in_progress가 생기면 침묵(순차 1활성), 킥을 씹으면 다음 open으로 한 번씩만 확대."""
+    킥을 씹으면 다음 open으로 한 번씩만 확대.
+    (2026-07-31: 'in_progress가 생기면 침묵'은 폐기 — 여력이 남으면 다음 사람도 세운다.)"""
     from system.rule.backlog import BacklogRelay, backlog_scope_key
     from system.rule.milestone import SubTask, claim_kick_target
     g = FakeGuide()
@@ -179,8 +180,8 @@ def test_claim_kick_target_작업단계_선점킥_규칙(onflag):
     f._claim_kicked = {backlog_scope_key(st.st_id, b1.backlog_id)}        # 킥했는데 씹힘 → 다음 open 1회
     who2, b_2, _ = claim_kick_target(f)
     assert (who2, b_2.backlog_id) == (13, b2.backlog_id)
-    b1.status = "in_progress"                                            # 누가 집으면 침묵
-    assert claim_kick_target(f) is None
+    b1.status = "in_progress"          # 누가 집어도 여력이 있으면 다음 사람을 세운다(2026-07-31)
+    assert claim_kick_target(f)[1].backlog_id == b2.backlog_id
     b1.status = "done"
     f._claim_kicked = {backlog_scope_key(st.st_id, b1.backlog_id),
                        backlog_scope_key(st.st_id, b2.backlog_id)}        # 전부 킥 소진 → 침묵

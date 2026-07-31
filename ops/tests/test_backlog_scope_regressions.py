@@ -180,7 +180,18 @@ def test_scoped_resolver와_가이드도구는_애매한_B1을_첫_ST로_추측�
     assert backlog1.status == backlog2.status == "open"
 
 
-def test_claim_kick은_뒤_ST가_작업중이면_앞_ST_open을_동시착수하지_않는다():
+def test_claim_kick은_뒤_ST가_작업중이어도_앞_ST_open을_세운다():
+    """[전원 병렬(2026-07-31, 사용자: '전체 직원이 계속 자기꺼 하면 되잖아')] 종전엔 어딘가
+    작업 중이면 새 착수를 고르지 않았다 — 그 한 줄이 판을 늘 한 줄로 만들었다."""
+    flow, (st1, _relay1, backlog1), (_st2, relay2, backlog2) = _flow_with_two_subtasks()
+    relay2.pick(22, backlog2.backlog_id, 22)
+
+    t = claim_kick_target(flow)
+    assert t is not None and t[1].backlog_id == backlog1.backlog_id and t[2] == st1.st_id
+
+
+def test_claim_kick은_동시_상한에서는_멈춘다(monkeypatch):
+    monkeypatch.setenv("ORGANT_BACKLOG_PARALLEL", "1")
     flow, (_st1, _relay1, _backlog1), (_st2, relay2, backlog2) = _flow_with_two_subtasks()
     relay2.pick(22, backlog2.backlog_id, 22)
 
@@ -264,7 +275,9 @@ def test_구버전_다중active복원은_먼저잡힌_하나만_보존한다():
     assert len(active_backlog_rows(flow)) == 1
 
 
-def test_가이드도구도_마일스톤전체_순차1활성을_지킨다(monkeypatch):
+def test_가이드도구도_다른_일감이_돌아도_착수시킨다(monkeypatch):
+    """[전원 병렬(2026-07-31, 사용자: '전체 직원이 계속 자기꺼 하면 되잖아')] 종전엔 다른 단위에
+    작업 중인 일감이 하나라도 있으면 도구가 선점을 거부했다(마일스톤 전체 순차 1활성)."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     flow, (st1, _relay1, backlog1), (_st2, relay2, backlog2) = _flow_with_two_subtasks()
     relay2.pick(22, backlog2.backlog_id, 22)
@@ -275,8 +288,8 @@ def test_가이드도구도_마일스톤전체_순차1활성을_지킨다(monkey
         )
     )
 
-    assert "마일스톤 전체 순차 1활성" in _tool_text(result)
-    assert backlog1.status == "open"
+    assert "순차 1활성" not in _tool_text(result)
+    assert backlog1.status == "in_progress"
     assert backlog2.status == "in_progress"
 
 
