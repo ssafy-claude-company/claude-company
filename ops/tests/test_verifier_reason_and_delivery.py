@@ -48,8 +48,9 @@ def test_웹이_아닌_산출물엔_배달을_요구하지_않는다(tmp_path):
     assert cycle_delivery_error(f) == ""
 
 
-def test_로그인_벽_뒤_주소는_배달이_아니다(tmp_path, monkeypatch):
-    """[U-442 실측] 팀이 배포하고 '라이브 PASS'를 보고했는데 그냥 열면 401(Sign in required)이었다."""
+def test_밖에만_올린_것은_배달이_아니다(tmp_path, monkeypatch):
+    """[사용자 지시(2026-07-31)] 외부 배포는 인정하되, 우리 판에서도 열려야 검증할 수 있다.
+    (U-442 실측: 외부 주소는 401 Sign in required였고 사용자는 아무것도 열지 못했다.)"""
     import types
 
     from system.rule import milestone as _ms
@@ -57,7 +58,7 @@ def test_로그인_벽_뒤_주소는_배달이_아니다(tmp_path, monkeypatch):
     f = types.SimpleNamespace(workspace=str(tmp_path), milestones=[ms],
                               _deploy_url="https://example.invalid/app/", _deploy_live=True)
     err = _ms.cycle_delivery_error(f)
-    assert "사용자가 그냥 열 수 없습니다" in err and "deploy" in err
+    assert "이 판에서 열 수 있는 입구가 없습니다" in err and "앱 풀에도" in err
 
 
 def test_정적_진입이_있으면_주소가_죽어도_닫힌다(tmp_path):
