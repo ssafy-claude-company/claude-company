@@ -1776,9 +1776,13 @@ def wrapup_done(flow, obj) -> str:
         if not _url:
             _wu = getattr(getattr(flow, "guide", None), "work_url", None)
             _pid = getattr(flow, "project_id", None)
-            if callable(_wu) and _pid:
+            if callable(_wu):
+                # [채널로 묻는다(2026-07-31)] 러너의 판 id는 매체의 id가 아니다 — 매체가 아는 것은
+                # 채널이고, 열리는지도 매체만 안다.
                 try:
-                    _url = str(_wu(str(_pid)) or "")
+                    _url = str(_wu(str(_pid or ""), getattr(flow, "user_channel", None)) or "")
+                except TypeError:
+                    _url = str(_wu(str(_pid or "")) or "") if _pid else ""
                 except Exception:
                     _url = ""
         _chk = (f"바로 열어 확인: {_url}" if _url else "채널 상단 '완성작' 버튼에서 바로 실행해 확인하세요")

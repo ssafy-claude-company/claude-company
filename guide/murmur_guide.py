@@ -90,7 +90,26 @@ class MurmurGuide:
     # 자동 등록해도 안전(디스코드처럼 새 채널을 만드는 매체는 미선언 → 자동 등록 안 함).
     autoproject = True
 
-    def work_url(self, project_id):
+    def work_url(self, project_id, channel_id=None):
+        """[열리는 주소만 준다(2026-07-31, 사용자 제보 '이거 안 켜지는데')] 종전엔 **러너의 판 id**
+        (P-078)를 그대로 끼워 주소를 지어냈다 — murmur는 자기 pid(U-442)로만 찾으므로 무조건 404였고,
+        서빙할 산출물이 없어도 링크를 붙였다. 이제 채널로 판을 찾아 매체가 '열린다'(has_work)고
+        답할 때만 그 pid로 주소를 만든다(아니면 빈 값 — 보고는 '완성작' 버튼 안내로 떨어진다).
+        """
+        pub = (os.environ.get("MURMUR_PUBLIC_URL") or "https://murmur.dojin-mini.shop").rstrip("/")
+        ch = channel_id if channel_id is not None else getattr(self, "_origin_channel", None)
+        if ch is None:
+            return ""
+        try:
+            rows = (self._get_sync("/projects/", {"limit": 200}) or {}).get("results") or []
+            row = next((r for r in rows if str(r.get("id")) == str(int(ch))), None)
+            if not row or not row.get("has_work"):
+                return ""
+            return f"{pub}/api/projects/{row.get('pid')}/works/"
+        except Exception:
+            return ""
+
+    def _work_url_legacy(self, project_id):
         """[확인 링크(2026-07-20, 사용자: '마일스톤 끝날 때마다 확인할 수 있는 자료')] 이 판 산출물의
         사용자-열람 주소(완성작 인앱 실행 엔드포인트). 공개 도메인은 env(MURMUR_PUBLIC_URL) 우선 —
         러너의 base(로컬 직결 127.0.0.1)는 사용자용 주소가 아니다. SYS는 duck-typing으로만 묻는다."""
