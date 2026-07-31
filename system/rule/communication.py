@@ -2827,6 +2827,12 @@ async def request(flow, me_id, role, args):
                        f"오류(서브프로세스 크래시)**입니다 — **다른 사람으로 바꾸거나 새로 뽑지 마세요(같은 환경이라 똑같이 "
                        f"실패).** 같은 동료에게 한 번만 다시 요청해보고(블립이면 회복), 또 실패하면 사용자에게 보고하고 멈추세요.")
         flow.consec_fail = 0   # 정상 응답 → 연속 실패 카운터 리셋(일시 블립 회복)
+        if not premature:
+            # 실작업이 있었다면 '빈손 연속'은 끊긴다 — 다음에 빈손이면 처음부터 센다.
+            try:
+                (getattr(flow, "_no_work_streak", None) or {}).pop(int(to), None)
+            except Exception:
+                pass
         if refused:
             # [B-14] 인자 > regex — offdomain_role 인자가 있으면 그 직군명, 없으면 첫줄 regex 캡처(폴백).
             need = (_off_arg or _off_regex).strip() or "해당 전문 직군"
@@ -2844,6 +2850,29 @@ async def request(flow, me_id, role, args):
             _dbg(f"{tag} ⚠owner 미착수(실작업 0)")
             if flow.log:
                 flow.log("owner_no_work", to=to, seg=flow.leader_segment)
+            # [할 일이 없는 사람을 계속 깨우지 않는다(2026-07-31, U-442 실측: owner_no_work 27세그먼트)]
+            # '실작업 0'은 두 가지다 — ①아직 착수 안 함(다시 깨우면 된다) ②**할 일이 남아 있지 않음**
+            # (일감이 다 끝났거나 남의 차례). 종전엔 둘을 구분하지 않고 SYS가 같은 사람을 40초마다
+            # 무한히 다시 깨워, 마감 단계에서 판이 헛돌며 토큰만 태웠다. 같은 사람이 연속 3번 빈손으로
+            # 돌아오면 그건 ②다 — 미완 표시를 풀어 흐름이 다음(검증·마감)으로 가게 한다.
+            _nw = getattr(flow, "_no_work_streak", None)
+            if _nw is None:
+                _nw = flow._no_work_streak = {}
+            _nw[int(to)] = int(_nw.get(int(to), 0)) + 1
+            if _nw[int(to)] >= 3:
+                _nw[int(to)] = 0
+                try:
+                    if flow.current is not None:
+                        flow.current.owner_incomplete = False
+                        flow.current.owner_delivered = True
+                except Exception:
+                    pass
+                if flow.log:
+                    flow.log("owner_no_work_exhausted", to=to, seg=flow.leader_segment)
+                return _ok(f"[{to} 응답] {_speech_clip(result, 1500)}\n\n[사실] "
+                           f"{flow._info(to) or to}가 연속 3회 빈손으로 돌아왔습니다 — 그에게 남은 일이 "
+                           f"없다는 뜻입니다(일감이 이미 끝났거나 남의 차례). 자동 이어가기를 멈추고 "
+                           f"미완 표시를 풉니다 — 다음 단계(완수조건 검증·마감)로 진행하세요.")
             # [B-17 — 사실통지 축소] 후속 행동지시 삭제: 백스톱 실재 — owner_incomplete=True가 세워져
             # complete_task가 거부되고(rule/task), 대리구현은 permissions #4(owner 도메인 대리 Write 거부)가
             # 막으며, SYS _auto_continue_owner가 같은 owner에게 기계적으로 다시 맡긴다.
