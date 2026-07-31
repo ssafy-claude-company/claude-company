@@ -80,6 +80,21 @@ _SECRET_ENV_SUBSTR = ("SECRET", "TOKEN", "PASSWORD", "PASSWD", "_API_KEY", "APIK
                       "PRIVATE_KEY", "RENDER_KEY", "GH_PAT")
 
 
+def _preinstalled_refusal(cmd) -> str:
+    """이미 갖춰진 것을 다시 설치하려는 명령이면 거절 사유 + 바로 쓰는 법. 아니면 빈 문자열."""
+    c = " ".join(str(cmd or "").split()).lower()
+    if "playwright install" in c or "playwright/driver" in c:
+        return ("실행 거부(이미 있음): 브라우저는 이 판의 공유 캐시에 이미 설치돼 있고 샌드박스가 "
+                "`PLAYWRIGHT_BROWSERS_PATH`로 물려줍니다 — 내려받지 말고 그대로 쓰세요"
+                "(`python3 -c \"from playwright.sync_api import sync_playwright\"`로 확인). "
+                "재설치는 작업공간에 수백 MB를 복사하고 십수 분을 태웁니다.")
+    if ("pip install" in c or "pip3 install" in c) and "playwright" in c:
+        return ("실행 거부(이미 있음): python playwright 패키지는 공유 venv에 이미 있습니다 — "
+                "`python3 -c \"import playwright\"`가 바로 통합니다. --target으로 작업공간에 "
+                "따로 깔지 마세요(용량·시간 낭비이고 검증 스크립트가 그 경로에 묶입니다).")
+    return ""
+
+
 def _is_secret_env(name: str) -> bool:
     u = (name or "").upper()
     return u in _SECRET_ENV_EXACT or any(s in u for s in _SECRET_ENV_SUBSTR)
@@ -1077,6 +1092,12 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             pass
         if any(d in _scan.lower() for d in _RUN_DENY):
             return _ok(f"실행 거부(안전): 파괴/저장소/시스템 패턴 포함 — {cmd[:80]}")
+        # [이미 있는 것을 다시 받지 않는다(2026-07-31, U-442 실측)] QA가 작업공간에 playwright 브라우저
+        # (646MB)와 pip 패키지(140MB)를 새로 내려받아 12분을 태웠다 — 이 판엔 둘 다 이미 있고 샌드박스가
+        # 읽기전용으로 물려준다(PLAYWRIGHT_BROWSERS_PATH=공유 캐시, PATH=공유 venv).
+        _already = _preinstalled_refusal(cmd)
+        if _already:
+            return _ok(_already)
         if any(p in cmd for p in _RUN_AUTHOR):
             return _ok("실행 거부: run은 '실행·빌드·검증' 전용입니다 — 파일 작성/수정은 Write/Edit 도구로 "
                        "하세요(그래야 권한·협의 게이트가 적용되고 누가 무엇을 만들었는지 기록됩니다). 예: "
