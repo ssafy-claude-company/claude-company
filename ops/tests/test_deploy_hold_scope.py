@@ -6,10 +6,9 @@ from system.rule import project as pj
 
 def test_보류는_라이브가_선_뒤부터():
     src = inspect.getsource(pj)
-    i = src.index("deploy_blind_held")
-    head = src[max(0, i - 2400):i]
-    assert "검증할 라이브가 없으면 맹목이 아니다" in head
-    cond = head[head.index("검증할 라이브가 없으면"):]
+    assert "검증할 라이브가 없으면 맹목이 아니다" in src
+    cond = src[src.index("검증할 라이브가 없으면"):]
+    cond = cond[:cond.index('flow.log("deploy_blind_held"')]
     assert 'getattr(flow, "_deploy_live", False)' in cond   # 라이브가 있을 때만 맹목 판정
 
 
