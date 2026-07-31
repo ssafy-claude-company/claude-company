@@ -80,12 +80,18 @@ def write_scopes_conflict(a, b) -> bool:
 
 
 def backlog_parallel_width() -> int:
-    """동시에 진행할 수 있는 백로그 수. 1이면 종전 순차 1활성 그대로."""
+    """동시에 진행할 수 있는 백로그 수.
+
+    [각자 자기 것을 계속(2026-07-31, 사용자: '전체 직원이 계속 자기꺼 하면 되잖아')] 종전 기본값 3은
+    '조심스러운 병렬'이었지만, 실제로는 그 위의 여러 관문이 전부 1활성이라 아무 의미가 없었다
+    (U-442 실측: 96분 내내 동시 진행 1). 이제 사람 수만큼 열린다 — 0 이하면 상한 없음.
+    """
     import os as _os
     try:
-        return max(1, int(_os.environ.get("ORGANT_BACKLOG_PARALLEL", "3")))
+        n = int(_os.environ.get("ORGANT_BACKLOG_PARALLEL", "8"))
     except (TypeError, ValueError):
-        return 3
+        n = 8
+    return 10 ** 6 if n <= 0 else n
 
 
 def blocked_ready_for_revisit(backlog, all_backlogs, blocked_scope) -> bool:
@@ -393,20 +399,13 @@ class BacklogRelay:
         # [겹칠 때만 순차(2026-07-30, 사용자 지시)] 종전엔 무조건 1활성이었다 — 안전하지만 판 시간의
         # 28%를 한 줄로 세운다. 쓰기 영역을 선언한 일감끼리 **겹치지 않으면** 동시에 간다.
         # 선언이 없으면 종전처럼 순차(알 수 없는 것은 모두와 겹친다고 본다 — fail-closed).
+        # [각자 자기 것을 계속(2026-07-31, 사용자 지시)] 다른 일감이 돈다는 이유로 착수를 막지 않는다 —
+        # 직원은 자기 일감을 계속한다. 남는 제한은 동시 진행 상한 하나뿐(자원 보호).
         _actives = [x for x in self.backlogs
                     if x.status == IN_PROGRESS and x.backlog_id != backlog_id]
-        if _actives:
-            _mine = declared_write_scope(self.get(backlog_id).body)
-            _blocked_by = next(
-                (x for x in _actives
-                 if write_scopes_conflict(_mine, declared_write_scope(x.body))), None)
-            if _blocked_by is not None:
-                raise BacklogError(
-                    f"{_blocked_by.backlog_id}가 같은 영역을 작업 중입니다 — 그 완료/중단 뒤 다음이 "
-                    f"선정됩니다. 겹치지 않는 일감은 본문에 `[쓰기: 경로]`를 선언하면 동시에 갑니다.")
-            if len(_actives) + 1 > backlog_parallel_width():
-                raise BacklogError(
-                    f"동시 진행 상한({backlog_parallel_width()})에 도달했습니다 — 하나가 끝나면 이어집니다.")
+        if _actives and len(_actives) + 1 > backlog_parallel_width():
+            raise BacklogError(
+                f"동시 진행 상한({backlog_parallel_width()})에 도달했습니다 — 하나가 끝나면 이어집니다.")
         if not _self_claim and self.turn_holder is not None and int(picker) != self.turn_holder:
             raise BacklogError(
                 f"배분권은 마지막 작업자({self.turn_holder})에게 있습니다 — 지명은 마무리한 사람의 몫.")

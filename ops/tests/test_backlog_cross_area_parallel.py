@@ -15,10 +15,10 @@ def test_활성이_있다고_무조건_접지_않는다():
     assert "ast, _ar, ab = active_now[0]" not in src
 
 
-def test_같은_영역과_겹치는_쓰기는_여전히_기다린다():
+def test_영역을_이유로_기다리게_하지_않는다():
+    """[전원 병렬(2026-07-31, 사용자 지시)] 영역 판정 자체를 인계에서 걷어냈다 — 상한만 남는다."""
     src = _handoff_src()
-    assert "같은 작업 영역" in src and "선언된 쓰기 영역 겹침" in src
-    assert "write_scopes_conflict" in src
+    assert "write_scopes_conflict" not in src and "같은 작업 영역" not in src
 
 
 def test_동시_상한을_존중한다():

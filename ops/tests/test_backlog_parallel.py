@@ -44,34 +44,25 @@ def test_겹치지_않으면_동시_착수된다(tmp_path):
     assert a.status == "in_progress" and b.status == "in_progress"
 
 
-def test_겹치면_종전대로_막힌다(tmp_path):
+def test_같은_영역이어도_막지_않는다(tmp_path):
+    """[전원 병렬(2026-07-31, 사용자 지시)] 영역이 겹쳐도 착수는 막지 않는다 — 직원은 자기 것을 한다.
+    (쓰기 영역 선언은 남는다: 무엇을 고칠 일인지 서로 읽는 정보로.)"""
     f, r = _relay(tmp_path)
     a = r.submit(12, "[쓰기: public/] 화면 만들기", force=True)
     b = r.submit(13, "[쓰기: public/index.html] 같은 화면 고치기", force=True)
     r.pick(11, a.backlog_id, 12)
     r.turn_holder = 11
-    with pytest.raises(BacklogError, match="같은 영역"):
-        r.pick(11, b.backlog_id, 13)
+    assert r.pick(11, b.backlog_id, 13).status == "in_progress"
 
 
-def test_선언이_없으면_순차_그대로(tmp_path):
+def test_선언이_없어도_동시에_간다(tmp_path):
     f, r = _relay(tmp_path)
     a = r.submit(12, "화면 만들기", force=True)
     b = r.submit(13, "검증기 만들기", force=True)
     r.pick(11, a.backlog_id, 12)
     r.turn_holder = 11
-    with pytest.raises(BacklogError):
-        r.pick(11, b.backlog_id, 13)
+    assert r.pick(11, b.backlog_id, 13).status == "in_progress"
 
 
-def test_상한을_넘으면_대기(tmp_path, monkeypatch):
-    monkeypatch.setenv("ORGANT_BACKLOG_PARALLEL", "2")
-    f, r = _relay(tmp_path)
-    xs = [r.submit(12, f"[쓰기: area{i}/] 일 {i}", force=True) for i in range(3)]
-    for x in xs[:2]:
-        r.turn_holder = 11
-        r.pick(11, x.backlog_id, 12)
-    r.turn_holder = 11
-    with pytest.raises(BacklogError, match="동시 진행 상한"):
-        r.pick(11, xs[2].backlog_id, 13)
-    assert backlog_parallel_width() == 2
+def test_상한은_사람_수만큼_열린다():
+    assert backlog_parallel_width() >= 8

@@ -854,7 +854,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         tools.append(set_subtask)
 
         @tool("pick_backlog",
-              "**순차 릴레이 — 한 번에 한 백로그.** desc='내가 할 일'로 내 백로그를 풀에 등재한다(st=단위 "
+              "**각자 자기 일감을 동시에 진행한다.** desc='내가 할 일'로 내 백로그를 풀에 등재한다(st=단위 "
               "id/목표 일부로 소속 지정). **등재 순서가 곧 실행 순서다** — 선행되어야 하는 일부터 "
               "등재하라(B1→B2→… 순으로 넘어간다). 아무도 작업 중이 아니고 내 차례면 즉시 착수, 아니면 "
               "대기(앞 사람이 끝나면 등재 순서상 다음 백로그의 제출자에게 자동으로 넘어온다). "
@@ -887,11 +887,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     if b.status == IN_PROGRESS and int(b.assignee or 0) == int(me_id):
                         _set_pipeline_ctx(flow, me_id)
                         return _ok(f"백로그 {b.backlog_id}는 이미 당신이 작업 중입니다 — 이어서 하세요.")
-                    _active = _active_scoped_backlog(flow, _sts)
-                    if _active is not None and _active[2] is not b:
-                        return _ok(
-                            f"선점 불가: {_active[0].st_id}/{_active[2].backlog_id}가 작업 중입니다"
-                            "(마일스톤 전체 순차 1활성) — 그 완료/차단 뒤 선정하세요.")
+                    # [전원 병렬(2026-07-31, 사용자 지시)] 다른 일감이 돈다고 선정을 막지 않는다.
                     if b.status == BLOCKED:
                         _rows = backlog_rows(flow)
                         if not blocked_ready_for_revisit(
@@ -975,19 +971,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                     _tgt.backlog_ids = [x.backlog_id for x in r.backlogs]
                     # [순차 착수 정책(2026-07-14)] 첫 착수(turn_holder None) 또는 내가 마무리자일 때만 즉시
                     # 착수 — 아니면 등재만(대기). 내 차례는 마무리자의 pick_backlog(id) 선정으로 온다.
-                    _th = r.turn_holder
-                    if _th is not None and int(_th) != int(me_id):
-                        _ck(flow)                                 # [갭#1] 등재(대기)도 영속
-                        return _ok(f"백로그 {b.backlog_id} 등재 완료(대기) — 지금 배분권은 마무리자"
-                                   f"({flow._info(_th) if hasattr(flow,'_info') else _th})에게 있습니다. "
-                                   f"당신 차례는 그의 선정으로 옵니다.")
-                    _active = _active_scoped_backlog(flow, _sts)
-                    if _active is not None and _active[2] is not b:
-                        _ck(flow)
-                        return _ok(
-                            f"백로그 {b.backlog_id} 등재 완료(대기) — "
-                            f"{_active[0].st_id}/{_active[2].backlog_id}가 작업 중입니다"
-                            "(마일스톤 전체 순차 1활성).")
+                    # [자기 일감은 곧바로 착수(2026-07-31, 사용자: '전체 직원이 계속 자기꺼')]
+                    # 종전엔 배분권(마무리자)과 전체 1활성 둘 다가 등재자를 대기로 돌려세웠다 —
+                    # 자기가 낸 일감을 자기가 하는 데 남의 차례를 기다릴 이유가 없다.
                     try:
                         r.pick(int(me_id), b.backlog_id, int(me_id))
                     except BacklogError as e:

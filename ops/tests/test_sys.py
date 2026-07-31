@@ -141,10 +141,13 @@ def test_SYS_작업턴완료뒤_다음백로그는_등록순서대로_응찰없�
 
     progressed = asyncio.run(s._claim_kick(f))
     assert progressed is True
-    assert b1.status == "done" and r.turn_holder == 11
+    # (2026-07-31: 작업 배분권 개념이 사라져 turn_holder는 더 이상 '다음 차례'를 뜻하지 않는다 —
+    #  이 계약의 핵심은 '등록 순서대로, 응찰 턴 없이' 넘어가는 것이다.)
+    assert b1.status == "done"
     assert asked == []
-    assert b2.status == "in_progress" and b2.assignee == 12   # 등록 순서상 다음
-    assert b3.status == "open"
+    # 등록 순서상 다음이 응찰 없이 그 사람에게 갔다(전원 병렬이라 같은 라운드에 끝났을 수도 있다).
+    assert b2.assignee == 12 and b2.status in ("in_progress", "done")
+    assert b3.status in ("open", "in_progress")
     assert any(e["event"] == "backlog_next_in_order" and e["backlog"] == b2.backlog_id
                for e in s.flow_log)
     assert any("[순서]" in a for a in (b2.activity or []))

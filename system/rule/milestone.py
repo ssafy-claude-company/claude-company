@@ -2244,9 +2244,12 @@ def claim_kick_target(flow):
             continue
         rows.extend((st, r, b) for b in r.backlogs)
 
-    # 단일 활성은 SubTask 내부가 아니라 열린 마일스톤 전체의 규칙이다. 앞 ST에 open이 있고 뒤 ST에
-    # in_progress가 있을 때 앞것을 또 집던 순회 순서 결함을 먼저 차단한다.
-    if any(b.status == "in_progress" for _st, _r, b in rows):
+    # [각자 자기 것을 계속(2026-07-31, 사용자: '전체 직원이 계속 자기꺼 하면 되잖아')] 종전엔
+    # 어딘가 in_progress가 하나라도 있으면 새 착수를 아예 고르지 않았다 — 이 한 줄이 '전원 병렬'을
+    # 원천 차단했다(U-442 실측: 96분 내내 동시 1). 이제 여력(동시 상한)이 남아 있으면 다음을 고른다.
+    from .backlog import backlog_parallel_width as _bpw
+    _in_prog = [b for _st, _r, b in rows if b.status == "in_progress"]
+    if len(_in_prog) >= _bpw():
         return None
 
     def _worker(st, b, *, revisit=False):
