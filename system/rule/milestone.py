@@ -1678,6 +1678,11 @@ def cycle_delivery_error(flow) -> str:
     사람이 열 수 있는 것: ①앱 풀에 등록된 이 판의 앱 ②작업공간의 정적 진입(index.html).
     둘 다 없으면 완수를 보류하고 배포를 요구한다. 반환: 사유(없으면 빈 문자열).
     """
+    # [실제로 배포했으면 그것이 배달이다(2026-07-31, U-442 실측)] 팀이 외부에 배포하고 라이브까지
+    # 확인했는데도 관문이 '열 곳이 없다'고 막아, 주기가 닫히지 못하고 판이 무진전으로 정지했다.
+    # 앱 풀·정적 진입만 배달로 보던 것을 고친다 — 검증된 배포 URL도 배달이다.
+    if getattr(flow, "_deploy_live", False) or str(getattr(flow, "_deploy_url", "") or "").strip():
+        return ""
     ws = str(getattr(flow, "workspace", "") or "")
     if not ws or not os.path.isdir(ws):
         return ""                                  # 작업공간 없는 흐름(대화형)은 배달 개념이 없다
@@ -1716,10 +1721,15 @@ def cycle_delivery_error(flow) -> str:
         return ""
     if name and isinstance(reg, dict) and any(str(k).endswith(name) for k in reg):
         return ""
-    return ("주기 완수 보류: 만든 것을 **사람이 열 수 있는 곳이 없습니다** — 이 주기의 검증은 "
-            "로컬 실행으로만 끝났고, 앱 풀에도 정적 진입(index.html)에도 이 판의 산출물이 없습니다. "
-            "각 주기는 '그것만으로 사용자가 열어서 써볼 수 있는 완성물'이므로, `deploy` 도구로 "
-            "이번 산출물을 올린 뒤 다시 선언하세요(배포가 곧 이번 주기의 배달입니다).")
+    # [보류는 할 일을 남긴다(2026-07-31, U-442 실측)] 이 문구만 돌려주면 회의도 일감도 생기지 않아
+    # 판이 무진전으로 정지했다(continue_incomplete 6회 → stalled_stopped). 무엇을 하면 풀리는지
+    # 한 줄로 못박는다 — 그대로 실행하면 되는 도구 이름과 순서.
+    return ("주기 완수 보류: 만든 것을 **사람이 열 수 있는 곳이 없습니다**(앱 풀·정적 진입·배포 URL "
+            "어디에도 이 판의 산출물이 없습니다 — 로컬 검증만으로는 배달이 아닙니다).\n"
+            "지금 할 일 하나: **`deploy` 도구를 호출해 이번 산출물을 올리세요**(name=영문 소문자 "
+            "서비스명, note=이번 주기 요지). 배포가 라이브로 확인되면 이 관문은 자동으로 풀리고 "
+            "주기가 닫힙니다. 실패하면 그 실패 원문을 백로그로 등록해 고친 뒤 다시 시도하세요 — "
+            "'검증은 끝났다'는 말로는 닫히지 않습니다.")
 
 
 def wrapup_done(flow, obj) -> str:
