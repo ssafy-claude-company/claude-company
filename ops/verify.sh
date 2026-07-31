@@ -113,6 +113,20 @@ if [ -r /etc/murmur-web.env ]; then
 else
   echo "  (프로덕션 env 없음 — 건너뜀)"
 fi
+echo "== 6-3) 러너 인제스트 생존 (2026-07-31 사고: 낡은 워커가 500을 뱉고 있었다) =="
+# [조용한 실패가 가장 나쁘다] 마이그레이션은 걸었는데 웹을 재시작하지 않으면, 낡은 워커가 옛 모델을
+# 들고 있어 /api/guide/ingest/가 통째로 500이 된다. 그동안 직원이 한 일은 murmur에 하나도 안 남는다.
+# 화면은 멀쩡해 보이고(캐시된 타임라인) 아무도 모른다 — 실측: charge_usd로 3시간 동안 15건.
+# 최근 10분 안에 인제스트 5xx가 있었으면 착지를 막는다.
+_ing=$(journalctl -u murmur-web --since "10 min ago" --no-pager 2>/dev/null \
+       | grep -c "Internal Server Error: /api/guide/ingest/" || true)
+if [ "${_ing:-0}" -gt 0 ]; then
+  echo "  ⚠ 최근 10분 인제스트 500이 ${_ing}건 — 직원이 한 일이 안 들어오고 있다"
+  echo "     대개 '마이그레이션은 걸고 웹은 안 고침'이다: systemctl restart murmur-web"
+  fail=1
+else
+  echo "  최근 10분 인제스트 오류 없음 ✓"
+fi
 echo "== 7) 비밀값 유출 검사 (원격 백업 = 외부 공개 가능성) =="
 # [2026-07-28] ops/가 git에 올라가는 이유는 tests(41)·verify·land·wt·contracts가 '검증의 단일
 # 진실원'이라 버전 관리가 필수이기 때문이다. 그러나 그 대가로 레포가 외부(원격)로 나가므로,
