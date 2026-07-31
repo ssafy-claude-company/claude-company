@@ -9,6 +9,11 @@
     MURMUR_URL   기본 https://murmur.dojin-mini.shop
     LLM_URL      기본 http://127.0.0.1:11434/v1/chat/completions  (Ollama)
     LLM_KEY      로컬 LLM이 키를 요구하면
+    MURMUR_HUMAN 1이면 사람이 답한다 — 프롬프트를 보여 주고 타이핑을 기다린다
+
+응답자가 무엇이든 상관없다. 이 커넥터가 하는 일은 요청을 가져와 답을 돌려주는 것뿐이고,
+그 사이에 무엇이 있는지는 murmur가 알지 못한다 — Ollama든, 다른 API든, 사람이든.
+사람이 답하려면 설정에서 마감(reply_deadline_sec)을 넉넉히 잡아 두면 된다.
 
 왜 이렇게 하나:
   공인 주소도 인증서도 없는 사람이 대부분이다. 이 커넥터는 **밖에서 안으로** 들어오지
@@ -31,6 +36,7 @@ MURMUR = os.environ.get("MURMUR_URL", "https://murmur.dojin-mini.shop").rstrip("
 TOKEN = os.environ.get("MURMUR_TOKEN", "").strip()
 LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:11434/v1/chat/completions")
 LLM_KEY = os.environ.get("LLM_KEY", "").strip()
+HUMAN = os.environ.get("MURMUR_HUMAN", "").strip() in ("1", "true", "yes")
 IDLE_SLEEP = 2.0
 
 
@@ -52,13 +58,39 @@ def _get(url, headers=None, timeout=30):
         return json.loads(r.read().decode("utf-8") or "{}")
 
 
+def _ask_human(req):
+    """사람이 답한다. 프롬프트를 보여 주고 타이핑을 기다린다.
+
+    응답 모양은 기계와 같게 맞춘다 - 부른 쪽은 무엇이 답했는지 몰라도 되고, 몰라야
+    응답자를 바꿔도 아무것도 안 깨진다.
+    """
+    msgs = req.get("messages") or []
+    print("\n" + "─" * 60)
+    for m in msgs[-4:]:                      # 최근 몇 마디만 - 전부 쏟으면 읽기 어렵다
+        who = m.get("role", "?")
+        print(f"[{who}] {str(m.get('content') or '')[:1500]}")
+    print("─" * 60)
+    print("답을 쓰고 Enter를 두 번 누르세요(빈 줄로 끝냅니다).")
+    lines = []
+    while True:
+        try:
+            ln = input()
+        except EOFError:
+            break
+        if not ln.strip() and lines:
+            break
+        lines.append(ln)
+    text = "\n".join(lines).strip()
+    return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+
+
 def main():
     if not TOKEN:
         print("MURMUR_TOKEN이 필요합니다. murmur 설정 → 실행 설정에서 발급하세요.",
               file=sys.stderr)
         return 2
     auth = {"Authorization": f"Bearer {TOKEN}"}
-    print(f"붙는 중: {MURMUR}  ←  {LLM_URL}")
+    print(f"붙는 중: {MURMUR}  ←  " + ("사람(직접 입력)" if HUMAN else LLM_URL))
     while True:
         try:
             got = _get(f"{MURMUR}/api/relay/pending/", auth)
@@ -80,8 +112,11 @@ def main():
 
         out, err = {}, ""
         try:
-            h = {"Authorization": f"Bearer {LLM_KEY}"} if LLM_KEY else {}
-            out = _post(LLM_URL, call.get("request") or {}, h)
+            if HUMAN:
+                out = _ask_human(call.get("request") or {})
+            else:
+                h = {"Authorization": f"Bearer {LLM_KEY}"} if LLM_KEY else {}
+                out = _post(LLM_URL, call.get("request") or {}, h)
         except Exception as e:
             err = f"{type(e).__name__}: {e}"[:200]
 
