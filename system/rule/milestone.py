@@ -24,6 +24,7 @@ from typing import List, Optional
 from .evidence import (
     direct_verifier_command, looks_like_verification_command,
     normalize_verifier_command, verifier_command_hash, verifier_spec_hash,
+    verifier_reject_reason,
 )
 
 __all__ = [
@@ -1668,6 +1669,59 @@ def approve_waiver(flow, obj, target: str, approve: bool = True) -> str:
     return (f"조건 '{c.desc[:40]}' {'포기 승인됨(waived) — 나머지 조건으로 주기 진행' if approve else '반려됨 — 다시 충족해야 함'}.")
 
 
+def cycle_delivery_error(flow) -> str:
+    """[주기는 배달까지다(2026-07-31, U-442 실측)] 1주기가 헤드리스 실행 하나로 '완수'되고 닫혔는데,
+    사람이 열 주소는 어디에도 없었다 — 사용자가 보고된 링크를 눌렀더니 404였다(배포·실행 단위는
+    백로그 0/1인 채 닫힘). 규칙은 "각 주기는 그것만으로 사용자가 열어서 써볼 수 있는 완성물"인데
+    검사가 없어 로컬 검증만으로 닫힌 것이다.
+
+    사람이 열 수 있는 것: ①앱 풀에 등록된 이 판의 앱 ②작업공간의 정적 진입(index.html).
+    둘 다 없으면 완수를 보류하고 배포를 요구한다. 반환: 사유(없으면 빈 문자열).
+    """
+    ws = str(getattr(flow, "workspace", "") or "")
+    if not ws or not os.path.isdir(ws):
+        return ""                                  # 작업공간 없는 흐름(대화형)은 배달 개념이 없다
+    # [웹 산출물에만 건다] 라이브러리·CLI·데이터 작업은 '열어서 쓰는 주소'라는 개념이 없다 —
+    # 브라우저에서 여는 것을 만들고 있을 때만 배달을 요구한다(작업공간 형태 + 이 주기의 말).
+    _texts = " ".join([str(getattr(obj_, "desc", "") or "") for obj_ in
+                       (getattr(getattr(flow, "milestones", None) or [None], "__iter__", None)
+                        and [c for m in (getattr(flow, "milestones", None) or [])
+                             for c in (getattr(m, "criteria", None) or [])] or [])])
+    _goal = " ".join(str(getattr(m, "goal", "") or "") for m in (getattr(flow, "milestones", None) or []))
+    _web_words = ("브라우저", "웹", "화면", "페이지", "사이트", "url", "http")
+    _looks_web = any(w in (_goal + _texts).lower() for w in _web_words)
+    try:
+        _has_html = any(f.endswith(".html") for _r, _d, _fs in os.walk(ws) for f in _fs
+                        if "node_modules" not in _r and ".collab" not in _r)
+    except Exception:
+        _has_html = False
+    if not (_looks_web or _has_html):
+        return ""
+    for sub in ("public", "dist", "build", ""):
+        if os.path.isfile(os.path.join(ws, sub, "index.html") if sub else os.path.join(ws, "index.html")):
+            return ""
+    try:
+        from ..guide_tools import deploy_service_name
+        name = str(deploy_service_name(flow) or "")
+    except Exception:
+        name = ""
+    try:
+        from ..deploy import _apps_dir
+        reg_path = os.path.join(str(_apps_dir()), "registry.json")
+        with open(reg_path, encoding="utf-8") as f:
+            reg = json.load(f) or {}
+    except Exception:
+        reg = {}
+    if name and isinstance(reg, dict) and reg.get(f"organt-{name}"):
+        return ""
+    if name and isinstance(reg, dict) and any(str(k).endswith(name) for k in reg):
+        return ""
+    return ("주기 완수 보류: 만든 것을 **사람이 열 수 있는 곳이 없습니다** — 이 주기의 검증은 "
+            "로컬 실행으로만 끝났고, 앱 풀에도 정적 진입(index.html)에도 이 판의 산출물이 없습니다. "
+            "각 주기는 '그것만으로 사용자가 열어서 써볼 수 있는 완성물'이므로, `deploy` 도구로 "
+            "이번 산출물을 올린 뒤 다시 선언하세요(배포가 곧 이번 주기의 배달입니다).")
+
+
 def wrapup_done(flow, obj) -> str:
     """잔여 정리 완료 선언 → done. wrapup 상태에서만 유효(조건 미충족 상태의 건너뛰기 차단)."""
     if obj.status != "wrapup":
@@ -1677,6 +1731,9 @@ def wrapup_done(flow, obj) -> str:
     # 최대 구현이 안 끝난 것 — 닫으면 미완 ST가 빈 장부의 유령으로 남는다(ch61: 조건 4/4인데 ST 5개 open).
     # 주기는 '조건 충족 + 하위 단위 전부 완수'일 때만 닫힌다. 미완 ST는 이름을 대 잇게 지시.
     if isinstance(obj, Milestone):
+        _deliv = cycle_delivery_error(flow)
+        if _deliv:
+            return _deliv
         _open_sts = [s for s in obj.subtasks if s.status not in ("done", "superseded")]
         if _open_sts:
             _names = " · ".join(f"{s.st_id}({s.goal[:24]})" for s in _open_sts[:6])
@@ -3035,7 +3092,11 @@ def _milestone_verifier_errors(flow, entries, proposed_phases=None):
             "(왼쪽=조건, 오른쪽=지금 적힌 명령) —\n"
             + "\n".join(
                 f"· {d[:55]} ← 지금 적힌 명령: "
-                + (f"`{v[:70]}` (이 작업공간에서 실행 가능한 검증 명령이 아닙니다)" if v
+                # [사유를 말한다(2026-07-31, U-442 실측)] "실행 가능한 명령이 아닙니다"만으론 회의가
+                # 변형만 반복하다 파킹된다 — 어떤 규칙을 어겼는지 그 줄에 바로 붙인다.
+                + (f"`{v[:70]}` — " + (verifier_reject_reason(
+                       v, getattr(flow, "workspace", ""), require_existing=False)
+                   or "이 작업공간에서 실행 가능한 검증 명령이 아닙니다") if v
                    else "(비어 있음)")
                 for d, v in non_exact[:6])
         )

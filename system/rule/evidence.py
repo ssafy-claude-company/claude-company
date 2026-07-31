@@ -248,6 +248,57 @@ def looks_like_verification_command(command, workspace="", require_existing=True
     return True
 
 
+def verifier_reject_reason(command, workspace="", require_existing=True) -> str:
+    """[왜 반려됐는지 말한다(2026-07-31, U-442 실측)] 회의가 서버 기동+헤드리스 검사를 한 줄로 이어
+    비준했다가(`… && (PORT=4173 npm run start & …; trap …; python3 verify.py)`) "이 작업공간에서
+    실행 가능한 검증 명령이 아닙니다"만 듣고 같은 벽에 3번 부딪혀 파킹됐다. 판정은 맞지만 **무엇을
+    어겼는지·대신 무엇을 쓰라는지**가 없으면 회의는 변형만 반복한다.
+
+    반환: 사람이 읽고 바로 고칠 수 있는 사유 한 줄(통과면 빈 문자열).
+    """
+    cmd = normalize_verifier_command(command)
+    if not cmd:
+        return "명령이 비어 있습니다."
+    if _TRIVIAL_RE.match(cmd):
+        return ("`true`·`echo`처럼 **무엇도 판정하지 않는 명령**입니다 — 실패할 수 있는 검사여야 "
+                "실증입니다.")
+    scrubbed_amp = cmd.replace("&&", "")
+    if _SHELL_META_RE.search(cmd) or "&" in scrubbed_amp:
+        return ("파이프·리다이렉트·`;`·서브셸·백그라운드(`&`)·`trap`은 앞 명령의 실패를 뒤 성공으로 "
+                "덮을 수 있어 실증으로 받지 않습니다 — **검사 하나를 스크립트 하나로 감싸세요**. "
+                "서버가 필요하면 그 스크립트가 직접 띄우고 끝나며 정리하게 만들고(예: "
+                "`python3 scripts/verify_game.py`), 여러 검사는 `A && B`처럼 **명령만** 이으세요.")
+    segments = re.split(r"\s*&&\s*", cmd)
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            return "`&&` 사이가 비어 있습니다."
+        if not _PROBE_RE.match(segment):
+            return (f"`{segment[:60]}`가 검사형 명령으로 읽히지 않습니다 — pytest·node·python3 "
+                    f"스크립트·npm test·curl처럼 **통과/실패가 종료코드로 갈리는 실행**이어야 합니다.")
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            return f"`{segment[:60]}`의 따옴표가 닫히지 않았습니다."
+        if not tokens or tokens[0] in ("cd", "true", ":", "echo", "printf"):
+            return f"`{tokens[0] if tokens else segment}`는 검사가 아닙니다."
+        if any(token in ("-c", "-e") for token in tokens[:2]):
+            return "인라인 코드(`-c`/`-e`)는 받지 않습니다 — 스크립트 파일로 만들어 그 실행을 비준하세요."
+        if not _existing_verifier_targets(tokens, workspace, require_existing):
+            return (f"`{segment[:60]}`가 가리키는 파일이 이 작업공간에 없습니다 — 경로를 맞추거나, "
+                    f"만드는 일을 이번 주기 백로그로 넣으세요(파일이 아직 없어도 경로만 정확하면 됩니다).")
+    if workspace:
+        for path in _ABS_PATH_RE.findall(cmd):
+            if path.startswith("//"):
+                continue
+            if not _inside_workspace(path, workspace):
+                return f"`{path[:60]}`는 이 작업공간 밖의 경로입니다."
+        for path in _REL_ESCAPE_RE.findall(cmd):
+            if not _inside_workspace(path, workspace):
+                return f"`{path[:60]}`는 이 작업공간 밖으로 나갑니다."
+    return ""
+
+
 def direct_verifier_command(spec, workspace="", require_existing=True) -> str:
     """Criterion.verify 자체가 실행 가능한 명령이면 그 exact 원문, 자연어 절차면 빈 값."""
     raw = normalize_verifier_command(spec)

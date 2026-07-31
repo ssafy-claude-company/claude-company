@@ -55,6 +55,8 @@ def test_e2e_full_rehearsal_fail_replan_then_pass(onflag, tmp_path):
         "http_get_check.py", "api_post_check.py", "browser_arc_check.py",
     ):
         (tmp_path / name).write_text("print('verified')\n", encoding="utf-8")
+    # [주기는 배달까지다(2026-07-31)] 웹 산출물 주기는 사람이 열 진입이 있어야 닫힌다.
+    (tmp_path / "index.html").write_text("<h1>rehearsal</h1>\n", encoding="utf-8")
     events = []
     f.log = tallying_logger(f, lambda ev, **kw: events.append((ev, kw)))   # sys_core 배선과 동형
 
