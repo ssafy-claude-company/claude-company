@@ -2294,6 +2294,13 @@ async def request(flow, me_id, role, args):
     to = int(args["to_id"])
     kind = Kind.WORK if str(args["kind"]).strip().lower().startswith("w") else Kind.INFO
     body = args["body"]
+    # [이 일에도 이름이 있다(2026-07-31, 사용자: '제목이 따로 존재해야 해 — 그냥 첫 글 첫 문장
+    # 가져오는 건 잘못된 대처')] 회의·단계는 제목을 강제하는데 요청만 없어서, 화면은 첫 문장을 잘라
+    # 제목처럼 썼다(문장 중간에서 끊긴 이름). 제목을 본문 첫 줄에 `[제목] …`으로 못박아 보내면
+    # 화면·기록이 같은 이름을 쓴다. 안 주면 종전대로(첫 문장) 떨어진다 — 막지는 않는다.
+    _title = " ".join(str(args.get("title") or "").split())[:60]
+    if _title and not str(body or "").lstrip().startswith("[제목]"):
+        body = f"[제목] {_title}\n{body}"
     # [B-16 — 게이트 마커 인자화(이중 수용: 인자 > regex, regex 폴백 존치)] override_reason 인자를 종전
     # '[직군초과: 사유]' 마커로 합성 — 이후 게이트(_offdomain_capability_hit)·기록이 종전 경로 그대로 소비.
     _ovr = str(args.get("override_reason") or "").strip()
