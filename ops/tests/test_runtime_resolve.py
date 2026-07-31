@@ -81,3 +81,71 @@ def test_전역기본은_설정이_붙어야_바뀐다():
     assert effective(SimpleNamespace(default_model="gpt-5.6-luna",
                                      default_runtime_profile=_profile("claude", "opus"))) == "opus"
     assert spec is not None
+
+
+class _Q:
+    """동의 조회를 흉내낸다 - DB 없이 관문의 계약만 본다."""
+    def __init__(self, found):
+        self.found = found
+
+    def filter(self, **kw):
+        self.kw = kw
+        return self
+
+    def exists(self):
+        return self.found
+
+
+def _patch_consent(monkeypatch, found=None, boom=False):
+    import sys, types
+    mod = types.ModuleType("sns.models")
+
+    class PEC:
+        objects = _Q(found)
+    if boom:
+        class PEC:  # noqa: F811
+            class objects:
+                @staticmethod
+                def filter(**kw):
+                    raise RuntimeError("DB 없음")
+    mod.ProjectEngineConsent = PEC
+    monkeypatch.setitem(sys.modules, "sns.models", mod)
+    monkeypatch.setitem(sys.modules, "sns", types.ModuleType("sns"))
+
+
+def test_우리_엔진은_동의가_필요없다():
+    """데이터가 우리 밖으로 안 나간다 - 동의를 물을 일이 아니다."""
+    ours = _profile("claude", "opus")
+    assert _rr.consent_ok(ours, None) is True
+    assert _rr.consent_ok(ours, object()) is True
+
+
+def test_제3자는_판이_없으면_거부한다():
+    """동의를 받을 주체가 없다 - 주체 없는 동의는 동의가 아니다."""
+    third = _profile("openai_compat", "llama", "https://x.example/v1")
+    assert _rr.consent_ok(third, None) is False
+
+
+def test_제3자는_동의가_있어야_열린다(monkeypatch):
+    third = _profile("openai_compat", "llama", "https://x.example/v1")
+    _patch_consent(monkeypatch, found=False)
+    assert _rr.consent_ok(third, object()) is False
+    _patch_consent(monkeypatch, found=True)
+    assert _rr.consent_ok(third, object()) is True
+
+
+def test_확인_실패는_거부다(monkeypatch):
+    """확인 실패를 허용으로 읽으면 통제가 아니다."""
+    third = _profile("openai_compat", "llama", "https://x.example/v1")
+    _patch_consent(monkeypatch, boom=True)
+    assert _rr.consent_ok(third, object()) is False
+
+
+def test_관문이_동의없는_제3자를_돌려주지_않는다(monkeypatch):
+    """None은 '우리 기본으로 간다' - 조용히 남의 서버로 보내는 것보다 안전하다."""
+    third = _profile("openai_compat", "llama", "https://x.example/v1")
+    a = _agent(model="opus", profile=third)
+    _patch_consent(monkeypatch, found=False)
+    assert _rr.profile_for_turn(a, object()) is None
+    _patch_consent(monkeypatch, found=True)
+    assert _rr.profile_for_turn(a, object()) is third
