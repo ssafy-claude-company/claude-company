@@ -1,0 +1,13 @@
+[Unit]
+Description=UPnP 포트 매핑 주기 확인
+# 공유기가 재시작하면 매핑이 사라진다. 이 서버 재부팅이 아니라 공유기 쪽 사건이라
+# 부팅 때만 걸면 그 사고를 못 막는다 - 주기로 확인한다.
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
