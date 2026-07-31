@@ -162,7 +162,12 @@ class VpsDeployTest(unittest.TestCase):
     def test_port_reuse_and_alloc(self):
         reg = {"a": {"port": 4100}, "b": {"port": 4101}}
         self.assertEqual(D._alloc_port(reg, "a"), 4100)   # 기존 앱은 자기 포트 유지
-        self.assertEqual(D._alloc_port(reg, "new"), 4102)
+        # [기계 상태에 기대지 않는다(2026-07-31)] 할당은 레지스트리 밖 **실점유**도 건너뛴다 —
+        # 이 머신에서 4102가 실제로 열려 있으면 다음 빈 포트가 나온다(라이브 앱 풀과 공존).
+        got = D._alloc_port(reg, "new")
+        self.assertGreaterEqual(got, 4102)
+        self.assertLessEqual(got, D._APPS_PORT_HI)
+        self.assertNotIn(got, {4100, 4101})
 
 
 if __name__ == "__main__":
