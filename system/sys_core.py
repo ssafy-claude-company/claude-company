@@ -1345,21 +1345,23 @@ class Sys:
             # 일어나지 않는다'이지 '오래 걸린다'가 아니다 — **무활동**으로 잰다.
             _idle_cap = int(getattr(self, "turn_timeout", 600) or 600)
             _hard_cap = int(os.environ.get("ORGANT_DRAIN_HARD_CAP", "7200"))   # 폭주 최후 방어(2시간)
-            _t0 = time.time()
+            # last_activity는 **단조 시계**(time.monotonic)다 — time.time()과 빼면 epoch 차이가 나와
+            # 첫 30초에 바로 잘린다(2026-07-31 실측: idle=1784555047). 같은 시계로 잰다.
+            _t0 = time.monotonic()
             results = None
             while results is None:
                 try:
                     results = await asyncio.wait_for(
                         asyncio.gather(*tasks, return_exceptions=True), timeout=30)
                 except asyncio.TimeoutError:
-                    _idle = time.time() - float(getattr(flow, "last_activity", 0) or _t0)
-                    if _idle < _idle_cap and (time.time() - _t0) < _hard_cap:
+                    _idle = time.monotonic() - float(getattr(flow, "last_activity", 0) or _t0)
+                    if _idle < _idle_cap and (time.monotonic() - _t0) < _hard_cap:
                         continue                      # 아직 손이 움직인다 — 기다린다
                     for _t in tasks:
                         if not _t.done():
                             _t.cancel()
                     self._log("inflight_drain_timeout", n=len(tasks),
-                              idle=int(_idle), waited=int(time.time() - _t0))
+                              idle=int(_idle), waited=int(time.monotonic() - _t0))
                     results = [asyncio.TimeoutError(
                         f"위임 회수 중단 — {int(_idle)}s 동안 아무 활동이 없었습니다")
                         for _ in tasks]
