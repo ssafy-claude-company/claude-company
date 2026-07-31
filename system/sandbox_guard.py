@@ -12,6 +12,7 @@
   · uid는 정해진 범위 안이고 0(root)이 될 수 없다
   · 판 대장은 root 전용이라 호출자가 재배정할 수 없다(충돌 = 판 경계 붕괴)
 """
+import fcntl
 import json
 import os
 
@@ -58,11 +59,32 @@ def project_key(real, root, kind="parent"):
     return rel.split(os.sep)[0]
 
 
-def uid_for(key, uidmap_path):
-    """판별 uid를 대장에서 찾거나 새로 배정한다(원자 교체). 대장은 root 전용."""
+def uid_for(key, uidmap_path, observed_uid=None):
+    """판별 uid를 대장에서 찾거나 새로 배정한다(잠금 + 원자 교체). 대장은 root 전용.
+
+    [경합 결함 수선(2026-07-30, 현준-4 실측)] 종전엔 읽고-고치고-바꿔쓰기를 잠금 없이 했다.
+    두 판이 동시에 등록하면 둘 다 같은 '가장 낮은 빈 uid'를 골라 하나가 다른 하나의 항목을
+    덮는다. 실측: p-078이 파일 29,828개를 uid 300002로 소유하는데 대장에는 그 항목이 없었다.
+    항목을 잃으면 살아 있는 uid가 다른 판에 다시 배정될 수 있고, 그 순간 두 판이 서로의
+    파일을 읽고 쓴다 - 격리가 뚫린다. 대장 전체를 잠그고 한 번에 한 등록만 통과시킨다.
+
+    observed_uid를 주면(작업공간 디렉터리의 실제 소유자) 대장에 항목이 없어도 그 uid를
+    되찾는다. 이미 판이 소유한 uid를 새로 배정하지 않기 위한 두 번째 방어선이다.
+    """
     d = os.path.dirname(uidmap_path)
     if d:
         os.makedirs(d, mode=0o700, exist_ok=True)
+    lock_path = uidmap_path + ".lock"
+    lock = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _uid_for_locked(key, uidmap_path, observed_uid)
+    finally:
+        os.close(lock)
+
+
+def _uid_for_locked(key, uidmap_path, observed_uid=None):
+    """대장 잠금을 쥔 채로 도는 본체 - 여기서만 대장을 고친다."""
     try:
         with open(uidmap_path, encoding="utf-8") as fp:
             m = json.load(fp)
@@ -81,16 +103,31 @@ def uid_for(key, uidmap_path):
             used.add(int(v))
         except (TypeError, ValueError):
             continue
+    # 대장이 항목을 잃었어도 디스크가 사실을 안다 - 이미 그 판이 쓰던 uid를 되찾는다.
+    if observed_uid is not None:
+        try:
+            ob = int(observed_uid)
+        except (TypeError, ValueError):
+            ob = None
+        if ob is not None and UID_MIN <= ob <= UID_MAX and ob not in used:
+            m[key] = ob
+            _write_uidmap(m, uidmap_path)
+            return ob
     for uid in range(UID_MIN, UID_MAX + 1):
         if uid not in used:
             m[key] = uid
-            tmp = uidmap_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fp:
-                json.dump(m, fp, ensure_ascii=False, indent=1, sort_keys=True)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, uidmap_path)
+            _write_uidmap(m, uidmap_path)
             return uid
     raise GuardError("배정할 uid가 없다(범위 소진)")
+
+
+def _write_uidmap(m, uidmap_path):
+    """대장을 원자적으로 갈아 끼운다(호출자가 잠금을 쥐고 있어야 한다)."""
+    tmp = uidmap_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fp:
+        json.dump(m, fp, ensure_ascii=False, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, uidmap_path)
 
 
 def parse_args(argv):
