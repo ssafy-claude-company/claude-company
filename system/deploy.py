@@ -332,6 +332,45 @@ def _apps_dir() -> Path:
     return d
 
 
+def pool_live_url(name) -> str:
+    """[장부가 아니라 사실을 본다(2026-07-31, U-442 실측)] 이 판의 앱이 앱 풀에 실제로 살아 있으면
+    그 공개 주소를 돌려준다(아니면 빈 값). 도구를 거치지 않고(운영자·복구 스크립트) 올라간 배포도
+    배포다 — '누가 올렸나'가 아니라 '지금 열리나'가 배달의 사실이기 때문이다.
+    """
+    nm = str(name or "").strip().lower()
+    if not nm:
+        return ""
+    try:
+        reg = _load_registry()
+    except Exception:
+        return ""
+    entry = None
+    for key in (f"organt-{nm}", nm):
+        if isinstance(reg.get(key), dict):
+            entry, nm = reg[key], key
+            break
+    if entry is None:
+        # 장부에 없어도 게이트웨이가 200으로 열어 주면 그것이 사실이다(레지스트리 경로가 다른
+        # 체크아웃에서 도는 경우·기록 유실 — 사람이 여는 데는 아무 지장이 없다).
+        for key in (f"organt-{nm}", nm):
+            _u = f"{_apps_base_url()}/{key}/"
+            _st = _check_live(_u, tries=1)
+            # _check_live는 4xx도 코드로 돌려준다(라우팅은 됐다는 뜻) — 배달 판정은 **2xx만**.
+            if _st and 200 <= int(_st) < 300:
+                return _u
+        return ""
+    if not entry.get("static"):
+        pid_ = entry.get("pid")
+        try:
+            if not (pid_ and os.path.exists(f"/proc/{int(pid_)}")):
+                return ""
+        except (TypeError, ValueError):
+            return ""
+    url = f"{_apps_base_url()}/{nm}/"
+    _st = _check_live(url, tries=1)
+    return url if (_st and 200 <= int(_st) < 300) else ""
+
+
 def _apps_base_url() -> str:
     # [서버 이전(2026-07-28)] 기본값이 구 VPS(murmur-ai.duckdns.org)를 가리켜, 봇 보고에 실린
     # 산출물 링크가 은퇴한 호스트로 갔다(실측: 1세대 보고의 works 링크). env 미설정 시 현 라이브

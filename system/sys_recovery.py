@@ -694,6 +694,23 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
         await flow.refresh(ref)   # 상태블록을 '진행'으로 재활성(블록이 남아 있으면)
     except Exception:
         pass
+    # [올라가 있으면 올라간 것이다(2026-07-31, 사용자 지시: '우리 서비스에도 배포해둬야 검증')]
+    # 팀이 "guide가 앱 풀 배포를 공식 deploy로 인식하지 않는다"며 멈췄다(U-442 실측) — 도구를 거치지
+    # 않은 배포(운영자 게시·복구)는 장부에 없어서 마감 관문이 계속 막았다. 복구 시점에 앱 풀의
+    # **사실**(살아 있고 200으로 열림)을 흐름 상태로 반영해, 장부와 현실이 어긋나 판이 서지 않게 한다.
+    try:
+        from .deploy import pool_live_url
+        from .guide_tools import deploy_service_name
+        _nm = deploy_service_name(flow)
+        _live = pool_live_url(_nm) if _nm else ""
+        if _live and not getattr(flow, "_deploy_live", False):
+            flow._deploy_live = True
+            flow._deploy_url = _live
+            flow._deployed_once = True
+            flow._deploy_writes = sum(int(v) for v in (flow.writes_by_role or {}).values())
+            sys._log("deploy_state_synced_from_pool", url=_live)
+    except Exception as _e:
+        sys._log("deploy_pool_sync_failed", err=str(_e)[:80])
     sys._log("open_task_restored", project=proj.get("id"), task=snap["task_id"],
              owner=int(snap.get("owner") or 0))
     return snap
