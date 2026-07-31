@@ -21,7 +21,9 @@ table inet organt_egress {
     # 8118(tinyproxy 관문)은 일부러 뺀다 — 봇의 유일한 바깥길이다.
     set internal_ports {
         type inet_service
-        elements = { 5432, 8000, 8002, 8080, 8100 }
+        # 22: 이 서버 SSH. 봇이 자기 판 밖으로 나갈 이유가 없고, 자격증명이 없어도
+        #     붙을 수 있다는 것 자체가 표면이다(무차별 시도·설정 실수).
+        elements = { 22, 5432, 8000, 8002, 8080, 8100 }
     }
 
     chain output {
@@ -41,8 +43,11 @@ table inet organt_egress {
         #
         # 이 포트들은 이미 시스템 서비스가 점유하고 있어 봇이 자기 서버를 띄울 수도
         # 없다 — 막아도 봇의 정상 작업에는 값이 없다. 관문(8118)은 목록에 없어 살아 있다.
-        tcp dport @internal_ports ip daddr 127.0.0.0/8 reject with icmpx type admin-prohibited
-        tcp dport @internal_ports ip6 daddr ::1 reject with icmpx type admin-prohibited
+        # 목적지를 가리지 않는다. 종전엔 127.0.0.0/8만 걸렀는데, 자기 LAN 주소로 가는
+        # 트래픽은 커널이 loopback으로 흘려서 그 뒤 'oif lo accept'에 걸려 통과했다 —
+        # 실측: 봇이 192.168.0.5:22(이 서버 SSH)에 연결됐다. 포트로만 막으면 경로가
+        # 무엇이든 같은 답이 나온다.
+        tcp dport @internal_ports reject with icmpx type admin-prohibited
 
         oif "lo" accept
         ip daddr 127.0.0.0/8 accept
