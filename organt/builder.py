@@ -166,6 +166,7 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                             int(_ch), float(_cost), int(rec.get("tokens_out") or 0),
                             tokens_in=int(rec.get("tokens_in") or 0),
                             tokens_cached=int(rec.get("tokens_cached") or 0),
+                            bot_id=organt_id,
                             purpose=str((getattr(flow, "_turn_purpose", None) or {}).get(organt_id) or "")))
                         _USAGE_BG.add(_t)
 
