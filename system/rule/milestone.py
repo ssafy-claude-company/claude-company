@@ -2268,11 +2268,14 @@ def claim_kick_target(flow):
         return 0
 
     # 실행 가능한 신규/보충 백로그가 blocked 원본보다 항상 먼저다.
+    from .backlog import worker_busy_with as _busy
     for st, _r, b in rows:
         if b.status != "open" or backlog_scope_key(st.st_id, b.backlog_id) in kicked:
             continue
         owner = _worker(st, b)
-        if owner:
+        # [한 사람은 한 번에 하나(2026-07-31, 사용자 지적)] 일감은 사람마다 병렬로 가지만 한 사람이
+        # 둘을 동시에 들 수는 없다 — 이미 손에 든 사람은 건너뛰고 손이 빈 다음 사람을 세운다.
+        if owner and not _busy(flow, owner):
             return (owner, b, st.st_id)
 
     # blocked는 차단 직후 즉시 재선정하지 않는다. 모든 실행 가능분이 소진되고 차단 뒤 보충 작업의
