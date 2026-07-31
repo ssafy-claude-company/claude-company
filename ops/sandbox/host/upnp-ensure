@@ -36,5 +36,22 @@ for p in $PORTS; do
 done
 
 # 조용한 성공은 기록하지 않는다 — 5분마다 도는 것이라 로그가 사실을 덮는다.
-[ "$added" -gt 0 ] && echo "$(date -Is) 완료: ${added}건 재등록" >> "$LOG"
+[ "$added" -gt 0 ] && echo "$(date -Is) 매핑 ${added}건 재등록" >> "$LOG"
+
+# [실제 도달 확인 2026-07-31] 매핑이 있다고 밖에서 열리는 것은 아니다. 07-30 사고 때
+# 진짜 문제는 '끊긴 것'이 아니라 '한 시간 넘게 아무도 몰랐던 것'이었다 — 서버 안에서
+# 보면 다 정상이라 내부 감시로는 안 잡힌다. 공인 주소로 실제로 두드려 본다.
+# UPNP_PROBE_HOST로 대상을 바꿀 수 있다 - 경고 경로가 실제로 도는지 시험하기 위해서다.
+# 시험할 수 없는 경보는 켜져 있다고 믿을 뿐 지켜 주지 않는다.
+PUB="${UPNP_PROBE_HOST:-$(timeout 10 curl -s --max-time 8 https://api.ipify.org 2>/dev/null)}"
+if [ -n "$PUB" ]; then
+  CODE="$(timeout 15 curl -s -o /dev/null -w '%{http_code}' --max-time 12 -k \
+          "https://${PUB}/" 2>/dev/null)"
+  if [ "$CODE" = "000" ] || [ -z "$CODE" ]; then
+    # 경고는 journal로도 낸다 — 로그 파일만 쓰면 아무도 안 본다.
+    echo "$(date -Is) 밖에서 안 열린다(공인 ${PUB} 응답 ${CODE:-없음}) — 매핑 재등록 시도함" >> "$LOG"
+    echo "외부 도달 실패: https://${PUB}/ 응답 ${CODE:-없음}" >&2
+    exit 1                      # 실패로 끝내야 systemd가 실패로 기록한다
+  fi
+fi
 exit 0
