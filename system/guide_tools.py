@@ -831,11 +831,15 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         return await _rule_say(flow, who, text)   # [→ rule/communication._say] 발언을 봇 본인 명의로(가시성=실체)
 
     @tool("request", "현재 Task 팀의 동료 한 명에게 요청(kind: Info=질문 / Work=작업, to_id 문자열). "
+          # [이 일에도 이름이 있다(2026-07-31, 사용자: '그냥 첫 글 첫 문장 가져오는건 잘못된 대처')]
+          # 회의·단계는 제목을 강제하는데 요청만 없어서, 화면이 첫 문장을 잘라 제목처럼 썼다.
+          "**title=이 요청 한 줄 제목**(필수 — 예: '결과 리포트 UI 브라우저 검증'). 화면은 이 제목으로 "
+          "그 대화를 부릅니다(없으면 첫 문장을 잘라 쓰던 옛 방식으로 떨어집니다). "
           "미완 owner가 있는 일을 타인에게 새로 맡길 땐 takeover_reason(담당 교체 사유) 또는 "
           "different_deliverable(별개 산출물임을 명시) 인자를 함께(선택 — 없으면 이어가기 안내로 보류될 수 있음). "
           "직군밖 차단의 의식적 예외는 override_reason(왜 그 동료가 맡아야 하는지)로(종전 body '[직군초과: 사유]'와 동등).",
-          {"to_id": str, "kind": str, "body": str, "takeover_reason": str, "different_deliverable": str,
-           "override_reason": str})
+          {"to_id": str, "kind": str, "title": str, "body": str, "takeover_reason": str,
+           "different_deliverable": str, "override_reason": str})
     async def request(args):
         return await _rule_request(flow, me_id, role, args)
     tools.append(request)
