@@ -1681,8 +1681,19 @@ def cycle_delivery_error(flow) -> str:
     # [실제로 배포했으면 그것이 배달이다(2026-07-31, U-442 실측)] 팀이 외부에 배포하고 라이브까지
     # 확인했는데도 관문이 '열 곳이 없다'고 막아, 주기가 닫히지 못하고 판이 무진전으로 정지했다.
     # 앱 풀·정적 진입만 배달로 보던 것을 고친다 — 검증된 배포 URL도 배달이다.
-    if getattr(flow, "_deploy_live", False) or str(getattr(flow, "_deploy_url", "") or "").strip():
-        return ""
+    # [로그인 벽 뒤는 배달이 아니다(2026-07-31, U-442 실측)] 팀이 배포하고 '라이브 검증 PASS'를
+    # 보고했는데 그 주소를 그냥 열면 401(Sign in required)이었다 — 자기 인증 세션에서만 열린다.
+    # 사용자가 못 여는 것은 배달이 아니므로 **인증 없이 2xx**인지 여기서 직접 확인한다.
+    _url = str(getattr(flow, "_deploy_url", "") or "").strip()
+    if _url:
+        try:
+            import urllib.request
+            with urllib.request.urlopen(_url, timeout=8) as _r:
+                if 200 <= int(getattr(_r, "status", 0) or 0) < 300:
+                    return ""
+        except Exception:
+            pass
+
     ws = str(getattr(flow, "workspace", "") or "")
     if not ws or not os.path.isdir(ws):
         return ""                                  # 작업공간 없는 흐름(대화형)은 배달 개념이 없다
@@ -1724,6 +1735,11 @@ def cycle_delivery_error(flow) -> str:
     # [보류는 할 일을 남긴다(2026-07-31, U-442 실측)] 이 문구만 돌려주면 회의도 일감도 생기지 않아
     # 판이 무진전으로 정지했다(continue_incomplete 6회 → stalled_stopped). 무엇을 하면 풀리는지
     # 한 줄로 못박는다 — 그대로 실행하면 되는 도구 이름과 순서.
+    if _url:
+        return (f"주기 완수 보류: 배포된 주소를 **사용자가 그냥 열 수 없습니다**({_url}) — 로그인 벽 "
+                f"뒤이거나 응답하지 않습니다. '우리 세션에서는 열린다'는 배달이 아닙니다.\n"
+                f"지금 할 일 하나: 인증 없이 열리는 곳에 다시 올리세요(`deploy` 도구는 이 판의 앱 풀로 "
+                f"올려 곧바로 공개 주소를 만듭니다). 올린 뒤 그 주소를 열어 확인하고 다시 선언하세요.")
     return ("주기 완수 보류: 만든 것을 **사람이 열 수 있는 곳이 없습니다**(앱 풀·정적 진입·배포 URL "
             "어디에도 이 판의 산출물이 없습니다 — 로컬 검증만으로는 배달이 아닙니다).\n"
             "지금 할 일 하나: **`deploy` 도구를 호출해 이번 산출물을 올리세요**(name=영문 소문자 "

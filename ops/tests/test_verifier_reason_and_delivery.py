@@ -46,3 +46,27 @@ def test_웹이_아닌_산출물엔_배달을_요구하지_않는다(tmp_path):
     f = types.SimpleNamespace(workspace=str(tmp_path), milestones=[ms])
     (tmp_path / "main.py").write_text("print(1)", encoding="utf-8")
     assert cycle_delivery_error(f) == ""
+
+
+def test_로그인_벽_뒤_주소는_배달이_아니다(tmp_path, monkeypatch):
+    """[U-442 실측] 팀이 배포하고 '라이브 PASS'를 보고했는데 그냥 열면 401(Sign in required)이었다."""
+    import types
+
+    from system.rule import milestone as _ms
+    ms = types.SimpleNamespace(goal="브라우저에서 여는 한 판", criteria=[])
+    f = types.SimpleNamespace(workspace=str(tmp_path), milestones=[ms],
+                              _deploy_url="https://example.invalid/app/", _deploy_live=True)
+    err = _ms.cycle_delivery_error(f)
+    assert "사용자가 그냥 열 수 없습니다" in err and "deploy" in err
+
+
+def test_정적_진입이_있으면_주소가_죽어도_닫힌다(tmp_path):
+    """주소가 안 열려도 이 판이 직접 서빙할 수 있으면 사람은 열 수 있다."""
+    import types
+
+    from system.rule import milestone as _ms
+    (tmp_path / "index.html").write_text("<h1>ok</h1>", encoding="utf-8")
+    ms = types.SimpleNamespace(goal="브라우저에서 여는 한 판", criteria=[])
+    f = types.SimpleNamespace(workspace=str(tmp_path), milestones=[ms],
+                              _deploy_url="https://example.invalid/app/")
+    assert _ms.cycle_delivery_error(f) == ""
