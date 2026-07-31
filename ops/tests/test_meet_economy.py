@@ -2296,6 +2296,10 @@ def test_마일스톤보고_확인링크와_2단계승계_체인(monkeypatch, tm
     ms2 = open_milestone(f, "확장", [{"desc": "점수판 표시", "verify": "node로 확인"}])
     assert any(c.desc == "모션 타이밍 100ms" for c in ms2.criteria)              # 이월 잣대 합류
     # 배포 URL이 생기면 보고 링크는 그것이 우선(실 배포 주소가 최상의 확인 자료)
+    # [배달 관문(2026-07-31)] 주기를 닫으려면 사람이 열 수 있는 것이 있어야 한다 — 이 테스트의
+    # 관심사는 링크 표기이므로 정적 진입을 만들어 관문을 만족시킨다(주소는 표기 확인용 가짜).
+    import pathlib
+    pathlib.Path(f.workspace, "index.html").write_text("<h1>rps</h1>", encoding="utf-8")
     f._deploy_url = "https://murmur-ai.duckdns.org/apps/rps/"
     ok2, _ = iter_verify(f, ms2, [{"desc": c.desc, "passed": True, "evidence": "run 출력 OK"}
                                   for c in ms2.criteria])
