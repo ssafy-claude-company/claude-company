@@ -1318,15 +1318,23 @@ class Sys:
         — 일하는 owner를 자르지 않고 결과를 회수하는 게 단일활성·작업 보존의 핵심이다."""
         tasks = [t for t in getattr(flow, "inflight_tasks", ()) if not t.done()]
         err_note = ""
+        if not tasks:
+            flow._await_notice_on = False      # 기다림이 풀렸다 — 다음 대기 때 다시 한 번 알린다
         if tasks:
             self._log("await_inflight_delegation", n=len(tasks))
             # [마감 대기 가시화(2026-07-09, 사용자)] 최종 보고·배포 성공이 이미 보이는데 마감 검증이
             # 침묵으로 돌면 "끝났는데 왜 대기중"이 된다(라이브: msg320 QA 25분 침묵) — 한 줄로 알린다.
-            try:
-                await flow.guide.post(int(flow.user_channel), 0,
-                                      f"[마감 대기] 완주 중인 작업 {len(tasks)}건의 결과를 회수한 뒤 마감합니다 — 새 요청은 그 뒤 처리됩니다.")
-            except Exception:
-                pass
+            # [같은 말을 77번 하지 않는다(2026-07-31, 사용자: '발언 보고 이런게 뭐이리 많이 생겼는지')]
+            # 이 안내는 이어가기 루프를 돌 때마다 나가서, U-442 채널의 518개 메시지 중 77개가
+            # **글자까지 똑같은 이 한 줄**이었다(전체의 15%). 상태가 바뀔 때 한 번만 알린다 —
+            # 기다림이 풀렸다가 다시 걸리면 그때 다시 한 번.
+            if not getattr(flow, "_await_notice_on", False):
+                flow._await_notice_on = True
+                try:
+                    await flow.guide.post(int(flow.user_channel), 0,
+                                          f"[마감 대기] 완주 중인 작업 {len(tasks)}건의 결과를 회수한 뒤 마감합니다 — 새 요청은 그 뒤 처리됩니다.")
+                except Exception:
+                    pass
             # [무한 대기 가드(2026-07-09, 사용자: "흐름 멈춤")] gather에 타임아웃이 없어 위임 태스크
             # 하나가 안 끝나면(자식 프로세스 사망·detach 미해소) 흐름 전체가 영구 정지했다(라이브:
             # ch49 await_inflight n=1로 10분+ 멎음, 자식=0). 턴 타임아웃×1.5 상한으로 끊고, 못 끝낸
