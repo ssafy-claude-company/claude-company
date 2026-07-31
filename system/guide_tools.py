@@ -130,7 +130,12 @@ def _scrubbed_run_env() -> dict:
     명령이 `$PORT`·`$ARTIFACT_DIR`를 쓰면 서로를 밟지 않고, 안 쓰면 종전 그대로 동작한다
     (라이브 명령을 깨지 않는 점진 도입). `$RUN_ID`는 영수증·증거 추적용.
     """
-    env = {k: v for k, v in os.environ.items() if not _is_secret_env(k)}
+    # [sudo 잔재 제거 2026-07-31, 현준-4] 도우미를 sudo로 부르면 SUDO_COMMAND·SUDO_USER가
+    # 봇 셸까지 따라 들어간다. 비밀은 아니지만 호출 전문(작업공간 경로·명령 원문)이
+    # 그대로 실려, 봇이 자기가 어떻게 감싸여 실행되는지 읽는다. 격리는 안이 밖을
+    # 모르게 하는 것이라 지운다.
+    env = {k: v for k, v in os.environ.items()
+           if not _is_secret_env(k) and not k.startswith("SUDO_")}
     try:
         rid = f"{int(time.time() * 1000) % 10**9:09d}"
         env.setdefault("RUN_ID", rid)

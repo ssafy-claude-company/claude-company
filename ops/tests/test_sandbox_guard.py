@@ -243,3 +243,19 @@ def test_협의기록이_없으면_덮지_않는다(tmp_path):
     argv, _env, err = _prepare_run_exec(str(ws), "echo 확인")
     assert not err and argv
     assert not any(a.endswith("/.collab") for a in argv)
+
+
+def test_sudo_잔재는_봇_셸에_실리지_않는다(monkeypatch):
+    """도우미를 sudo로 부르면 SUDO_COMMAND가 봇까지 따라온다 - 호출 전문이 그대로 실린다.
+
+    비밀은 아니지만 격리는 안이 밖을 모르게 하는 것이다.
+    """
+    from system.guide_tools import _scrubbed_run_env
+
+    monkeypatch.setenv("SUDO_COMMAND", "/usr/local/sbin/organt-sandbox --workspace /판")
+    monkeypatch.setenv("SUDO_USER", "dojin")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = _scrubbed_run_env()
+    assert "SUDO_COMMAND" not in env
+    assert "SUDO_USER" not in env
+    assert env.get("PATH")          # 빌드에 필요한 것은 그대로 남는다
