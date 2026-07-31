@@ -212,6 +212,45 @@ def revive_blocked_when_pool_exhausted(flow) -> list:
     return revived
 
 
+def blocked_wakeups(flow, finished_backlog_id="", finisher=0) -> list:
+    """[기다리던 것이 끝나면 깨운다(2026-07-31, 사용자 지시)] 막힌 일감은 '무엇을 기다리는지'를
+    적어 둔다(waits_for=그 일감, waits_who=그 사람). 그 일감이 끝나거나 그 사람 손이 비면 곧바로
+    대기(open)로 되돌린다 — 전체 일감이 소진될 때까지 기다리지 않는다.
+
+    반환: 깨운 (scope_key, backlog) 목록.
+    """
+    fid = str(finished_backlog_id or "")
+    try:
+        who = int(finisher or 0)
+    except (TypeError, ValueError):
+        who = 0
+    woke = []
+    rows = backlog_rows(flow)
+    busy = {int(getattr(b, "assignee", 0) or 0) for _st, _r, b in rows if b.status == IN_PROGRESS}
+    for st, r, b in rows:
+        if b.status != BLOCKED:
+            continue
+        want_id = str(getattr(b, "waits_for", "") or "")
+        want_who = int(getattr(b, "waits_who", 0) or 0)
+        if not want_id and not want_who:
+            continue
+        done_id = bool(want_id) and want_id == fid
+        free_who = bool(want_who) and (want_who == who or want_who not in busy)
+        if not (done_id or free_who):
+            continue
+        b.status = OPEN
+        b.waits_for, b.waits_who = "", 0
+        b.ts_done = 0.0
+        try:
+            b.activity.append(f"[대기 해제] 기다리던 {want_id or '작업'}이 끝나 다시 열림")
+        except Exception:
+            pass
+        woke.append((backlog_scope_key(st.st_id, b.backlog_id), b))
+        if getattr(r, "_emit", None):
+            r._emit("blocked_woken", backlog=b.backlog_id, waited_for=want_id or str(want_who))
+    return woke
+
+
 def blocked_supplement_targets(scoped_rows):
     """이번 보충 회의가 직접 풀어야 할 blocked 잎 노드만 돌려준다.
 
@@ -270,6 +309,8 @@ class Backlog:
     block_reason: str = ""
     note: str = ""               # iter 정리 등 상태 밖 메모(상태 4종을 오염시키지 않는다)
     supplement_for: list = field(default_factory=list)  # 보충 회의가 해결하려는 scoped blocked 원본들
+    waits_for: str = ""          # 이 일감이 끝나기를 기다린다(백로그 id) — 막힘 해제의 근거
+    waits_who: int = 0            # 이 사람이 손을 비우기를 기다린다(봇 id)
     ts_submit: float = 0.0       # 생성 시각 — blocked 뒤 생긴 보충 세대인지 판별하는 구조 증거
     ts_pick: float = 0.0         # [창 귀속(2026-07-10)] 선정 시각 — 이 시각부터의 대화가 이 백로그
     ts_done: float = 0.0         # 완료/차단 시각 — 창의 끝
@@ -521,7 +562,8 @@ class BacklogRelay:
         self._emit("backlog_dropped", backlog=b.backlog_id, by=int(worker), reason=str(reason or "")[:120])
         return b
 
-    def block(self, worker: int, backlog_id: str, next_starter: int, reason: str = ""):
+    def block(self, worker: int, backlog_id: str, next_starter: int, reason: str = "",
+              waits_for: str = "", waits_who: int = 0):
         """차단 핸드오프(§3 확정): 선행 필요 발견 → 이 백로그는 blocked로 **보존**(버리지 않는다),
         차단자가 '다음 시작자'를 지정한다(그가 새 턴 홀더 — 배분이 현장에 남는 또 하나의 경로).
 
@@ -536,6 +578,12 @@ class BacklogRelay:
         b.status, b.block_count = BLOCKED, b.block_count + 1
         b.ts_done = time.time()
         b.block_reason = str(reason or "")[:300]
+        # [무엇을 기다리는지 적는다(2026-07-31, 사용자: '다른 얘가 하는거 필요하다 하면 중지로 있다가
+        # 그 사람 끝나면 그 중지된 얘 깨어나서 일하고')] 종전엔 '막혔다'만 남겨서, 기다리던 일이
+        # 끝나도 스스로 깨어날 근거가 없었다(모든 일감이 소진돼야 되살아났다). 기다리는 대상을
+        # 적어 두면 그것이 끝나는 순간 이 일감을 깨울 수 있다.
+        b.waits_for = str(waits_for or "").strip()[:64]
+        b.waits_who = int(waits_who or 0) or None
         self.turn_holder = int(next_starter)
         self._emit("relay_block", backlog=b.backlog_id, by=int(worker), next=int(next_starter),
                    reason=b.block_reason, block_count=b.block_count)
@@ -871,13 +919,12 @@ def handoff_note(flow, r, actor, verb) -> None:
                      f"접으세요 — 혼자 판단 말고 팀 표결로.")
         return
     cand = " · ".join(f"{b.backlog_id}({_info(b.submitter)}: {b.body[:24]})" for b in rem[:8])
-    # [등록 순서가 실행 순서(2026-07-29, 사용자 지시)] 종전 안내는 '내가 다음이어야 하는 이유를 알리라'는
-    # 로비를 요구했다 — 순서가 이미 회의에서 정해졌다면 그 라운드는 낭비이고, 순서를 흔들기까지 한다.
-    # 기본은 등재 순서대로 자동 인계이고, pick_backlog(id)는 그 순서를 **벗어나야 할 때**의 장치다.
-    notes.append(f"[다음 선정] {_info(actor)}의 백로그가 {verb} — 다음은 **등재 순서대로** "
-                 f"{rem[0].backlog_id}({_info(rem[0].submitter)})에게 넘어갑니다. 순서를 바꿔야 할 사유가 "
-                 f"있을 때만 담당자({_info(actor)})가 pick_backlog(id)로 다른 항목을 지정하세요. "
-                 f"남은 백로그(순서대로): {cand}")
+    # [지명이 아니라 각자 집는다(2026-07-31, 사용자: '개인마다 하나씩 계속 진행')] 종전엔 마무리한
+    # 사람이 다음 수행자를 '선정'했다(배분권). 이제 각자 자기 것을 순서대로 집으므로, 이 줄은 공고가
+    # 아니라 **남은 순서 안내**다 — 손이 빈 사람이 위에서부터 가져가면 된다.
+    notes.append(f"[다음] {_info(actor)}의 백로그가 {verb} — 다음 차례는 등재 순서대로 "
+                 f"{rem[0].backlog_id}({_info(rem[0].submitter)})입니다. 손이 비면 pick_backlog로 "
+                 f"자기 차례를 집으세요(한 사람은 한 번에 하나). 남은 백로그(순서대로): {cand}")
 
 
 def sync_completion(flow, worker) -> None:

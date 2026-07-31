@@ -1780,278 +1780,10 @@ class Sys:
                     return (int(getattr(b, "assignee", 0) or getattr(b, "submitter", 0) or 0), b, st.st_id)
         return None
 
-    async def _backlog_handoff(self, flow, r, holder):
-        """완료자가 남은 백로그 보유자의 응찰을 보고 다음 일을 고르는 구조적 릴레이.
-
-        도구 자발 호출에 기대지 않는다. 보유자만 자기 백로그로 응찰하고, 마지막 작업자가 응찰표를
-        본 뒤 선택한다. 응답이 잘리거나 형식이 틀린 경우에만 최고 응찰(동률은 제출순)을 안전망으로 쓴다.
-        """
-        import re
-        from .rule.backlog import blocked_ready_for_revisit
-
-        # 실행 가능한 보충분이 남아 있는 동안 blocked 원본을 응찰표에 올리면, 선행을 한 건만 끝내고
-        # 원본을 즉시 재개해 다시 막힐 수 있다. 열린 마일스톤 전체의 open을 먼저 소진하고 차단 뒤
-        # 실제 done 증거가 생긴 blocked만 마지막 작업자의 다음 선정 후보로 복귀시킨다.
-        all_scoped_rows = []
-        open_ms = next((m for m in (getattr(flow, "milestones", None) or [])
-                        if m.status not in ("done", "superseded")), None)
-        store = getattr(flow, "backlog_relays", None) or {}
-        for st in (getattr(open_ms, "subtasks", None) or []):
-            relay = store.get(st.st_id)
-            all_scoped_rows.extend((st, row) for row in (getattr(relay, "backlogs", None) or []))
-        all_rows = [row for _st, row in all_scoped_rows]
-        # [백로그는 전체에서 고른다(2026-07-29, 사용자 지시)] 순차 1활성 잠금은 **마일스톤 전체**인데
-        # 다음 일감 후보는 그 서브태스크 릴레이 안에서만 모았다 — 제약은 전역, 선택지는 지역이라
-        # '전체를 보고 선행이 준비된 것부터'가 구조적으로 불가능했다(실측: 단계 사이 순서는 등록순 고정).
-        # 서브태스크는 관리 틀일 뿐 백로그는 동급이므로, 열린 마일스톤의 모든 릴레이를 후보로 본다.
-        _relay_of = {}                      # backlog_id → 그 항목을 소유한 릴레이(선정 시 pick 대상)
-        rem = []
-        for _st_x, _row in all_scoped_rows:
-            _rl = store.get(_st_x.st_id)
-            if _rl is None:
-                continue
-            if getattr(_row, "status", "") == "open" and _row not in rem:
-                rem.append(_row)
-                _relay_of[_row.backlog_id] = _rl
-        # [막힘은 판이 비면 자동 복귀(2026-07-29, 사용자 지시)] 실행 가능한 일이 하나도 안 남았는데
-        # blocked만 남아 있으면 판은 그대로 멈춘다 — 후보를 세기 전에 되돌린다.
-        # [보충으로 풀 수 없는 막힘은 접는다(2026-07-29, U-079 4세대 실측: 보충 8건·회의 4회 뒤
-        # 새 백로그 0건으로 파킹)] 되살리기보다 먼저 — e2e 재실증만 남은 원본은 이번 주기에 어떤
-        # 보충으로도 완료될 수 없다. 접어야 주기가 검증까지 가고, 그 항목은 Task 경계 e2e가 다시 건다.
-        from .rule.backlog import drop_unresolvable_blocked as _drop_unres
-        _folded = _drop_unres(flow)
-        if _folded:
-            self._log("backlog_unresolvable_folded", backlogs=list(_folded)[:8])
-        from .rule.backlog import revive_blocked_when_pool_exhausted as _revive
-        _revived = _revive(flow)
-        if _revived:
-            self._log("backlog_unblocked_by_exhaustion", backlogs=list(_revived)[:8])
-            rem = []
-            _relay_of = {}
-            for _st_x, _row in all_scoped_rows:
-                _rl = store.get(_st_x.st_id)
-                if _rl is None:
-                    continue
-                if getattr(_row, "status", "") == "open" and _row not in rem:
-                    rem.append(_row)
-                    _relay_of[_row.backlog_id] = _rl
-        from .rule.backlog import backlog_scope_key
-        relay_st = next((st for st, row in all_scoped_rows
-                         if any(row is item for item in r.backlogs)), None)
-        rem.extend(
-            b for b in r.backlogs
-            if relay_st is not None
-            and blocked_ready_for_revisit(
-                b, all_rows, backlog_scope_key(relay_st.st_id, b.backlog_id))
-            and b not in rem)
-        if not rem:
-            return None
-        by_owner, candidate_owner = {}, {}
-        bots = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
-        for b in rem:
-            owner = int(getattr(b, "submitter", 0) or 0)
-            if not owner and bots:
-                from .role_fit import role_fit
-                owner = max(bots, key=lambda k: role_fit(str(getattr(b, "body", "") or ""), bots[k]))
-            if owner:
-                by_owner.setdefault(owner, []).append(b)
-                candidate_owner[b.backlog_id] = owner
-        if not candidate_owner:
-            return None
-        # [빈손도 응찰한다(2026-07-28, U-079 실측)] 종전엔 '자기가 가진 백로그'를 가진 사람만 물었다.
-        # 자기 몫을 다 끝낸 봇은 다음 판돌이에서 통째로 빠져(실측: 팀 9명 중 4명이 인계 응찰 0회),
-        # 인계가 소수에게 몰리고 남은 갈래는 순서대로 소화됐다. 남은 백로그가 있는 한, 손이 빈 팀원도
-        # 같은 형식으로 응찰할 수 있게 후보를 연다 — 선정되면 그 갈래의 담당이 그 사람으로 바뀐다.
-        # [마무리한 사람도 응찰에 포함(2026-07-29, 사용자: '자기 자신도 그 응찰에 포함될 수 있어야
-        # 다음 작업이 내꺼인게 정답일 수 있으니')] 종전엔 holder를 빈손 후보에서 빼, 자기 백로그가
-        # 없으면 응찰조차 못 했다 — 다음 일이 정말 그의 몫일 때 그 사실을 말할 자리가 없었다.
-        # 선정권은 그대로 holder에게 있고(자기 표도 표일 뿐), 최고 응찰이면 그가 이어받는다.
-        _idle = [m for m in bots if m not in by_owner]
-        for _m in _idle[:6]:                      # wake 비용 상한 — 한 판돌이에 최대 6명
-            by_owner.setdefault(_m, list(rem))
-        # [등록 순서가 곧 실행 순서(2026-07-29, 사용자 지시)] 회의는 백로그를 순서까지 정해 등록한다
-        # (B1·B2·… = 제출 순 = 선행 순). 그 순서가 정본이면 인계마다 응찰을 돌 이유가 없다 —
-        # 다음 항목이 열려 있으면 그대로 넘긴다. 봇 N명을 깨우는 응찰 라운드와 선정 턴이 통째로
-        # 사라지고(인계당 최대 7턴의 문맥 재전송이 준다), 순서는 회의 결정 그대로 지켜진다.
-        # 응찰은 '순서대로 갈 수 없을 때'의 장치로 남는다: 열린 다음 항목이 없을 때만 연다.
-        _seq = sorted(rem, key=lambda b: float(getattr(b, "ts_submit", 0) or 0))
-        _head = next((b for b in _seq if getattr(b, "status", "") == "open"
-                      and b.backlog_id in candidate_owner), None)
-        bids, choice, selected, fallback = [], "", "", False
-        _in_order = _head is not None
-        if _head is not None:
-            selected = _head.backlog_id
-            valid = {selected: candidate_owner[selected]}
-            self._log("backlog_next_in_order", backlog=selected,
-                      to=int(valid[selected]), skipped_bidding=True)
-            try:
-                _l0 = "[순서] 회의가 정한 등록 순서대로 이어받음 — 응찰 없이 다음 차례"
-                if not getattr(_head, "activity", None) or _head.activity[-1] != _l0:
-                    _head.activity.append(_l0)
-            except Exception:
-                pass
-        else:
-            bids = []
-            for owner, owned in by_owner.items():
-                opts = " · ".join(f"{b.backlog_id}:{(b.body or '')[:55]}" for b in owned)
-                try:
-                    ans = await self.run_turn(
-                        flow, owner,
-                        f"[다음 백로그 응찰] 지금 남아 있는 백로그: {opts}\n"
-                        f"지금 다음으로 할 자기 백로그 하나를 골라 `[응찰: N, {owned[0].backlog_id}] 이유` "
-                        f"형식으로 답하세요. 지금 순서가 아니면 `[패스]`. 도구·작업 없이 즉답.\n"
-                        # [점수의 뜻을 구조가 정한다(2026-07-28, U-079 실측: 응찰 10건 중 9건이 9점 —
-                        # N이 무엇을 재는 값인지 아무 데도 없어 '하겠다'는 의사표시가 됐고, 그래서 동점
-                        # 폴백(=제출 순서)이 실질 규칙이 됐다.] 재는 것은 의욕이 아니라 **지금 실행 가능한가**다.
-                        f"N(1~9)은 **지금 바로 실행 가능한 정도**입니다 — 이 백로그가 필요로 하는 입력·선행 "
-                        f"산출물이 **이미 작업공간에 있으면 높게**, 다른 갈래의 결과를 기다려야 하면 낮게. "
-                        f"하고 싶은 마음이 아니라 착수 가능성을 적으세요(선행이 안 끝났으면 `[패스]`).",
-                        Kind.INFO, "worker", micro=True)
-                except Exception:
-                    ans = ""
-                m = re.search(r"\[응찰\s*:\s*([1-9])\s*,\s*(B\d+)\s*\]", str(ans or ""), re.I)
-                if m:
-                    bid_id = m.group(2).upper()
-                    if any(b.backlog_id == bid_id for b in owned):
-                        bids.append((int(m.group(1)), bid_id, owner, str(ans)[:180]))
-                self._log("backlog_handoff_bid", by=owner,
-                          score=(int(m.group(1)) if m else 0), backlog=(m.group(2).upper() if m else ""))
-            if bids:
-                sheet = "\n".join(f"- {bid_id} / {flow._info(owner) or owner} / {score}점: {reason}"
-                                  for score, bid_id, owner, reason in bids)
-                valid = {bid_id: owner for _score, bid_id, owner, _reason in bids}
-                # [응찰·선정은 그 백로그 안에 남는다(2026-07-29, 사용자 지적: '각 백로그마다 백로그 안에')]
-                # 채널 마커로 띄웠더니 공통 흐름에 마일스톤 행으로 끼어들어 작업 생각 표시를 흐트러뜨렸다.
-                # 응찰은 **그 일감의 활동**이다 — 해당 백로그 장부에 붙이면 백로그 행을 펼칠 때 그 자리에 보인다.
-                try:
-                    for _sc, _bid, _own, _rsn in bids:
-                        _b = self._find_backlog_obj(flow, _bid)
-                        if _b is None:
-                            continue
-                        _line = f"[응찰] {flow._info(_own) or _own} {_sc}점 — {str(_rsn or '').strip()[:120]}"
-                        if not getattr(_b, "activity", None) or _b.activity[-1] != _line:
-                            _b.activity.append(_line)
-                except Exception:
-                    pass
-            else:
-                # 전원이 패스했거나 형식 응답이 깨져도 최근 작업자의 배분권은 사라지지 않는다. 실제 남은
-                # 보유 목록을 그대로 보여 직접 선택하게 하고, 그 응답마저 깨질 때만 제출순을 안전망으로 쓴다.
-                sheet = "\n".join(
-                    f"- {b.backlog_id} / {flow._info(candidate_owner[b.backlog_id]) or candidate_owner[b.backlog_id]}"
-                    f" / 패스·응답 없음: {(b.body or '')[:70]}" for b in rem if b.backlog_id in candidate_owner)
-                valid = dict(candidate_owner)
-            try:
-                choice = await self.run_turn(
-                    flow, int(holder),
-                    f"[다음 백로그 선정] 당신이 방금 작업을 마쳐 배분권을 가집니다. 보유자 응찰표:\n{sheet}\n"
-                    f"다음 하나를 직접 골라 `[선정: B번호]`로 답하세요. 도구 없이 즉답.",
-                    Kind.INFO, "worker", micro=True)
-            except Exception:
-                choice = ""
-            cm = re.search(r"\[선정\s*:\s*(B\d+)\s*\]", str(choice or ""), re.I)
-            selected = cm.group(1).upper() if cm else ""
-            fallback = selected not in valid
-        if fallback:
-            if bids:
-                # 응답 장애 안전망: 점수 우선, 동률은 원래 백로그 제출 순서.
-                order = {b.backlog_id: i for i, b in enumerate(rem)}
-                _score, selected, _owner, _reason = max(
-                    bids, key=lambda x: (x[0], -order.get(x[1], 10**9)))
-            else:
-                selected = next(b.backlog_id for b in rem if b.backlog_id in valid)
-        # [선정이 순서도 함께 정한다(2026-07-29, 사용자 지시)] 응찰 점수는 '지금 착수 가능한 정도'다.
-        # 그 값을 한 번 쓰고 버리지 않고 **남은 백로그의 순서**에 반영한다 — 준비된 것이 앞으로 오면
-        # 다음 회차의 폴백(제출순)도 자연히 실행 가능 순서가 되고, 선행 미충족 항목을 집었다가
-        # 되돌리는 헛턴(=문맥 재전송 비용)이 줄어든다. 상대 순서만 바꾸며 항목을 더하거나 빼지 않는다.
-        try:
-            if bids:
-                _score_of = {}
-                for _sc, _bid, _own, _rsn in bids:
-                    _score_of[_bid] = max(int(_sc or 0), _score_of.get(_bid, 0))
-                for _r in (getattr(flow, "backlog_relays", None) or {}).values():
-                    _open = [b for b in (getattr(_r, "backlogs", None) or [])
-                             if getattr(b, "status", "") in ("open", "blocked")]
-                    if len(_open) < 2:
-                        continue
-                    _pos = {id(b): i for i, b in enumerate(_r.backlogs)}
-                    _sorted = sorted(_open, key=lambda b: (-_score_of.get(b.backlog_id, 0),
-                                                           _pos[id(b)]))
-                    if [b.backlog_id for b in _open] != [b.backlog_id for b in _sorted]:
-                        _slots = [i for i, b in enumerate(_r.backlogs) if b in _open]
-                        for _slot, _b in zip(_slots, _sorted):
-                            _r.backlogs[_slot] = _b
-                        if getattr(flow, "log", None):
-                            flow.log("backlog_reordered_by_readiness",
-                                     order=[b.backlog_id for b in _sorted][:8])
-        except Exception:
-            pass
-        owner = valid[selected]
-        # [선정도 그 백로그 안에(2026-07-29, 사용자 지적)] 누가 왜 이 일을 가져갔는지는 그 일감의
-        # 기록이다. 선택 태그(`[선정: B7]`)는 사유가 아니므로 걷어내고, 남는 게 없으면 그 사실을 적는다.
-        try:
-            _why = re.sub(r"\[선정\s*:\s*B\d+\s*\]", " ", str(choice or ""))
-            _why = " ".join(_why.split())[:160]
-            _bsel = None if _in_order else self._find_backlog_obj(flow, selected)
-            if _bsel is not None:
-                _sl = (f"[선정] → {flow._info(owner) or owner} · "
-                       + (f"사유: {_why}" if (_why and not fallback)
-                          else "사유 없이 선택함" if not fallback
-                          else "응답 없음 — 점수·제출순 폴백"))
-                if not getattr(_bsel, "activity", None) or _bsel.activity[-1] != _sl:
-                    _bsel.activity.append(_sl)
-        except Exception:
-            pass
-        # [담당자 생존 확인(2026-07-28, 사용자 지적)] 담당은 백로그 제출자 id에서 온다. 그 사이 그
-        # 직원이 해고되거나 로스터에서 빠지면(특히 '내 직원만' 스코프처럼 로스터가 좁아진 뒤) 없는
-        # 사람에게 일이 배정되고, 그 갈래는 깨우지 못한 채 활성으로 남아 **단일 활성 규칙 때문에 판
-        # 전체가 멈춘다**. 살아있는 팀원 중 직군 적합도가 가장 높은 사람에게 넘긴다(백로그 자체는 유지).
-        if bots and int(owner) not in bots:
-            from .role_fit import role_fit
-            _body = next((str(getattr(b, "body", "") or "") for b in rem
-                          if b.backlog_id == selected), "")
-            _new = max(bots, key=lambda k: role_fit(_body, bots[k]))
-            self._log("backlog_owner_missing", backlog=str(selected),
-                      gone=int(owner), reassigned=int(_new))
-            owner = _new
-        # 응찰/선정 micro 턴 사이에는 다른 표면이 선점할 수 있다. 최종 변이 직전에 전역 잠금을
-        # 다시 읽어, relay-local pick이 다른 SubTask의 active를 보지 못하는 경합을 막는다.
-        # [각자 자기 것을 계속(2026-07-31, 사용자: '다른 작업 공간이고 뭐고 그냥 전체 직원이 계속
-        # 자기꺼 하면 되잖아')] 종전엔 활성이 하나라도 있으면 선정을 접었고(1활성), 그다음엔 작업
-        # 영역이 다를 때만 열었다. 이제 열려 있는 일감은 그대로 나간다 — 남는 제한은 상한뿐이다.
-        from .rule.backlog import (active_backlog_rows, backlog_parallel_width,
-                                   worker_busy_with)
-        # [한 사람은 한 번에 하나(2026-07-31, 사용자: '개인이 어떻게 2개를 동시에 작업할 수 있지')]
-        _busy_id = worker_busy_with(flow, owner)
-        if _busy_id:
-            self._log("backlog_handoff_owner_busy", to=int(owner), holding=str(_busy_id),
-                      requested=str(selected))
-            return None
-        active_now = active_backlog_rows(flow)
-        if active_now and len(active_now) + 1 > backlog_parallel_width():
-            _ast, _ar2, _ab = active_now[0]
-            self._log("backlog_handoff_preempted", st=str(_ast.st_id),
-                      backlog=str(_ab.backlog_id), requested=str(selected), why="동시 진행 상한")
-            return None
-        if active_now:
-            self._log("backlog_parallel_open", requested=str(selected), active=len(active_now))
-        # 선정된 항목이 다른 서브태스크의 릴레이 소유일 수 있다 — 그 릴레이에 배분한다.
-        _rt = _relay_of.get(selected) or r
-        if getattr(_rt, "turn_holder", None) is not None and int(_rt.turn_holder) != int(holder):
-            _rt.turn_holder = int(holder)   # 배분권은 방금 마무리한 사람 — 릴레이가 달라도 같다
-        _rt.pick(int(holder), selected, int(owner))
-        from .rule.milestone import _ckpt
-        _ckpt(flow)
-        self._log("backlog_handoff_selected", by=int(holder), backlog=selected,
-                  to=int(owner), fallback=bool(fallback))
-        picked = next((b for b in rem if b.backlog_id == selected), None)
-        try:
-            await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
-                                  f"[다음 선정] {flow._info(holder) or holder} → "
-                                  f"{flow._info(owner) or owner} · "
-                                  f"{_clip(getattr(picked, 'body', ''), 160)}")
-        except Exception:
-            pass
-        return selected
+    # [인계 폐지(2026-07-31, 사용자: '인계가 왜 있는거야')] 마무리한 사람이 다음 수행자를
+    # 지명하던 배분권 릴레이(_backlog_handoff)는 '한 번에 한 명' 시절의 구조였다. 지금은
+    # 각자 자기 것을 하므로 지명할 것이 없다 — 끝낸 사람이 _start_next_in_order로 곧바로
+    # 등록 순서상 다음 일감을 집는다(선점킥과 같은 규칙). 응찰·배분권 코드도 함께 사라졌다.
 
     @staticmethod
     def _backlog_turn_complete_text(result):
@@ -2109,10 +1841,67 @@ class Sys:
                     f"[완료] 백로그 {b.backlog_id} · {(b.body or '')[:70]} — 작업 기록됨.")
             except Exception:
                 pass
-        # worker가 같은 턴 안에서 이미 다음 항목을 선정했다면 그 선택을 존중한다.
-        if not any(getattr(x, "status", "") == "in_progress" for x in r.backlogs):
-            await self._backlog_handoff(flow, r, int(who))
+        # [인계를 없애고 자기가 집는다(2026-07-31, 사용자: '개인마다 하나씩 계속 진행')] 종전엔
+        # 마무리한 사람이 '다음 수행자를 지명'하는 배분권 릴레이(응찰 포함)가 돌았다 — 한 번에 한
+        # 명이던 시절의 구조다. 지금은 각자 자기 것을 하므로 지명할 것이 없다: 끝낸 사람이 곧바로
+        # 등록 순서상 다음 일감을 집는다(선점킥과 같은 규칙 — 기계가 둘일 이유가 없다).
+        # 그리고 이 완료를 기다리던 중지 일감이 있으면 그 자리에서 깨운다.
+        try:
+            from .rule.backlog import blocked_wakeups as _wake
+            for _key, _wb in _wake(flow, str(getattr(b, "backlog_id", "")), int(who)):
+                self._log("blocked_woken", backlog=str(_wb.backlog_id), by=str(getattr(b, "backlog_id", "")))
+                try:
+                    await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
+                                          f"[대기 해제] {_wb.backlog_id} — 기다리던 작업이 끝나 다시 열렸습니다.")
+                except Exception:
+                    pass
+        except Exception as _e:
+            self._log("blocked_wake_failed", err=str(_e)[:80])
+        await self._start_next_in_order(flow, int(who))
         return True
+
+    async def _start_next_in_order(self, flow, worker=0) -> bool:
+        """끝낸 사람이 등록 순서상 다음 일감을 곧바로 집는다(인계·응찰 없음).
+
+        고르는 규칙은 선점킥과 같다(claim_kick_target) — 이미 손이 찬 사람은 건너뛰고, 동시 상한을
+        지키며, 등록 순서를 따른다. 여기서 바로 세우는 이유는 '끝나자마자 다음'이 사람 눈에 자연스럽고,
+        다음 순회를 기다리며 판이 비는 시간을 없애기 때문이다.
+        """
+        from .rule.backlog import backlog_scope_key, revive_blocked_when_pool_exhausted
+        from .rule.milestone import _ckpt, claim_kick_target
+        t = claim_kick_target(flow)
+        if not t:
+            # 남은 것이 중지뿐이면 그 자리에서 되살린다 — 다음 순회를 기다리며 판이 비지 않게.
+            _rv = revive_blocked_when_pool_exhausted(flow)
+            if _rv:
+                self._log("backlog_unblocked_by_exhaustion", backlogs=list(_rv)[:8])
+                t = claim_kick_target(flow)
+            if not t:
+                return False
+        who2, b2, st_id = t
+        r2 = self._backlog_relay(flow, st_id)
+        if r2 is None:
+            return False
+        try:
+            kicked = getattr(flow, "_claim_kicked", None)
+            if kicked is None:
+                kicked = flow._claim_kicked = set()
+            kicked.add(backlog_scope_key(st_id, b2.backlog_id))
+            r2.pick(int(who2), b2.backlog_id, int(who2))
+            _ckpt(flow)
+            b2._drive_n = 1
+            self._log("backlog_next_in_order", backlog=str(b2.backlog_id), to=int(who2),
+                      skipped_bidding=True)
+            _l = "[순서] 회의가 정한 등록 순서대로 이어받음 — 응찰 없이 다음 차례"
+            if not getattr(b2, "activity", None) or b2.activity[-1] != _l:
+                b2.activity.append(_l)
+            await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
+                                  f"[다음] {flow._info(who2) or who2} · "
+                                  f"{_clip(getattr(b2, 'body', ''), 160)}")
+            return True
+        except Exception as e:
+            self._log("start_next_failed", err=str(e)[:80])
+            return False
 
     async def _drive_one_backlog(self, flow, who, b, st_id) -> bool:
         """진행 중 백로그 하나를 이어-구동한다(구동 상한·완료 판정 포함) — 병렬 구동의 단위."""

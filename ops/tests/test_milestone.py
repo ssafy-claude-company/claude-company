@@ -489,7 +489,7 @@ def test_무지정_보고는_자기백로그_SubTask로_귀속_릴레이_이음(
     rule_report_iter(f, 12, {"results": "메커닉 규격 정의 | pass | mechanic_spec.md 완성"})
     assert b.status == "done"                          # 자기 백로그가 장부에 착지
     assert any(ev == "iter_target_inferred" and kw.get("st") == st.st_id for ev, kw in evs)
-    assert any("[다음 선정]" in n for n in f._pipeline_notes)   # 릴레이가 이어진다(정지 없음)
+    assert any("[다음]" in n for n in f._pipeline_notes)        # 다음 차례 안내가 이어진다(정지 없음)
     # 백로그를 안 쥔 보고는 종전대로 마일스톤 검증(무회귀) — 미착지 안내에 오귀속 코칭 동봉
     out = rule_report_iter(f, 13, {"results": "엉뚱한 산출물 | pass | 파일"})
     assert "미착지" in out and "당신이 집은 백로그" in out

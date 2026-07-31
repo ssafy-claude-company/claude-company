@@ -199,7 +199,8 @@ def test_교착신호_같은백로그_2회차단():
 
 def test_백로그_소진시_회의코칭_아니면_다음선정():
     """[백로그 소진 트리거(2026-07-14, 사용자: '백로그 다 돌고 서브태스크·백로그 회의')] 종결 순간
-    남은 백로그가 있으면 [다음 선정], 하나도 없으면(풀 소진) [백로그 소진] 회의 코칭(meet/vote_stop)."""
+    남은 백로그가 있으면 [다음](순서 안내), 하나도 없으면(풀 소진) [백로그 소진] 회의 코칭.
+    (2026-07-31: 지명 공고 → 순서 안내로 바뀜 — 각자 자기 것을 집는다.)"""
     from system.rule.backlog import handoff_note, relay_for
     f, st, ev = _pipe_flow()
     f._pipeline_notes = []
@@ -208,7 +209,7 @@ def test_백로그_소진시_회의코칭_아니면_다음선정():
     r.submit(B, "프론트 카드")
     r.pick(A, "B1", A); r.done(A, "B1")
     handoff_note(f, r, A, "완료됐습니다")
-    assert any("[다음 선정]" in n for n in f._pipeline_notes)     # 아직 B2 남음
+    assert any("[다음]" in n for n in f._pipeline_notes)          # 아직 B2 남음
     f._pipeline_notes.clear()
     r.pick(A, "B2", B); r.done(B, "B2")                           # 마지막까지 종결
     handoff_note(f, r, B, "완료됐습니다")
@@ -491,7 +492,7 @@ def test_중단_dropped_본인만_처리제외_핸드오프(monkeypatch):
         pass
     handoff_note(f, r, A, "중단됐습니다")
     notes = "\n".join(getattr(f, "_pipeline_notes", []) or [])
-    assert "[다음 선정]" in notes and "B2" in notes               # 남은 보유자 응찰 공고
+    assert "[다음]" in notes and "B2" in notes                    # 남은 순서 안내
     assert ("backlog_dropped" in [e for e, _ in ev])
 
 

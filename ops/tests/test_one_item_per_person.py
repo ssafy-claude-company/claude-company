@@ -16,9 +16,10 @@ def test_선점킥이_이미_일하는_사람을_건너뛴다():
     assert "worker_busy_with" in src and "not _busy(flow, owner)" in src
 
 
-def test_인계가_바쁜_사람에게_얹지_않는다():
-    src = inspect.getsource(sys_core.Sys._backlog_handoff)
-    assert "worker_busy_with" in src and "backlog_handoff_owner_busy" in src
+def test_다음_집기가_바쁜_사람을_건너뛴다():
+    """(2026-07-31: 인계가 폐지돼 이 계약은 claim_kick_target 한 곳에서 지켜진다.)"""
+    src = inspect.getsource(ms.claim_kick_target)
+    assert "worker_busy_with" in src and "not _busy(flow, owner)" in src
 
 
 def test_도구가_두_개째_선점을_막는다():
