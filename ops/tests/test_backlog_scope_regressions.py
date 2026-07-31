@@ -155,7 +155,7 @@ def test_scoped_resolver와_block도구는_현재수행자의_뒤_ST_B1을_선�
             {"id": "B1", "st": "", "reason": "구현 산출물이 먼저 필요함"}
         )
     )
-    assert "차단(" in _tool_text(result)
+    assert "중지(선행 대기" in _tool_text(result)   # 2026-07-31: 사람 말로 '중지'(막힘 표시와 같은 말)
     assert backlog1.status == "open"
     assert backlog2.status == "blocked"
     assert backlog2.block_reason == "구현 산출물이 먼저 필요함"

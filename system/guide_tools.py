@@ -922,8 +922,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
               "[차단 — 선행 필요] 내 백로그가 **다른 일(선행)이 먼저 돼야** 진행 가능할 때: 이 백로그를 "
               "잠시 보류(blocked, 버리지 않고 보존·나중 재개)하고 순차 릴레이의 자리를 넘긴다 — 정지한 채 "
               "릴레이를 막지 않는 출구다. id=백로그, st=단위 ID/목표, reason=무슨 선행이 필요한가. 중단(drop=완수 불가)과 "
-              "다르다: 차단은 선행이 풀리면 재방문한다.",
-              {"id": str, "st": str, "reason": str})
+              "다르다: 차단은 선행이 풀리면 재방문한다. waits_for=기다리는 백로그 id(예: B3) — 적어 두면 "
+              "그것이 끝나는 순간 이 일감이 자동으로 다시 열린다(비워 두면 이유 문장에서 B번호를 읽는다).",
+              {"id": str, "st": str, "reason": str, "waits_for": str})
         async def block_backlog(args):
             from .rule.backlog import BacklogError, handoff_note
             from .rule.milestone import flush_pipeline_notes as _flush, _ckpt as _ck
@@ -938,15 +939,30 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             if _err:
                 return _ok(f"차단 불가: {_err}")
             _tgt, r, b = _hit
+            # [무엇을 기다리는지 적는다(2026-07-31, 사용자 지시)] 적어 두면 그것이 끝나는 순간
+            # 이 일감이 자동으로 다시 열린다. 안 적었으면 이유 문장에서 B번호를 읽고, 그마저 없으면
+            # '지금 일하는 사람들이 손을 비울 때'로 둔다(종전처럼 소진까지 기다리지 않게).
+            _wf = str(args.get("waits_for") or "").strip().upper()
+            if not _wf:
+                _m = _re.search(r"\bB(\d+)\b", reason.upper())
+                _wf = f"B{_m.group(1)}" if _m else ""
+            _ww = 0
+            if not _wf:
+                from .rule.backlog import active_backlog_rows as _act
+                _others = [int(getattr(x[2], "assignee", 0) or 0) for x in _act(flow)
+                           if int(getattr(x[2], "assignee", 0) or 0) != int(me_id)]
+                _ww = _others[0] if _others else 0
             try:
-                # next_starter=나(차단자) — 배분권을 쥐고 [다음 선정]으로 선행 작업 수행자를 고른다.
-                _bl, _deadlock = r.block(int(me_id), bid, int(me_id), reason)
+                _bl, _deadlock = r.block(int(me_id), bid, int(me_id), reason,
+                                         waits_for=_wf, waits_who=_ww)
             except BacklogError as e:
                 return _ok(f"차단 불가: {e}")
             handoff_note(flow, r, me_id, "차단됐습니다(선행 대기)")
             _ck(flow)
-            _msg = (f"백로그 {bid} 차단(선행 대기 — 보존, 나중 재개). 순차 자리를 넘겼습니다: 당신이 "
-                    f"pick_backlog(id)로 선행 작업 수행자를 선정하거나 남은 백로그를 진행시키세요.")
+            _msg = (f"백로그 {bid} 중지(선행 대기 — 보존). "
+                    + (f"{_wf}가 끝나면 자동으로 다시 열립니다. " if _wf
+                       else "기다리는 작업이 끝나면 자동으로 다시 열립니다. ")
+                    + "당신은 그동안 다음 일감을 집으면 됩니다(pick_backlog).")
             if _deadlock:
                 _msg += (f" ⚠ 같은 백로그가 {_bl.block_count}회 차단됐습니다 — 접근이 결과를 못 바꾸는 "
                          f"신호입니다. renegotiate_criterion(조건 재협상) 또는 vote_stop(판 접기)을 고려하세요.")

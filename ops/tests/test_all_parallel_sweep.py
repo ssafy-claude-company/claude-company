@@ -7,9 +7,10 @@ from system.rule import milestone as ms
 from system import sys_prompt
 
 
-def test_인계에_1활성_관문이_없다():
-    src = inspect.getsource(sys_core.Sys._backlog_handoff)
-    assert "backlog_parallel_width()" in src
+def test_다음_집기에_1활성_관문이_없다():
+    """(2026-07-31: 인계 폐지 — 다음 일감을 세우는 자리는 _start_next_in_order 하나다.)"""
+    src = inspect.getsource(sys_core.Sys._start_next_in_order)
+    assert "claim_kick_target" in src
     assert "같은 작업 영역" not in src and "write_scopes_conflict" not in src
 
 
