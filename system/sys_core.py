@@ -2361,38 +2361,16 @@ class Sys:
                 _need_ratify = ("verifier" in _why or "비준" in _why)
                 _tries = int(getattr(flow, "_e2e_ratify_tries", 0) or 0)
                 if _need_ratify and _tries < 2:
+                    # [출구는 정식 단계 회의다(2026-08-01, U-442 실측)] 임시 회의를 열어 봤지만 그
+                    # 결론은 어디에도 착지하지 않았다(ms_consensus_empty) — GOAL 실증 명령을 바꾸는
+                    # 자리는 GOAL@ 마커를 붙이는 **마일스톤 회의**뿐이다. 여기서는 길만 비켜 준다:
+                    # 경계를 잠시 쉬면 단계 기계가 meeting_stage()='milestone'로 그 회의를 연다
+                    # (_goal_verifier_unrunnable — rule/milestone).
                     flow._e2e_ratify_tries = _tries + 1
                     flow._stage_stuck = None
-                    try:
-                        await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
-                            "[실증 재비준 필요] e2e를 열 수 없습니다 — GOAL 완수조건이 비준한 실증 "
-                            "명령을 이 작업공간에서 실행할 수 없습니다.\n" + _why + "\n"
-                            "**meet를 열어 각 조건의 `실증:`을 실제로 존재하고 통과하는 명령으로 "
-                            "재비준**하세요(있는 파일만 씁니다). 재비준이 끝나면 e2e가 열립니다.")
-                    except Exception:
-                        pass
-                    flow._e2e_ratify_until = time.monotonic() + 900   # 15분간 경계를 쉰다
-                    # [말만 걸어 두면 아무도 안 온다(2026-08-01, U-442 실측)] 유예만 주고 채널에
-                    # 글만 남겼더니 30분 동안 턴이 0이었다(할 일이 없어 아무도 안 깨어남 → 무활동
-                    # 중단). 회의를 **직접 연다** — 단계 회의와 같은 경로로.
-                    try:
-                        from .rule.communication import meet as _stage_meet
-                        _cmds = "\n".join(
-                            f"  · {c}" for c in sorted(_existing_verifier_files(flow))[:8])
-                        await _stage_meet(flow, flow.anchor, {
-                            "topic": "실증 명령 재비준 — GOAL 완수조건",
-                            "my_opinion": (
-                                "e2e를 열 수 없습니다: GOAL 조건이 비준한 실증 명령을 이 작업공간에서 "
-                                "실행할 수 없습니다.\n" + _why[:400] +
-                                "\n각 조건의 `실증:`을 **실제로 있는 검증기**로 재비준합시다. "
-                                "지금 작업공간에 있는 것들:\n" + (_cmds or "  (검증기 없음 — 먼저 만들어야 합니다)")
-                            )[:1500],
-                            "_sys_open": True})
-                        self._log("e2e_ratify_meeting_opened", tries=_tries + 1)
-                    except Exception as _e:
-                        self._log("e2e_ratify_meeting_failed", err=str(_e)[:100])
+                    flow._e2e_ratify_until = time.monotonic() + 900
                     self._log("e2e_ratify_meeting_requested", reason=_why[:180], tries=_tries + 1)
-                    return True
+                    return False          # 처리하지 않음 — 단계 회의가 이어받는다
                 flow._stage_stuck = "e2e-open"
                 self._log("e2e_boundary_open_failed", reason=_why[:180])
                 return True
