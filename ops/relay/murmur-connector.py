@@ -41,6 +41,7 @@ LLM_KEY = os.environ.get("LLM_KEY", "").strip()
 HUMAN = os.environ.get("MURMUR_HUMAN", "").strip() in ("1", "true", "yes")
 CMD = os.environ.get("MURMUR_CMD", "").strip()
 CMD_TIMEOUT = int(os.environ.get("MURMUR_CMD_TIMEOUT", "600"))
+_spec_qs = ""
 IDLE_SLEEP = 2.0
 
 
@@ -99,6 +100,36 @@ def _ask_command(req):
     return _wrap_answer(proc.stdout)
 
 
+def _specs():
+    """이 컴퓨터가 내놓는 자원. 사람이 적는 대신 재서 올린다.
+
+    [남는 연산 2026-08-01, 현준-4] 사람이 적으면 거짓말한다 - 24GB라고 적어 두고 4GB로
+    돌리면 등급 배정이 통째로 틀어진다. 못 재면 안 보낸다(0으로 보내면 없다는 뜻이 된다).
+    """
+    out = {}
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            name, mib = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")]
+            out["gpu"] = name
+            out["vram_gb"] = str(int(int(mib) / 1024))
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as fp:
+            for ln in fp:
+                if ln.startswith("MemTotal:"):
+                    out["ram_gb"] = str(int(int(ln.split()[1]) / 1024 / 1024))
+                    break
+    except Exception:
+        pass
+    return out
+
+
 def _ask_human(req):
     """사람이 답한다. 프롬프트를 보여 주고 타이핑을 기다린다.
 
@@ -130,10 +161,17 @@ def main():
               file=sys.stderr)
         return 2
     auth = {"Authorization": f"Bearer {TOKEN}"}
+    # 자원은 한 번 재서 계속 같이 보낸다 - 매번 재면 느려지고, 안 보내면 등급이 안 선다.
+    import urllib.parse
+    spec = _specs()
+    global _spec_qs
+    _spec_qs = ("?" + urllib.parse.urlencode(spec)) if spec else ""
+    if spec:
+        print("  내놓는 자원:", spec)
     print(f"붙는 중: {MURMUR}  ←  " + ("사람(직접 입력)" if HUMAN else (CMD if CMD else LLM_URL)))
     while True:
         try:
-            got = _get(f"{MURMUR}/api/relay/pending/", auth)
+            got = _get(f"{MURMUR}/api/relay/pending/{_spec_qs}", auth)
         except urllib.error.HTTPError as e:
             if e.code == 403:
                 print("토큰이 거부됐습니다. 다시 발급하세요.", file=sys.stderr)
