@@ -842,7 +842,8 @@ def test_DRAFT쓰기실패_wakecap경계_사람개입은_등록보류하고_큐�
     from system.rule import floor
 
     async def fill_to_cap(policy, state, opening, speak, bid=None, max_turns=64,
-                          on_alloc=None, speak_many=None):   # [동시 발언] 엔진 시그니처 확장 수용
+                          on_alloc=None, speak_many=None, can_close=None):
+        # [동시 발언·빈칸 종결보류] 엔진 시그니처 확장 수용
         alloc = floor.Allocation(floor.SELF, next=12, reason="wake_cap 경계 대본")
         for _ in range(24):
             await speak(12, alloc)

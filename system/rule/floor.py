@@ -282,7 +282,7 @@ def parallel_floor_width() -> int:
 
 async def run_conversation(policy: FloorPolicy, state: FloorState, opening: Turn, speak,
                            bid=None, max_turns: int = 64, on_alloc=None,
-                           speak_many=None) -> List[Turn]:
+                           speak_many=None, can_close=None) -> List[Turn]:
     """대화 엔진 — 배분은 정책에, IO(깨우기·응찰 수집)는 콜백에 위임하는 순수 루프(매체·내용 불가지).
 
       speak(speaker_id, alloc) -> Turn|None : 배분받은 화자의 턴 실행. None=화자 실행 불가 → 종결.
@@ -318,7 +318,23 @@ async def run_conversation(policy: FloorPolicy, state: FloorState, opening: Turn
             if on_alloc:
                 on_alloc(alloc)
         if alloc.kind == CLOSE:
-            break
+            # [빈칸을 두고 닫지 않는다(2026-08-01, U-478 실측)] 새 판의 목표 회의가 기고 0건인 채
+            # 전원 [종료]로 닫혔다 — 결론 구획엔 빈칸 2개가 그대로였고, 판은 목표도 없이 죽었다.
+            # 종결은 대화의 합의지만 **결론의 완성**은 소비자가 안다: 미완이면 한 라운드 더 연다.
+            if can_close is not None and not can_close():
+                alloc = Allocation(OPEN, candidates=state.silence_order(),
+                                   reason="결론 미완 — 빈칸이 남아 종결 보류")
+                if on_alloc:
+                    on_alloc(alloc)
+                bids = (await bid(alloc.candidates, OPEN)) if bid is not None else []
+                _bids_seen = list(bids or [])
+                alloc = policy.resolve_open(state, turn, list(bids or []))
+                if on_alloc:
+                    on_alloc(alloc)
+                if alloc.kind in (CLOSE, CLOSE_VOTE):
+                    break                      # 그래도 아무도 안 나서면 종전대로 닫는다
+            else:
+                break
         # [동시 발언(2026-07-30)] ②자기선택(SELF)으로 낙찰된 라운드는, 같은 응찰에서 필요를 밝힌
         # 다른 후보들도 함께 말하게 한다 — 그들은 어차피 다음 라운드에 같은 말을 할 사람들이고,
         # 발언은 산출물이 텍스트뿐이라 동시에 해도 서로를 깨뜨리지 않는다. 낙찰자만 종전 권한

@@ -1420,10 +1420,21 @@ async def meet(flow, me_id, args):
             # 큰 회의 대응이었고 단계 분리로 불필요해져 폐지(2026-07-14).
             _ran_discuss = not _skip_discuss   # 이번 패스가 실제 토론을 돌았는가(무진전 판정의 전제)
             if not _skip_discuss:
+                # [빈칸을 두고 닫지 않는다(2026-08-01, U-478 실측)] 결론 구획에 `⟦…⟧`가 남아
+                # 있으면 대화가 합의로 닫혀도 회의는 끝난 게 아니다 — 한 라운드 더 연다.
+                def _can_close():
+                    if not _pipe:
+                        return True
+                    try:
+                        _ph0, _obj0 = _ms_dstat(_dread(flow, "DRAFT.md") or "")
+                    except Exception:
+                        return True
+                    return _ph0 == 0
                 await run_conversation(policy, st, _t0,
                                        _speak, bid=(_bid if tt else None),
                                        max_turns=(budget if tt else budget + 1), on_alloc=_on_alloc,
-                                       speak_many=(_speak_many if tt else None))
+                                       speak_many=(_speak_many if tt else None),
+                                       can_close=(_can_close if tt else None))
             _skip_discuss = False
             _flush_minutes()
             # [결론 직전 지명 존중(2026-07-21)] 완성 컷에 실려온 지명자에게 답 슬롯 1턴 — 그 편집이
