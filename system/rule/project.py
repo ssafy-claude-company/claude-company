@@ -189,7 +189,23 @@ async def deploy(flow, args, me_id=None):
     # *동시*만 막고 *순차* 재배포는 못 막음). 직전 배포 이후 Write/Edit가 0이면(=같은 코드) 차단하고 'URL을
     # curl 확인하라'로 돌린다 — 진짜 결함을 고쳤으면 writes가 늘어 통과(교차검증 cc_held와 같은 정신, deploy판).
     _dwrites = sum((getattr(flow, "writes_by_role", None) or {}).values())
-    if getattr(flow, "_deployed_once", False) and _dwrites == getattr(flow, "_deploy_writes", -1):
+    # [저작 카운터는 codex 판에서 영원히 0이다(2026-08-01, U-442 실측)] writes_by_role은 guide의
+    # Write/Edit 도구만 센다. 그런데 codex 봇은 파일을 샌드박스 안 자기 편집기로 고친다 — 최근 24시간
+    # 감사 로그에 Write/Edit가 **0건**이었다(전부 report_iter·run·pick_backlog 같은 guide 도구). 그래서
+    # `_dwrites == _deploy_writes`가 영구히 참이 되고, 첫 배포 뒤 **모든 재배포가 차단**됐다. 실측 귀결:
+    # 팀은 새 빌드(HEAD d248459)를 만들어 검증까지 끝냈는데 공개 앱 풀은 옛 자산만 서빙하고
+    # release-manifest.json은 404 → 공개 URL verifier 실패 → B1 2회 차단 → 교착 → 단계 파킹.
+    # 이미 있는 작업공간 내용 해시(간접 쓰기까지 잡으려고 만든 것)를 같이 본다 — 둘 다 그대로일 때만
+    # '변경 없음'이다.
+    _stamp = ""
+    try:
+        from .milestone import workspace_artifact_stamp as _was
+        _stamp = str(_was(flow) or "")
+    except Exception:
+        _stamp = ""
+    _same_stamp = bool(_stamp) and _stamp == str(getattr(flow, "_deploy_stamp", "") or "")
+    if (getattr(flow, "_deployed_once", False) and _dwrites == getattr(flow, "_deploy_writes", -1)
+            and (_same_stamp or not _stamp)):
         if flow.log:
             flow.log("deploy_thrash", writes=_dwrites)
         return _ok("[재배포 차단 — 직전 배포 후 코드 변경 없음] Render 무료 빌드는 60초+라 deploy가 "
@@ -264,6 +280,7 @@ async def deploy(flow, args, me_id=None):
     from ..deploy import deploy_sync
     flow.deploy_inflight = True
     flow._deploy_writes = _dwrites         # 이 배포 시점의 저작 수 — 다음 배포가 '변경 없음'을 판정
+    flow._deploy_stamp = _stamp            # 같은 판정의 2차 축 — 간접 쓰기(codex 편집기)까지 포함
     _dep = {"on": False}
 
     async def _do_deploy():
