@@ -1686,6 +1686,22 @@ class Sys:
         rot = flow.leader_segment % len(team)
         cap = max(1, int(os.environ.get("ORGANT_FLOOR_OFFERS", "3") or "3"))
         cands = (team[rot:] + team[:rot])[:cap]      # 회전 = 응찰 기회 공정성(장부 없는 결정론)
+        # [계속 안 나서는 사람은 덜 묻는다(2026-08-01, U-442 실측)] 세그먼트 경계 응찰은 값이 있다 —
+        # 467번 물어 159번(34%) 실제 발언이 나왔다. 낭비는 **거절이 이어지는 사람**에 몰려 있었다:
+        # 한 QA는 82번 질문에 최근 73번 연속 '보탤 말 없음'. 연속 거절이 쌓이면 묻는 간격을 벌리고
+        # (완전히 빼지 않는다 — 판이 바뀌면 할 말이 생긴다), 한 번이라도 나서면 즉시 원복한다.
+        _dec = getattr(flow, "_seg_decline", None)
+        if _dec is None:
+            _dec = flow._seg_decline = {}
+        def _asks_now(m):
+            st = int(_dec.get(int(m), 0) or 0)
+            if st < 3:
+                return True                      # 초반 거절은 그냥 묻는다
+            gap = min(8, 2 ** (st // 3))         # 3연속 거절부터 2·4·8 세그먼트 간격
+            return (int(flow.leader_segment) % gap) == 0
+        _kept = [m for m in cands if _asks_now(m)]
+        if _kept:
+            cands = _kept
         # [발언 누진 임계(2026-07-21, U-036 재작업 #2)] 회의(floor.resolve_open)와 같은 곡선을 작업 중
         # 끼어들기에도 — 판 인원(팀+앵커)이 클수록 더 높은 확신만 세그먼트를 끊는다. env·기본값 공유.
         from .rule.floor import bid_threshold as _bth
@@ -1710,7 +1726,10 @@ class Sys:
             for m, res, _note in await _fork_collect(flow, lead, cands, _probe_body):
                 s = 0 if res is None else _bid_score(res)
                 bids.append((int(m), s))
-                self._log("floor_bid", surface="segment", who=int(m), score=s)
+                # 연속 거절 장부 — 나서면 0으로, 아니면 +1(다음부터 간격이 벌어진다).
+                _dec[int(m)] = 0 if s > 0 else int(_dec.get(int(m), 0) or 0) + 1
+                self._log("floor_bid", surface="segment", who=int(m), score=s,
+                          declines=_dec[int(m)])
             pos = sorted((b for b in bids if b[1] >= _req), key=lambda b: -b[1])   # 동률=회전 순(stable) · 임계 미달=패스 동형
             if not pos:
                 self._log("floor_alloc", surface="segment", policy="turn-taking", kind="continue", nxt=int(lead))
