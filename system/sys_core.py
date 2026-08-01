@@ -2328,8 +2328,28 @@ class Sys:
             # 시작해 접두사 검사가 **실패를 성공으로 읽었다** — 빈 분모로 6턴을 태우고 파킹하는데
             # 로그에는 실패가 안 남았다. 분모가 실제로 섰는지(증거)를 본다.
             if getattr(flow, "e2e_checklist", None) is None:
+                # [막힘의 출구는 파킹이 아니라 회의다(2026-08-01, U-442 실측)] 실증 명령이 없는
+                # 파일을 가리켜 e2e가 못 열릴 때, SYS는 "회의에서 비준하라"고 말하면서도 그 자리에서
+                # 판을 파킹해 **회의를 열 기회 자체를 없앴다**(재개 → 즉시 같은 실패 → 파킹 반복).
+                # 비준이 없어 못 여는 것이면 그 비준 회의를 열어 준다 — 사람을 부르는 건 그다음이다.
+                _why = str(opened)[:400]
+                _need_ratify = ("verifier" in _why or "비준" in _why)
+                _tries = int(getattr(flow, "_e2e_ratify_tries", 0) or 0)
+                if _need_ratify and _tries < 2:
+                    flow._e2e_ratify_tries = _tries + 1
+                    flow._stage_stuck = None
+                    try:
+                        await flow.guide.post(int(getattr(flow, "user_channel", 0) or 0), 0,
+                            "[실증 재비준 필요] e2e를 열 수 없습니다 — GOAL 완수조건이 비준한 실증 "
+                            "명령을 이 작업공간에서 실행할 수 없습니다.\n" + _why + "\n"
+                            "**meet를 열어 각 조건의 `실증:`을 실제로 존재하고 통과하는 명령으로 "
+                            "재비준**하세요(있는 파일만 씁니다). 재비준이 끝나면 e2e가 열립니다.")
+                    except Exception:
+                        pass
+                    self._log("e2e_ratify_meeting_requested", reason=_why[:180], tries=_tries + 1)
+                    return True
                 flow._stage_stuck = "e2e-open"
-                self._log("e2e_boundary_open_failed", reason=str(opened)[:180])
+                self._log("e2e_boundary_open_failed", reason=_why[:180])
                 return True
             flow._e2e_no_progress = 0
             flow._e2e_turns = 0
