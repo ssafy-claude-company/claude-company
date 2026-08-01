@@ -2319,8 +2319,14 @@ def _goal_verifier_unrunnable(flow) -> bool:
     ws = str(getattr(flow, "workspace", "") or "")
     if not ws:
         return False
-    for ref in _goal_locked_refs(flow):
-        cmd = str(getattr(ref, "verify", "") or "")
+    cmds = [str(getattr(ref, "verify", "") or "") for ref in _goal_locked_refs(flow)]
+    # 잠금 참조가 아직 안 세워진 판(중간 주기까지만 돈 경우)에서는 Task 완수조건 원문에서 읽는다 —
+    # 화면·장부가 보는 것과 같은 곳이다(`- 조건 | 실증: <명령>`).
+    _acc = str(getattr(getattr(flow, "current", None), "acceptance", "") or "")
+    for line in _acc.splitlines():
+        if "실증:" in line:
+            cmds.append(line.split("실증:", 1)[1].strip())
+    for cmd in cmds:
         if not cmd:
             continue
         if direct_verifier_command(cmd, ws, require_existing=False) and not direct_verifier_command(
