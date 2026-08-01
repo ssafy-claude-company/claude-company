@@ -113,6 +113,30 @@ def _existing_verifier_files(flow) -> list:
     return out
 
 
+
+_AUTO_CONT_MARK = "[SYS 자동 이어가기"
+
+
+def _unwrap_auto_continue(text) -> str:
+    """[이어가기 안내가 스스로를 감싼다(2026-08-01, U-442 대화 전문 실측)] 자동 이어가기는 '원문 그대로'를
+    인용해 보내는데, 그 원문(last_work_body)이 직전 이어가기 본문이면 안내문까지 함께 인용된다. 실측:
+    채용 봇의 한 위임이 **59겹**까지 중첩돼 본문이 7,000자로 불었다(겹당 정확히 +110자). 봇은 매번
+    '처음부터 다시 하지 말 것'을 59번 읽고 진짜 지시는 맨 안쪽에서 찾아야 했다. 겹을 벗겨 원래 지시만
+    남긴다 — 인용할 것은 사람이 준 일이지 시스템이 붙인 안내가 아니다."""
+    s = str(text or "").strip()
+    for _ in range(64):
+        if not s.startswith(_AUTO_CONT_MARK):
+            break
+        nl = s.find("\n")
+        if nl < 0:
+            return ""                      # 인용 없는 변형(끊김 안내)은 남길 원문이 없다
+        s = s[nl + 1:].strip()
+        tail = s.rfind("\n\n[이어가기]")
+        if tail > 0:
+            s = s[:tail].strip()
+    return s
+
+
 class Sys:
     def __init__(self, guide, guild_id, organt_builder, bot_info: Optional[Dict[int, str]] = None,
                  workspace=None, projects_path=None, session_dir=None, max_continue=6,
@@ -1468,7 +1492,8 @@ class Sys:
                     "목표가 *객관적으로 실증*됐습니다 — 담당 owner의 일은 done입니다(시스템이 완료로 인정). "
                     "**complete_task로 마감하세요.** 추가 QA·polish·재배포는 별도 요청 — 목표는 이미 달성됐고 "
                     "무한 재검증은 진행이 아닙니다.")
-        _orig = (getattr(flow.current, "last_work_body", "") or "").strip() if flow.current else ""
+        _orig = _unwrap_auto_continue(
+            getattr(flow.current, "last_work_body", "") if flow.current else "")
         if _orig:
             # [정밀 복구 — 드리프트 차단] 리더가 재작문한 위임이 아니라 *원래 보냈던 위임 원문* 그대로 이어 보낸다
             # (부팅 복구 5:13≠5:47 드리프트 차단). owner는 원래 받았던 그 지시로 정확히 재개한다.
