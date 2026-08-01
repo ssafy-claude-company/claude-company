@@ -4341,8 +4341,33 @@ def rule_report_iter(flow, me_id, args) -> str:
         return "검증할 주기가 없습니다 — set_milestone으로 주기를 먼저 여세요."
     tgt = _find_subtask(ms, args.get("target"))
     if str(args.get("target") or "").strip() and tgt is None:
-        return (f"대상 SubTask를 못 찾았습니다: {str(args.get('target'))[:40]} — "
-                f"현재 주기의 SubTask: {', '.join(s.st_id for s in ms.subtasks) or '(없음)'}")
+        # [백로그 id로도 대상을 찾는다(2026-08-01, U-442 실측)] 화면·[다음] 안내·서로의 발언이 모두
+        # 백로그를 `B1`로 부르는데 report_iter의 target은 SubTask id만 받았다. 실측(ch267): 배포가
+        # "`B1`은 유효한 guide target이 아니며 report_iter(target=B1)는 대상 없음으로 거절됐다"를
+        # 채널에 올렸고, 팀은 정본 id를 되묻느라 턴을 태우다 B1/B2를 blocked로 둔 채 주기가 5시간
+        # 넘게 멈췄다. 부르는 이름과 받는 이름이 다르면 그건 봇의 실수가 아니라 표면의 결함이다.
+        _q = str(args.get("target") or "").strip().upper().lstrip("/")
+        _rls = getattr(flow, "backlog_relays", None) or {}
+        _hits = []
+        for _st in ms.subtasks:
+            for _b in list(getattr(_rls.get(_st.st_id), "backlogs", None) or []):
+                _bid = str(getattr(_b, "backlog_id", "") or "").upper()
+                if _bid and (_bid == _q or f"{_st.st_id}/{_bid}".upper().endswith("/" + _q)):
+                    _hits.append((_st, _b))
+        if len(_hits) > 1:      # 내 것이 있으면 그것 — 없으면 후보를 정본 id로 되돌려준다
+            _mine = [h for h in _hits if int(getattr(h[1], "assignee", 0) or 0) == int(me_id)]
+            _hits = _mine or _hits
+        if len(_hits) == 1:
+            tgt = _hits[0][0]
+            if flow.log:
+                flow.log("iter_target_from_backlog", st=tgt.st_id,
+                         bl=str(getattr(_hits[0][1], "backlog_id", "")), by=int(me_id))
+        elif _hits:
+            return ("백로그 이름이 여러 단위에 있습니다 — 어느 것인지 정본 id로 지정하세요: "
+                    + ", ".join(f"{st.st_id}/{getattr(b, 'backlog_id', '')}" for st, b in _hits[:8]))
+        else:
+            return (f"대상 SubTask를 못 찾았습니다: {str(args.get('target'))[:40]} — "
+                    f"현재 주기의 SubTask: {', '.join(s.st_id for s in ms.subtasks) or '(없음)'}")
     # [완료 단위 재검증 차단(2026-07-21, U-039 재개 실측: 앵커가 이미 done인 ST-1에 계속 report_iter →
     # iter_n++·ms_iter_pass 반복 루프로 크레딧 공회전, 릴레이는 ST-2로 안 넘어감)] 이미 done인
     # SubTask는 재검증하지 않는다 — 다음 미완 단위 백로그로 가라고 코칭(재개 시 앵커의 스테일
