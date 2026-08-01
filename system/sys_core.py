@@ -2322,6 +2322,13 @@ class Sys:
                 return True
             return False
 
+        # [비준할 시간을 준다(2026-08-01, U-442 실측)] 재비준을 요청해 놓고 다음 순회에서 곧바로 다시
+        # e2e를 열려 하면, 회의가 열리기도 전에 시도 횟수만 태우고 파킹한다(실측: 같은 초에 2회 소진).
+        # 요청 뒤 몇 세그먼트는 경계 검사를 쉬어 팀이 실제로 meet를 열 수 있게 한다.
+        _skip = int(getattr(flow, "_e2e_ratify_skip", 0) or 0)
+        if _skip > 0:
+            flow._e2e_ratify_skip = _skip - 1
+            return False
         if getattr(flow, "e2e_checklist", None) is None:
             opened = rule_e2e_open(flow)
             # [문자열 대신 사실로 판정(2026-07-27, 전수감사)] 실패 문자열도 "e2e 개시 불가…"로
@@ -2346,6 +2353,7 @@ class Sys:
                             "재비준**하세요(있는 파일만 씁니다). 재비준이 끝나면 e2e가 열립니다.")
                     except Exception:
                         pass
+                    flow._e2e_ratify_skip = 4      # 이 동안은 경계를 쉬고 회의·작업이 돌게 둔다
                     self._log("e2e_ratify_meeting_requested", reason=_why[:180], tries=_tries + 1)
                     return True
                 flow._stage_stuck = "e2e-open"
