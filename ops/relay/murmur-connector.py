@@ -173,9 +173,18 @@ def _isolated_argv(cmd):
         for d in ("/lib", "/lib64", "/bin", "/sbin"):
             if os.path.exists(d):
                 argv += ["--ro-bind", d, d]
+        # [실측 2026-08-01, 현준-4] 새 /tmp만 주면 사용자의 모델 스크립트가 안 보여
+        # 명령 모드를 아예 못 쓴다 - 가두기만 하고 실행이 안 되면 격리가 아니라 고장이다.
+        # 커넥터를 띄운 폴더만 읽기 전용으로 들여보낸다: 모델을 부르는 것은 되고,
+        # 홈 전체와 다른 폴더는 여전히 안 보인다.
         argv += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-                 "--unshare-user", "--unshare-pid", "--die-with-parent",
-                 "--", "/bin/sh", "-c", cmd]
+                 "--unshare-user", "--unshare-pid", "--die-with-parent"]
+        # 작업 폴더 바인드는 --tmpfs /tmp **뒤에** 와야 한다. 앞에 두면 tmpfs가 덮어
+        # 폴더가 사라진다(실측: bwrap Can't chdir). 순서가 곧 뜻인 인자다.
+        cwd = os.getcwd()
+        if cwd not in ("/", "/root", os.path.expanduser("~")):
+            argv += ["--ro-bind", cwd, cwd, "--chdir", cwd]
+        argv += ["--", "/bin/sh", "-c", cmd]
         return argv
     return None
 
