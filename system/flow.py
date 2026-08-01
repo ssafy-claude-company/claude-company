@@ -169,6 +169,7 @@ class Flow:
         self._consec_fail_t0 = 0.0     # 연속실패 윈도 시작 ts
         self._deploy_block_n = 0       # 배포 차단 카운트
         self._deploy_writes = -1       # 마지막 배포 시점 쓰기 누계(-1=미배포)
+        self._deploy_stamp = ""        # 마지막 배포 시점 작업공간 내용 해시(간접 쓰기까지 잡는다)
         self._deployed_once = False    # 1회 이상 배포됨
         self.deploy_capped = False     # 배포 상한 도달
         self.deploy_inflight = False   # 배포 진행 중
