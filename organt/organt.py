@@ -335,6 +335,9 @@ class Organt:
             if _rv is not None:
                 _eng = (await _rv(bot_id=getattr(self, "_organt_bot_id", None),
                                   channel_id=getattr(self, "_organt_tenant", None))) or {}
+                # 웹이 알려준 종류를 다음 턴 판정에 남긴다 - 이름 추측을 대신한다.
+                if _eng.get("kind"):
+                    self._engine_kind = _eng["kind"]
         except Exception:
             _eng = {}
         async with botpool.slot(tenant=getattr(self, "_organt_tenant", None)):

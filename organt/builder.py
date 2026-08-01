@@ -17,7 +17,7 @@ from system.protocol import Marker
 from .organt import Organt, build_options, load_persona, pinned_cwd
 # [실행 방법 분리(2026-07-30)] 어느 엔진으로 도는가는 문자열 접두사가 아니라 이 함수가 정한다 —
 # 판단이 코드 여기저기로 번지지 않게. 설계: ops/2026-07-30-실행방법-분리-설계.md
-from .runtime import is_codex
+from .runtime import is_codex, kind_of
 
 _USAGE_BG = set()   # [GC 방어] fire-and-forget 사용량 보고 태스크 참조 보존
 from system.permissions import make_pre_tool_use_hook
@@ -243,7 +243,10 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
         _org._organt_bot_id = organt_id
         # [GPT 봇(2026-07-22, 사용자: 'gpt로 봇들 지능 바꿔')] 모델이 gpt-*면 Claude SDK 대신 codex 경로로
         # 돈다 — 원 guide 도구를 그대로 심어 CodexBackend가 HTTP 브리지로 codex에 물린다(Claude 봇은 불변).
-        if _m and is_codex(_m) and flow is not None:
+        # [내 LLM 경로 2026-08-01, 현준-4] 이름으로 추측하지 않는다. 실행 설정이 종류를
+        # 알려주면 그것을 쓴다 - 이름이 실행 방식을 정하면 이름을 바꿀 때 경로가 바뀐다.
+        _declared = str(getattr(_org, "_engine_kind", "") or "")
+        if (_m or _declared) and kind_of(_m, _declared) == "codex" and flow is not None:
             from system.guide_tools import make_guide_tools
             _org._codex_model = str(_m)
             _org._codex_effort = _ef            # 추론 강도도 codex에 반영(low=하이쿠급 저비용)

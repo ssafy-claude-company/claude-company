@@ -37,6 +37,22 @@ def runtime_kind(model):
     return CLAUDE
 
 
+def kind_of(model, declared=""):
+    """실행 종류. 웹이 알려준 것이 있으면 그것을 믿고, 없으면 문자열 규칙으로 떨어진다.
+
+    [내 LLM 경로 수선(2026-08-01, 현준-4)] 종전엔 모델 문자열만 봤다. 그러면 내가 등록한
+    LLM 이름이 'llama-3.3-70b'일 때 gpt- 접두사가 아니라서 Claude 경로로 가고, 애써 등록한
+    주소는 영영 안 쓰인다 - 이름이 실행 방식을 정하는 구조라 이름을 바꾸면 경로가 바뀐다.
+
+    실행 설정이 종류를 명시하므로 그것을 그대로 쓴다. 우리 것(claude) 말고는 전부 codex
+    프로토콜로 돈다(openai_compat·relay 모두 OpenAI 호환 얼굴을 쓴다).
+    """
+    d = str(declared or "").strip().lower()
+    if d:
+        return CLAUDE if d == CLAUDE else CODEX
+    return runtime_kind(model)
+
+
 def is_codex(model):
     """호출부가 읽기 쉬운 형태. builder가 쓴다."""
     return runtime_kind(model) == CODEX
