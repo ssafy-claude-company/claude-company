@@ -2365,12 +2365,25 @@ def meeting_stage(flow):
         # 열리지 않는다(실측: `node scripts/verify-recruitment-game.mjs` — 그런 파일이 없다).
         # 사후에 그 명령을 바꾸는 경로는 GOAL@ 마커를 붙이는 **마일스톤 회의**뿐이므로, 그 한 주기를
         # 연다(같은 사유로 두 번은 안 연다 — 그 뒤엔 사람에게 간다).
-        if _goal_verifier_unrunnable(flow) and not getattr(flow, "_goal_ratify_cycle", False):
-            try:
-                flow._goal_ratify_cycle = True
-            except Exception:
-                pass
-            return "milestone"
+        # [안건은 주기가 열릴 때까지 유지된다(2026-08-01, U-442 실측)] 한 번 돌려주고 곧바로 표시를
+        # 꺼 버렸더니, 그 주기가 실제로 열리기도 전에 다음 순회에서 안건이 None이 됐다 — 봇들이
+        # "안건이 None이므로 판정하지 않는다"며 무한히 토론했다(실측 발언 다수). 주기가 실제로
+        # 열릴 때까지(마일스톤 수가 늘 때까지) 같은 안건을 유지하고, 너무 오래 못 열면 그때 접는다.
+        if _goal_verifier_unrunnable(flow):
+            _seen = getattr(flow, "_goal_ratify_at", None)
+            _tries = int(getattr(flow, "_goal_ratify_tries", 0) or 0)
+            if _seen is None:
+                try:
+                    flow._goal_ratify_at = len(_mss)
+                except Exception:
+                    pass
+                _seen = len(_mss)
+            if len(_mss) <= int(_seen) and _tries < 8:
+                try:
+                    flow._goal_ratify_tries = _tries + 1
+                except Exception:
+                    pass
+                return "milestone"
         return None                                     # 로드맵 소진 → 작업/완료 단계
     _sts = [st for st in _open.subtasks if st.status != "superseded"]
     if not _sts:
