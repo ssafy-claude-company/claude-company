@@ -27,6 +27,6 @@ def test_두_번까지만_열고_그다음엔_사람을_부른다():
 def test_요청_뒤엔_경계를_잠시_쉰다():
     """요청만 하고 곧바로 다시 열려 하면 회의가 열리기도 전에 횟수를 태운다(실측: 같은 초에 2회)."""
     src = _src()
-    assert "_e2e_ratify_skip" in src
+    assert "_e2e_ratify_until" in src
     i = src.index("e2e_ratify_meeting_requested")
-    assert "flow._e2e_ratify_skip = 4" in src[max(0, i - 300):i]
+    assert "time.monotonic() + 900" in src[max(0, i - 300):i]
