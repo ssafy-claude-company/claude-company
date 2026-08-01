@@ -2310,6 +2310,25 @@ def claim_kick_target(flow):
     return None
 
 
+def _goal_verifier_unrunnable(flow) -> bool:
+    """GOAL 완수조건 중 '이 작업공간에서 실행할 수 없는 명령'에 묶인 것이 있는가.
+
+    비준 자체가 없는 경우(자연어)는 여기 해당하지 않는다 — 그건 최종 주기의 정상 경로가 맡는다.
+    여기서 잡는 것은 **비준은 했는데 그 파일이 없는** 상태다(e2e가 열릴 수 없는 유일한 막다른 길).
+    """
+    ws = str(getattr(flow, "workspace", "") or "")
+    if not ws:
+        return False
+    for ref in _goal_locked_refs(flow):
+        cmd = str(getattr(ref, "verify", "") or "")
+        if not cmd:
+            continue
+        if direct_verifier_command(cmd, ws, require_existing=False) and not direct_verifier_command(
+                cmd, ws, require_existing=True):
+            return True                 # 형태는 명령인데 가리키는 파일이 없다
+    return False
+
+
 def meeting_stage(flow):
     """현 상태에서 이 회의가 정할 단 하나를 도출. 'goal'|'milestone'|'subtask'|'backlog'|None(작업 단계)."""
     _cur = getattr(flow, "current", None)
@@ -2334,6 +2353,17 @@ def meeting_stage(flow):
         _road = roadmap_phases(flow)
         _done_n = roadmap_done_count(flow)
         if not _mss or (_road and _done_n < len(_road)):
+            return "milestone"
+        # [실행할 수 없는 실증에 묶인 GOAL은 마지막 주기가 푼다(2026-08-01, U-442 실측)] 로드맵을
+        # 다 돌았는데 GOAL 조건이 **이 작업공간에서 실행할 수 없는 명령**에 묶여 있으면 e2e가 영영
+        # 열리지 않는다(실측: `node scripts/verify-recruitment-game.mjs` — 그런 파일이 없다).
+        # 사후에 그 명령을 바꾸는 경로는 GOAL@ 마커를 붙이는 **마일스톤 회의**뿐이므로, 그 한 주기를
+        # 연다(같은 사유로 두 번은 안 연다 — 그 뒤엔 사람에게 간다).
+        if _goal_verifier_unrunnable(flow) and not getattr(flow, "_goal_ratify_cycle", False):
+            try:
+                flow._goal_ratify_cycle = True
+            except Exception:
+                pass
             return "milestone"
         return None                                     # 로드맵 소진 → 작업/완료 단계
     _sts = [st for st in _open.subtasks if st.status != "superseded"]
