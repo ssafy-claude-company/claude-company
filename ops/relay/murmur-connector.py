@@ -92,12 +92,76 @@ def _ask_command(req):
     셸이든, 직접 만든 무엇이든 글을 받고 글을 뱉으면 붙는다. 커넥터가 모양을 맞춰 준다.
     """
     import subprocess
-    proc = subprocess.run(CMD, shell=True, input=_prompt_text(req),
-                          capture_output=True, text=True, timeout=CMD_TIMEOUT)
+    argv = _isolated_argv(CMD)
+    if argv:
+        proc = subprocess.run(argv, input=_prompt_text(req),
+                              capture_output=True, text=True, timeout=CMD_TIMEOUT)
+    else:
+        # 가둘 수단이 없으면 그대로 돈다. 막지 않는 이유는 막으면 대부분이 못 쓰기 때문이고,
+        # 대신 그 사실을 플랫폼에 올려 빌리는 쪽이 고를 수 있게 한다.
+        proc = subprocess.run(CMD, shell=True, input=_prompt_text(req),
+                              capture_output=True, text=True, timeout=CMD_TIMEOUT)
     if proc.returncode != 0:
         # 오류 내용을 그대로 올린다 - 왜 실패했는지 모르면 붙일 수가 없다.
         raise RuntimeError((proc.stderr or "").strip()[:200] or f"명령 실패({proc.returncode})")
     return _wrap_answer(proc.stdout)
+
+
+def _detect_models():
+    """이 컴퓨터에 이미 있는 LLM을 찾는다.
+
+    [남는 연산 2026-08-01, 현준-4] 제공자에게 "모델을 고르고 띄우라"고 하면 대부분 못 한다.
+    있는 것을 찾아서 알려 주는 것이 우리 몫이다 - 켜 두기만 하면 되는 것이 이 시장의 전제다.
+    """
+    import subprocess
+    out = []
+    try:
+        r = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            for ln in r.stdout.strip().splitlines()[1:]:
+                name = ln.split()[0] if ln.split() else ""
+                if name:
+                    out.append(name)
+    except Exception:
+        pass
+    return out[:20]
+
+
+def _isolation():
+    """LLM을 가둘 수단이 이 컴퓨터에 있는가.
+
+    제공자는 모르는 곳에서 온 일을 자기 PC에서 돌린다. 그 일이 자기 파일을 못 만지게
+    하는 것은 우리가 대신 해 줄 수 없고, 도구가 있는지 알려 주고 쓰는 것까지만 할 수 있다.
+
+    없다고 막지는 않는다 - 막으면 대부분이 못 쓴다. 대신 무엇이 걸려 있는지 플랫폼에
+    올려서, 빌리는 쪽이 '격리된 곳에서만 돌린다'를 고를 수 있게 한다.
+    """
+    import shutil
+    for tool in ("bwrap", "podman", "docker"):
+        if shutil.which(tool):
+            return tool
+    return "none"
+
+
+def _isolated_argv(cmd):
+    """명령을 격리 안에서 돌리는 argv로 바꾼다. 수단이 없으면 그대로 둔다.
+
+    가두는 범위: 파일은 읽기 전용(모델 파일은 읽어야 한다), 홈은 안 보이고, 망은
+    로컬만 - 모르는 곳에서 온 일이 제공자의 파일과 계정을 만지면 안 된다.
+    """
+    iso = _isolation()
+    if iso == "bwrap":
+        # 실측으로 맞춘 조합이다(2026-08-01). symlink만으로는 /bin/sh가 안 잡혀 아무것도
+        # 못 돌았다 - 가두기만 하고 실행이 안 되면 격리가 아니라 고장이다.
+        argv = ["bwrap", "--ro-bind", "/usr", "/usr"]
+        for d in ("/lib", "/lib64", "/bin", "/sbin"):
+            if os.path.exists(d):
+                argv += ["--ro-bind", d, d]
+        argv += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+                 "--unshare-user", "--unshare-pid", "--die-with-parent",
+                 "--", "/bin/sh", "-c", cmd]
+        return argv
+    return None
 
 
 def _specs():
@@ -164,6 +228,10 @@ def main():
     # 자원은 한 번 재서 계속 같이 보낸다 - 매번 재면 느려지고, 안 보내면 등급이 안 선다.
     import urllib.parse
     spec = _specs()
+    spec["isolation"] = _isolation()
+    models = _detect_models()
+    if models:
+        spec["models"] = ",".join(models)
     global _spec_qs
     _spec_qs = ("?" + urllib.parse.urlencode(spec)) if spec else ""
     if spec:
