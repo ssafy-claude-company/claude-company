@@ -36,7 +36,11 @@ def test_그런_경우_마지막_주기_회의를_연다(tmp_path, monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f = _flow(tmp_path, "node scripts/verify-recruitment-game.mjs --check=core")
     assert meeting_stage(f) == "milestone"
-    assert meeting_stage(f) is None          # 같은 사유로 두 번은 안 연다
+    # 주기가 실제로 열릴 때까지 같은 안건을 유지한다(안건 None으로 떨어지면 회의가 헛돈다)
+    assert meeting_stage(f) == "milestone"
+    f.milestones.append(types.SimpleNamespace(status="open", ms_id="MS-2", goal="재비준 주기",
+                                              subtasks=[], criteria=[], locked_criteria=[]))
+    assert meeting_stage(f) == "subtask"      # 열렸으면 그 주기의 다음 단계로 넘어간다
 
 
 def test_실행_가능하면_주기를_더_열지_않는다(tmp_path, monkeypatch):
