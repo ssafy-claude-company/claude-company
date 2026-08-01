@@ -302,6 +302,17 @@ class Organt:
         """
         if micro and os.environ.get("ORGANT_MICRO_FRESH", "1") != "0":
             return None
+        # [스레드는 일감 경계에서 끊는다(2026-08-01, U-478 실측)] 작업 턴 하나가 26~34분 동안
+        # **1,200만~3,200만 토큰**을 실어 나른다(캐시 97~99% — 거의 전부 같은 스레드의 재전송).
+        # 상위 5턴이 판 전체 비용의 41%였다. 스레드가 길어질수록 매 내부 호출이 그 전량을 다시
+        # 보내기 때문이다. 기억을 통째로 버리자는 게 아니라 **일감이 바뀌는 자리**에서 끊는다 —
+        # 그 일감이 무엇인지·무엇을 했는지는 장부(백로그 본문·활동 기록)가 들고 있고, 새 스레드는
+        # 그걸 프롬프트로 받는다. 같은 일감을 이어가는 턴은 종전대로 세션을 잇는다.
+        _mark = str(getattr(self, "_work_scope", "") or "")
+        if _mark and _mark != str(getattr(self, "_work_scope_seen", "") or ""):
+            self._work_scope_seen = _mark
+            if os.environ.get("ORGANT_SCOPE_FRESH", "1") != "0":
+                return None
         return self.session_id
 
     async def _run_codex(self, prompt: str, micro: bool = False):
