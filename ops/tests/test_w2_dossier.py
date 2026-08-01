@@ -553,6 +553,10 @@ def test_DRAFT_공동편집_완성_안정_최종표결로_회의가_닫힌다(tm
             return "[종료]"
         return "[패스]"
     f.wake = wake
+    # [목표 정족수는 이 테스트의 대상이 아니다(2026-08-01)] 이 테스트가 재는 것은 wake 예산·답
+    # 슬롯·DRAFT 안정이다 — 심의 인원이 적은 세계라 goal 정족수(goal_quorum_hold)는 소진 상태로
+    # 둬 원래 재려던 계약만 관측한다.
+    f._goal_quorum_tries = 99
     r = asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견"}))
     txt = r["content"][0]["text"]
     d0 = dossier_read(f, "DRAFT.md")

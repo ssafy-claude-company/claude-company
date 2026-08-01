@@ -881,6 +881,10 @@ def test_DRAFT쓰기실패_wakecap경계_사람개입은_등록보류하고_큐�
         return "[패스]"
 
     f.wake = wake
+    # [목표 정족수는 이 테스트의 대상이 아니다(2026-08-01)] 이 테스트가 재는 것은 wake 예산·답
+    # 슬롯·DRAFT 안정이다 — 심의 인원이 적은 세계라 goal 정족수(goal_quorum_hold)는 소진 상태로
+    # 둬 원래 재려던 계약만 관측한다.
+    f._goal_quorum_tries = 99
     asyncio.run(t["meet"].handler({
         "topic": "방명록", "members": "", "rounds": "2", "my_opinion": "여는 의견",
     }))
@@ -1040,6 +1044,10 @@ def test_결론직전_지명은_답슬롯_1턴_존중후_표결(monkeypatch, tmp
             return "[종료]"
         return "[패스]"
     f.wake = wake
+    # [목표 정족수는 이 테스트의 대상이 아니다(2026-08-01)] 이 테스트가 재는 것은 wake 예산·답
+    # 슬롯·DRAFT 안정이다 — 심의 인원이 적은 세계라 goal 정족수(goal_quorum_hold)는 소진 상태로
+    # 둬 원래 재려던 계약만 관측한다.
+    f._goal_quorum_tries = 99
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
