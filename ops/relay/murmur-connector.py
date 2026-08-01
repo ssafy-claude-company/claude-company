@@ -127,6 +127,22 @@ def _detect_models():
     return out[:20]
 
 
+def _effective_isolation():
+    """지금 설정에서 격리가 **실제로 걸리는가**.
+
+    [정정 2026-08-01, 현준-4] 격리는 명령 모드(MURMUR_CMD)에만 걸린다. Ollama처럼 이미
+    떠 있는 서버에 HTTP로 보내는 경우는 그 서버가 우리 샌드박스 밖에 있으므로 아무것도
+    가두지 못한다. 그런데 화면에는 '격리 bwrap'이라고 떴다 - 거짓 안심이다.
+
+    쓸 수 있는 수단이 아니라 **이번 실행에 걸리는 것**을 올린다.
+    """
+    if HUMAN:
+        return "human"          # 사람이 답한다 - 가둘 대상이 없다
+    if CMD:
+        return _isolation()     # 명령 모드에서만 실제로 걸린다
+    return "none"               # 이미 떠 있는 서버로 보낸다 - 우리가 못 가둔다
+
+
 def _isolation():
     """LLM을 가둘 수단이 이 컴퓨터에 있는가.
 
@@ -228,7 +244,7 @@ def main():
     # 자원은 한 번 재서 계속 같이 보낸다 - 매번 재면 느려지고, 안 보내면 등급이 안 선다.
     import urllib.parse
     spec = _specs()
-    spec["isolation"] = _isolation()
+    spec["isolation"] = _effective_isolation()
     models = _detect_models()
     if models:
         spec["models"] = ",".join(models)
