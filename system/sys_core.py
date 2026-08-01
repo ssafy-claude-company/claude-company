@@ -1695,9 +1695,12 @@ class Sys:
             _dec = flow._seg_decline = {}
         def _asks_now(m):
             st = int(_dec.get(int(m), 0) or 0)
-            if st < 3:
+            if st < 5:
                 return True                      # 초반 거절은 그냥 묻는다
-            gap = min(8, 2 ** (st // 3))         # 3연속 거절부터 2·4·8 세그먼트 간격
+            # [백오프는 보조 장치다(2026-08-01)] 원인(문맥 없는 질문)을 고쳤으므로 간격은 완만하게만
+            # 둔다 — 5연속 거절부터 한 세그먼트 건너 묻는 정도. 지수로 벌리면 판이 바뀌어 할 말이
+            # 생긴 사람을 오래 못 부른다(그게 이 응찰의 존재 이유다).
+            gap = 2 if st >= 5 else 1
             return (int(flow.leader_segment) % gap) == 0
         _kept = [m for m in cands if _asks_now(m)]
         if _kept:
@@ -1711,12 +1714,36 @@ class Sys:
             _sstep = 1
         _req = _bth(len(team) + 1, _sstep)
 
+        # [무엇에 대해 묻는지 말하지 않으면 답은 늘 '패스'다(2026-08-01, U-442 실측)] 종전 문구는
+        # "진행 중인 작업 상황에 지금 보탤 게 있나"였는데 **그 상황이 무엇인지는 주지 않았다** —
+        # 봇은 자기 세션의 마지막 기억(수십 분 전 다른 주제)으로 판단할 수밖에 없어 합리적으로
+        # [패스]했다(한 QA는 82번 중 73번 연속). 지금 무슨 일이 벌어지는지 두 줄을 붙인다.
+        def _now_lines():
+            out = []
+            try:
+                from .rule.backlog import active_backlog_rows as _act
+                for _st, _r, b in _act(flow)[:2]:
+                    who = flow._info(int(getattr(b, "assignee", 0) or 0)) or "담당 미정"
+                    out.append(f"· 지금 작업 중: {who} — {str(getattr(b, 'body', ''))[:70]}")
+            except Exception:
+                pass
+            try:
+                acts = [str(x) for x in (getattr(flow, "activity", None) or [])][-2:]
+                out += [f"· 최근 활동: {a[:70]}" for a in acts]
+            except Exception:
+                pass
+            return "\n".join(out[:3])
+
         def _probe_body(c):
             _bar = (f" (참여 {len(team) + 1}명 — `[응찰: {_req}]` 이상만 발언권을 받습니다)"
                     if _req > 1 else "")
-            return ("[발언권 응찰 — 자기선택] 진행 중인 작업 상황에 **지금** 보태야 할 관찰·우려·"
-                    "제안이 있는지 스스로 판단하세요. 있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 "
-                    f"요지만, 없으면 `[패스]`만 답하세요.{_bar}")
+            _ctx = _now_lines()
+            return ("[발언권 응찰 — 자기선택] 지금 판에서 벌어지는 일입니다:\n"
+                    + (_ctx or "· (진행 중인 일감 없음 — 다음 단계로 넘어가는 참)") + "\n\n"
+                    "여기에 **지금** 보태야 할 관찰·우려·제안이 있는지 스스로 판단하세요"
+                    "(당신 직군에서 지금 말하지 않으면 뒤늦게 비싸질 것이 있나요?). "
+                    "있으면 `[응찰: N]`(N=1~9, 필요 강도)과 한 줄 요지만, 없으면 `[패스]`만 "
+                    f"답하세요.{_bar}")
         # [응찰≠작업생각] 프로브·발언 동안 activity log(💭)를 억제한다 — 응찰 추론("배포 논의에 …응찰합니다")은
         # 봇의 실작업 생각이 아니라 턴테이킹 메커니즘이라 진행표시에 남기면 안 된다(사용자: "왜 응찰이 중간에
         # 저렇게 남아"). 대신 낙찰 '발언'은 채널에만 남긴다(가시화). finally로 반드시 해제.
