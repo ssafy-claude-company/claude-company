@@ -220,6 +220,10 @@ class Organt:
             # 이미 본 세션인데 기준선이 없다 = 장부에서 밀려났다는 뜻. 청구는 하되 기록으로 남긴다.
             self._usage_anomaly = {"why": "baseline_lost", "sid": key,
                                    "cum_input": int(now.get("input_tokens") or 0)}
+        # [스레드 누계는 다음 턴의 요금이다(2026-08-01, U-442 실측)] 이 값이 그대로 다음 호출의
+        # 입력이 된다 — 끊을 자리를 정하려면 지금 얼마를 이고 있는지부터 알아야 한다.
+        self._thread_cum_sid = key
+        self._thread_cum_input = int(now.get("input_tokens") or 0)
         # 감사 필드 — 러너가 turn_done에 그대로 실어 사후 검산이 가능하게 한다.
         self._usage_audit = {"sid": key, "first_turn_of_thread": bool(first_time),
                              "cum_input": int(now.get("input_tokens") or 0),
@@ -313,6 +317,19 @@ class Organt:
             self._work_scope_seen = _mark
             if os.environ.get("ORGANT_SCOPE_FRESH", "1") != "0":
                 return None
+        # [한 일감을 오래 붙들어도 스레드는 자란다(2026-08-01, U-442 실측)] 일감 경계만으로는
+        # 부족했다 — 47시간을 같은 판에서 돈 봇의 스레드 누계 입력이 **1억 토큰**에 이르렀고,
+        # 최근 20턴이 $17.19(턴당 $0.86)였다. 같은 시간대의 새 판은 턴당 $0.035다. 누계가 상한을
+        # 넘으면 다음 턴은 새 스레드로 시작한다 — 무엇을 하던 중인지는 장부와 프롬프트가 들고 있다.
+        try:
+            _cap = int(os.environ.get("ORGANT_THREAD_INPUT_CAP", "3000000"))
+        except ValueError:
+            _cap = 3000000
+        if (_cap > 0 and self.session_id
+                and str(getattr(self, "_thread_cum_sid", "") or "") == str(self.session_id)
+                and int(getattr(self, "_thread_cum_input", 0) or 0) >= _cap):
+            self._thread_cum_input = 0
+            return None
         return self.session_id
 
     async def _run_codex(self, prompt: str, micro: bool = False):
