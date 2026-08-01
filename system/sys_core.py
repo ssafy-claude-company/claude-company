@@ -96,6 +96,23 @@ def _changed_activity_payload(state: dict, rows):
     return values
 
 
+def _existing_verifier_files(flow) -> list:
+    """작업공간에 실제로 있는 검증기 후보(회의가 재비준할 때 고를 수 있게 이름을 준다)."""
+    import os as _os
+    ws = str(getattr(flow, "workspace", "") or "")
+    out = []
+    for sub in ("scripts", "tests", "."):
+        d = _os.path.join(ws, sub) if sub != "." else ws
+        try:
+            for fn in sorted(_os.listdir(d)):
+                if fn.endswith((".py", ".mjs", ".js")) and ("verify" in fn or "test" in fn):
+                    rel = f"{sub}/{fn}" if sub != "." else fn
+                    out.append(("python3 " if fn.endswith(".py") else "node ") + rel)
+        except OSError:
+            continue
+    return out
+
+
 class Sys:
     def __init__(self, guide, guild_id, organt_builder, bot_info: Optional[Dict[int, str]] = None,
                  workspace=None, projects_path=None, session_dir=None, max_continue=6,
@@ -2355,6 +2372,25 @@ class Sys:
                     except Exception:
                         pass
                     flow._e2e_ratify_until = time.monotonic() + 900   # 15분간 경계를 쉰다
+                    # [말만 걸어 두면 아무도 안 온다(2026-08-01, U-442 실측)] 유예만 주고 채널에
+                    # 글만 남겼더니 30분 동안 턴이 0이었다(할 일이 없어 아무도 안 깨어남 → 무활동
+                    # 중단). 회의를 **직접 연다** — 단계 회의와 같은 경로로.
+                    try:
+                        from .rule.communication import meet as _stage_meet
+                        _cmds = "\n".join(
+                            f"  · {c}" for c in sorted(_existing_verifier_files(flow))[:8])
+                        await _stage_meet(flow, flow.anchor, {
+                            "topic": "실증 명령 재비준 — GOAL 완수조건",
+                            "my_opinion": (
+                                "e2e를 열 수 없습니다: GOAL 조건이 비준한 실증 명령을 이 작업공간에서 "
+                                "실행할 수 없습니다.\n" + _why[:400] +
+                                "\n각 조건의 `실증:`을 **실제로 있는 검증기**로 재비준합시다. "
+                                "지금 작업공간에 있는 것들:\n" + (_cmds or "  (검증기 없음 — 먼저 만들어야 합니다)")
+                            )[:1500],
+                            "_sys_open": True})
+                        self._log("e2e_ratify_meeting_opened", tries=_tries + 1)
+                    except Exception as _e:
+                        self._log("e2e_ratify_meeting_failed", err=str(_e)[:100])
                     self._log("e2e_ratify_meeting_requested", reason=_why[:180], tries=_tries + 1)
                     return True
                 flow._stage_stuck = "e2e-open"
