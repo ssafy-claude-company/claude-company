@@ -2633,6 +2633,63 @@ def deferred_only(v):
     return s.startswith("(후속") or s.startswith("후속:") or s.startswith("후속：")
 
 
+GOAL_QUORUM_MIN = 3    # 무엇을 만들지는 최소 이만큼이 심의한다
+GOAL_QUORUM_TRIES = 3  # 끝내 못 모이면 판을 죽이지 않는다(기록만 남기고 통과)
+
+
+def goal_quorum_hold(flow, voters, yes):
+    """[목표는 만들 사람들이 모인 뒤 정한다(2026-08-01, 사용자 실측 지시)]
+
+    실측(ch303 '게임 만들어줘'): GOAL 회의 참석 2명(기획·채용), 2라운드, 표결 **찬성 1 · 반대 0**으로
+    확정. 찬성표를 낸 채용의 두 발언은 'DRAFT 결정 구획 반영'·'형식 이의 해소'로 문서 형식 작업이었고,
+    게임 내용을 판단한 사람은 없었다. 게임 기획자·비주얼·사운드는 목표 확정 84분 뒤에 합류했다 —
+    **정작 게임을 아는 사람이 목표 결정에 없었다.** 같은 엔진의 다음 criteria 회의는 반대 2 → 반대 1 →
+    찬성 2로 세 라운드에 걸쳐 내용이 깎였다(반박 능력은 있었고, goal에서만 0이었다).
+
+    한 사람의 첫 제안이 곧 결론이 되는 것을 막는 건 프롬프트가 아니라 정족수다. 심의 인원이 모자라면
+    확정을 보류하고 충원·참여를 요구한다. 상한(GOAL_QUORUM_TRIES)을 둬 충원이 끝내 안 돼도 판은 산다.
+    """
+    n = len(list(voters or []))
+    if n >= GOAL_QUORUM_MIN and yes >= 2:
+        return ""
+    tries = int(getattr(flow, "_goal_quorum_tries", 0) or 0) + 1
+    try:
+        flow._goal_quorum_tries = tries
+    except Exception:
+        pass
+    if tries > GOAL_QUORUM_TRIES:
+        return ""
+    try:
+        if flow.log:
+            flow.log("goal_quorum_hold", voters=n, yes=yes, tries=tries)
+    except Exception:
+        pass
+    return (f"무엇을 만들지를 판단할 사람이 자리에 모자랍니다 — 지금 {n}명이 심의했고 찬성 {yes}표입니다"
+            f"(필요: 심의 {GOAL_QUORUM_MIN}명·찬성 2표). 목표는 만들 사람들이 모인 뒤 정합니다. "
+            f"이 요청에 필요한 직군(도메인 전문·설계·구현·검증)을 recruit로 먼저 충원하거나, 팀에 이미 "
+            f"있다면 그 사람들이 이번 회의에 응찰해 함께 판단한 뒤 다시 표결하세요.")
+
+
+_CITE_RE = re.compile(r"[ \t]*[(（]?\s*근거\s*[:：][^)）\n]*[)）]?[\s.·,]*$")
+
+
+def strip_internal_citation(text):
+    """[사용자에게 보이는 문장에 내부 파일 줄번호가 붙지 않게(2026-08-01, 사용자 지적)]
+
+    실측: Task 목표가 '…게임을 만든다(근거: MINUTES.md:10-16).'로 등록됐다. 봇들이 서로에게 근거를
+    대는 습관(회의록·DRAFT 줄 인용)이 목표 문장까지 따라왔다. 목표는 사용자가 읽는 한 문장이고 내부
+    파일 경로는 거기 있을 것이 아니다. 파일처럼 보이는 인용(확장자 또는 :줄번호)일 때만 떼어낸다 —
+    '근거: 사용자 요청' 같은 산문 근거는 보존한다."""
+    s = str(text or "").strip()
+    m = _CITE_RE.search(s)
+    if not m:
+        return s
+    tail = m.group(0)
+    if not re.search(r"\.\w{1,5}\b|:\d", tail):
+        return s
+    return (s[:m.start()].rstrip().rstrip(".·,") or s).strip()
+
+
 def _goal_procedure_error(goal):
     """GOAL의 절차형 나열만 잡고 인라인 코드 안의 상태 전이는 보존한다.
 
@@ -3530,7 +3587,7 @@ def register_stage(flow, stage, prop, origin=""):
     if stage == "goal":
         # [통일 수렴안(가안)] prop = [수렴안]의 '목표:'+조건 줄들. goal 단계는 이 수렴안을 가공해
         # Task GOAL을 세팅하고 GOAL.md를 쓴다(수렴안=통일 산출물, 가공은 이 단계의 몫).
-        goal = _val("목표")
+        goal = strip_internal_citation(_val("목표"))
         if not goal:
             return False, "수렴안에 '목표: ⟦이 Task로 정확히 무엇을 만드는지⟧' 줄이 필요합니다."
         # [결정 없는 결정 칸 거부(2026-07-21, U-038 실측: 목표='(후속: 기획 단계에서 확정 — 담당·

@@ -254,6 +254,7 @@ async def meet(flow, me_id, args):
             # [전역 회의 소속 태깅] 이 회의가 도는 동안 run_turn의 파이프라인 태깅이 SubTask를 생략
             # (주기까지만) — 전역 회의가 특정 단계 폴더로 접히는 오배치 차단. 해제는 meet() 완료 콜백.
             flow._stage_meeting = _stage
+            flow._meet_dissented = False   # 반대 이력은 회의 단위
         _agenda, _stage_tmpl = _ms_agenda(_stage)
         if _agenda:
             from .milestone import stage_context as _ms_sctx
@@ -1094,6 +1095,18 @@ async def meet(flow, me_id, args):
                 except Exception:
                     pass
             _passed0 = (len(_dissents) == 0 and _yes >= 1)
+            if _dissents:
+                flow._meet_dissented = True     # 이 회의에서 실제 반대가 한 번이라도 나왔다
+            elif _passed0 and _stage == "goal" and not getattr(flow, "_meet_dissented", False):
+                # [목표 정족수(2026-08-01, 사용자: '얘들이 실질적으로 회의에서 효율적인 대화를 했는가')]
+                # 반대 한 번 없이 첫 표결에서 통과하는 GOAL만 잡는다 — 반박이 실제로 오간 회의는 방에서
+                # 일이 벌어진 것이라 그대로 닫는다(criteria 회의는 반대 2→1→0으로 스스로 깎였다).
+                # 상세·실측 근거는 milestone.goal_quorum_hold.
+                from .milestone import goal_quorum_hold as _gq
+                _hold = _gq(flow, _voters, _yes)
+                if _hold:
+                    _passed0 = False
+                    _dissents.append(_hold)
             try:
                 from .._util import clip as _clip
                 _vsum = (f"결론 확정 표결 — 찬성 {_yes} · 반대 {len(_dissents)}"
