@@ -2948,6 +2948,15 @@ class Sys:
             # 예산 안에서 이어 붙인다(organt 쪽 구현 — Claude 봇은 max_turns가 이미 그 역할).
             # 회의 발언 턴에는 달지 않는다 — 발언 자체가 행위라 도구 0이 정상이다.
             organt._codex_expect_tool = _mode in ("close", "e2e")
+            # [스레드는 일감 경계에서 끊는다(2026-08-01)] 지금 무슨 일감을 하는 턴인지 알려 준다 —
+            # 일감이 바뀌면 organt가 새 스레드로 시작한다(같은 일감을 이어가면 그대로 잇는다).
+            try:
+                from .rule.backlog import active_backlog_rows as _act_rows
+                _mine = next((f"{st.st_id}::{b.backlog_id}" for st, _r, b in _act_rows(flow)
+                              if int(getattr(b, "assignee", 0) or 0) == int(organt_id)), "")
+                organt._work_scope = _mine
+            except Exception:
+                pass
             if _mode == "e2e":
                 # Claude의 네이티브 수정 표면을 제거한다. Codex는 allowed_tools를 쓰지 않으므로
                 # 별도 read-only bwrap 신호를 내려 네이티브 셸 쓰기를 막고, exact verifier는
