@@ -189,15 +189,25 @@ if git -C "$MS" diff --name-only "$pre_cc..HEAD" 2>/dev/null | grep -qE '^(syste
     # 봇이 1시간 54분째 돌던 턴이 통째로 사라졌다(01:48:44 재시작 = 세션 마지막 기록 시각). 그 턴은
     # turn_done을 못 남겨 **누계 5,578만 토큰이 장부에도 안 잡혔고**, 잃은 작업 때문에 판이 파킹됐다.
     # 실행 중인 codex 턴이 없을 때까지 기다렸다가 재시작한다(최대 20분 — 그 뒤엔 알리고 진행).
+    # [기다릴 것은 '턴 0'이 아니라 '잃을 것이 적은 순간'이다(2026-08-02 재교정)] 두 판이 돌면 도는 턴은
+    # 거의 항상 있다(실측: 13개 동시) — '전부 끝날 때까지'는 영영 오지 않아 20분을 버리고 강제 재시작했다.
+    # 아픈 것은 **오래 돈 턴**을 죽이는 것이다(01:48 사고: 114분짜리 유실, 누계 5,578만 토큰 미계상).
+    # 가장 오래된 턴이 5분 미만이 되는 순간까지만 기다린다 — 그때 잃는 것은 몇 분어치뿐이다.
+    _oldest_turn() {
+      ps -eo etimes,args | awk '/[c]odex exec/ { if ($1 > m) m = $1 } END { print m + 0 }'
+    }
     _w=0
-    while [ "$_w" -lt 1200 ] && pgrep -f "codex exec" >/dev/null 2>&1; do
-      [ "$_w" = 0 ] && echo "  ⏳ 돌고 있는 codex 턴이 끝나기를 기다립니다(재시작이 턴을 죽입니다)"
-      sleep 15; _w=$((_w+15))
+    while [ "$_w" -lt 1200 ] && [ "$(_oldest_turn)" -ge 300 ]; do
+      if [ "$_w" = 0 ]; then
+        echo "  ⏳ 오래 돈 턴이 있어 기다립니다(재시작이 그 턴을 죽입니다) — 가장 오래된 턴 $(_oldest_turn)초"
+      fi
+      sleep 15
+      _w=$((_w + 15))
     done
-    if pgrep -f "codex exec" >/dev/null 2>&1; then
-      echo "  ⚠ 20분을 기다렸는데도 도는 턴이 있습니다 — 그대로 재시작합니다(그 턴은 유실됩니다)"
-    elif [ "$_w" -gt 0 ]; then
-      echo "  ✓ 도는 턴 없음(${_w}초 대기) — 안전하게 재시작합니다"
+    if [ "$(_oldest_turn)" -ge 300 ]; then
+      echo "  ⚠ 20분을 기다렸는데도 오래 돈 턴이 있습니다($(_oldest_turn)초) — 그대로 재시작합니다(그 턴은 유실됩니다)"
+    else
+      echo "  ✓ 가장 오래된 턴 $(_oldest_turn)초 — 잃을 것이 적은 순간에 재시작합니다"
     fi
     systemctl restart organt-runner && echo "  organt-runner 재시작 — 브레인 반영 완료" \
       || echo "  ⚠ organt-runner 재시작 실패 — systemctl status organt-runner 확인"
