@@ -786,11 +786,25 @@ class Sys:
     _ONBOARD_PERSONA_RE = re.compile(r"\[인격\]\s*(?P<v>.*?)(?=\n\[/인격\]|\n\[개인기준\]|\Z)", re.S)
 
     def _pick_recruiter(self):
-        """'채용/인사' 직군을 가진 Organt(리크루터). 여러 명이면 첫 번째, 없으면 None(기능 dormant)."""
-        for mid, label in self.bot_info.items():
-            if any("채용" in j or j.strip() == "인사" for j in str(label or "").split("·")):
-                return int(mid)
-        return None
+        """'채용/인사' 직군을 가진 Organt(리크루터). 없으면 None(기능 dormant).
+
+        [한 사람이 여러 판의 병목이 된다(2026-08-02 실측·사용자 확인)] 종전엔 **무조건 첫 번째**를
+        골랐다. 봇 단위 전역 점유(Engagement — 한 사람은 한 시점에 한 흐름)는 '같은 사람이 두 채널에서
+        동시에 말하는 이중 존재'를 막으려는 의도된 설계인데, 리크루터가 하나뿐이면 그 배타성이 곧
+        판 사이 병목이 된다(오늘 8.1시간 중 신판 3.0h·새판 3.9h 굶음). 사람을 늘리는 것이 옳은 방향이라
+        (사용자: '판마다 다른 사람을 둬도 되겠지'), 여기서는 **지금 손이 빈 리크루터를 먼저** 고른다 —
+        여럿이면 판들이 자연히 다른 사람을 쓰게 된다. 전원이 바쁘면 종전처럼 첫 번째(대기)로 돌아간다.
+        """
+        cands = [int(mid) for mid, label in self.bot_info.items()
+                 if any("채용" in j or j.strip() == "인사" for j in str(label or "").split("·"))]
+        if not cands:
+            return None
+        free = [m for m in cands if self.engaged.holder(m) is None]
+        if free:
+            return free[0]
+        if len(cands) == 1:
+            self._log("recruiter_single_busy", bot=cands[0])   # 사람을 더 둘 자리 — 관측으로 남긴다
+        return cands[0]
 
     def pick_onboard_bots(self):
         """정체성(이름·인격) 미완 신규 봇 — 직군은 있으나(예비 아님) 아직 온보딩 안 됨. 기존 봇
