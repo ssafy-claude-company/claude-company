@@ -525,7 +525,28 @@ async def _run_codex_process(
         except Exception:
             pass
         assert proc.stdout is not None
-        async for raw in proc.stdout:
+        # [응답이 끊긴 턴이 영원히 매달린다(2026-08-02 실측)] 종전엔 stdout을 무기한 기다렸다.
+        # 19:24 자원 폭주 직후 시작된 두 턴이 **120분간 한 줄도 쓰지 않은 채** 프로세스만 살아 있었고,
+        # 그동안 두 판이 통째로 멈췄다(오늘 아침 증류 100분 매달림과 같은 결함, 다른 경로).
+        # 시간으로 자르면 정상 작업 턴(실측 최장 67분, 성과 있음)을 죽인다. **무응답 시간**으로 잰다 —
+        # 정상 세션의 기록 간격은 중앙 1초·95분위 116초라(표본 10.8만) 10분이면 5배 여유다.
+        try:
+            _idle_cap = float(os.environ.get("ORGANT_TURN_IDLE_CAP", "600") or 600)
+        except ValueError:
+            _idle_cap = 600.0
+        while True:
+            try:
+                raw = (await asyncio.wait_for(proc.stdout.readline(), timeout=_idle_cap)
+                       if _idle_cap > 0 else await proc.stdout.readline())
+            except asyncio.TimeoutError:
+                api_error = f"무응답 {int(_idle_cap)}s — 매달린 턴 회수"
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                break
+            if not raw:
+                break
             if on_activity:
                 try:
                     on_activity()
