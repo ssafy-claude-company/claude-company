@@ -1755,6 +1755,20 @@ def wrapup_done(flow, obj) -> str:
         if _deliv:
             return _deliv
         _open_sts = [s for s in obj.subtasks if s.status not in ("done", "superseded")]
+        # [막고 있는 그 단계가 이미 소진된 것이면 여기서 닫는다(2026-08-02, U-478 실측)] 세그먼트 정리는
+        # continue_incomplete 경로에서만 돌아 좀처럼 안 걸렸다(재시작 후 1건). 정작 걸림돌이 드러나는
+        # 자리는 여기다 — 주기를 닫으려는데 미완 SubTask가 남았다고 말하는 순간. 그 미완이 '백로그를
+        # 다 닫고도 열려 있는' 것이면 지금 닫고 다시 센다(실측 ST-7: 백로그 12개 done, 조건 0개, open).
+        if _open_sts:
+            try:
+                from .backlog import close_subtask_if_drained
+                for _st in list(_open_sts):
+                    _r = (getattr(flow, "backlog_relays", None) or {}).get(getattr(_st, "st_id", ""))
+                    if _r is not None:
+                        close_subtask_if_drained(flow, _st, _r)
+                _open_sts = [s for s in obj.subtasks if s.status not in ("done", "superseded")]
+            except Exception:
+                pass
         if _open_sts:
             _names = " · ".join(f"{s.st_id}({s.goal[:24]})" for s in _open_sts[:6])
             return ("마일스톤 완수 보류: 완수조건은 충족됐지만 이 주기의 SubTask "
