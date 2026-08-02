@@ -947,6 +947,37 @@ def sync_completion(flow, worker) -> None:
         handoff_note(flow, r, worker, "완료됐습니다")
     except BacklogError:
         pass
+    close_subtask_if_drained(flow, st, r)
+
+
+def close_subtask_if_drained(flow, st, relay) -> bool:
+    """[마지막 백로그가 닫히면 그 단계도 닫힌다(2026-08-02, U-478 실측)]
+
+    서브태스크는 '백로그 소진 = 완수'로 닫기로 되어 있는데(2026-07-22 결정), 그 판정이 **report_iter를
+    누군가 target=ST로 다시 불러 줄 때만** 돌았다. 실측: ST-7이 백로그 12개를 전부 done으로 닫고 완수조건
+    0개인 채 `open`으로 남아, 주기가 안 닫히고 Task 마감이 14회 거절됐다(complete_task_refused). 아무도
+    부르지 않으면 영영 열려 있는 것이라, 마지막 백로그가 닫히는 자리에서 같은 판정을 한다.
+
+    조건: 백로그가 하나 이상 있었고 전부 종결(done/dropped)이며 아직 열려 있는 단계. 닫는 경로는
+    report_iter의 그것과 동일하다(on_subtask_wrapup → wrapup → wrapup_done).
+    """
+    try:
+        if st is None or getattr(st, "status", "") not in ("open", "in_progress"):
+            return False
+        rows = list(getattr(relay, "backlogs", None) or [])
+        if not rows or any(x.status not in ("done", "dropped") for x in rows):
+            return False
+        from .milestone import wrapup_done
+        on_subtask_wrapup(flow, st)
+        st.status = "wrapup"
+        wrapup_done(flow, st)
+        if getattr(flow, "log", None):
+            flow.log("subtask_closed_on_drain", st=getattr(st, "st_id", ""), n=len(rows))
+        return True
+    except Exception as e:
+        if getattr(flow, "log", None):
+            flow.log("subtask_close_failed", st=getattr(st, "st_id", ""), err=str(e)[:60])
+        return False
 
 
 def on_subtask_wrapup(flow, st) -> str:
