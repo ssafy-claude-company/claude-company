@@ -4507,6 +4507,13 @@ def rule_report_iter(flow, me_id, args) -> str:
             tgt.status = "wrapup"          # 게이트 없음 — 소진이 곧 정리 완료 전제(wrapup_done 진입 조건)
             wrapup_done(flow, tgt)
             return f"SubTask {tgt.st_id} — 백로그 전부 소진, 완수. {_sweep}"
+        # [왜 안 닫혔는지 남긴다(2026-08-02)] 화면 미러는 '전부 done'인데 단계가 안 닫히는 일이 있었다
+        # (U-478 ST-7). 미러와 살아 있는 릴레이가 어긋나면 눈으로는 원인을 못 잡는다 — 잔여 id를
+        # 그대로 적어 다음 번엔 추측 없이 안다.
+        if flow.log:
+            flow.log("subtask_left_open", st=tgt.st_id, left=len(_left),
+                     ids=",".join(b.backlog_id for b in _left[:8]),
+                     states=",".join(f"{b.backlog_id}:{b.status}" for b in _left[:8]))
         return (f"백로그 완료 기록 — SubTask {tgt.st_id} 잔여 {len(_left)}건. 다음 수행자를 "
                 f"pick_backlog(id)로 선정하세요(검증 게이트는 마일스톤에서).")
     # 대상 없음 = 마일스톤 완수조건 검증(유일한 실증 게이트)

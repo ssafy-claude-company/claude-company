@@ -454,19 +454,35 @@ def _stop_app(entry: dict) -> None:
             time.sleep(0.1)
 
 
+# [실행이 남긴 찌꺼기가 배포를 통째로 막았다(2026-08-02, U-442 실측)] 브라우저 검증이 앱 풀 폴더에
+# root 소유 0700 `.config/pulse/…-runtime`(PulseAudio 런타임)을 남겼고, 다음 배포가 그걸 읽으려다
+# `PermissionError: [Errno 13] Permission denied: '.config'`로 죽었다 — 산출물과 아무 상관 없는
+# 디렉터리 하나 때문에 release-manifest 반영이 막히고 주기가 못 닫혔다. 실행 흔적은 산출물이 아니다.
+_RUNTIME_JUNK = (".git", ".collab", "node_modules", "app.log", "__pycache__",
+                 ".config", ".cache", ".local", ".npm-cache", ".pki", ".dbus",
+                 ".qa-browsers", ".qa-deps", ".qa-deps.broken")
+
+
 def _copy_workspace(ws: Path, dst: Path) -> None:
-    """산출물만 복사 — .git(히스토리)·.collab(협의 원본)·node_modules(현지 install)·로그 제외.
-    dst의 기존 node_modules는 남겨 npm install 캐시로 쓴다."""
-    ignore = shutil.ignore_patterns(".git", ".collab", "node_modules", "app.log", "__pycache__")
+    """산출물만 복사 — 히스토리·협의 원본·현지 install·로그·실행 런타임 흔적 제외.
+    dst의 기존 node_modules는 남겨 npm install 캐시로 쓴다. 읽을 수 없는 항목은 건너뛴다 —
+    한 항목의 권한 문제로 배포 전체가 죽지 않게(그 사실은 호출부가 로그로 본다)."""
+    ignore = shutil.ignore_patterns(*_RUNTIME_JUNK)
     dst.mkdir(parents=True, exist_ok=True)
+    skipped = []
     for item in ws.iterdir():
-        if item.name in (".git", ".collab", "node_modules", "app.log", "__pycache__"):
+        if item.name in _RUNTIME_JUNK:
             continue
         to = dst / item.name
-        if item.is_dir():
-            shutil.copytree(item, to, dirs_exist_ok=True, ignore=ignore)
-        else:
-            shutil.copy2(item, to)
+        try:
+            if item.is_dir():
+                shutil.copytree(item, to, dirs_exist_ok=True, ignore=ignore)
+            else:
+                shutil.copy2(item, to)
+        except (PermissionError, OSError) as e:
+            skipped.append(f"{item.name}({type(e).__name__})")
+    if skipped:
+        print(f"[deploy] 복사 건너뜀(권한·읽기 불가): {', '.join(skipped[:6])}", flush=True)
 
 
 def _app_unit(appdir: Path) -> str:
