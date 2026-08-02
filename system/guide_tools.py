@@ -155,6 +155,41 @@ def run_repeat_note(flow, cmd, stamp):
             f"환경이 막고 있어 못 고치는 것이면 block_backlog의 사유로 그 사실을 적으세요.")
 
 
+def prefer_shared_browsers(command, workspace, cache=None):
+    """[같은 브라우저를 판마다 한 벌씩 더 올린다(2026-08-02, 실측)] 구판 작업공간은 `.qa-browsers`(646MB)와
+    `.qa-deps.broken`(141MB)을 자기 명령에 경로째 박아 쓰고 있었다 — 공유 캐시(2.4GB)에 **같은 개정판이
+    이미 다 있는데도**. 4코어·14G 머신에 같은 chromium이 두 벌 올라가 페이지 캐시가 갈리고, 브라우저
+    검증 하나가 코어 절반을 먹는 상황에서 두 판이 서로를 느리게 만들었다. 어제 이름만 `.broken`으로
+    바꿔둔 디렉터리조차 명령에 박혀 있어 그대로 쓰였다 — 이름 바꾸기는 불완전한 조치였다.
+
+    공유 캐시에 필요한 개정판이 **빠짐없이** 있을 때만 판별 경로를 공유 캐시로 바꾼다. 하나라도 없으면
+    손대지 않는다 — 없는 것을 있다고 우기면 봇이 또 몇 시간을 태운다(browser_build_gap 참조).
+    """
+    import re as _re
+    cmd = str(command or "")
+    ws = str(workspace or "").strip()
+    if not cmd or not ws or "PLAYWRIGHT_BROWSERS_PATH=" not in cmd:
+        return cmd, ""
+    shared = str(cache or PW_CACHE)
+    if browser_build_gap(ws, shared):
+        return cmd, ""
+    changed = []
+
+    def _sub(m):
+        val = m.group(1).strip("\"'")
+        if val.rstrip("/") == shared.rstrip("/"):
+            return m.group(0)
+        changed.append(val)
+        return "PLAYWRIGHT_BROWSERS_PATH=" + shared
+
+    out = _re.sub(r"PLAYWRIGHT_BROWSERS_PATH=([^\s;|&]+)", _sub, cmd)
+    if not changed:
+        return cmd, ""
+    return out, ("[공유 브라우저로 바꿔 실행] " + ", ".join(changed[:2])
+                 + " 대신 공유 캐시를 씁니다 — 같은 개정판이 이미 있고, 판별 사본은 같은 브라우저를 "
+                   "한 벌 더 메모리에 올려 서로를 느리게 만듭니다.")
+
+
 def _preinstalled_refusal(cmd, workspace="") -> str:
     """이미 갖춰진 것을 다시 설치하려는 명령이면 거절 사유 + 바로 쓰는 법. 아니면 빈 문자열.
 
@@ -1378,6 +1413,11 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         except Exception:
             _rro = None
             _pre_files = None
+        _shared_note = ""
+        try:
+            cmd, _shared_note = prefer_shared_browsers(cmd, _ws)
+        except Exception:
+            _shared_note = ""
         _repeat_note = ""
         try:
             from .rule.milestone import workspace_artifact_stamp as _was
@@ -1423,7 +1463,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         # 없다 → 그 자리에서 올바른 '한 run 묶기' 패턴을 처방한다(추측·재시도 루프 차단).
         _c = cmd.strip()
         _bg_only = _c.endswith("&") and not _c.endswith("&&")
-        _hint = _repeat_note
+        _hint = _repeat_note + (("\n\n" + _shared_note) if _shared_note else "")
         if _bg_only:
             _hint += ("\n\n⚠ 끝의 `&`로 띄운 백그라운드 프로세스(서버 등)는 **이 run이 끝나며 그룹째 정리**됐습니다 "
                      "— 다음 run엔 살아있지 않습니다(run 간 포트충돌 방지 설계). 서버 **기동증명은 반드시 한 run "
