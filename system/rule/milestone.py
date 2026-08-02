@@ -4498,6 +4498,11 @@ def rule_report_iter(flow, me_id, args) -> str:
     if tgt is not None:
         _r2 = relay_for(flow, tgt)
         _left = [b for b in _r2.backlogs if b.status not in ("done", "dropped")]
+        # [분기에 들어왔다는 사실부터 남긴다(2026-08-02)] 미러는 '전부 done'인데 단계가 안 닫히고,
+        # 잔여 로그(subtask_left_open)조차 안 찍혔다 — 이 블록에 아예 안 들어온 것인지, 들어왔는데
+        # 잔여가 있는 것인지 구분이 안 됐다. 들어온 순간을 무조건 찍어 그 갈림길을 없앤다.
+        if flow.log:
+            flow.log("subtask_close_check", st=tgt.st_id, total=len(_r2.backlogs), left=len(_left))
         if not _left:
             try:
                 from .backlog import on_subtask_wrapup
