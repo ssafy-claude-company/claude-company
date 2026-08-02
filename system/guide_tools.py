@@ -129,6 +129,32 @@ def browser_build_gap(workspace, cache=None):
     return missing
 
 
+def run_repeat_note(flow, cmd, stamp):
+    """[같은 검증을 고친 것 없이 되돌린다(2026-08-02, 감사로그 실측)] 최근 24시간 run 203회 중 **51%가
+    같은 명령의 반복**이었다(`npm run verify:milestone1` 34회, `npm run test:all` 18회). 고치고 다시
+    재는 것은 정상이지만, **작업공간이 한 글자도 안 바뀐 채** 같은 명령을 또 돌리는 것은 같은 결과를
+    다시 사는 일이다. 막지는 않는다 — 라이브 URL·배포처럼 바깥 상태가 바뀌어 결과가 달라지는 검증이
+    있기 때문이다. 세 번째부터 사실만 붙여 준다(무엇을 고칠지 정하고 다시 오라는 신호).
+    """
+    if not stamp:
+        return ""
+    book = getattr(flow, "_run_repeat", None)
+    if book is None:
+        book = flow._run_repeat = {}
+    key = (str(cmd or "").strip()[:200], str(stamp))
+    n = book[key] = int(book.get(key, 0)) + 1
+    if n < 3:
+        return ""
+    try:
+        if flow.log:
+            flow.log("run_repeat_unchanged", n=n, cmd=str(cmd or "")[:60])
+    except Exception:
+        pass
+    return (f"\n\n⚠ 이 명령을 **작업공간이 그대로인 채 {n}번째** 실행했습니다 — 바깥 상태(라이브 URL·배포)가 "
+            f"바뀌지 않았다면 결과도 같습니다. 무엇을 고칠지 정해 파일을 바꾼 뒤 다시 재세요. "
+            f"환경이 막고 있어 못 고치는 것이면 block_backlog의 사유로 그 사실을 적으세요.")
+
+
 def _preinstalled_refusal(cmd, workspace="") -> str:
     """이미 갖춰진 것을 다시 설치하려는 명령이면 거절 사유 + 바로 쓰는 법. 아니면 빈 문자열.
 
@@ -1352,6 +1378,12 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         except Exception:
             _rro = None
             _pre_files = None
+        _repeat_note = ""
+        try:
+            from .rule.milestone import workspace_artifact_stamp as _was
+            _repeat_note = run_repeat_note(flow, cmd, _was(flow))
+        except Exception:
+            _repeat_note = ""
         try:
             timed_out, rc, out, err = await anyio.to_thread.run_sync(_exec)
         except Exception as e:
@@ -1391,9 +1423,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         # 없다 → 그 자리에서 올바른 '한 run 묶기' 패턴을 처방한다(추측·재시도 루프 차단).
         _c = cmd.strip()
         _bg_only = _c.endswith("&") and not _c.endswith("&&")
-        _hint = ""
+        _hint = _repeat_note
         if _bg_only:
-            _hint = ("\n\n⚠ 끝의 `&`로 띄운 백그라운드 프로세스(서버 등)는 **이 run이 끝나며 그룹째 정리**됐습니다 "
+            _hint += ("\n\n⚠ 끝의 `&`로 띄운 백그라운드 프로세스(서버 등)는 **이 run이 끝나며 그룹째 정리**됐습니다 "
                      "— 다음 run엔 살아있지 않습니다(run 간 포트충돌 방지 설계). 서버 **기동증명은 반드시 한 run "
                      "안에** start→대기→점검을 묶으세요: `node server.js & sleep 1; curl -s 127.0.0.1:$PORT/헬스경로 "
                      "&& curl -s -X POST 127.0.0.1:$PORT/api/…` (별도 run으로 나누면 서버가 죽어 curl이 붙지 못합니다).")
