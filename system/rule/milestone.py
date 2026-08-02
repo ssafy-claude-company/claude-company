@@ -349,7 +349,15 @@ def _ms_one(flow, ms, relays):
         # 상태로 미러 — 피드가 단계 폴더에 B1✓·B2▶담당… 칩으로 그린다(채팅 행 아님).
         bl = []
         r = relays.get(st.st_id)
-        for b in (getattr(r, "backlogs", None) or [])[:12]:
+        # [자르되 사실은 잃지 않는다(2026-08-02, U-478 실측)] 종전엔 앞에서 12개만 실었다. ST-7은 실제
+        # 33개였는데 앞 12개가 마침 전부 done이라 화면·프롬프트가 **'전부 완료'로 읽혔다** — 살아 있는
+        # 장부엔 21건이 남아 있었다(subtask_left_open). 그 절단 때문에 나도, 봇도, 사용자도 진행률을
+        # 3분의 1로 봤다. 목록은 여전히 자르되 **미완을 먼저** 싣고, 총계·미완 수를 따로 실어
+        # "몇 개 중 몇 개"라는 사실이 절단에 지워지지 않게 한다.
+        _all = list(getattr(r, "backlogs", None) or [])
+        _open_first = [b for b in _all if b.status not in ("done", "dropped")]
+        _rest = [b for b in _all if b.status in ("done", "dropped")]
+        for b in (_open_first + _rest)[:12]:
             try:
                 _fmt = getattr(flow, "_info", None) or (lambda x: "")
                 a = str(_fmt(b.assignee) or "") if b.assignee else ""
@@ -368,9 +376,13 @@ def _ms_one(flow, ms, relays):
                        "act": list(getattr(b, "activity", None) or [])[-200:]})
         # [백로그=계획 목록(2026-07-10, 사용자: '미리 만들어 두는 건데')] ST 완수조건 = 등록 순간부터
         # 존재하는 계획 단위 — 전 목록을 표면에 준다(passed=✓). 릴레이 bl은 담당·진행의 보강 데이터.
+        _bl_total, _bl_left = len(_all), len(_open_first)
         cr = [{"d": str(c.desc or ""), "p": bool(c.passed), "w": c.status == "waived",
                "v": str(c.verify or ""), "e": _clip(c.evidence, 400)} for c in st.criteria[:15]]
-        sts.append({"g": _clip(st.goal, 300), "id": st.st_id, "s": st.status, "met": st_met, "total": st_total, "bl": bl, "cr": cr})
+        sts.append({"g": _clip(st.goal, 300), "id": st.st_id, "s": st.status, "met": st_met,
+                    "total": st_total, "bl": bl, "cr": cr,
+                    # 목록은 12개로 잘려도 이 둘은 언제나 참이다 — 화면·프롬프트가 진행률을 오해하지 않게.
+                    "bl_total": _bl_total, "bl_left": _bl_left})
     # [완수조건 표면화(2026-07-13, 사용자: '뭐 완수했는지 보이게')] ms레벨 조건도 ✓체크리스트로
     ms_cr = [{"d": str(c.desc or ""), "p": bool(c.passed), "w": c.status == "waived",
               "v": str(c.verify or ""), "e": _clip(c.evidence, 400)} for c in ms.criteria[:15]]
