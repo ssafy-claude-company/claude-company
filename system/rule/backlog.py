@@ -907,7 +907,16 @@ def handoff_note(flow, r, actor, verb) -> None:
       · 남은 백로그 있으면 → [다음 선정] 공고(응찰 → 마무리자 선정).
       · 풀 소진(남은 것 0) → [백로그 소진] 회의 코칭 — 조건 확인 후 미충족이면 meet 추가 단위 or
         vote_stop(중지 투표). 봇 혼자 판단 말고 팀 회의·표결로."""
-    _info = getattr(flow, "_info", lambda x: x)
+    # [이름이 비면 문장이 깨진다(2026-08-02, 대화 전수 실측)] 화면에 "**의** 백로그가 완료됐습니다"와
+    # "[다음] **556001** · Failure revalidation isolation"이 그대로 떴다 — bot_info에 그 id가 없거나
+    # 빈 문자열이면 _info가 빈 값·원시 id를 돌려준다. 사람에게 보이는 줄에는 사람 이름이 있어야 한다.
+    _raw_info = getattr(flow, "_info", lambda x: x)
+
+    def _info(x):
+        v = str(_raw_info(x) or "").strip()
+        if v and not v.isdigit():
+            return v
+        return "담당자"          # 이름을 모르면 역할 대신 중립어 — 숫자·빈칸은 사람의 이름이 아니다
     notes = getattr(flow, "_pipeline_notes", None)
     if notes is None:
         notes = flow._pipeline_notes = []

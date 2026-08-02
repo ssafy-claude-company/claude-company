@@ -302,7 +302,8 @@ class MurmurGuide:
         res = await self._post("/api/guide/ingest/", {
             "op": "send_request", "channel_id": int(ch), "thread_id": int(thread_id),
             "sender_id": int(sender_id), "msg_type": "request",
-            "to_id": (int(to_id) if to_id else None), "kind": k, "body": str(body), "payload": _pipe_payload()})
+            "to_id": (int(to_id) if to_id else None), "kind": k,
+            "body": strip_server_paths(body), "payload": _pipe_payload()})
         self._track_last(ch, thread_id, res.get("msg_id"))
         return str(res.get("msg_id"))
 
@@ -311,7 +312,8 @@ class MurmurGuide:
         res = await self._post("/api/guide/ingest/", {
             "op": "send_response", "channel_id": int(ch), "thread_id": int(thread_id),
             "sender_id": int(sender_id), "msg_type": "response",
-            "reply_to": (int(request_msg_id) if request_msg_id else None), "body": str(body), "payload": _pipe_payload()})
+            "reply_to": (int(request_msg_id) if request_msg_id else None),
+            "body": strip_server_paths(body), "payload": _pipe_payload()})
         self._track_last(ch, thread_id, res.get("msg_id"))
         return str(res.get("msg_id"))
 
@@ -333,7 +335,7 @@ class MurmurGuide:
 
     async def edit_message(self, channel_id, message_id, content):
         await self._post("/api/guide/ingest/", {
-            "op": "edit_message", "message_id": int(message_id), "body": str(content)})
+            "op": "edit_message", "message_id": int(message_id), "body": strip_server_paths(content)})
 
     async def post_document(self, channel_id, sender_id, title, body):
         """[B-12 — Guide 선택 메서드] 회의 발언 *전문*을 murmur Document로 저장 → 열람 ref 반환.
@@ -345,7 +347,7 @@ class MurmurGuide:
         try:
             res = await self._post("/api/guide/document/", {
                 "channel_id": int(ch), "sender_id": int(sender_id or 0),
-                "title": str(title or "")[:200], "body": str(body or "")})
+                "title": str(title or "")[:200], "body": strip_server_paths(body)})
         except Exception:
             return None
         ref = (res or {}).get("ref")
