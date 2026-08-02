@@ -7,13 +7,13 @@ from system import sys_core
 
 def test_일감이_바뀌면_새_스레드로_시작한다():
     src = inspect.getsource(og.Organt._resume_sid)
-    assert "_work_scope" in src and "ORGANT_SCOPE_FRESH" in src
+    assert "_scope_changed" in src
     assert "일감이 바뀌는 자리" in src
 
 
 def test_같은_일감을_이어가면_세션을_잇는다():
     src = inspect.getsource(og.Organt._resume_sid)
-    i = src.index("_work_scope_seen")
+    i = src.index("_scope_changed")
     assert "return self.session_id" in src[i:]
 
 

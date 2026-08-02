@@ -14,4 +14,4 @@ def test_누계만으로_스레드를_끊지_않는다():
 
 def test_일감_경계_리셋은_남아_있다():
     src = inspect.getsource(og.Organt._resume_sid)
-    assert "_work_scope" in src and "ORGANT_SCOPE_FRESH" in src
+    assert "_scope_changed" in src

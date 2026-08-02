@@ -9,23 +9,29 @@ class _F:
 
 def test_두명_한표로는_목표가_확정되지_않는다():
     f = _F()
-    hold = goal_quorum_hold(f, [1, 2], 1)      # ch303 실측: 심의 2명·찬성 1
+    hold = goal_quorum_hold(f, [1, 2], 1, roster=6)      # ch303 실측: 심의 2명·찬성 1
     assert hold and "모자랍니다" in hold and "recruit" in hold
 
 
 def test_셋이_모여_두표면_확정된다():
-    assert goal_quorum_hold(_F(), [1, 2, 3], 2) == ""
+    assert goal_quorum_hold(_F(), [1, 2, 3], 2, roster=6) == ""
 
 
 def test_찬성이_하나뿐이면_인원이_차도_보류():
-    assert goal_quorum_hold(_F(), [1, 2, 3, 4], 1)
+    assert goal_quorum_hold(_F(), [1, 2, 3, 4], 1, roster=6)
 
 
 def test_끝내_못모으면_판을_죽이지_않는다():
     f = _F()
     for _ in range(GOAL_QUORUM_TRIES):
-        assert goal_quorum_hold(f, [1, 2], 1)
-    assert goal_quorum_hold(f, [1, 2], 1) == ""
+        assert goal_quorum_hold(f, [1, 2], 1, roster=6)
+    assert goal_quorum_hold(f, [1, 2], 1, roster=6) == ""
+
+
+def test_팀_자체가_작으면_요구하지_않는다():
+    """[새 판 U-494가 4분 만에 죽어 재교정] 판이 태어나는 순간 자리에 있는 사람은 씨앗 둘뿐이다.
+    그 방에 '셋이 모여라'를 요구하면 소집할 사람이 없어 회의가 소진되고 판이 goal에서 죽는다."""
+    assert goal_quorum_hold(_F(), [1, 2], 2, roster=2) == ""
 
 
 def test_목표에서_내부_파일_인용을_뗀다():

@@ -271,6 +271,13 @@ class Organt:
         """[적당히 — wake-aware 주입] 이번 실행이 직전 세션을 resume하는가(=대화 기억이 보존되는가).
         _session_in_store가 결정론(세션 파일 실재)이라 SYS가 프롬프트 조립 전에 '전체(fresh) vs 델타
         (resume)'를 추측 없이 정확히 안다. True=resume(핵심 규칙만·나머지는 대화 기억), False=fresh(전체)."""
+        # [증류한 지식이 새 스레드에 안 실렸다(2026-08-02, 사용자 지적으로 발견)] 이 값이 True면 SYS는
+        # first_wake=False로 보고 **개인 기준(수면 증류 산출)·경험을 주입하지 않는다** — "대화 기억이
+        # 담보한다"는 전제다. 그런데 일감 경계 리셋이 붙은 뒤로는 세션 파일이 있어도 이번 턴이 **새
+        # 스레드**로 시작할 수 있다. 그러면 그 봇은 자기 직무 기준도 대화 기억도 없이 일을 시작한다 —
+        # 47명이 최대 50회씩 증류해 쌓은 24,995자가 그 턴에는 통째로 빠진다. 전제와 사실을 맞춘다.
+        if self._scope_changed():
+            return False
         return self._session_in_store()
 
     def _options_for_call(self, micro: bool = False) -> ClaudeAgentOptions:
@@ -295,6 +302,16 @@ class Organt:
             return dataclasses.replace(o, resume=_sid)
         return o
 
+    def _scope_changed(self) -> bool:
+        """일감이 바뀌어 이번 턴을 새 스레드로 시작하는가 — 판정만(부작용 없음).
+
+        _resume_sid와 will_resume이 **같은 사실**을 봐야 한다. 갈라지면 '세션은 새로 여는데 지식은
+        안 싣는' 구멍이 생긴다(아래 will_resume 주석 참조)."""
+        if os.environ.get("ORGANT_SCOPE_FRESH", "1") == "0":
+            return False
+        mark = str(getattr(self, "_work_scope", "") or "")
+        return bool(mark) and mark != str(getattr(self, "_work_scope_seen", "") or "")
+
     def _resume_sid(self, micro: bool):
         """[짧은 상호작용은 세션을 물지 않는다(2026-07-30, U-079 실측)] 응찰·표결 한 줄에도 그 봇의
         작업 스레드 전체가 다시 실렸다 — 168토큰 말하려고 12만~25만 토큰을 읽는 구조였다. 세션의
@@ -312,11 +329,9 @@ class Organt:
         # 보내기 때문이다. 기억을 통째로 버리자는 게 아니라 **일감이 바뀌는 자리**에서 끊는다 —
         # 그 일감이 무엇인지·무엇을 했는지는 장부(백로그 본문·활동 기록)가 들고 있고, 새 스레드는
         # 그걸 프롬프트로 받는다. 같은 일감을 이어가는 턴은 종전대로 세션을 잇는다.
-        _mark = str(getattr(self, "_work_scope", "") or "")
-        if _mark and _mark != str(getattr(self, "_work_scope_seen", "") or ""):
-            self._work_scope_seen = _mark
-            if os.environ.get("ORGANT_SCOPE_FRESH", "1") != "0":
-                return None
+        if self._scope_changed():
+            self._work_scope_seen = str(getattr(self, "_work_scope", "") or "")
+            return None
         # [스레드 누계 상한은 폐기했다(2026-08-01, 같은 날 실측으로 반증)] 누계 1억 토큰짜리 스레드를
         # 보고 "스레드가 길어서 비싸다"로 읽었으나, 같은 길이 구간에서 첫 턴과 이어가는 턴을 나란히
         # 재 보니 이득이 턴 길이에 따라 뒤집혔다 — 30~120초 턴은 새 스레드가 7.0배 쌌지만 15분 넘는

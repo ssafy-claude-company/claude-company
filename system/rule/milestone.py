@@ -2637,7 +2637,7 @@ GOAL_QUORUM_MIN = 3    # 무엇을 만들지는 최소 이만큼이 심의한다
 GOAL_QUORUM_TRIES = 3  # 끝내 못 모이면 판을 죽이지 않는다(기록만 남기고 통과)
 
 
-def goal_quorum_hold(flow, voters, yes):
+def goal_quorum_hold(flow, voters, yes, roster=0):
     """[목표는 만들 사람들이 모인 뒤 정한다(2026-08-01, 사용자 실측 지시)]
 
     실측(ch303 '게임 만들어줘'): GOAL 회의 참석 2명(기획·채용), 2라운드, 표결 **찬성 1 · 반대 0**으로
@@ -2651,6 +2651,18 @@ def goal_quorum_hold(flow, voters, yes):
     """
     n = len(list(voters or []))
     if n >= GOAL_QUORUM_MIN and yes >= 2:
+        return ""
+    # [없는 사람을 부를 수는 없다(2026-08-02, 새 판 U-494가 4분 만에 죽어 재교정)] 판이 태어나는 순간
+    # 자리에 있는 사람은 씨앗 둘(기획·채용)뿐이다. 그 방에 "셋이 모여라"를 요구하면 회의는 소집할 사람이
+    # 없어 소진되고, 판은 goal에서 그대로 죽는다(실측: 07:01 hold → 07:02 ms_consensus_empty → 정지).
+    # 요구는 **채울 수 있을 때만** 한다 — 팀에 사람이 이미 있는데 안 나온 것이면 부르고, 팀 자체가
+    # 작으면 통과시킨다. 좁은 목표의 진짜 해결은 목표 확정 뒤 충원을 강제하는 자리에 있지, 여기가 아니다.
+    if int(roster or 0) < GOAL_QUORUM_MIN:
+        try:
+            if flow.log:
+                flow.log("goal_quorum_skipped", roster=int(roster or 0), voters=n)
+        except Exception:
+            pass
         return ""
     tries = int(getattr(flow, "_goal_quorum_tries", 0) or 0) + 1
     try:

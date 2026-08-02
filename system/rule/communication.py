@@ -1103,7 +1103,8 @@ async def meet(flow, me_id, args):
                 # 일이 벌어진 것이라 그대로 닫는다(criteria 회의는 반대 2→1→0으로 스스로 깎였다).
                 # 상세·실측 근거는 milestone.goal_quorum_hold.
                 from .milestone import goal_quorum_hold as _gq
-                _hold = _gq(flow, _voters, _yes)
+                _roster = len({int(x) for x in (list(members or []) + list(_voters or []))})
+                _hold = _gq(flow, _voters, _yes, roster=_roster)
                 if _hold:
                     _passed0 = False
                     _dissents.append(_hold)
