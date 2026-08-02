@@ -80,10 +80,59 @@ _SECRET_ENV_SUBSTR = ("SECRET", "TOKEN", "PASSWORD", "PASSWD", "_API_KEY", "APIK
                       "PRIVATE_KEY", "RENDER_KEY", "GH_PAT")
 
 
-def _preinstalled_refusal(cmd) -> str:
-    """이미 갖춰진 것을 다시 설치하려는 명령이면 거절 사유 + 바로 쓰는 법. 아니면 빈 문자열."""
+PW_CACHE = "/root/.cache/ms-playwright"
+
+
+def browser_build_gap(workspace, cache=None):
+    """[봇이 쓰는 playwright가 기대하는 브라우저 빌드가 공유 캐시에 있는가(2026-08-02, U-478 실측)]
+
+    playwright는 판올림마다 브라우저 빌드 번호가 바뀐다. 공유 캐시에 chromium·firefox·webkit이
+    '있다'는 사실만으로 거절하면, 작업공간의 playwright가 **다른 번호**를 기대할 때 그 거절은 거짓이
+    된다. 실측: 작업공간 node playwright 1.62.1은 firefox-1538·webkit-2336을 찾는데 캐시에는
+    1532·2311만 있었다. 봇은 "이미 있음" 거절을 믿고 /tmp에 apt 상태 디렉터리를 만들어 시스템
+    패키지를 손으로 풀었고(exec 163회 중 apt·ldd 15회), 결국 백로그가 세 번 차단돼 판이 파킹됐다.
+
+    작업공간의 playwright-core가 선언한 브라우저 개정판을 읽어 캐시에 없는 것만 돌려준다.
+    읽을 수 없으면 빈 목록 — 모르면 거절하지 않는다(거짓 거절이 이 사고의 원인이었다).
+    """
+    import glob as _glob
+    import json as _json
+    cache = str(cache or PW_CACHE)   # 기본값은 호출 시점에 읽는다(테스트·재배치 가능)
+    ws = str(workspace or "").strip()
+    if not ws:
+        return []
+    reg = os.path.join(ws, "node_modules", "playwright-core", "browsers.json")
+    try:
+        with open(reg, encoding="utf-8") as fp:
+            data = _json.load(fp)
+    except Exception:
+        return []
+    want, missing = {}, []
+    for b in (data.get("browsers") or []):
+        name, rev = str(b.get("name") or ""), str(b.get("revision") or "")
+        if name in ("chromium", "firefox", "webkit") and rev:
+            want[name] = rev
+    for name, rev in want.items():
+        if not _glob.glob(os.path.join(cache, f"{name}-{rev}")):
+            missing.append(f"{name}-{rev}")
+    return missing
+
+
+def _preinstalled_refusal(cmd, workspace="") -> str:
+    """이미 갖춰진 것을 다시 설치하려는 명령이면 거절 사유 + 바로 쓰는 법. 아니면 빈 문자열.
+
+    **없는 것을 '있다'고 거절하지 않는다** — browser_build_gap이 빈 자리를 찾으면 거절 대신
+    작업공간에 받는 정확한 명령을 돌려준다(그 몇백 MB가 세 시간짜리 삽질보다 싸다)."""
     c = " ".join(str(cmd or "").split()).lower()
     if "playwright install" in c or "playwright/driver" in c:
+        _gap = browser_build_gap(workspace)
+        if _gap:
+            return ("설치 필요(공유 캐시에 없음): 이 작업공간의 playwright가 기대하는 "
+                    f"**{', '.join(_gap)}**이(가) 공유 캐시에 없습니다. 시스템 패키지를 손으로 풀지 "
+                    "말고 작업공간에 받으세요:\n"
+                    "`PLAYWRIGHT_BROWSERS_PATH=$PWD/.pw npx playwright install "
+                    f"{' '.join(g.split('-')[0] for g in _gap)}`\n"
+                    "그 뒤 검증 명령도 같은 `PLAYWRIGHT_BROWSERS_PATH=$PWD/.pw`로 실행하세요.")
         # [없는 엔진을 봇이 손으로 만들고 있었다(2026-08-02, U-478 세션 전문 실측)] 4브라우저 완수조건을
         # 받은 배포/인프라 봇이 webkit이 없자 /tmp에 apt 상태 디렉터리를 따로 만들어 시스템 패키지를 풀고
         # ldd로 의존성을 좇았다 — 한 턴 1시간 48분 중 상당 부분이 그 삽질이었다(exec 163회 중 apt·ldd 계열
@@ -1125,7 +1174,7 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         # [이미 있는 것을 다시 받지 않는다(2026-07-31, U-442 실측)] QA가 작업공간에 playwright 브라우저
         # (646MB)와 pip 패키지(140MB)를 새로 내려받아 12분을 태웠다 — 이 판엔 둘 다 이미 있고 샌드박스가
         # 읽기전용으로 물려준다(PLAYWRIGHT_BROWSERS_PATH=공유 캐시, PATH=공유 venv).
-        _already = _preinstalled_refusal(cmd)
+        _already = _preinstalled_refusal(cmd, _ws)
         if _already:
             return _ok(_already)
         if any(p in cmd for p in _RUN_AUTHOR):
