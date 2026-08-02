@@ -185,6 +185,20 @@ if git -C "$MS" diff --name-only "$pre_cc..HEAD" 2>/dev/null | grep -qE '^(syste
     echo "  ⚠ 러너 재시작 건너뜀(LAND_SKIP_RUNNER=1) — 브레인 반영 전. 잊지 말 것:"
     echo "     systemctl restart organt-runner"
   else
+    # [재시작이 돌던 턴을 죽인다(2026-08-02 실사고)] 착지가 러너를 무조건 재시작해, U-478의 배포/인프라
+    # 봇이 1시간 54분째 돌던 턴이 통째로 사라졌다(01:48:44 재시작 = 세션 마지막 기록 시각). 그 턴은
+    # turn_done을 못 남겨 **누계 5,578만 토큰이 장부에도 안 잡혔고**, 잃은 작업 때문에 판이 파킹됐다.
+    # 실행 중인 codex 턴이 없을 때까지 기다렸다가 재시작한다(최대 20분 — 그 뒤엔 알리고 진행).
+    _w=0
+    while [ "$_w" -lt 1200 ] && pgrep -f "codex exec" >/dev/null 2>&1; do
+      [ "$_w" = 0 ] && echo "  ⏳ 돌고 있는 codex 턴이 끝나기를 기다립니다(재시작이 턴을 죽입니다)"
+      sleep 15; _w=$((_w+15))
+    done
+    if pgrep -f "codex exec" >/dev/null 2>&1; then
+      echo "  ⚠ 20분을 기다렸는데도 도는 턴이 있습니다 — 그대로 재시작합니다(그 턴은 유실됩니다)"
+    elif [ "$_w" -gt 0 ]; then
+      echo "  ✓ 도는 턴 없음(${_w}초 대기) — 안전하게 재시작합니다"
+    fi
     systemctl restart organt-runner && echo "  organt-runner 재시작 — 브레인 반영 완료" \
       || echo "  ⚠ organt-runner 재시작 실패 — systemctl status organt-runner 확인"
   fi
