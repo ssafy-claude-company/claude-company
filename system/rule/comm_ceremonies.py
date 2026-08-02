@@ -223,8 +223,23 @@ async def vote_stop(flow, me_id, args):
             try:
                 _tid = getattr(flow.current, "thread_id", None) or getattr(flow, "user_channel", None)
                 if _tid:
-                    await flow.guide.post(int(_tid), 0, f"[Task 중지 상신] 팀이 이 Task를 접자고 표결"
-                                          f"({board})했습니다. 사유: {reason[:200]}. 중지를 승인하시겠습니까?")
+                    # [사람에게 묻는 글은 사람의 말로(2026-08-02, 사용자: '중지 상신 대충 만든 느낌')]
+                    # 종전 문구는 팀의 내부 사유 200자를 그대로 이어 붙여, `report_iter wrapup`·
+                    # `e2e_open` 같은 도구 이름이 한 문단으로 쏟아졌다(실측 U-442 화면). 사용자가
+                    # 판단하려면 세 가지만 있으면 된다 — 지금까지 된 것, 막힌 것, 두 선택지.
+                    _made = ""
+                    try:
+                        _u = str(getattr(flow, "_deploy_url", "") or "")
+                        if _u:
+                            _made = f"\n지금까지 만든 것: {_u}"
+                    except Exception:
+                        _made = ""
+                    await flow.guide.post(int(_tid), 0,
+                        "[Task 중지 상신] 팀이 더는 진전을 못 낸다고 판단했습니다"
+                        f"({board})." + _made
+                        + f"\n막힌 곳: {_speech_clip(reason, 120)}"
+                        + "\n\n**중지**를 누르면 여기서 마치고, **재개**를 누르면 지금 장부 그대로 이어서 "
+                          "다시 시도합니다. 무엇을 바꿔야 할지 한 줄 적어 주시면 그대로 반영해 잇습니다.")
             except Exception:
                 pass
         _ckpt(flow)
