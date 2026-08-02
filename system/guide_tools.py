@@ -84,8 +84,13 @@ def _preinstalled_refusal(cmd) -> str:
     """이미 갖춰진 것을 다시 설치하려는 명령이면 거절 사유 + 바로 쓰는 법. 아니면 빈 문자열."""
     c = " ".join(str(cmd or "").split()).lower()
     if "playwright install" in c or "playwright/driver" in c:
+        # [없는 엔진을 봇이 손으로 만들고 있었다(2026-08-02, U-478 세션 전문 실측)] 4브라우저 완수조건을
+        # 받은 배포/인프라 봇이 webkit이 없자 /tmp에 apt 상태 디렉터리를 따로 만들어 시스템 패키지를 풀고
+        # ldd로 의존성을 좇았다 — 한 턴 1시간 48분 중 상당 부분이 그 삽질이었다(exec 163회 중 apt·ldd 계열
+        # 반복 15회). 셋을 정식 설치했으니(chromium·firefox·webkit) 무엇이 있는지 이름으로 알려준다.
         return ("실행 거부(이미 있음): 브라우저는 이 판의 공유 캐시에 이미 설치돼 있고 샌드박스가 "
-                "`PLAYWRIGHT_BROWSERS_PATH`로 물려줍니다 — 내려받지 말고 그대로 쓰세요"
+                "`PLAYWRIGHT_BROWSERS_PATH`로 물려줍니다 — **chromium·firefox·webkit(Safari 엔진) 셋 다** "
+                "바로 씁니다. 내려받지 말고 그대로 쓰세요"
                 "(`python3 -c \"from playwright.sync_api import sync_playwright\"`로 확인). "
                 "재설치는 작업공간에 수백 MB를 복사하고 십수 분을 태웁니다.")
     if ("pip install" in c or "pip3 install" in c) and "playwright" in c:
@@ -1042,7 +1047,9 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
     @tool("run",
           f"작업공간에서 명령을 실행해 산출물을 직접 검증(빌드/구동/테스트). cwd={flow.workspace or '작업공간 루트'} "
           f"(이 절대경로가 작업공간 — `/workspace` 아님). 60s 제한, "
-          "웹 작품은 **실제 브라우저 검증 가능**: playwright+chromium 설치됨 — 예: PJT venv의 python -c로 "
+          "웹 작품은 **실제 브라우저 검증 가능**: playwright의 **chromium·firefox·webkit(Safari 엔진) 셋 다** "
+          "설치돼 있습니다(2026-08-02 확인 — 셋 모두 라이브 URL 로드 성공). 다중 브라우저 완수조건은 "
+          "이 셋으로 실증하세요 — 시스템 패키지를 손으로 풀 필요가 없습니다. 예: PJT venv의 python -c로 "
           "sync_playwright 페이지 로드→로드시간·콘솔에러·스크린샷 확인('실행됨'과 '사용할 만함'은 다르다). "
           "출력 반환. 서버 구동은 'node server.js & sleep 1; curl -s localhost:3000/'처럼 백그라운드+점검으로 "
           "묶으면 됨 — run이 끝나면 백그라운드 프로세스까지 자동 정리하므로 kill 불필요(다음 run의 포트 충돌 없음). "
