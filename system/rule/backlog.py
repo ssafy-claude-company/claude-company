@@ -980,6 +980,37 @@ def close_subtask_if_drained(flow, st, relay) -> bool:
         return False
 
 
+def sweep_drained_subtasks(flow) -> int:
+    """[이미 소진된 단계는 방아쇠가 없다(2026-08-02)] close_subtask_if_drained는 '마지막 백로그가 닫히는
+    순간'에 걸린다. 그런데 그 수정 이전에 이미 전부 닫힌 단계(실측 ST-7: 백로그 12개 done, 상태 open)는
+    새 완료가 생기지 않아 영영 열려 있다. 세그먼트마다 한 번 훑어 같은 판정을 적용한다 — 열려 있는데
+    백로그가 전부 종결된 단계를 닫는다. 닫은 수를 돌려준다(0이면 아무 일도 없었다는 뜻)."""
+    if not pipeline_on():
+        return 0
+    n = 0
+    for ms in (getattr(flow, "milestones", None) or []):
+        if getattr(ms, "status", "") in ("done", "superseded"):
+            continue
+        # [주기가 그것 하나 때문에 못 닫힐 때만 쓸어 담는다(2026-08-02 재교정)] 아무 때나 훑으면
+        # 아직 일감을 더 낼 단계까지 조기에 닫아, 이어가기 예산이 남았는데 판이 끝나 버린다
+        # (계약 테스트 6건이 그렇게 깨졌다). 완수조건이 **이미 전부 충족**된 주기 — 즉 닫을 준비가
+        # 끝났는데 소진된 단계 하나가 막고 있는 자리 — 에서만 적용한다. 그게 실측된 그 상황이다.
+        try:
+            from .milestone import _cnt_active
+            _met, _tot = _cnt_active(getattr(ms, "criteria", None) or [])
+        except Exception:
+            _met = _tot = 0
+        if not (_tot >= 1 and _met >= _tot):
+            continue
+        for st in (getattr(ms, "subtasks", None) or []):
+            r = (getattr(flow, "backlog_relays", None) or {}).get(getattr(st, "st_id", ""))
+            if r is None:
+                continue
+            if close_subtask_if_drained(flow, st, r):
+                n += 1
+    return n
+
+
 def on_subtask_wrapup(flow, st) -> str:
     """[SubTask iter 연동 — §2] iter_verify 통과(status=wrapup) 후 호출: 잔여 백로그 정리 +
     디스크 장부(.collab/MILESTONES.md, §9 미러). 반환 = 장부 요지 한 줄(호출부가 채널 보고에 씀).

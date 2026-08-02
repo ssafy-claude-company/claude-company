@@ -1391,6 +1391,18 @@ class Sys:
         self._log("deploy_state_synced_from_pool", url=live)
         return True
 
+    def _sweep_drained(self, flow) -> None:
+        """[소진된 단계 일괄 정리(2026-08-02)] 백로그를 다 닫고도 열려 있는 단계 때문에 주기가 못 닫히는
+        일을 없앤다. 적용 범위는 rule.backlog.sweep_drained_subtasks가 좁힌다(완수조건이 이미 전부
+        충족된 주기에서만) — 아무 때나 훑으면 아직 일감을 더 낼 단계까지 조기에 닫는다."""
+        try:
+            from .rule.backlog import sweep_drained_subtasks
+            n = sweep_drained_subtasks(flow)
+            if n:
+                self._log("subtasks_swept_on_drain", n=n)
+        except Exception as e:
+            self._log("subtask_sweep_failed", err=str(e)[:60])
+
     async def _drain_inflight(self, flow) -> str:
         """완주 중인 위임(detach 포함)이 있으면 끝까지 기다리고, 도착한 위임 결과를 이어가기 리더에게
         전달할 본문으로 돌려준다(없으면 ''). CLI가 도구 호출을 포기해도 deliver 태스크는 계속 돌므로
@@ -4173,6 +4185,7 @@ class Sys:
                 # 게시·복구)는 흐름 장부에 없어, 제품이 라이브인데도 마감 관문이 계속 막았다. 복구
                 # 시점 한 번으로는 경로에 따라 놓친다 — 세그먼트마다(5분 캐시) 앱 풀의 사실을 본다.
                 self._sync_pool_deploy(flow)
+                self._sweep_drained(flow)
                 self._log("continue_incomplete",
                           task=(flow.current.task_id if flow.current else None), attempt=cont,
                           seg=flow.leader_segment, progressed=progressed,
