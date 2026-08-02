@@ -45,6 +45,32 @@ def _pipe_payload():
         return {}
 
 
+_WS_ROOTS = ("/root/murmur-stack/ops/var/organt_sns_workspace/",
+             "/root/ClaudeCompany/ops/var/organt_sns_workspace/")
+
+
+def strip_server_paths(text) -> str:
+    """[사용자 화면에 서버 내부 경로가 뜬다(2026-08-02, 피드 전수 스캔)] 채널 발언 45건(ch267)·8건(ch303)에
+    `/root/murmur-stack/ops/var/organt_sns_workspace/p-078-…/scripts/verify.py` 같은 절대경로가 그대로
+    실렸다. 링크로 렌더된 것도 있었다(`[verifier](</root/…>)`). 사용자에게는 의미 없는 문자열이고 서버
+    구조 노출이다. 봇끼리는 절대경로가 필요하니 **표시 직전에만** 작업공간 뿌리를 떼어 상대경로로 만든다
+    — 파일 이름과 위치는 그대로 남아 무엇을 가리키는지는 잃지 않는다."""
+    t = str(text or "")
+    for root in _WS_ROOTS:
+        i = 0
+        while True:
+            i = t.find(root, i)
+            if i < 0:
+                break
+            j = t.find("/", i + len(root))          # 판 폴더 다음 구분자까지가 뿌리
+            if j < 0:
+                t = t[:i] + "(작업공간)" + t[i + len(root):]
+                break
+            t = t[:i] + t[j + 1:]
+            i = i
+    return t
+
+
 class MurmurGuide:
     """Rule ↔ 원격 SNS(guide_bridge) 전송기. 러너 프로세스 1개 안에서 Sys/Flow에 주입된다."""
 
@@ -191,7 +217,8 @@ class MurmurGuide:
         ch = self._thread_channel.get(int(channel_id)) or ORIGIN_CHANNEL.get() or self._origin_channel or int(channel_id)
         res = await self._post("/api/guide/ingest/", {
             "op": "post", "channel_id": int(ch), "thread_id": int(channel_id),
-            "sender_id": int(sender_id or 0), "msg_type": "plain", "body": str(content),
+            "sender_id": int(sender_id or 0), "msg_type": "plain",
+            "body": strip_server_paths(content),
             "reply_to": (int(reply_to) if reply_to else None), "payload": _pipe_payload()})
         if int(sender_id or 0) != 0:
             self._track_last(ch, channel_id, res.get("msg_id"))   # 앵커=마지막 '봇' 발화 — SYS 게시([배포 결과] 등)에 의견이 달리는 어색함 방지(사용자)
