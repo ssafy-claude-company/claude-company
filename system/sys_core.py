@@ -740,7 +740,17 @@ class Sys:
             # [목적 표기(2026-07-30)] 이 경로는 run_turn을 거치지 않아 결산에 목적이 비었다 —
             # 증류도 돈을 쓰는 턴이므로 원장에 제 이름으로 잡혀야 한다.
             self._mark_purpose(flow, mid, "수면 증류")
-            out = await organt.handle(prompt, micro=True)
+            # [증류는 매달릴 수 있다(2026-08-02 실사고)] 증류 세션 36개 중 35개가 **1초 안에** 끝났는데,
+            # 04:37에 시작한 하나가 완료 표식 없이 멈춘 채 프로세스만 1시간 40분을 살아 있었다. 그 봇은
+            # `__distill__` 점유로 묶여 일감을 못 받았고, 4코어 머신의 슬롯 3개를 붙들었으며, '가장 오래된
+            # 턴'을 보는 러너 재시작 대기가 영영 성립하지 않았다. 작업 턴에는 turn_timeout이 있지만 증류는
+            # 이 경로라 보호 밖이었다. 실측(중앙 0초·최대 0초)에 비춰 넉넉한 상한을 두고 끊는다 —
+            # 증류는 실패해도 다음 주기에 다시 하면 되는 일이라, 매달리는 것보다 끊는 쪽이 언제나 낫다.
+            _dt = float(os.environ.get("ORGANT_DISTILL_TIMEOUT", "300") or 300)
+            out = await asyncio.wait_for(organt.handle(prompt, micro=True), timeout=_dt)
+        except asyncio.TimeoutError:
+            self._log("bot_distill_timeout", bot=mid, sec=int(_dt))
+            return False
         except TypeError:
             out = await organt.handle(prompt)            # 구형 빌더/스텁 호환(테스트 등)
         except Exception as e:
