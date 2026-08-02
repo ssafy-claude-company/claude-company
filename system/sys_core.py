@@ -5070,8 +5070,29 @@ class Sys:
                     _capacity_used = len(_active) + _reserved_n
                     if self.max_flows > 0 and _capacity_used >= self.max_flows:
                         continue
+                    # [매인 사람 하나가 판 하나를 굶긴다(2026-08-02 실측)] 받을 봇이 다른 판에 매여 있으면
+                    # 이 판을 통째로 건너뛴다. 봇 18명 중 16명은 판 전용인데 기획·채용 2명만 공유라,
+                    # 그 둘이 병목이 된다 — 오늘 8.1시간 중 신판 3.0h·새판 3.9h를 굶었고(최장 92분)
+                    # 재시작으로도 안 풀린 판이 있었다. 연속으로 건너뛴 판은 **그 사람만 기다리지 말고**
+                    # 지금 손이 빈 사람에게 넘긴다(선거 경로가 이미 하는 그 선택). 연속성은 그대로 우선이라
+                    # 처음 몇 번은 종전대로 기다린다 — 굶는 판만 구제한다.
+                    _skips = getattr(self, "_ch_skip", None)
+                    if _skips is None:
+                        _skips = self._ch_skip = {}
                     if ch in busy_ch or to_id in busy_lead or self.engaged.holder(to_id) is not None:
-                        continue
+                        _skips[ch] = int(_skips.get(ch, 0)) + 1
+                        if _skips[ch] < 5 or ch in busy_ch:
+                            continue
+                        _free = next((int(b) for b in self.bot_info
+                                      if not _is_spare_label(self.bot_info.get(int(b)))
+                                      and self.engaged.holder(int(b)) is None
+                                      and int(b) not in busy_lead), None)
+                        if _free is None:
+                            continue
+                        self._log("starved_channel_reassigned", ch=ch, skips=_skips[ch],
+                                  was=to_id, to=_free)
+                        to_id = _free
+                    _skips.pop(ch, None)
                     seen.add(mid)
                     kind = Kind.WORK if (m["kind"] or "W") == "W" else Kind.INFO
                     req = Request(to_id=to_id, kind=kind, body=m["body"], from_id=0, message_id=str(mid))
