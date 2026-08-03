@@ -808,6 +808,8 @@ def _resolve_flow_backlog(flow, body: str, to: int):
         backlog_id = mark.group("bl").upper()
         candidates = [row for row in rows if row[2].backlog_id.upper() == backlog_id]
         st_hint = str(mark.group("st") or "").strip()
+        if "::" in st_hint:      # 시스템이 보여 준 `ST::Bn` 표기를 그대로 되받는다(위 주석과 같은 이유)
+            st_hint = st_hint.split("::", 1)[0].strip()
         if st_hint:
             candidates = [
                 row for row in candidates

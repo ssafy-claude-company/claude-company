@@ -862,7 +862,16 @@ def _resolve_scoped_backlog(flow, subtasks, backlog_id, me_id, st_hint=""):
     from .rule.backlog import DONE, DROPPED, relay_for
 
     bid = str(backlog_id or "").strip()
-    hint = str(st_hint or "").strip().lower()
+    hint = str(st_hint or "").strip()
+    # [시스템이 쓴 표기를 시스템이 되받는다(2026-08-03, 실측 U-478)] 이 판은 봇에게 범위를
+    # `<SubTask-ID>::<Bn>`으로 보여준다 — 후보 목록도(`ST::B1 · ST::B2`), 오류문도, 보충 링크
+    # 문법(`[해결: ST::Bn]`)도 그 꼴이다. 그런데 봇이 그 문자열을 st로 되돌려주면 st_id와 같지
+    # 않아 '단위를 찾지 못했습니다'로 거절됐고, 팀은 같은 확인을 네 턴 반복했다(10:32~10:45,
+    # 그 사이 wrapup 재실증도 못 했다). 가르친 표기는 받아야 한다 — `::` 뒤는 일감 이름이므로
+    # 범위 힌트에서 떼어 낸다(모호할 여지가 없는 자기 표기다).
+    if "::" in hint:
+        hint = hint.split("::", 1)[0].strip()
+    hint = hint.lower()
     candidates = []
     for st in subtasks:
         relay = relay_for(flow, st)
