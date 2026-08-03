@@ -2324,6 +2324,26 @@ def claim_kick_target(flow):
         if owner and not _busy(flow, owner):
             return (owner, b, st.st_id)
 
+    # [등재자가 손이 차 있다고 그 일이 멈추지는 않는다(2026-08-03, 실측 U-478)] 위 1차는 일감을
+    # **등재자에게만** 준다(자기 등재 원칙). 그런데 러너는 검증 보고의 조건 줄마다 백로그를 소급
+    # 등재하므로(report_iter → submit(force=True)), 많이 보고한 사람일수록 자기만 집을 수 있는
+    # 일감이 쌓인다. 실측: ST-7의 미배정 24건이 전부 제출자 5명 것이고 그 5명이 모두 다른 일을
+    # 들고 있어, 판에 42명·최근 6시간에 11명이 돌고 있는데도 18시간 동안 아무도 집지 못했다.
+    # 단위가 닫히려면 모든 백로그가 종결돼야 하므로(subtask_close_check) 판은 완주할 수 없다.
+    # 등재자 우선은 그대로 두고(1차), 그 사람이 손이 차 있으면 손 빈 적임자에게 넘긴다 — 무주
+    # 백로그에 이미 쓰던 것과 같은 선택(role_fit)이다. 동시 상한(_bpw)은 위에서 그대로 지킨다.
+    for st, _r, b in rows:
+        if b.status != "open" or backlog_scope_key(st.st_id, b.backlog_id) in kicked:
+            continue
+        _own = _worker(st, b)
+        _bots = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
+        _free = [k for k in _bots if k != int(_own or 0) and not _busy(flow, k)]
+        if not _free:
+            continue
+        from ..role_fit import role_fit as _rf2
+        _q = f"{getattr(st, 'goal', '')} {b.body}"
+        return (int(max(_free, key=lambda k: _rf2(_q, _bots[k]))), b, st.st_id)
+
     # blocked는 차단 직후 즉시 재선정하지 않는다. 모든 실행 가능분이 소진되고 차단 뒤 보충 작업의
     # 실제 완료가 남았을 때만 재방문한다. handoff가 응답 장애로 선택을 못 했을 때의 구조적 안전망이다.
     all_backlogs = [b for _st, _r, b in rows]
