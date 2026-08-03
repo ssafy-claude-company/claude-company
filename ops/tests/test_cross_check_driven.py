@@ -51,3 +51,18 @@ def test_위임_경로를_요청_본문이_닫는다():
     window = src[i:i + 900]
     assert "당신이 직접 해야 합니다" in window
     assert "위임했다는 응답은 검증으로 세지" in window
+
+
+def test_세는_자리를_관측한다():
+    """[2026-08-03 실측] 마감 관문은 cross_check_offdomain>0을 요구하는데, 위임이 여러 번 나가고
+    지목된 봇이 턴을 마쳐도(20:58:09, 225초) 카운터는 0 그대로였다(cc=0 offdom=0, holds 11).
+    응답이 이 자리에 닿는지, 닿는데 조건에서 걸리는지, 아예 안 닿는지가 구분되지 않으면
+    고칠 수가 없다 — 세는 순간과 못 세는 순간을 둘 다 남긴다."""
+    from system.rule import communication
+
+    src = inspect.getsource(communication)
+    assert "cross_check_seen" in src
+    i = src.index("cross_check_seen")
+    window = src[i:i + 400]
+    for k in ("product_ready", "counted", "owner"):
+        assert k in window, k + "가 없으면 어디서 걸렸는지 모른다"

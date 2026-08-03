@@ -2923,6 +2923,20 @@ async def request(flow, me_id, role, args):
         # 독식이 검증 면제되던 구멍.
         product_ready = (flow.current.owner_delivered
                          or (not flow.current.owner and getattr(flow.current, "leader_writes", 0) > 0))
+        # [세는 자리를 관측한다(2026-08-03, 실측 U-478)] 마감 관문은 cross_check_offdomain>0을
+        # 요구하는데, 위임이 여러 번 나가고 지목된 봇이 턴을 마쳐도(20:58:09, 225초) 카운터는 0
+        # 그대로였다(task_close_state cc=0 offdom=0, holds 11). 응답이 이 자리에 닿는지, 닿는데
+        # 조건에서 걸리는지, 아예 안 닿는지가 로그로 구분되지 않는다 — 그래서 고칠 수가 없다.
+        # 세는 순간과 못 세는 순간을 둘 다 남긴다(관측만 — 판정은 그대로).
+        if flow.log:
+            try:
+                _own0 = int(getattr(flow.current, "owner", 0) or 0) if flow.current else 0
+                flow.log("cross_check_seen", to=int(to), owner=_own0,
+                         product_ready=bool(product_ready),
+                         counted=bool(flow.current and product_ready and to != _own0),
+                         kind=str(getattr(kind, "name", kind)))
+            except Exception:
+                pass
         if flow.current and product_ready and to != flow.current.owner:
             flow.current.cross_checks += 1
             # [독립 검증 = 다른 도메인 — 동질 모델] 같은 Claude·같은 직군 검증자는 에코(같은 관점→같은
