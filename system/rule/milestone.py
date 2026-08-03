@@ -632,6 +632,21 @@ def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
                  goal=str(goal or "").strip(), criteria=_mk_criteria(_ce))
     ms.subtasks.append(st)
     _ckpt(flow)
+    # [정본은 진행 중인 일도 담아야 한다(2026-08-03, 실측 U-478)] 디스크 장부
+    # (.collab/MILESTONES.md)는 지금까지 **단계가 닫힐 때 한 번만** 쓰였다(backlog.on_subtask_wrapup —
+    # 유일한 기록 지점). 그래서 진행 중인 단계는 정본에 아예 없고, "정본을 Read로 대조"한 봇은
+    # 자기가 지금 일하는 단위를 못 찾아 "유효한 canonical target/unit ID가 없습니다"로 결론냈다.
+    # 실측 U-478 10:32~10:45: ST-7에서 일하는 중인데 MILESTONES.md엔 ST-1~ST-6뿐이라(ST-7은
+    # 11:07 마감 때 처음 기록됨) 같은 확인이 다섯 턴 반복됐고, 그 사이 주기 마감도 못 했다.
+    # 개설 시점에 단위의 신원(ID·목표)을 먼저 남긴다 — 마감 때의 완료 목록은 종전대로 이어 쓴다.
+    try:
+        from .._util import dossier_append
+        dossier_append(flow, "MILESTONES.md",
+                       f"## SubTask {st.st_id} — 진행 중\n"
+                       f"목표: {_clip(st.goal, 300)}\n"
+                       f"(이 단계의 일감은 진행 중입니다 — 목록은 단계가 닫힐 때 이 아래에 남습니다.)")
+    except Exception:
+        pass                                     # 장부 실패가 개설을 죽이지 않는다(§9 미러는 보조)
     if flow.log:
         flow.log("subtask_open", ms=ms.ms_id, st=st.st_id, goal=st.goal[:80])
     _pnote(flow, f"[SubTask 개설] ({st.st_id}) {_clip(st.goal, 300)}")
