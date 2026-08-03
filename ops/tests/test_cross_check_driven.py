@@ -40,3 +40,14 @@ def test_이미_물어본_사람은_후보에서_뺀다():
     i = src.index("task_close_crosscheck_sent")
     window = src[max(0, i - 400):i + 200]
     assert "_cc_asked.add" in window, "보낸 사람을 기록해야 다음엔 다른 동료가 걸린다"
+
+
+def test_위임_경로를_요청_본문이_닫는다():
+    """[2026-08-03 실측] 지목된 동료가 이 요청을 받고 한 일이 다시 위임이었다
+    ("독립 QA 최종 인수검증 위임을 유지합니다" 14:52·15:14). 위임 응답은 교차검증으로 세지
+    않으므로 관문은 그대로 막히고 판이 20분 무진행으로 멎었다."""
+    src = inspect.getsource(sys_core)
+    i = src.index("SYS — 마감 전 독립 검증")
+    window = src[i:i + 900]
+    assert "당신이 직접 해야 합니다" in window
+    assert "위임했다는 응답은 검증으로 세지" in window
