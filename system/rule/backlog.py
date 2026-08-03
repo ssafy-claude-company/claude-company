@@ -1051,6 +1051,12 @@ def sweep_drained_subtasks(flow) -> int:
             _met = _tot = 0
         if not (_tot >= 1 and _met >= _tot):
             continue
+        # [실증된 주기를 붙잡는 것이 '미착수 기록'이면 여기서 푼다(2026-08-03, 실측 U-478)]
+        # iter_verify 안에도 같은 정리를 두었지만, 그 자리는 팀이 report_iter를 다시 부를 때만
+        # 돈다 — 백로그가 남아 있으면 재검증이 걸리지 않으니 영영 안 불린다(실측: 완수조건 1/1을
+        # 05:57에 실증하고도 상태 open, Task 마감 48회 거절). 이 훑기는 세그먼트마다 돌고 적용
+        # 범위도 같다(완수조건이 이미 전부 충족된 주기) — 막힘이 관측되는 자리에서 함께 푼다.
+        drop_unstarted_on_proven_cycle(flow, ms)
         for st in (getattr(ms, "subtasks", None) or []):
             r = (getattr(flow, "backlog_relays", None) or {}).get(getattr(st, "st_id", ""))
             if r is None:

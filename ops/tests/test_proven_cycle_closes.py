@@ -107,3 +107,42 @@ def test_손을_댄_일감은_실증_시점에도_게이트를_막는다(monkeyp
 
     assert ok is False and "백로그" in msg
     assert ms.status != "wrapup"
+
+
+def test_재검증을_기다리지_않고_세그먼트_훑기에서도_풀린다(monkeypatch):
+    """[iter_verify 안에만 두면 영영 안 불린다(2026-08-03 실측)]
+
+    iter_verify는 팀이 report_iter를 다시 부를 때만 돈다. 그런데 백로그가 남아 있으면 재검증
+    자체가 걸리지 않으므로(작업 소진 뒤에야 실증을 드라이브한다), 완수조건을 실증하고도 주기가
+    영영 open에 머문다 — 실측 U-478: 05:57 실증, 이후 Task 마감 48회 거절.
+    막힘이 관측되는 자리(세그먼트마다 도는 훑기)에서도 같은 정리가 돌아야 한다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.backlog import sweep_drained_subtasks
+    from system.rule.milestone import Criterion
+
+    flow, ms, st, relay = _cycle()
+    ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
+    ms.criteria[0].passed = True
+    ghost = relay.submit(22, "보고가 남긴 조건 줄", force=True)     # 미착수 기록만 남은 상태
+
+    sweep_drained_subtasks(flow)
+
+    assert ghost.status == "dropped", "관측 자리에서 미착수 기록이 풀리지 않는다"
+    assert st.status in ("done", "superseded"), "소진된 단계가 닫히지 않았다"
+
+
+def test_완수조건이_아직인_주기는_훑기가_건드리지_않는다(monkeypatch):
+    """적용 범위는 그대로 — 아직 일감을 더 낼 주기를 조기에 닫으면 안 된다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.backlog import sweep_drained_subtasks
+    from system.rule.milestone import Criterion
+
+    flow, ms, st, relay = _cycle()
+    ms.criteria = [Criterion(desc="아직 실증 안 됨", verify="npm run verify")]
+    ghost = relay.submit(22, "미착수 일감", force=True)
+
+    sweep_drained_subtasks(flow)
+
+    assert ghost.status == "open"
+    assert st.status not in ("done", "superseded")
