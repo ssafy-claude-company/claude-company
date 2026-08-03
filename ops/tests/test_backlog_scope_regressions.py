@@ -243,7 +243,16 @@ def test_위임완료는_첫_ST가_아니라_실제_뒤_ST_active를_완료한�
     assert backlog2.status == "done"
 
 
-def test_report_iter의_소급백로그도_다른_ST_active를_우회하지_않는다(monkeypatch):
+def test_report_iter의_소급백로그는_남의_작업_슬롯을_가로채지_않는다(monkeypatch):
+    """[2026-08-03 개정] 이 계약은 본래 '단일 활성 잠금'(한 시점에 백로그 하나)을 지키려고, 보고가
+    소급 등재한 백로그를 **통과분까지 open으로** 남겼다. 그런데 그 잠금은 2026-07-31 전원 병렬로
+    폐지됐고(backlog_parallel_width·claim_kick_target), 남은 것은 부작용뿐이었다 — 끝난 일이
+    주인 없는 open 일감으로 장부에 쌓여 단위가 영영 닫히지 않았다(실측 U-478 ST-7: 총량 71→108,
+    시스템 등재 미완 89건 중 72건은 한 번도 지명되지 않음).
+
+    지켜야 할 것은 '보고가 남의 작업 슬롯을 가로채지 않는다'이지 '끝난 일을 안 닫는다'가 아니다.
+    통과분은 그 자리에서 닫히고(작업 중으로 남지 않으므로 슬롯을 점유하지 않는다), 미충족분은
+    남은 실제 작업이므로 열린 채로 둔다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     flow, (st1, relay1, _backlog1), (_st2, relay2, backlog2) = _flow_with_two_subtasks()
     relay2.pick(22, backlog2.backlog_id, 22)
@@ -254,9 +263,15 @@ def test_report_iter의_소급백로그도_다른_ST_active를_우회하지_않�
     )
 
     assert "잔여" in result
-    fresh = relay1.get("B2")
-    assert fresh.status == "open"
+    assert relay1.get("B2").status == "done"          # 끝난 일은 끝난 것으로 장부에 남는다
+    # 남의 작업 슬롯은 그대로 — 보고가 활성 목록을 바꾸지 않았다.
     assert active_backlog_rows(flow) == [(flow.milestones[0].subtasks[1], relay2, backlog2)]
+
+    rule_report_iter(
+        flow, 12,
+        {"target": st1.st_id, "results": "아직 못 닫은 점검 | fail | exit 1"},
+    )
+    assert relay1.get("B3").status != "done"          # 미충족은 남은 일로 장부에 열려 있다
 
 
 def test_구버전_다중active복원은_먼저잡힌_하나만_보존한다():
