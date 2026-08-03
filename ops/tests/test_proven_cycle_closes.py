@@ -169,3 +169,50 @@ def test_보고할_때마다_소진_판정_자리에서_풀린다(monkeypatch):
 
     assert ghost.status == "dropped", "보고 자리에서 미착수 기록이 풀리지 않는다"
     assert st.status in ("done", "superseded"), "소진된 단계가 닫히지 않았다"
+
+
+def test_일감이_하나도_없는_단계도_실증된_주기에서는_닫힌다(monkeypatch):
+    """[빈 단계는 닫을 방아쇠가 없다(2026-08-03, 실측 U-496)]
+
+    소진 판정은 '일감이 하나 이상 있었고 전부 종결'을 요구한다 — 아직 분해 중인 단계를 조기에
+    닫지 않으려는 조건이다. 그런데 회의가 단계 둘을 열고 일감을 한쪽에만 등재하면 빈 단계가
+    남는다(실측 U-496 MS-749610899-2: 'QA·브라우저 수용 게이트' bl_total 0). 그 단계는 완료될
+    일감이 없으니 방아쇠가 영영 오지 않고, 주기가 그것 하나 때문에 못 닫힌다.
+
+    완수조건이 이미 실증된 주기에서는 '아직 분해 중'일 수 없다 — 빈 단계도 소진으로 본다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.backlog import BacklogRelay, sweep_drained_subtasks
+    from system.rule.milestone import Criterion, SubTask
+
+    flow, ms, st, relay = _cycle()
+    ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
+    ms.criteria[0].passed = True
+    done_one = relay.submit(12, "실제로 끝낸 일", force=True)
+    relay.pick(12, done_one.backlog_id, 12)
+    relay.done(12, done_one.backlog_id)
+
+    empty = SubTask("MS-P/ST-2", "QA 게이트", [])      # 일감이 한 건도 등재되지 않은 단계
+    ms.subtasks.append(empty)
+    flow.backlog_relays[empty.st_id] = BacklogRelay(empty.st_id)
+
+    sweep_drained_subtasks(flow)
+
+    assert empty.status in ("done", "superseded"), "빈 단계가 주기를 영영 붙잡는다"
+    assert st.status in ("done", "superseded")
+
+
+def test_완수조건이_아직인_주기의_빈_단계는_건드리지_않는다(monkeypatch):
+    """분해 중인 단계를 조기에 닫으면 안 된다 — 원래 조건의 취지는 그대로 지킨다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.backlog import BacklogRelay, close_subtask_if_drained
+    from system.rule.milestone import SubTask
+
+    flow, ms, st, relay = _cycle()
+    empty = SubTask("MS-P/ST-9", "아직 분해 중", [])
+    ms.subtasks.append(empty)
+    r = BacklogRelay(empty.st_id)
+    flow.backlog_relays[empty.st_id] = r
+
+    assert close_subtask_if_drained(flow, empty, r) is False
+    assert empty.status not in ("done", "superseded")

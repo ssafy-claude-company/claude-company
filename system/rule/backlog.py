@@ -999,7 +999,7 @@ def drop_unstarted_on_proven_cycle(flow, ms) -> list:
     return dropped
 
 
-def close_subtask_if_drained(flow, st, relay) -> bool:
+def close_subtask_if_drained(flow, st, relay, allow_empty: bool = False) -> bool:
     """[마지막 백로그가 닫히면 그 단계도 닫힌다(2026-08-02, U-478 실측)]
 
     서브태스크는 '백로그 소진 = 완수'로 닫기로 되어 있는데(2026-07-22 결정), 그 판정이 **report_iter를
@@ -1014,7 +1014,15 @@ def close_subtask_if_drained(flow, st, relay) -> bool:
         if st is None or getattr(st, "status", "") not in ("open", "in_progress"):
             return False
         rows = list(getattr(relay, "backlogs", None) or [])
-        if not rows or any(x.status not in ("done", "dropped") for x in rows):
+        # [일감이 하나도 없는 단계는 소진의 예외가 아니다(2026-08-03, 실측 U-496)] 소진 판정은
+        # '일감이 하나 이상 있었고 전부 종결'을 요구한다 — 아직 분해 중인 단계를 조기에 닫지
+        # 않으려는 조건이다. 그런데 회의가 단계 둘을 열고 일감을 한쪽에만 등재하면(실측 U-496
+        # MS-749610899-2: 'QA·브라우저 수용 게이트' bl_total 0), 그 빈 단계는 닫을 방아쇠가
+        # 영영 없다 — 주기가 그것 하나 때문에 못 닫힌다. 완수조건이 이미 실증된 주기에서는
+        # '아직 분해 중'일 수 없으므로(allow_empty), 빈 단계도 소진으로 본다.
+        if not rows and not allow_empty:
+            return False
+        if any(x.status not in ("done", "dropped") for x in rows):
             return False
         from .milestone import wrapup_done
         on_subtask_wrapup(flow, st)
@@ -1060,8 +1068,8 @@ def sweep_drained_subtasks(flow) -> int:
         for st in (getattr(ms, "subtasks", None) or []):
             r = (getattr(flow, "backlog_relays", None) or {}).get(getattr(st, "st_id", ""))
             if r is None:
-                continue
-            if close_subtask_if_drained(flow, st, r):
+                r = relay_for(flow, st)      # 릴레이조차 없는 빈 단계 — 같은 판정 대상이다
+            if close_subtask_if_drained(flow, st, r, allow_empty=True):
                 n += 1
     return n
 
