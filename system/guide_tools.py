@@ -644,6 +644,21 @@ def _seal_verifier_command(flow, actor, evidence_for, command) -> str:
         return ("verifier 봉인 불가 — true/echo/inline -c·-e/작업공간 밖 test가 아닌 실제 "
                 "테스트·빌드·HTTP·브라우저 검사 명령이어야 하며, 실행형 verify가 이미 있으면 "
                 "그 원문과 정확히 같아야 합니다.")
+    # [가리키는 파일이 없는 명령은 봉인하지 않는다(2026-08-03, 실측 U-478·U-496)] 봉인은 명령의
+    # **형태**만 봤다(command_matches_spec). 그래서 이 작업공간에 없는 절대경로가 그대로 봉인되고,
+    # 다음 run이 exit 2로 죽고, receipt는 rc=0에서만 발급되므로 그 항목은 결과 없이 실패로 남는다.
+    # e2e judge는 "검증기가 못 돌았다"와 "제품이 틀렸다"를 구분하지 않으므로(wrapup.judge), 그것이
+    # **제품 결함**으로 집계돼 수리 주기가 열린다 — 실측 U-496 13:04 e2e 결함 2건의 실제 원인이
+    # "봉인된 verifier의 잘못된 절대경로로 guide에서 exit 2/receipt 미발급"이었다.
+    # 판정자는 이미 있다(_goal_verifier_unrunnable과 같은 술어): 형태는 실행 명령인데 가리키는
+    # 파일이 없으면 지금 말해 준다 — 봉인 전에 고치면 결함 기록도, 수리 주기도 생기지 않는다.
+    _ws = getattr(flow, "workspace", "")
+    if (_ws and direct_verifier_command(cmd, _ws, require_existing=False)
+            and not direct_verifier_command(cmd, _ws, require_existing=True)):
+        return ("verifier 봉인 불가 — 이 명령이 가리키는 파일이 작업공간에 없습니다: "
+                f"`{cmd[:160]}`. 경로는 작업공간 기준이어야 하며(cwd={_ws}), 파일을 먼저 만들거나 "
+                "경로를 고친 뒤 다시 봉인하세요. 없는 파일을 봉인하면 실행이 실패하고 그 실패가 "
+                "제품 결함으로 기록됩니다.")
     stamp = workspace_artifact_stamp(flow)
     if not stamp:
         return "verifier 봉인 불가 — 작업공간 artifact stamp를 만들 수 없습니다."
