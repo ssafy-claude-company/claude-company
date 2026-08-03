@@ -959,6 +959,46 @@ def sync_completion(flow, worker) -> None:
     close_subtask_if_drained(flow, st, r)
 
 
+def drop_unstarted_on_proven_cycle(flow, ms) -> list:
+    """완수조건이 실증된 주기에서, **아무도 착수한 적 없는** 일감을 그 주기와 함께 종결한다.
+
+    [실증된 주기는 끝난다(2026-08-03, 사용자: '근본적인 문제가 해결됐는데 잔여 문제여도 그런 게
+    끝나도록 구조적으로 유도되어야 한다')]
+
+    단계는 '일감 소진 = 완수'로 닫힌다(2026-07-22). 그런데 러너가 보고의 조건 줄마다 일감을 소급
+    등재하므로(report_iter), 아무도 집지 않은 항목이 장부에 쌓여 소진이 영영 오지 않았다 —
+    실측 U-478 ST-7: 미완 58건 중 53건이 그렇게 태어나 한 번도 지명되지 않았고, 그 사이 주기의
+    완수조건은 3차 검증에서 전부 실증됐다(충족 1/1). 목표는 증명됐는데 기록이 판을 붙잡았다.
+
+    ts_pick이 0인 일감은 **누가 하기로 한 일이 아니라 장부에 남은 기록**이다. 주기의 목표가
+    실증된 이상 그것이 주기를 막을 근거가 없다. 반대로 한 번이라도 손을 댄 일감(진행 중·막힘·
+    재개 대기)은 실제로 벌어진 일이므로 그대로 남아 마감을 막는다 — 사용자가 정한 '최대 구현으로
+    연 하위 단위는 전부 끝난다'(2026-07-14)는 그 항목들에서 그대로 지켜진다.
+    """
+    store = getattr(flow, "backlog_relays", None) or {}
+    dropped = []
+    for st in (getattr(ms, "subtasks", None) or []):
+        if getattr(st, "status", "") in (DONE, "superseded"):
+            continue
+        for b in (getattr(store.get(getattr(st, "st_id", "")), "backlogs", None) or []):
+            if getattr(b, "status", "") != OPEN or float(getattr(b, "ts_pick", 0) or 0):
+                continue
+            b.status = DROPPED
+            b.ts_done = time.time()
+            try:
+                line = ("[접음] 주기의 완수조건이 전부 실증돼 주기가 닫힙니다 — 이 일감은 아무도 "
+                        "착수하지 않았습니다. 다음 주기에 필요하면 그때 다시 등재하세요.")
+                if not getattr(b, "activity", None) or b.activity[-1] != line:
+                    b.activity.append(line)
+            except Exception:
+                pass
+            dropped.append(str(getattr(b, "backlog_id", "")))
+    if dropped and getattr(flow, "log", None):
+        flow.log("unstarted_dropped_on_proven_cycle",
+                 ms=str(getattr(ms, "ms_id", "") or ""), n=len(dropped), backlogs=dropped[:12])
+    return dropped
+
+
 def close_subtask_if_drained(flow, st, relay) -> bool:
     """[마지막 백로그가 닫히면 그 단계도 닫힌다(2026-08-02, U-478 실측)]
 

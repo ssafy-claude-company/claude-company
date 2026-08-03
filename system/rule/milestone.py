@@ -1773,6 +1773,14 @@ def wrapup_done(flow, obj) -> str:
         # 다 닫고도 열려 있는' 것이면 지금 닫고 다시 센다(실측 ST-7: 백로그 12개 done, 조건 0개, open).
         if _open_sts:
             try:
+                # [실증된 주기는 끝난다(2026-08-03, 사용자 지시)] 완수조건이 전부 실증된 뒤에도
+                # 아무도 착수하지 않은 일감이 장부에 남아 단계가 소진되지 않는다 — 그 기록이
+                # 목표가 증명된 주기를 붙잡는다. 착수 이력이 없는 것만 먼저 접고 다시 센다.
+                from .backlog import drop_unstarted_on_proven_cycle
+                drop_unstarted_on_proven_cycle(flow, obj)
+            except Exception:
+                pass
+            try:
                 from .backlog import close_subtask_if_drained
                 for _st in list(_open_sts):
                     _r = (getattr(flow, "backlog_relays", None) or {}).get(getattr(_st, "st_id", ""))
