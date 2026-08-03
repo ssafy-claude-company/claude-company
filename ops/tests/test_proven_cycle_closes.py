@@ -66,3 +66,44 @@ def test_실증된_주기는_미착수_기록만_남았을_때_닫힌다(monkeyp
 
     assert ms.status == "done", f"실증된 주기가 미착수 기록에 막혔다: {out}"
     assert st.status in ("done", "superseded")
+
+
+def test_완수조건_실증_시점에_미착수_기록은_게이트를_막지_않는다(monkeypatch):
+    """[막힌 자리는 wrapup_done이 아니라 iter_verify였다(2026-08-03 실측)]
+
+    U-478 MS-585233967-2는 완수조건 1/1을 3차 검증에서 실증하고도 주기 상태가 `open`에 머물렀다.
+    iter_verify가 '완수조건 충족 + 백로그 전부 종결'을 함께 요구하는데(2026-07-14 사용자 규칙),
+    ST-7에 미완 54건이 남아 wrapup에 이르지 못한 것이다 — 그중 대부분이 아무도 착수한 적 없는
+    소급 등재분이었다.
+
+    그 규칙의 근거는 '백로그를 모두 완수하면 끝난다 — 중단으로 처리된 것은 제외'다. 착수 이력이
+    없는 항목은 접어서 게이트를 통과시키고, 손을 댄 항목은 그대로 막는다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import Criterion, iter_verify
+
+    flow, ms, st, relay = _cycle()
+    ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
+    ms.criteria[0].passed = True
+    relay.submit(22, "보고가 남긴 조건 줄", force=True)      # 미착수 — 게이트를 막으면 안 된다
+
+    ok, msg = iter_verify(flow, ms, [{"desc": "브라우저에서 한 판이 돌아간다", "passed": True, "evidence": "exit 0 · npm run verify PASS"}])
+
+    assert ok is True, f"실증된 주기가 미착수 기록에 막혔다: {msg}"
+    assert ms.status == "wrapup"
+
+
+def test_손을_댄_일감은_실증_시점에도_게이트를_막는다(monkeypatch):
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import Criterion, iter_verify
+
+    flow, ms, st, relay = _cycle()
+    ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
+    ms.criteria[0].passed = True
+    started = relay.submit(12, "실제로 집어서 하던 일", force=True)
+    relay.pick(12, started.backlog_id, 12)
+
+    ok, msg = iter_verify(flow, ms, [{"desc": "브라우저에서 한 판이 돌아간다", "passed": True, "evidence": "exit 0 · npm run verify PASS"}])
+
+    assert ok is False and "백로그" in msg
+    assert ms.status != "wrapup"

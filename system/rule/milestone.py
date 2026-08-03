@@ -866,6 +866,21 @@ def iter_verify(flow, obj, results):
         # 표현이 맞아 — 중단으로 처리된 것은 제외')] 완수조건이 충족돼도 미종결(open/in_progress/
         # blocked) 백로그가 남아 있으면 아직 끝이 아니다 — 전부 완료(done)나 중단(dropped)돼야 닫힌다.
         # dropped(개인이 완수 불가로 접은 것)는 remaining()이 이미 제외한다.
+        # [실증된 주기는 미착수 기록에 붙잡히지 않는다(2026-08-03, 사용자: '근본적인 문제가
+        # 해결됐는데 잔여 문제여도 그런 게 끝나도록 구조적으로 유도되어야')] 러너가 보고의 조건
+        # 줄마다 일감을 소급 등재하므로(report_iter), 아무도 집지 않은 항목이 장부에 쌓여 이 게이트가
+        # 영영 열리지 않는다 — 실측 U-478 MS-585233967-2: 완수조건 1/1을 3차에서 실증하고도
+        # ST-7의 미완 54건(그중 대부분이 미착수 등재분) 때문에 주기가 wrapup에 이르지 못했다.
+        # 위 규칙의 근거(2026-07-14)는 '백로그를 모두 완수하면 끝난다 — **중단으로 처리된 것은
+        # 제외**'다. 아무도 착수한 적 없는 항목은 누가 하기로 한 일이 아니라 장부에 남은 기록이므로,
+        # 완수조건이 전부 실증된 이 자리에서 사유와 함께 접는다. 한 번이라도 손을 댄 일감은 그대로
+        # 남아 이 게이트를 막는다 — 실제로 벌어진 일은 끝나야 끝이다.
+        try:
+            from .backlog import drop_unstarted_on_proven_cycle
+            if isinstance(obj, Milestone):
+                drop_unstarted_on_proven_cycle(flow, obj)
+        except Exception:
+            pass
         _pending = _backlogs_pending(flow, obj)
         if _pending:
             return False, (f"완수조건은 충족됐지만 백로그 {len(_pending)}건이 아직 처리 중입니다 "
