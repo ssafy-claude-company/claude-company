@@ -4497,12 +4497,26 @@ def rule_report_iter(flow, me_id, args) -> str:
                     # 그건 각자 pick→작업→보고를 거쳐야 한다(릴레이가 [다음 선정]으로 이어줌).
                     _mine = (b.status == "in_progress" and int(b.assignee or 0) == int(me_id))
                     if _fresh and b.status == "open":
-                        # 보고 경로도 열린 마일스톤 전체의 단일 활성 잠금을 지킨다. 다른 ST가 작업
-                        # 중이면 방금 만든 항목은 open 장부로만 남고, 릴레이가 차례에 착수시킨다.
-                        from .backlog import active_backlog_rows
-                        if not active_backlog_rows(flow):
-                            r.pick(int(me_id), b.backlog_id, int(me_id))   # 솔로: 방금 만든 것만 픽
+                        # [끝난 일을 열린 일감으로 남기지 않는다(2026-08-03, 실측 U-478/U-496)]
+                        # 아래 '단일 활성 잠금'은 2026-07-31 전원 병렬 이전의 규칙이었다. 지금은
+                        # 여러 사람이 늘 동시에 일하므로 active_backlog_rows가 비는 순간이 거의 없고,
+                        # 그래서 **통과(pass)로 보고한 조건까지** 주인 없는 open 일감으로 등재돼
+                        # 장부에 영구히 쌓였다(실측: 시스템 등재 백로그 89건 미완, 그중 72건은 한 번도
+                        # 지명되지 않음 · ST-7 총량 71→108). 통과 보고는 '시작할 일'이 아니라 '끝난
+                        # 일'이라 동시 착수 잠금과 무관하다 — 방금 내 증거로 닫힌 조건은 그 자리에서
+                        # 닫는다. 미충족(fail)은 남은 실제 작업이므로 종전대로 장부에 열어 둔다.
+                        if it.get("passed"):
+                            r.pick(int(me_id), b.backlog_id, int(me_id))
                             _mine = True
+                        else:
+                            from .backlog import active_backlog_rows
+                            if not active_backlog_rows(flow):
+                                r.pick(int(me_id), b.backlog_id, int(me_id))   # 솔로: 방금 만든 것만 픽
+                                _mine = True
+                        if flow.log:
+                            flow.log("iter_backlog_registered", backlog=str(b.backlog_id),
+                                     passed=bool(it.get("passed")), by=int(me_id),
+                                     st=str(getattr(tgt, "st_id", "") or ""))
                     if it.get("passed") and b.status != "done" and _mine:
                         r.done(int(me_id), b.backlog_id)
                         _finished_mine = True
