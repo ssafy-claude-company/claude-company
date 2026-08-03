@@ -1417,6 +1417,34 @@ class Sys:
         except Exception as e:
             self._log("subtask_sweep_failed", err=str(e)[:60])
 
+    def _stage_roster_ready(self, flow) -> bool:
+        """단계 회의를 열 사람이 있는가.
+
+        [빈 방은 정체가 아니다(2026-08-03, 실측 U-501·U-502)] 갓 생긴 판에는 아직 사람이 없다.
+        그런데 SYS는 곧바로 GOAL 회의를 열고, meet는 "회의할 멤버가 없습니다"로 즉시 되돌려준다
+        (rule.communication.meet). 그 반환을 성공/실패로 가리지 않고 재개설 계수만 올려, 같은 단계
+        3회에서 stage_stall_break로 판이 죽었다 — 실측 U-502: 태어난 지 **46초** 만에 4턴을 태우고
+        중단(채용 0건·회의 응찰 0건). 재개설 계수가 잡으려는 것은 '같은 자리를 맴도는 팀'이지
+        '아직 없는 팀'이 아니다.
+
+        사람이 없으면 회의를 열지 않고 이 바퀴를 넘긴다 — 채용이 먼저다(같은 판의 재요청은 그
+        경로로 28초에 첫 채용, 67초에 두 번째 채용까지 갔다).
+        """
+        cur = getattr(flow, "current", None)
+        if cur is None:
+            return True                     # Task가 없으면 이 게이트의 판단 대상이 아니다
+        try:
+            from .rule.comm_helpers import _is_spare
+        except ImportError:
+            return True
+        roster = [m for m in (getattr(cur, "team", None) or [])
+                  if m != flow.anchor and not _is_spare(flow, m)]
+        if roster:
+            return True
+        self._log("stage_meeting_skipped_empty_roster",
+                  ch=int(getattr(flow, "user_channel", 0) or 0))
+        return False
+
     async def _drain_inflight(self, flow) -> str:
         """완주 중인 위임(detach 포함)이 있으면 끝까지 기다리고, 도착한 위임 결과를 이어가기 리더에게
         전달할 본문으로 돌려준다(없으면 ''). CLI가 도구 호출을 포기해도 deliver 태스크는 계속 돌므로
@@ -4061,7 +4089,7 @@ class Sys:
                     # 루프 상단의 파킹 처리로 넘긴다.
                     if getattr(flow, "_stage_stuck", None):
                         continue
-                if _stage_pending() and not flow.cancelled:
+                if _stage_pending() and not flow.cancelled and self._stage_roster_ready(flow):
                     # [위임 완주 우선(2026-07-20, U-035 실측)] 리더가 자유 위임(동료 질문)을 걸어둔 채
                     # 단계 회의를 열면 meet 게이트가 '[대기] 위임 진행 중'으로 즉시 거절 — 여는 의견
                     # 턴만 3회 태우고 stage_stall_break 오컷(백로그 단계 진입 실패로 판 중단). 게이트가
