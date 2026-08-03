@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, nullcontext
 import os
+import time
 import signal
 import socket
 from typing import List, Optional
@@ -527,26 +528,35 @@ async def _run_codex_process(
         assert proc.stdout is not None
         # [응답이 끊긴 턴이 영원히 매달린다(2026-08-02 실측)] 종전엔 stdout을 무기한 기다렸다.
         # 19:24 자원 폭주 직후 시작된 두 턴이 **120분간 한 줄도 쓰지 않은 채** 프로세스만 살아 있었고,
-        # 그동안 두 판이 통째로 멈췄다(오늘 아침 증류 100분 매달림과 같은 결함, 다른 경로).
-        # 시간으로 자르면 정상 작업 턴(실측 최장 67분, 성과 있음)을 죽인다. **무응답 시간**으로 잰다 —
-        # 정상 세션의 기록 간격은 중앙 1초·95분위 116초라(표본 10.8만) 10분이면 5배 여유다.
-        try:
-            _idle_cap = float(os.environ.get("ORGANT_TURN_IDLE_CAP", "600") or 600)
-        except ValueError:
-            _idle_cap = 600.0
-        while True:
+        # 그동안 두 판이 통째로 멈췄다(아침 증류 100분 매달림과 같은 결함, 다른 경로).
+        # 시간으로 자르면 정상 작업 턴(실측 최장 67분, 성과 있음)을 죽인다 — **무응답 시간**으로 잰다.
+        # 정상 세션의 기록 간격은 중앙 1초·95분위 116초(표본 10.8만)라 10분이면 5배 여유다.
+        #
+        # [읽기 루프는 건드리지 않는다(2026-08-02 재작성)] 처음엔 readline을 wait_for로 감쌌는데
+        # `test_Codex턴취소는_프로세스그룹까지_회수`가 멈췄다 — wait_for가 취소 의미를 바꿔 회수가
+        # 안 됐다. 매달림을 고치려다 취소를 깨뜨린 것이라, 루프는 원래대로 두고 **감시자만 옆에** 둔다.
+        _idle = {"t": time.monotonic()}
+
+        async def _idle_watch():
             try:
-                raw = (await asyncio.wait_for(proc.stdout.readline(), timeout=_idle_cap)
-                       if _idle_cap > 0 else await proc.stdout.readline())
-            except asyncio.TimeoutError:
-                api_error = f"무응답 {int(_idle_cap)}s — 매달린 턴 회수"
+                cap = float(os.environ.get("ORGANT_TURN_IDLE_CAP", "600") or 600)
+            except ValueError:
+                cap = 600.0
+            if cap <= 0:
+                return
+            while True:
+                await asyncio.sleep(min(30.0, cap / 4))
+                if time.monotonic() - _idle["t"] < cap:
+                    continue
                 try:
-                    proc.kill()
+                    proc.kill()          # 회수 — 읽기 루프는 EOF로 정상 종료된다
                 except Exception:
                     pass
-                break
-            if not raw:
-                break
+                return
+
+        _idle_task = asyncio.create_task(_idle_watch())
+        async for raw in proc.stdout:
+            _idle["t"] = time.monotonic()
             if on_activity:
                 try:
                     on_activity()
@@ -607,6 +617,10 @@ async def _run_codex_process(
     finally:
         if getattr(proc, "returncode", None) is None:
             await asyncio.shield(_terminate_process(proc))
+        try:
+            _idle_task.cancel()      # 무응답 감시자 정리 — 턴이 끝나면 더 볼 것이 없다
+        except Exception:
+            pass
         _err = await _join_stderr_task(_stderr_task)
     if stderr and _err:
         try:
