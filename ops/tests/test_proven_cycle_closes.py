@@ -248,3 +248,60 @@ def test_쓰이지_않은_빈_단계는_마감_게이트를_막지_않는다(mon
     ms.status = "done"
     assert work_ledger_release_error(flow) is None, (
         "쓰이지 않은 단위 때문에 Task 마감이 막힌다")
+
+
+def test_증거로_실증된_단계없는_주기는_손상으로_보지_않는다(monkeypatch):
+    """[실증된 주기는 손상 기록이 아니다(2026-08-03, 실측 U-478)]
+
+    work_ledger_release_error의 취지는 그 docstring 그대로 '구·손상 체크포인트 탐지'다 — 아무 일도
+    안 했는데 done으로 굳은 기록을 잡는 것. 그런데 단계 없이 닫힌 주기는 정상 경로로도 생긴다
+    (주기 완수 = 조건 실증, 단계는 선택). 그것까지 손상으로 보면 이미 끝난 일에 분해 회의를 다시
+    열게 된다 — 실측 MS-755549625-3('e2e 결함 1건 해소')은 12:35에 재개방된 뒤 12명 회의가 두 번
+    연속 meet_gate_exhausted로 소진됐다.
+
+    조건이 실행 증거(sys_run)로 실증된 주기는 그 검증 자체가 작업 기록이다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import Criterion, Milestone, work_ledger_release_error
+
+    flow, ms, st, relay = _cycle()
+    b = relay.submit(12, "첫 주기의 일감", force=True)
+    relay.pick(12, b.backlog_id, 12)
+    relay.done(12, b.backlog_id)
+    st.status = "done"
+    ms.status = "done"
+
+    repair = Milestone("MS-R", "e2e 결함 1건 해소", [])
+    c = Criterion(desc="결함이 사라졌다", verify="npm run verify")
+    c.passed = True
+    c.evidence_source = "sys_run"
+    repair.criteria = [c]
+    repair.subtasks = []
+    repair.status = "done"
+    flow.milestones.append(repair)
+
+    assert work_ledger_release_error(flow) is None, "실증된 주기를 손상으로 보고 다시 연다"
+
+
+def test_증거_없이_done인_단계없는_주기는_여전히_잡는다(monkeypatch):
+    """이 검사가 원래 잡으려던 것 — 아무 증거 없이 done으로 굳은 기록은 그대로 막는다."""
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import Criterion, Milestone, work_ledger_release_error
+
+    flow, ms, st, relay = _cycle()
+    b = relay.submit(12, "첫 주기의 일감", force=True)
+    relay.pick(12, b.backlog_id, 12)
+    relay.done(12, b.backlog_id)
+    st.status = "done"
+    ms.status = "done"
+
+    hollow = Milestone("MS-H", "빈 기록", [])
+    c = Criterion(desc="조건", verify="npm run verify")
+    c.passed = True                       # 통과 표기는 있으나 실행 증거가 없다
+    hollow.criteria = [c]
+    hollow.subtasks = []
+    hollow.status = "done"
+    flow.milestones.append(hollow)
+
+    err = work_ledger_release_error(flow)
+    assert err and "MS-H" in err
