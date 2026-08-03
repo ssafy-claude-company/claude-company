@@ -1945,7 +1945,18 @@ class Sys:
             while not task.done():
                 await asyncio.sleep(poll)
                 idle = time.monotonic() - getattr(flow, "last_activity", time.monotonic())
-                if idle > self.turn_timeout and not task.done():
+                # [멈춘 봇은 옆 사람이 일하면 안 보인다(2026-08-03, 계측 확인)] 위 idle은 **흐름
+                # 전체**의 도구 활동을 잰다. 그래서 한 봇이 완전히 멈춰도 다른 봇들이 도구를 부르는
+                # 동안에는 시계가 갱신돼 그 봇이 가려진다 — 계측 실측: tool_ran=False인 턴이
+                # **2141초(35분)** 살아 있다가, 판 전체가 조용해진 뒤에야 잘렸다.
+                # 그 사이 그 봇에게 간 교차검증 요청은 오류로 끝나고(카운터는 응답에서만 오른다)
+                # 마감 관문은 cc=0으로 계속 거절해 리더가 마감을 열 번 반복 호출했다.
+                # 워치독의 선언된 목적은 "완전히 멈춘 것만 끊는다"인데, 정작 멈춘 것을 못 봤다.
+                # 이 턴이 **자기 도구를 한 번도 안 불렀다면** 그 턴 자신의 시작부터 잰다.
+                own_idle = idle
+                if getattr(flow, "_turn_first_tool", None) is None:
+                    own_idle = max(idle, time.monotonic() - float(getattr(flow, "_turn_t0", 0) or 0))
+                if own_idle > self.turn_timeout and not task.done():
                     timed_out = True
                     task.cancel()
                     return

@@ -32,3 +32,23 @@ def test_타임아웃_로그가_세_값을_함께_남긴다():
     window = src[i:i + 600]
     for k in ("tool_ran", "first_tool_s", "turn_s"):
         assert k in window, k + "가 없으면 원인 판별이 안 된다"
+
+
+def test_도구를_한_번도_안_부른_턴은_자기_시작부터_잰다():
+    """[멈춘 봇은 옆 사람이 일하면 안 보인다(2026-08-03, 계측 확인)]
+
+    워치독의 idle은 **흐름 전체**의 도구 활동을 잰다. 그래서 한 봇이 완전히 멈춰도 다른 봇들이
+    도구를 부르는 동안에는 시계가 갱신돼 그 봇이 가려진다.
+
+    계측 실측: tool_ran=False인 턴이 turn_s=2141.4(35분) 살아 있다가, 판 전체가 조용해진 뒤에야
+    잘렸다. 그 사이 그 봇에게 간 교차검증 요청은 오류로 끝났고(카운터는 응답에서만 오른다),
+    마감 관문은 cc=0으로 계속 거절해 리더가 마감을 열 번 반복 호출했다(complete_thrash holds 10).
+
+    워치독의 선언된 목적은 "완전히 멈춘 것만 끊는다"인데 정작 멈춘 것을 못 봤다.
+    """
+    src = inspect.getsource(sys_core.Sys._run_until_silent)
+    assert "own_idle" in src, "턴 자신의 무활동을 재지 않으면 멈춘 봇은 계속 가려진다"
+    assert "_turn_first_tool" in src and "_turn_t0" in src
+    # 도구를 부른 턴은 종전대로 흐름 시계로만 잰다(일하는 워커 보호는 그대로).
+    i = src.index("own_idle = idle")
+    assert "is None" in src[i:i + 200], "도구를 부른 턴까지 자기 시작부터 재면 오래 일하는 워커가 잘린다"
