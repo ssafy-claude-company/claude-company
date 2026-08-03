@@ -66,3 +66,21 @@ def test_세는_자리를_관측한다():
     window = src[i:i + 400]
     for k in ("product_ready", "counted", "owner"):
         assert k in window, k + "가 없으면 어디서 걸렸는지 모른다"
+
+
+def test_살아있는_위임이_있으면_그_픽은_기다리는_것이다():
+    """[기다림은 무진전이 아니다(2026-08-03, 계측으로 확정)]
+
+    진전 판정은 장부 서명 변화다(ledger_signature). 그런데 마감 관문에서 교차검증 응답을 기다리는
+    동안에는 장부가 바뀔 수 없다 — 기다림은 정의상 항상 무진전이라 그 픽은 재픽 없이 종결된다.
+    위임은 즉시 반환되고(인플라이트) 응답 처리는 나중이므로, 판이 그 전에 파킹되면 응답은 영영
+    처리되지 않는다.
+
+    실측 U-478: 21:55:07 위임 → 21:58:14 그 봇 턴 완료 → 21:58:38 stalled_stopped(repicks 7).
+    세는 자리에 건 계측(cross_check_seen)이 0건이었다 — 응답이 그 자리에 도달조차 못 했다.
+    재개하면 같은 순서를 반복해 cc는 영원히 0이고 마감은 열한 번 거절됐다.
+    """
+    src = inspect.getsource(sys_core)
+    i = src.index("_flow_cycle_progress[_ch1]")
+    window = src[max(0, i - 900):i]
+    assert "inflight_tasks" in window, "살아 있는 위임을 보지 않으면 기다리는 판이 죽는다"

@@ -4483,6 +4483,20 @@ class Sys:
             _prog1 = (_lsig1(flow) != getattr(flow, "_ledger_sig0", None))
         except Exception:
             _prog1 = True
+        # [기다림은 무진전이 아니다(2026-08-03, 계측으로 확정)] 진전 판정은 장부 서명 변화다. 그런데
+        # 마감 관문에서 교차검증 응답을 기다리는 동안에는 장부가 바뀔 수 없다 — 기다림은 **정의상
+        # 항상 무진전**이라 그 픽은 재픽 없이 종결된다. 위임은 즉시 반환되고(인플라이트) 응답 처리는
+        # 나중이므로, 판이 그 전에 파킹되면 응답은 영영 처리되지 않는다.
+        # 실측 U-478: 21:55:07 위임 → 21:58:14 그 봇 턴 완료 → 21:58:38 stalled_stopped(repicks 7).
+        # 세는 자리에 건 계측(cross_check_seen)이 **0건**이었다 — 응답이 그 자리에 도달조차 못 했다.
+        # 재개하면 같은 순서를 반복해 cc는 영원히 0이고 마감은 열한 번 거절됐다.
+        # 살아 있는 위임이 남아 있으면 이 픽은 '멈춘' 것이 아니라 '기다리는' 것이다 — 위 폴백과 같은
+        # 원칙(판을 조기에 죽이는 쪽보다 이어가는 쪽이 안전)을 여기에도 둔다.
+        try:
+            if any(not t.done() for t in (getattr(flow, "inflight_tasks", None) or ())):
+                _prog1 = True
+        except Exception:
+            pass
         if not hasattr(self, "_flow_cycle_progress"):
             self._flow_cycle_progress = {}
         # [픽 단위 누적(2026-07-20, U-035 실측)] 한 픽 안에서 handle이 여러 번 돌 수 있다(위임 결과
