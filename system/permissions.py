@@ -141,6 +141,9 @@ def make_pre_tool_use_hook(audit, allowed, actor=None, role=None, flow=None):
         if flow is not None:
             try:
                 flow.last_activity = time.monotonic()
+                # [계측] 이 턴의 첫 도구 호출 시각 — 잘린 턴이 느린 것인지 멈춘 것인지 가른다.
+                if getattr(flow, "_turn_first_tool", None) is None:
+                    flow._turn_first_tool = flow.last_activity
                 # [진행 가시성] '지금 무엇을 하는지'를 사람이 읽을 한 줄로 기록 — 상태블록이 보인다.
                 if actor is not None:
                     flow.note_activity(actor, _describe_tool(tool, tool_input))

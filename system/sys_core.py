@@ -1929,6 +1929,13 @@ class Sys:
         허용된다 → '퀄리티 있게 오래 일하는 owner'는 안 자르고 '완전히 멈춘 것'만 끊는다(벽시계 고정
         타임아웃이 일하는 워커를 잘라 좀비·미완을 만들던 결함의 근본 교정)."""
         flow.last_activity = time.monotonic()
+        # [계측 — 잘린 턴이 느린 것인지 멈춘 것인지(2026-08-03, 실측 U-478)] 이 워치독은 '도구
+        # 무활동'으로 끊는데, 로그에는 끊었다는 사실과 임계값(sec)만 남는다. 그래서 그 봇이
+        # **첫 도구 호출에 오래 걸린 것**인지 **아예 멈춘 것**인지 구분할 수 없다 — 24시간에
+        # agent_timeout이 49회 났는데 어느 쪽인지 모르니 고칠 수도 없다.
+        # 턴 시작 시각과 첫 도구 호출 시각만 남기면 둘이 갈린다(관측만 — 동작은 그대로).
+        flow._turn_t0 = time.monotonic()
+        flow._turn_first_tool = None
         task = asyncio.ensure_future(coro_factory())
         poll = max(1, min(15, self.turn_timeout))
         timed_out = False
@@ -3304,7 +3311,13 @@ class Sys:
                         pass
                 return _out
             except asyncio.TimeoutError:
-                self._log("agent_timeout", organt=organt_id, role=role, sec=self.turn_timeout)
+                _t0 = float(getattr(flow, "_turn_t0", 0) or 0)
+                _ft = getattr(flow, "_turn_first_tool", None)
+                self._log("agent_timeout", organt=organt_id, role=role, sec=self.turn_timeout,
+                          # 도구를 한 번이라도 불렀나 · 첫 호출까지 몇 초 걸렸나 · 턴 전체 몇 초였나
+                          tool_ran=bool(_ft),
+                          first_tool_s=(round(float(_ft) - _t0, 1) if (_ft and _t0) else None),
+                          turn_s=(round(time.monotonic() - _t0, 1) if _t0 else None))
                 return (f"API Error: timeout — 동료({organt_id}) 서브프로세스가 {self.turn_timeout}s 동안 "
                         f"도구 활동이 전혀 없어(행) 끊겼습니다. 단일흐름이라 인프라 문제로 간주(크래시와 동일) — "
                         f"대체 채용 말고, 진행하던 일이 있으면 같은 담당자에게 '이어서' 재요청하거나 보고하세요.")
