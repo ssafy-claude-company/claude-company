@@ -4020,6 +4020,28 @@ class Sys:
                 # 연속 예산소진으로 스스로 못 정하면(communication.py가 _stage_stuck 신호를 세움) 봇을
                 # 계속 굴리지 않는다 — quota_halt와 동형 파킹: mark_stopped(재시작 생존·'완료' 아닌 '중지')
                 # + 안내 1회 후 break. 무한 재루프의 토큰 낭비를 끊고, 재개는 사용자의 방향 제시·재개 버튼.
+                # [교차 검증도 SYS가 구동한다(2026-08-03, 실측 U-478)] 마감 게이트가 "다른 멤버의
+                # 실사용 검증 응답 1건"을 요구하는데 그 응답을 받아낼 주체가 없었다 — 리더는 마감을
+                # 반복 호출하고(complete_thrash), 지목된 검증자는 다시 위임했다. e2e를 SYS가 직접
+                # 구동하듯 여기도 SYS가 그 사람을 직접 깨운다. 게이트가 남긴 신호를 한 번 소비한다.
+                _ccd = getattr(flow, "_cc_drive", None)
+                if _ccd:
+                    try:
+                        flow._cc_drive = None
+                    except Exception:
+                        pass
+                    try:
+                        self._log("cross_check_driven", ch=int(flow.user_channel or 0), to=int(_ccd))
+                        await flow.wake(int(_ccd),
+                            "[최종 인수검증 — 당신이 직접] 이 판은 산출물 검증만 남았습니다. 만든 "
+                            "사람이 아닌 당신의 **실사용 응답 1건**이 오면 마감 관문이 열립니다.\n"
+                            "다른 사람에게 넘기지 말고 **당신이 직접** 하세요(위임하면 관문은 그대로 "
+                            "막힙니다).\n① 작업공간에서 산출물을 실제로 실행하고 ② 사용자처럼 주 "
+                            "사용 흐름을 처음부터 끝까지 걸어 본 뒤 ③ 무엇이 좋고 무엇이 아쉬운지 "
+                            "구체적으로 한 응답으로 보고하세요. 코드 수정은 하지 마세요.",
+                            Kind.INFO)
+                    except Exception:
+                        pass
                 if getattr(flow, "_stage_stuck", None):
                     _stuck_why = str(getattr(flow, "_stage_stuck", "") or "")
                     try:

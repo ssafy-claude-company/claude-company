@@ -534,6 +534,19 @@ def _gate_cross_check(flow, third, has_product, _engx, _scopex):
         # 리더의 run은 교차검증으로 안 쳐주므로(peer 필수) 결과 문구만 바꿔 재호출하면 영원히 막힌다 —
         # "멈추고 검증 1회 위임하라"를 하드 문구로. cross_check가 오르면 cc_ok=True로 자연 통과(교착 0).
         flow.current.cc_held = getattr(flow.current, "cc_held", 0) + 1
+        # [안내로 안 끊기는 자리는 구조로 끊는다(2026-08-03, 실측 U-478)] 이 게이트는 "다른 멤버의
+        # 검증 응답 1건"을 요구하면서 그 응답을 **받아내는 주체를 두지 않는다** — 리더의 자발성에
+        # 맡긴다. SYS는 e2e는 직접 구동하는데(_drive_task_boundary_e2e) 여기는 안 한다.
+        # 실측 U-478: 13:49 e2e 통과(결함 0) 뒤 13:50 이 게이트가 막았고, 지목된 검증자는 14:52에
+        # 검증 대신 재위임했으며, 리더는 마감을 반복 호출해 holds 5까지 갔다(한 시간 14턴 $5.57,
+        # 판은 그 사이 한 번 정지). 게이트가 "재호출하지 말라"고 하드 문구로 말해도 반복된다.
+        # 여기서 깨울 수는 없으므로(동기 함수) 누구를 깨워야 하는지 신호만 남긴다 — 소비는 SYS 루프.
+        try:
+            _pick = (third_offdom or third or [None])[0]
+            if _pick is not None and flow.current.cc_held >= 3:
+                flow._cc_drive = int(_pick)
+        except Exception:
+            pass
         _thrash = ""
         if flow.current.cc_held >= 3:
             if flow.log:
