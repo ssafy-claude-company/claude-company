@@ -146,3 +146,26 @@ def test_완수조건이_아직인_주기는_훑기가_건드리지_않는다(mo
 
     assert ghost.status == "open"
     assert st.status not in ("done", "superseded")
+
+
+def test_보고할_때마다_소진_판정_자리에서_풀린다(monkeypatch):
+    """[막힘이 관측되는 자리에서 푼다(2026-08-03, 실측)]
+
+    같은 정리를 iter_verify와 세그먼트 훑기에 두었지만 둘 다 이 상황에 도달하지 않는다 —
+    전자는 백로그가 남으면 재검증이 안 걸려서, 후자는 세그먼트 경계가 몇 시간에 한 번이라서.
+    실측 U-478: 완수조건 1/1을 05:57에 실증하고 3시간 뒤에도 상태 open, 그 사이 경계 1회.
+
+    소진 여부를 실제로 묻는 자리는 report_iter의 단계 마감 판정이다 — 보고마다 돈다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import Criterion, rule_report_iter
+
+    flow, ms, st, relay = _cycle()
+    ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
+    ms.criteria[0].passed = True
+    ghost = relay.submit(22, "보고가 남긴 조건 줄", force=True)     # 미착수 기록
+
+    rule_report_iter(flow, 12, {"target": st.st_id, "results": "다른 조건 | pass | exit 0"})
+
+    assert ghost.status == "dropped", "보고 자리에서 미착수 기록이 풀리지 않는다"
+    assert st.status in ("done", "superseded"), "소진된 단계가 닫히지 않았다"

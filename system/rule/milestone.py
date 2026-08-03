@@ -4565,6 +4565,22 @@ def rule_report_iter(flow, me_id, args) -> str:
     # 소진되면 완수(작업 단위 grouping일 뿐). 위 루프가 든 백로그를 완료했고, 여기선 소진 여부만 본다.
     # 마일스톤만 실증 게이트(진짜 완수 판정)를 유지한다.
     if tgt is not None:
+        # [막힘이 관측되는 자리에서 푼다(2026-08-03, 실측)] 미착수 기록 정리를 iter_verify와
+        # 세그먼트 훑기(sweep_drained_subtasks)에 두었지만 둘 다 이 상황에서는 도달하지 않는다 —
+        # 전자는 백로그가 남으면 재검증이 안 걸려서, 후자는 세그먼트 경계가 몇 시간에 한 번이라서
+        # (실측 U-478: 완수조건 1/1을 05:57에 실증하고 3시간 뒤에도 상태 open, 그 사이 경계 1회).
+        # 소진 여부를 실제로 묻는 자리는 여기다 — 보고마다 돈다. '무엇이 소진을 막는가'의 판정과
+        # '미착수 기록은 막지 않는다'는 규칙은 같은 자리에 있어야 한다.
+        try:
+            _pms = next((m for m in (getattr(flow, "milestones", None) or [])
+                         if tgt in (getattr(m, "subtasks", None) or [])), None)
+            if _pms is not None:
+                _m0, _t0 = _cnt_active(getattr(_pms, "criteria", None) or [])
+                if _t0 >= 1 and _m0 >= _t0:
+                    from .backlog import drop_unstarted_on_proven_cycle
+                    drop_unstarted_on_proven_cycle(flow, _pms)
+        except Exception:
+            pass
         _r2 = relay_for(flow, tgt)
         _left = [b for b in _r2.backlogs if b.status not in ("done", "dropped")]
         # [분기에 들어왔다는 사실부터 남긴다(2026-08-02)] 미러는 '전부 done'인데 단계가 안 닫히고,
