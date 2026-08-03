@@ -2480,7 +2480,18 @@ def meeting_stage(flow):
         # 꺼 버렸더니, 그 주기가 실제로 열리기도 전에 다음 순회에서 안건이 None이 됐다 — 봇들이
         # "안건이 None이므로 판정하지 않는다"며 무한히 토론했다(실측 발언 다수). 주기가 실제로
         # 열릴 때까지(마일스톤 수가 늘 때까지) 같은 안건을 유지하고, 너무 오래 못 열면 그때 접는다.
-        if _goal_verifier_unrunnable(flow):
+        # [e2e가 요청한 비준 회의를 실제로 여는 연결(2026-08-03, 실측 U-496)] e2e 개시부는 비준이
+        # 없어 못 열 때 "길만 비켜 준다 — 단계 기계가 그 회의를 연다"고 적고 15분을 물러선다
+        # (_e2e_ratify_until). 그런데 그 회의를 여는 조건인 _goal_verifier_unrunnable은 **명령은
+        # 있는데 파일이 없는** 경우만 잡는다(빈 명령은 `if not cmd: continue`로 건너뛴다). U-496의
+        # 막힘은 "condition:3에 고정된 exact verifier가 **없습니다**" — 명령 자체가 없는 경우라
+        # 술어가 False를 돌려주고, 회의는 영영 안 열린다.
+        # 실측: 18:38 요청(tries 1) → 18:53 요청(tries 2) → 19:08 정지. 정확히 15분 간격 두 번을
+        # 침묵으로 보내고 파킹했다. 재개하면 tries가 0으로 돌아가 같은 30분을 다시 돈다.
+        # 술어의 원래 문장("비준 자체가 없는 경우는 최종 주기의 정상 경로가 맡는다")은 Task 경계에서는
+        # 성립하지 않는다 — 로드맵을 다 돌아 열 주기가 남아 있지 않다. e2e가 비준을 요청했다는 사실
+        # 자체를 회의 개시 근거로 삼는다(요청과 개시를 잇는다).
+        if _goal_verifier_unrunnable(flow) or int(getattr(flow, "_e2e_ratify_tries", 0) or 0) > 0:
             _seen = getattr(flow, "_goal_ratify_at", None)
             _tries = int(getattr(flow, "_goal_ratify_tries", 0) or 0)
             if _seen is None:
