@@ -81,6 +81,10 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
             def heartbeat():   # 메시지 수신 단위 하트비트 — 도구 훅 사이 사각(긴 단일 생성)을 메움
                 try:
                     flow.last_activity = time.monotonic()
+                    # [이 턴 자신의 생존 신호(2026-08-03)] last_activity는 흐름 전체가 공유해서,
+                    # 옆 봇이 일하면 멈춘 봇이 가려진다. 이 서브프로세스가 방금 무언가를 뱉었다는
+                    # 사실을 턴 단위로도 남긴다 — 워치독이 '느린 생성'과 '죽은 프로세스'를 가른다.
+                    flow._turn_last_msg = flow.last_activity
                 except Exception:
                     pass
 

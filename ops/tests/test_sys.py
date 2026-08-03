@@ -3170,12 +3170,11 @@ def test_하트비트_일하는워커는_침묵타임아웃_안걸림():
             for _ in range(12):                 # 총 ~1.2s > turn_timeout(0.5) — 그래도 활동으로 보호
                 await asyncio.sleep(0.1)
                 self.flow.last_activity = _t.monotonic()   # 도구 활동 흉내(하트비트)
-                # [흉내를 실제 훅과 맞춘다(2026-08-03)] 진짜 도구 호출은 permissions 훅에서
-                # last_activity와 함께 '이 턴의 첫 도구 호출'도 표시한다. 그 표시가 있어야
-                # 워치독이 '이 턴이 스스로 일했다'를 알 수 있다 — 계약(일하는 워커는 안 잘린다)은
-                # 그대로이고, 흉내가 한쪽만 세우던 것을 맞추는 것이다.
-                if getattr(self.flow, "_turn_first_tool", None) is None:
-                    self.flow._turn_first_tool = self.flow.last_activity
+                # [흉내를 실제 하트비트와 맞춘다(2026-08-03)] organt.builder.heartbeat는 서브프로세스
+                # 메시지마다 last_activity와 함께 '이 턴의 마지막 메시지'도 남긴다. 워치독이 옆 봇의
+                # 활동에 가려지지 않고 이 턴의 생존을 보려면 그 표시가 필요하다 — 계약(일하는 워커는
+                # 안 잘린다)은 그대로이고, 흉내가 한쪽만 세우던 것을 맞추는 것이다.
+                self.flow._turn_last_msg = self.flow.last_activity
             return "끝까지 완료"
 
     s = Sys(g, guild_id=1, organt_builder=lambda oid, srv, role, flow=None: _Worker(flow),

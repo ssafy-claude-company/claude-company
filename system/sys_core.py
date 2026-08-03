@@ -1936,6 +1936,7 @@ class Sys:
         # 턴 시작 시각과 첫 도구 호출 시각만 남기면 둘이 갈린다(관측만 — 동작은 그대로).
         flow._turn_t0 = time.monotonic()
         flow._turn_first_tool = None
+        flow._turn_last_msg = 0.0          # 이 턴의 마지막 서브프로세스 메시지(하트비트가 채운다)
         task = asyncio.ensure_future(coro_factory())
         poll = max(1, min(15, self.turn_timeout))
         timed_out = False
@@ -1953,9 +1954,17 @@ class Sys:
                 # 마감 관문은 cc=0으로 계속 거절해 리더가 마감을 열 번 반복 호출했다.
                 # 워치독의 선언된 목적은 "완전히 멈춘 것만 끊는다"인데, 정작 멈춘 것을 못 봤다.
                 # 이 턴이 **자기 도구를 한 번도 안 불렀다면** 그 턴 자신의 시작부터 잰다.
+                # [가르는 기준은 '도구'가 아니라 '이 턴의 생존'이다(2026-08-03 재교정)] 처음엔
+                # '도구를 한 번도 안 부른 턴'을 잘랐는데, 하트비트(builder.heartbeat)는 서브프로세스가
+                # 메시지를 뱉을 때마다 갱신된다 — 즉 도구를 안 불러도 **살아서 길게 생성 중인** 턴이
+                # 있고, 그건 원래 보호 대상이다(긴 단일 생성). 도구 유무로 자르면 그 턴이 잘린다.
+                # 이 턴이 **아무것도 안 뱉은** 시간으로 잰다 — 옆 봇의 활동에 가려지지 않으면서
+                # 살아 있는 생성은 그대로 보호된다.
                 own_idle = idle
-                if getattr(flow, "_turn_first_tool", None) is None:
-                    own_idle = max(idle, time.monotonic() - float(getattr(flow, "_turn_t0", 0) or 0))
+                _lm = float(getattr(flow, "_turn_last_msg", 0) or 0)
+                _t0w = float(getattr(flow, "_turn_t0", 0) or 0)
+                if _t0w:
+                    own_idle = max(idle, time.monotonic() - max(_lm, _t0w))
                 if own_idle > self.turn_timeout and not task.done():
                     timed_out = True
                     task.cancel()

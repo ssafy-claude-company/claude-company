@@ -34,21 +34,27 @@ def test_타임아웃_로그가_세_값을_함께_남긴다():
         assert k in window, k + "가 없으면 원인 판별이 안 된다"
 
 
-def test_도구를_한_번도_안_부른_턴은_자기_시작부터_잰다():
-    """[멈춘 봇은 옆 사람이 일하면 안 보인다(2026-08-03, 계측 확인)]
+def test_아무것도_안_뱉은_턴은_자기_시작부터_잰다():
+    """[가르는 기준은 '도구'가 아니라 '이 턴의 생존'이다(2026-08-03 재교정)]
 
-    워치독의 idle은 **흐름 전체**의 도구 활동을 잰다. 그래서 한 봇이 완전히 멈춰도 다른 봇들이
-    도구를 부르는 동안에는 시계가 갱신돼 그 봇이 가려진다.
+    워치독의 idle은 flow.last_activity — 흐름 전체가 공유한다. 그래서 한 봇이 완전히 멈춰도
+    옆 봇이 일하는 동안에는 가려진다(계측 실측: tool_ran=False인 턴이 turn_s=2141.4로 35분 생존).
 
-    계측 실측: tool_ran=False인 턴이 turn_s=2141.4(35분) 살아 있다가, 판 전체가 조용해진 뒤에야
-    잘렸다. 그 사이 그 봇에게 간 교차검증 요청은 오류로 끝났고(카운터는 응답에서만 오른다),
-    마감 관문은 cc=0으로 계속 거절해 리더가 마감을 열 번 반복 호출했다(complete_thrash holds 10).
-
-    워치독의 선언된 목적은 "완전히 멈춘 것만 끊는다"인데 정작 멈춘 것을 못 봤다.
+    처음엔 '도구를 한 번도 안 부른 턴'을 잘랐는데 그건 과했다 — 하트비트(organt.builder)는
+    서브프로세스가 메시지를 뱉을 때마다 갱신되므로, 도구를 안 불러도 **살아서 길게 생성 중인**
+    턴이 있고 그건 원래 보호 대상이다(긴 단일 생성). 이 턴이 **아무것도 안 뱉은** 시간으로 잰다.
     """
     src = inspect.getsource(sys_core.Sys._run_until_silent)
-    assert "own_idle" in src, "턴 자신의 무활동을 재지 않으면 멈춘 봇은 계속 가려진다"
-    assert "_turn_first_tool" in src and "_turn_t0" in src
-    # 도구를 부른 턴은 종전대로 흐름 시계로만 잰다(일하는 워커 보호는 그대로).
+    assert "_turn_last_msg" in src, "이 턴의 생존을 재지 않으면 멈춘 봇은 계속 가려진다"
+    assert "own_idle" in src
     i = src.index("own_idle = idle")
-    assert "is None" in src[i:i + 200], "도구를 부른 턴까지 자기 시작부터 재면 오래 일하는 워커가 잘린다"
+    window = src[i:i + 300]
+    assert "_turn_last_msg" in window and "max(" in window, (
+        "살아서 생성 중인 턴은 보호돼야 한다 — 메시지 시각을 함께 봐야 한다")
+
+
+def test_하트비트가_턴_생존_표시를_남긴다():
+    from organt import builder
+
+    src = inspect.getsource(builder)
+    assert "_turn_last_msg" in src, "하트비트가 표시를 안 남기면 워치독이 볼 것이 없다"
