@@ -169,6 +169,11 @@ echo "════ 라이브 반영 ════"
 _snap_drop; snap=""              # 검증 끝 — 스냅샷은 여기서 치운다(디스크·worktree 목록 정리)
 if ( cd "$MS/murmur/frontend" && npm run build >/tmp/land-build.log 2>&1 ); then
   echo "  프론트 dist 재빌드 — 정본 반영"
+  # [옛 자산은 두 주를 산다(2026-08-03)] 빌드는 dist를 비우지 않는다(vite emptyOutDir:false) —
+  # 착지 순간에 열려 있던 탭이 부르는 옛 css·js가 404가 되면 화면이 정본 스타일 없이 그려진다.
+  # 대신 아무도 안 부르는 낡은 것은 여기서 걷어낸다. 지금 빌드가 쓴 파일은 mtime이 방금이라 남는다.
+  gone=$(find "$MS/murmur/frontend/dist/assets" -type f -mtime +14 -print -delete 2>/dev/null | wc -l)
+  [ "${gone:-0}" -gt 0 ] && echo "  옛 자산 ${gone}개 정리(2주 지난 것)"
 else
   echo "  ⚠ 프론트 빌드 실패 — 화면이 낡은 채 남는다. /tmp/land-build.log 확인 후 수동 빌드:"
   echo "     cd $MS/murmur/frontend && npm run build"
