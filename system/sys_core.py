@@ -2679,6 +2679,18 @@ class Sys:
         # e2e_pass·인도까지 끝낸 판이 열 수 없는 문 앞에 섰다. 마감 구동 자신이 끝난 흐름에서도
         # 봇을 깨우므로 이 조건은 이 자리에선 모순이다. 위임의 안전성은 남은 두 조건이 지킨다:
         # 아직 교차검증이 0이고(cc==0), 이 흐름에서 한 번도 안 보냈을 때(_close_cc_sent)만 나간다.
+        # [한 번 보내고 끝나면 그 한 사람이 안 하면 영영 못 닫는다(2026-08-03, 실측 U-478)]
+        # 이 발송기는 흐름당 1회(_close_cc_sent)만 나간다. 실측: 13:50에 QA에게 나갔고 그 QA가
+        # 14:52에 검증 대신 **재위임**했다 — 응답은 왔지만 교차검증은 0 그대로였고, 다시 보낼 길이
+        # 없어 리더가 마감만 반복 호출했다(complete_thrash holds 5, 한 시간 14턴 $5.57, 판 정지 2회).
+        # 게이트가 반복 보류에 이르면(_close_cc_retry) 잠금을 풀어 **다른 동료**에게 다시 보낸다 —
+        # 이미 물어본 사람은 후보에서 뺀다(같은 사람에게 다시 보내면 같은 결과다).
+        if getattr(flow, "_close_cc_retry", False):
+            try:
+                flow._close_cc_retry = False
+                flow._close_cc_sent = False
+            except Exception:
+                pass
         if (int(getattr(ref, "cross_check_offdomain", 0) or 0) == 0
                 and not getattr(flow, "_close_cc_sent", False)):
             try:
@@ -2691,6 +2703,7 @@ class Sys:
                     if m != _own
                     and ({_norm_job(j) for j in _jobs_of(flow._info(m) or "")} - {""})
                     and not (({_norm_job(j) for j in _jobs_of(flow._info(m) or "")} - {""}) & _od)
+                    and int(m) not in (getattr(flow, "_cc_asked", None) or set())
                 ]
                 # 검증 직군 우선, 마감을 부를 당사자는 후순위 — 게이트가 경계하는 '리더 독점'
                 # (스스로 만들고 스스로 검증)으로 흐르지 않게 한다.
@@ -2698,7 +2711,11 @@ class Sys:
                 _peer = _cands[0] if _cands else None
                 if _peer:
                     flow._close_cc_sent = True
-                    self._log("task_close_crosscheck_sent", to=int(_peer), owner=_own)
+                    if getattr(flow, "_cc_asked", None) is None:
+                        flow._cc_asked = set()
+                    flow._cc_asked.add(int(_peer))
+                    self._log("task_close_crosscheck_sent", to=int(_peer), owner=_own,
+                              asked=len(flow._cc_asked))
                     _tls = {t.name: t for t in make_guide_tools(flow, actor, "leader")}
                     await _tls["request"].handler({
                         "to_id": str(_peer), "kind": "Work",
@@ -4020,28 +4037,6 @@ class Sys:
                 # 연속 예산소진으로 스스로 못 정하면(communication.py가 _stage_stuck 신호를 세움) 봇을
                 # 계속 굴리지 않는다 — quota_halt와 동형 파킹: mark_stopped(재시작 생존·'완료' 아닌 '중지')
                 # + 안내 1회 후 break. 무한 재루프의 토큰 낭비를 끊고, 재개는 사용자의 방향 제시·재개 버튼.
-                # [교차 검증도 SYS가 구동한다(2026-08-03, 실측 U-478)] 마감 게이트가 "다른 멤버의
-                # 실사용 검증 응답 1건"을 요구하는데 그 응답을 받아낼 주체가 없었다 — 리더는 마감을
-                # 반복 호출하고(complete_thrash), 지목된 검증자는 다시 위임했다. e2e를 SYS가 직접
-                # 구동하듯 여기도 SYS가 그 사람을 직접 깨운다. 게이트가 남긴 신호를 한 번 소비한다.
-                _ccd = getattr(flow, "_cc_drive", None)
-                if _ccd:
-                    try:
-                        flow._cc_drive = None
-                    except Exception:
-                        pass
-                    try:
-                        self._log("cross_check_driven", ch=int(flow.user_channel or 0), to=int(_ccd))
-                        await flow.wake(int(_ccd),
-                            "[최종 인수검증 — 당신이 직접] 이 판은 산출물 검증만 남았습니다. 만든 "
-                            "사람이 아닌 당신의 **실사용 응답 1건**이 오면 마감 관문이 열립니다.\n"
-                            "다른 사람에게 넘기지 말고 **당신이 직접** 하세요(위임하면 관문은 그대로 "
-                            "막힙니다).\n① 작업공간에서 산출물을 실제로 실행하고 ② 사용자처럼 주 "
-                            "사용 흐름을 처음부터 끝까지 걸어 본 뒤 ③ 무엇이 좋고 무엇이 아쉬운지 "
-                            "구체적으로 한 응답으로 보고하세요. 코드 수정은 하지 마세요.",
-                            Kind.INFO)
-                    except Exception:
-                        pass
                 if getattr(flow, "_stage_stuck", None):
                     _stuck_why = str(getattr(flow, "_stage_stuck", "") or "")
                     try:

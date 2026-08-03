@@ -542,9 +542,8 @@ def _gate_cross_check(flow, third, has_product, _engx, _scopex):
         # 판은 그 사이 한 번 정지). 게이트가 "재호출하지 말라"고 하드 문구로 말해도 반복된다.
         # 여기서 깨울 수는 없으므로(동기 함수) 누구를 깨워야 하는지 신호만 남긴다 — 소비는 SYS 루프.
         try:
-            _pick = (third_offdom or third or [None])[0]
-            if _pick is not None and flow.current.cc_held >= 3:
-                flow._cc_drive = int(_pick)
+            if flow.current.cc_held >= 3:
+                flow._close_cc_retry = True     # 소비는 SYS 마감 구동부(다른 동료에게 재발송)
         except Exception:
             pass
         _thrash = ""
