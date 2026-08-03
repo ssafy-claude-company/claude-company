@@ -703,6 +703,21 @@ def work_ledger_release_error(flow, repair=False):
         subtasks = [st for st in (getattr(ms, "subtasks", None) or [])
                     if st.status != "superseded"]
         if not subtasks:
+            # [실증된 주기는 손상 기록이 아니다(2026-08-03, 실측 U-478)] 이 검사의 취지는 위 docstring
+            # 그대로 **구·손상 체크포인트 탐지**다 — 아무 일도 안 했는데 done으로 굳은 기록을 잡는 것.
+            # 그런데 단계 없이 닫힌 주기는 정상 경로로도 생긴다(계약: 주기 완수 = 조건 실증, 단계는
+            # 선택). 그것까지 손상으로 보면 이미 끝난 일에 분해 회의를 다시 열게 된다 — 실측
+            # MS-755549625-3('e2e 결함 1건 해소'): 12:35 재개방 뒤 12명 회의가 두 번 연속
+            # meet_gate_exhausted로 소진됐다.
+            # 조건이 **실행 증거(sys_run)로 실증된** 주기는 그 검증 자체가 작업 기록이다. 증거 없이
+            # done인 주기만 손상으로 본다(그게 이 검사가 잡으려던 것이다).
+            _crit = [c for c in (getattr(ms, "criteria", None) or []) if c.status != "waived"]
+            _proven = bool(_crit) and all(
+                bool(getattr(c, "passed", False))
+                and str(getattr(c, "evidence_source", "") or "") == "sys_run"
+                for c in _crit)
+            if _proven:
+                continue
             problems.append(f"{ms.ms_id}: SubTask 0개")
             reopen_ms.append(ms)
             continue
