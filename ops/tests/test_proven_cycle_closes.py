@@ -216,3 +216,35 @@ def test_완수조건이_아직인_주기의_빈_단계는_건드리지_않는�
 
     assert close_subtask_if_drained(flow, empty, r) is False
     assert empty.status not in ("done", "superseded")
+
+
+def test_쓰이지_않은_빈_단계는_마감_게이트를_막지_않는다(monkeypatch):
+    """[빈 단계는 완수가 아니라 쓰이지 않은 것(2026-08-03, 실측 U-478 마감 게이트)]
+
+    Task 마감 게이트(work_ledger_release_error)는 단위마다 백로그 1개 이상을 요구한다. 그래서
+    일감이 한 건도 없는 단계를 done으로 닫으면 마감에서 "백로그 0개"로 거절돼 그 주기가 다시
+    열리고 같은 바퀴를 돈다(실측: MS-755549625-3이 12:35에 그렇게 재개방됐다).
+
+    쓰이지 않은 단위의 정직한 처분은 superseded다 — 마감 게이트도 그것만은 건너뛴다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.backlog import BacklogRelay, sweep_drained_subtasks
+    from system.rule.milestone import Criterion, SubTask, work_ledger_release_error
+
+    flow, ms, st, relay = _cycle()
+    ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
+    ms.criteria[0].passed = True
+    b = relay.submit(12, "실제로 끝낸 일", force=True)
+    relay.pick(12, b.backlog_id, 12)
+    relay.done(12, b.backlog_id)
+
+    unused = SubTask("MS-P/ST-2", "쓰이지 않은 단위", [])
+    ms.subtasks.append(unused)
+    flow.backlog_relays[unused.st_id] = BacklogRelay(unused.st_id)
+
+    sweep_drained_subtasks(flow)
+
+    assert unused.status == "superseded", "빈 단계를 done으로 닫으면 마감 게이트가 다시 연다"
+    ms.status = "done"
+    assert work_ledger_release_error(flow) is None, (
+        "쓰이지 않은 단위 때문에 Task 마감이 막힌다")
