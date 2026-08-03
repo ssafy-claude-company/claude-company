@@ -1026,6 +1026,15 @@ def close_subtask_if_drained(flow, st, relay, allow_empty: bool = False) -> bool
             return False
         if any(x.status not in ("done", "dropped") for x in rows):
             return False
+        if not rows:
+            # [빈 단계는 완수가 아니라 쓰이지 않은 것(2026-08-03, 실측 U-478 마감 게이트)] 일감이
+            # 한 건도 없는 단계를 done으로 닫으면 Task 마감 게이트가 "백로그 0개"로 그 주기를 다시
+            # 열어 같은 바퀴를 돈다(work_ledger_release_error). 쓰이지 않은 단위의 정직한 처분은
+            # superseded — 마감 게이트도 그것만은 건너뛴다.
+            st.status = "superseded"
+            if getattr(flow, "log", None):
+                flow.log("subtask_superseded_unused", st=getattr(st, "st_id", ""))
+            return True
         from .milestone import wrapup_done
         on_subtask_wrapup(flow, st)
         st.status = "wrapup"
