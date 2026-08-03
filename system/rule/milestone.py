@@ -747,6 +747,18 @@ def work_ledger_release_error(flow, repair=False):
             if ms.status in ("done", "wrapup"):
                 ms.status, ms.iter_stuck = "open", 0
                 changed = True
+            # [복원이 실제로 복원이 되게 한다(2026-08-03, 실측 U-478)] 단계가 0개라 다시 연 주기는
+            # 다시 열렸을 뿐 상태가 그대로다 — 팀은 '무엇을 만들지'부터 정하는 작업 영역 분해 회의를
+            # 새로 열고, 이미 끝난 일을 두고 12명이 합의를 못 봐 소진된다(실측 MS-755549625-3:
+            # 12:35·13:10·13:27 세 번 재개방, meet_gate_exhausted 2회, 판 정지 1회).
+            # 막고 있는 것이 '단위가 없다'면, 여는 자리에서 단위를 만들어 주는 것이 복원이다 —
+            # 그러면 다음 회의는 그 단위의 일감을 정하는 작은 회의가 된다.
+            if not [x for x in (getattr(ms, "subtasks", None) or []) if x.status != "superseded"]:
+                try:
+                    open_subtask(flow, ms, f"{str(getattr(ms, 'goal', '') or '주기')[:40]} — 잔여 정리", [])
+                    changed = True
+                except Exception:
+                    pass
         for st in {id(x): x for x in reopen_st}.values():
             if st.status in ("done", "wrapup"):
                 st.status, st.iter_stuck = "open", 0

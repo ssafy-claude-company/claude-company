@@ -305,3 +305,42 @@ def test_증거_없이_done인_단계없는_주기는_여전히_잡는다(monkey
 
     err = work_ledger_release_error(flow)
     assert err and "MS-H" in err
+
+
+def test_단계가_없어_다시_연_주기는_단위까지_받는다(monkeypatch):
+    """[복원이 실제로 복원이 되게 한다(2026-08-03, 실측 U-478)]
+
+    Task 마감 게이트는 주기마다 SubTask 1개 이상을 요구하고, 없으면 그 주기를 다시 연다
+    (work_ledger_release_error, repair=True). 그런데 다시 열기만 하면 상태가 그대로라 팀은
+    '무엇을 만들지'부터 정하는 작업 영역 분해 회의를 새로 연다 — 이미 조건 실증까지 끝난
+    주기를 두고 12명이 합의를 못 봐 소진된다.
+
+    실측 MS-755549625-3('e2e 결함 1건 해소'): 12:35·13:10·13:27 세 번 재개방,
+    meet_gate_exhausted 2회, stage_stuck_parked → stalled_stopped 1회.
+
+    막고 있는 것이 '단위가 없다'면 여는 자리에서 단위를 만들어 주는 것이 복원이다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.milestone import Criterion, Milestone, work_ledger_release_error
+
+    flow, ms, st, relay = _cycle()
+    b = relay.submit(12, "첫 주기의 일감", force=True)
+    relay.pick(12, b.backlog_id, 12)
+    relay.done(12, b.backlog_id)
+    st.status = "done"
+    ms.status = "done"
+
+    repair = Milestone("MS-R", "e2e 결함 1건 해소", [])
+    c = Criterion(desc="결함이 사라졌다", verify="npm run verify")
+    c.passed = True
+    repair.criteria = [c]
+    repair.subtasks = []
+    repair.status = "done"
+    flow.milestones.append(repair)
+
+    err = work_ledger_release_error(flow, repair=True)
+
+    assert err, "단계 0개인 주기는 종전대로 잡아야 한다(계약 유지)"
+    assert repair.status == "open", "다시 열려야 한다"
+    _sts = [x for x in repair.subtasks if x.status != "superseded"]
+    assert len(_sts) == 1, "다시 열면서 단위까지 주어야 팀이 같은 회의를 반복하지 않는다"
