@@ -4561,6 +4561,10 @@ def rule_report_iter(flow, me_id, args) -> str:
                 if b is None:
                     try:
                         b = r.submit(int(me_id), d, force=True)
+                        # [이건 팀이 정한 일이 아니라 보고가 남긴 기록이다(2026-08-04)] 아래 정리
+                        # (drop_unstarted_on_proven_cycle)가 접어도 되는 것은 이 소급 등재분뿐이다 —
+                        # 회의에서 각자 직접 올린 일감은 팀의 결정이라 접으면 안 된다.
+                        b.auto_registered = True
                         _fresh = True
                     except (BacklogError, DuplicateBacklog):
                         # 참조 표기·중복 desc는 새 백로그로 만들지 않는다(검증만 — churn 차단)

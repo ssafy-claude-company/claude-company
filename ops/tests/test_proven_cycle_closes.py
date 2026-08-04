@@ -35,6 +35,7 @@ def _cycle():
 def test_아무도_착수하지_않은_일감은_실증된_주기와_함께_접힌다():
     flow, ms, st, relay = _cycle()
     ghost = relay.submit(12, "보고가 남긴 조건 줄", force=True)      # 소급 등재 — 아무도 안 집음
+    ghost.auto_registered = True     # 실제 report_iter 경로가 세우는 표시(흉내를 맞춘다)
 
     dropped = drop_unstarted_on_proven_cycle(flow, ms)
 
@@ -58,8 +59,9 @@ def test_실증된_주기는_미착수_기록만_남았을_때_닫힌다(monkeyp
     done_one = relay.submit(12, "실제로 끝낸 일", force=True)
     relay.pick(12, done_one.backlog_id, 12)
     relay.done(12, done_one.backlog_id)
-    relay.submit(22, "보고가 남긴 조건 줄 1", force=True)
-    relay.submit(22, "보고가 남긴 조건 줄 2", force=True)
+    for _g in (relay.submit(22, "보고가 남긴 조건 줄 1", force=True),
+               relay.submit(22, "보고가 남긴 조건 줄 2", force=True)):
+        _g.auto_registered = True     # 실제 report_iter 경로가 세우는 표시
     ms.status = "wrapup"                     # 완수조건 실증 통과 상태
 
     out = wrapup_done(flow, ms)
@@ -85,7 +87,8 @@ def test_완수조건_실증_시점에_미착수_기록은_게이트를_막지_�
     flow, ms, st, relay = _cycle()
     ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
     ms.criteria[0].passed = True
-    relay.submit(22, "보고가 남긴 조건 줄", force=True)      # 미착수 — 게이트를 막으면 안 된다
+    _g0 = relay.submit(22, "보고가 남긴 조건 줄", force=True)   # 미착수 — 게이트를 막으면 안 된다
+    _g0.auto_registered = True
 
     ok, msg = iter_verify(flow, ms, [{"desc": "브라우저에서 한 판이 돌아간다", "passed": True, "evidence": "exit 0 · npm run verify PASS"}])
 
@@ -125,6 +128,7 @@ def test_재검증을_기다리지_않고_세그먼트_훑기에서도_풀린다
     ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
     ms.criteria[0].passed = True
     ghost = relay.submit(22, "보고가 남긴 조건 줄", force=True)     # 미착수 기록만 남은 상태
+    ghost.auto_registered = True
 
     sweep_drained_subtasks(flow)
 
@@ -141,6 +145,7 @@ def test_완수조건이_아직인_주기는_훑기가_건드리지_않는다(mo
     flow, ms, st, relay = _cycle()
     ms.criteria = [Criterion(desc="아직 실증 안 됨", verify="npm run verify")]
     ghost = relay.submit(22, "미착수 일감", force=True)
+    ghost.auto_registered = True
 
     sweep_drained_subtasks(flow)
 
@@ -164,6 +169,7 @@ def test_보고할_때마다_소진_판정_자리에서_풀린다(monkeypatch):
     ms.criteria = [Criterion(desc="브라우저에서 한 판이 돌아간다", verify="npm run verify")]
     ms.criteria[0].passed = True
     ghost = relay.submit(22, "보고가 남긴 조건 줄", force=True)     # 미착수 기록
+    ghost.auto_registered = True
 
     rule_report_iter(flow, 12, {"target": st.st_id, "results": "다른 조건 | pass | exit 0"})
 
@@ -344,3 +350,33 @@ def test_단계가_없어_다시_연_주기는_단위까지_받는다(monkeypatc
     assert repair.status == "open", "다시 열려야 한다"
     _sts = [x for x in repair.subtasks if x.status != "superseded"]
     assert len(_sts) == 1, "다시 열면서 단위까지 주어야 팀이 같은 회의를 반복하지 않는다"
+
+
+def test_회의가_방금_등재한_팀의_일감은_접지_않는다(monkeypatch):
+    """[내가 낸 결함 교정(2026-08-04, 실측 U-478)]
+
+    이 정리는 "보고가 남긴 기록"을 치우려고 만들었는데, 착수 이력만 보고 접었더니 회의가 **방금
+    등재한 팀의 일감까지** 쓸어버렸다.
+
+    실측 원장:
+      13:44:57 회의가 단계 8개 개설 · 전원이 자기 몫 15건 등재(forced=False)
+      13:45:19 unstarted_dropped_on_proven_cycle n=15   ← 22초 만에 전부 접힘
+      13:46:25 봇 하나가 각 단계에 force 등재해 혼자 집고 혼자 완료
+      13:47:11 주기 완수
+    그 결과 4명이 "회의 발언 외 실작업 0"이 되어 마감 관문이 흡수 차단으로 막혔다.
+
+    접어도 되는 것은 시스템이 보고에서 소급 등재한 것뿐이다.
+    """
+    monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
+    from system.rule.backlog import drop_unstarted_on_proven_cycle
+
+    flow, ms, st, relay = _cycle()
+    team = relay.submit(22, "회의에서 내가 직접 올린 내 몫", force=False)   # 팀의 결정
+    ghost = relay.submit(22, "보고가 남긴 조건 줄", force=True)
+    ghost.auto_registered = True                                        # 시스템 소급 등재
+
+    dropped = drop_unstarted_on_proven_cycle(flow, ms)
+
+    assert ghost.backlog_id in dropped, "보고가 남긴 기록은 접어야 한다"
+    assert team.backlog_id not in dropped, "팀이 직접 올린 일감을 접으면 그 사람의 몫이 사라진다"
+    assert team.status == "open"
