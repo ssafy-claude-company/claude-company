@@ -162,6 +162,12 @@ def task_snapshot(flow, ref) -> dict:
         # act_by와 같은 이유 — 응찰 이력이 리셋되면 기여 관문이 '아무에게도 기회가 안 갔다'로
         # 오판해 마감이 영영 안 닫힌다(2026-08-04).
         "floor_bidders": sorted(int(x) for x in (getattr(flow, "floor_bidders", None) or ())),
+        # [마디 마커는 유실되면 안 된다(2026-08-04, 실측 U-478 MS-755549625-3)] _pnote는 봇 도구 호출
+        # 뒤에만 채널로 flush된다 — 그 사이 러너가 재시작하면 '[마일스톤 시작]' 같은 경계 마커가
+        # 메모리와 함께 증발한다. 실측: MS-3은 ms_open은 로그에 있는데 시작 마커 게시가 없어, 화면의
+        # 홈 블록이 서지 못했고 그 주기의 SubTask 완수·iter 검증·완수 기록 전부가 집을 잃었다.
+        "pipeline_notes": list(getattr(flow, "_pipeline_notes", None) or []),
+        "pnote_seen": sorted(getattr(flow, "_pnote_seen", None) or []),
         "contrib_checked": bool(getattr(ref, "contrib_checked", False)),
         "cross_check_offdomain": int(getattr(ref, "cross_check_offdomain", 0) or 0),
         "last_verify_writes": int(getattr(ref, "last_verify_writes", -1)),
@@ -608,6 +614,12 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
             flow.floor_bidders.add(int(_b))
         except (AttributeError, TypeError, ValueError):
             break
+    if snap.get("pipeline_notes"):
+        flow._pipeline_notes = list(getattr(flow, "_pipeline_notes", None) or []) \
+            + [str(x) for x in snap["pipeline_notes"]]
+    if snap.get("pnote_seen"):
+        flow._pnote_seen = set(getattr(flow, "_pnote_seen", None) or set()) \
+            | {str(x) for x in snap["pnote_seen"]}
     flow._deploy_count = int(snap.get("deploy_count", 0) or 0)
     flow._deployed_once = bool(snap.get("deployed_once", False))
     flow._deploy_live = bool(snap.get("deploy_live", False))   # 배포 목표 달성 신호 복원(완료 인식 유지)
