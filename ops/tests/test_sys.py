@@ -1203,8 +1203,9 @@ def test_member는_request_recruit_run():
     f = _flow(FakeGuide())
     # [배포 탈중앙화 2026-07-08] deploy는 이제 전 멤버 장착(리더 독점 폐지 — 검증 끝낸 owner가 직접 공개).
     # [P0 B-2 2026-07-13] atelier(공유 판)도 전원 — 사용은 자발.
+    # [경제 감각 2026-08-04] economy(읽기 전용)도 전원 — 봇이 비용·시장을 셈에 넣는다.
     assert {t.name for t in make_guide_tools(f, 12, "member")} == {"request", "recruit", "run", "report", "deploy",
-                                                                   "atelier",
+                                                                   "atelier", "economy",
                                                           "complete_task"}
 
 
@@ -1213,7 +1214,7 @@ def test_leader는_project_task_도구():
     names = {t.name for t in make_guide_tools(f, 11, "leader")}
     # 보고/답변 툴 없음(반환=Response). 흐름 도구(request·recruit·run)+리더 셋업·배포 도구.
     # [W3 B-18③] list_projects: 회사 이력 pull 보강(push 캡 16건 유지 — pull 전환 아님).
-    assert names == {"request", "recruit", "run", "atelier",
+    assert names == {"request", "recruit", "run", "atelier", "economy",
                      "create_project", "create_task", "set_goal", "complete_task", "deploy", "send_file",
                      "vote", "vote_stop", "meet", "parallel_work", "list_projects"}   # Discord 심화 대화: 표결·회의(1R 동시 수집). 경쟁 구현은
                                        # 사용자 판단으로 제거(같은 모델 중복 비교 — 효과는 협업에서)

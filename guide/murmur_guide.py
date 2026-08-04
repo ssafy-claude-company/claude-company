@@ -249,6 +249,16 @@ class MurmurGuide:
         except Exception:
             return None
 
+    async def economy(self, channel_id=None):
+        """[봇의 경제 조회(2026-08-04, 사용자: '봇이 경제를 활용할 줄 알아야')] 읽기 전용 —
+        요율·시장 상위·이 판 주인의 예산. 실패는 None(경제를 몰라도 협업은 계속된다)."""
+        try:
+            return await self._post("/api/guide/ingest/", {
+                "op": "economy",
+                "channel_id": int(channel_id) if channel_id else 0})
+        except Exception:
+            return None
+
     async def report_usage(self, channel_id, cost_usd, tokens_out,
                            tokens_in=0, tokens_cached=0, purpose="", bot_id=None):
         """[사용량 귀속(2026-07-18, 운영/과금)] 봇 턴 비용을 채널 단위로 웹에 보고(HTTP) → 웹이 보드 주인

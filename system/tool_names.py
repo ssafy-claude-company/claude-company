@@ -31,7 +31,9 @@ FLOW_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL, RUN_TOOL,
               # 한 세트로 열어, 마감 호출자 부재로 판이 못 닫히는 일이 없게 한다(U-065 교착).
               "mcp__guide__complete_task",
               "mcp__guide__deploy",   # [배포 탈중앙화(2026-07-08, 사용자)] deploy는 전원 — 검증 끝낸 owner가 직접 공개(리더 독점 폐지)
-              "mcp__guide__atelier"]  # [P0 B-2(2026-07-13)] 공유 판 — 전원, 사용은 자발(산출물·증거 남김, 승격 핀 done 회신)
+              "mcp__guide__atelier",  # [P0 B-2(2026-07-13)] 공유 판 — 전원, 사용은 자발(산출물·증거 남김, 승격 핀 done 회신)
+              # [경제 감각(2026-08-04)] 요율·예산·시장 읽기 — 전원, 읽기 전용(돈이 움직이는 걸음 없음).
+              "mcp__guide__economy"]
 # 리더(코디네이터) 흐름 도구: 조율만(run 없음) — 구현·실행은 owner/QA가 한다.
 COORD_TOOLS = [REQUEST_TOOL, RECRUIT_TOOL]
 LEADER_TOOLS = [f"mcp__guide__{n}" for n in

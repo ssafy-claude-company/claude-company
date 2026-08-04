@@ -1614,6 +1614,41 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
             return _ok(f"atelier 실패: {e}")
     tools.append(atelier)
 
+    # [경제 감각(2026-08-04, 사용자: '봇이 경제를 활용할 줄 알아야')] 읽기 전용 조회 —
+    # 봇이 비용·시장을 셈에 넣고 말하게 한다("이 작업은 약 80뮤르(1,440원)", "이 일엔 시장의
+    # ○○ 영입이 낫겠다"). 돈이 움직이는 걸음은 도구에 없다 — 그건 사람이 화면에서 한다.
+    # 매체중립: guide에 economy가 없으면(디스코드 등) 지원하지 않는다고 답할 뿐, 협업은 계속된다.
+    @tool("economy",
+          "판의 경제를 본다(읽기 전용): 크레딧·뮤르 요율, 주인의 남은 예산, 시장에 나온 직원들. "
+          "작업 비용을 가늠해 말하거나('약 80뮤르 = 1,440원'), 부족한 일손을 시장 영입으로 "
+          "제안할 때 근거로 쓴다. 실제 결제·영입은 사람이 화면에서 한다.",
+          {"type": "object", "properties": {}})
+    async def economy(args):
+        fn = getattr(g, "economy", None)
+        if fn is None:
+            return _ok("이 매체에서는 경제 정보를 지원하지 않습니다.")
+        try:
+            d = await fn(getattr(flow, "user_channel", None))
+        except Exception:
+            d = None
+        if not d or not d.get("ok"):
+            return _ok("경제 정보를 지금 가져오지 못했습니다 — 비용 셈 없이 진행하세요.")
+        r = d.get("rates") or {}
+        cur = r.get("currency") or "뮤르"
+        lines = [f"[요율] 크레딧 1 ≈ {r.get('credit_krw', '?')}원 · {cur} 충전 {r.get('buy_krw', '?')}원 "
+                 f"· 현금화 {r.get('cashout_krw', '?')}원 · 판매 수수료 {r.get('fee_pct', '?')}%"]
+        b = d.get("owner_budget")
+        if b:
+            lines.append(f"[주인 예산] 남은 크레딧 {b.get('remaining_credits')}"
+                         f"/{b.get('quota_credits')} ({b.get('plan')}) · {cur} 잔액 {b.get('murr_balance')}")
+        mk = d.get("market") or []
+        if mk:
+            top = " · ".join(f"{m.get('name')}({m.get('role')}) {m.get('price')}{cur}"
+                             f"/증류{m.get('distills')}" for m in mk[:5])
+            lines.append(f"[시장] {top}")
+        return _ok("\n".join(lines))
+    tools.append(economy)
+
     if role == "leader":
         @tool("create_project",
               "Project로 판단되면 전용 채널 생성 + 규모를 산정해 팀 배정"
