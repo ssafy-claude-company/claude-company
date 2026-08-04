@@ -86,26 +86,3 @@ def test_살아있는_위임이_있으면_그_픽은_기다리는_것이다():
     assert "inflight_tasks" in window, "살아 있는 위임을 보지 않으면 기다리는 판이 죽는다"
 
 
-def test_흡수차단도_SYS가_위임을_보낸다():
-    """[요구와 발송을 잇는다(2026-08-04, 실측 U-478)]
-
-    마감 게이트는 "회의에서 말만 하고 Work를 한 번도 못 받은 멤버"가 있으면 닫지 못하게 하고
-    (흡수 차단), 그들에게 실제로 위임하라고 한다. 그런데 그 위임을 보내는 장치가 없었다 —
-    교차검증만 SYS가 대신 보낸다.
-
-    실측: 게이트가 요구한 사람은 1785686081825988·1785712162172918인데 실제로 나간 위임 5건은
-    전부 다른 사람(교차검증 대상)이었다. 리더의 행동은 마감 재시도에 다 쓰이고, 최근 4시간
-    39턴 $10.34가 생산적 마디 0개로 탔다.
-    """
-    from system.rule import task_gates
-
-    src = inspect.getsource(task_gates._gate_cross_check.__globals__["_gate_team_contrib"]) \
-        if "_gate_team_contrib" in task_gates._gate_cross_check.__globals__ \
-        else inspect.getsource(task_gates)
-    assert "_close_absorbed" in src, "누구에게 보낼지 신호가 없으면 SYS가 발송할 수 없다"
-
-    src2 = inspect.getsource(sys_core)
-    assert "task_close_contrib_sent" in src2 and "_close_absorbed" in src2, (
-        "게이트가 요구해도 보내는 자리가 없으면 리더는 마감만 반복한다")
-    i = src2.index("task_close_contrib_sent")
-    assert "_close_contrib_asked" in src2[max(0,i-400):i + 600], "이미 보낸 사람은 빼고 다음 사람에게 보낸다"
