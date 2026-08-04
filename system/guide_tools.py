@@ -1803,7 +1803,15 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         # 있었다). 같은 판의 e2e 단계는 표면을 그 일에 필요한 것만 남겨 실제로 도구를 쓰게 했다.
         # 같은 방식: 산출물을 확인하는 run과 마감만 남긴다 — 논의가 선택지로 남아 있지 않게.
         # (관문이 요구하는 회계·의식적 드롭은 complete_task의 result에 담긴다.)
-        allowed = {"run", "complete_task"}
+        # [관문이 시키는 일을 할 도구는 있어야 한다(2026-08-04, 실측 U-478 — 사용자: '근본적인
+        # 해결방안으로')] 팀 기여 관문은 세 출구를 준다: ① request(Work)로 그 직군에 실제로 맡기기
+        # ② 팀에서 빼기 ③ result에 '[기여 불필요] <이유>'. 그런데 이 표면엔 run·complete_task뿐이라
+        # ①을 부를 수단이 없다. 게다가 '흡수 차단'(회의 발언만 하고 Work를 한 번도 못 받은 멤버)은
+        # ③을 명시적으로 막는다 — "한 번 위임한 뒤에야 [기여 불필요]로 마감 가능". 즉 봇은 이 관문을
+        # 통과할 방법이 **구조적으로 없었고**, 할 수 있는 유일한 행동인 complete_task만 반복하다
+        # 파킹됐다(실측: 마감 시도 41회·반복 경보 14회·판 정지 11회, 그 사이 마디 0개).
+        # request(Work)는 논의가 아니라 관문이 지목해 요구하는 행동이다 — 그것만 더한다.
+        allowed = {"run", "complete_task", "request"}
         return [candidate for candidate in tools if candidate.name in allowed]
 
     # [완료 권한 = 검수 역할(사용자 2026-07)] acceptance/'done' 판정은 QA의 일 — 종전엔 리더가 독점(complete_task

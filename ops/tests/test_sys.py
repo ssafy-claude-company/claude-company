@@ -8190,8 +8190,16 @@ def test_마감턴은_전용_표면으로_연다():
 
     src = inspect.getsource(make_guide_tools)
     i = src.index('if mode == "close"')
-    seg = src[i:i + 700]
-    assert '"run", "complete_task"' in seg, "마감 전용 표면이 산출물 확인·마감만 남기지 않는다"
+    seg = src[i:i + 2200]
+    # [개정(2026-08-04, 실측 U-478)] 원래 계약은 "run·complete_task만"이었다. 그런데 팀 기여 관문은
+    # 세 출구 중 ①로 request(Work) 위임을, ②로 팀 제거를 요구하고, '흡수 차단' 대상에게는 ③
+    # ([기여 불필요])를 명시적으로 막는다 — 그 표면엔 ①을 부를 수단이 없어 봇이 관문을 통과할
+    # 방법이 **구조적으로 없었다**(마감 시도 41회·반복 경보 14회·판 정지 11회, 그 사이 마디 0개).
+    # 이 테스트가 막으려던 것은 '도구 26개를 열어 놓으니 논의만 하고 아무도 안 부른 것'이다 —
+    # 관문이 지목해 요구하는 request 하나는 논의가 아니라 그 요구의 실행 수단이다.
+    assert '"run", "complete_task", "request"' in seg, \
+        "마감 표면이 관문이 요구하는 행동(위임)을 할 수 없다"
+    assert '"meet"' not in seg and '"vote"' not in seg, "논의 도구는 여전히 열지 않는다"
 
     drive = inspect.getsource(Sys._drive_task_close)
     assert drive.count('tool_mode="close"') >= 2, \
