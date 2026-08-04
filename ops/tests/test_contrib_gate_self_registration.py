@@ -95,7 +95,7 @@ def test_관문_문구에_위임이_남아있지_않다():
     err = _run(flow, result="[기여 불필요] 필요 없었음")
     assert "위임" not in err, err
     assert "request(Work)" not in err, err
-    assert "set_subtask" in err
+    assert "회의에서 그 도메인의 단위를 열면" in err
 
 
 def test_기회가_갔어도_명시_없는_재호출은_통과_안_한다():
