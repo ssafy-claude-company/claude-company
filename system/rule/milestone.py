@@ -4379,6 +4379,28 @@ def register_stage(flow, stage, prop, origin=""):
                 # 두 게이트를 다 우회해 'B4'·재진술이 백로그로 태어난 것이 근본).
                 # 기본 귀속 우선순위는 R1 원저자 > DRAFT 편집 저자 > 적임 폴백. 명시된 독립 검증만
                 # 위에서 제작 주인과 다른 Task 팀원으로 분리한다.
+                # [재검증 재판 차단(2026-08-04, 사용자: '적절한 가격과 시간으로' — 실측 U-496:
+                # 같은 3엔진×2뷰포트 매트릭스가 단계를 옮겨가며 재등재돼 오늘만 $87 연소)] 이
+                # 마일스톤에서 이미 **완료된 검증**과 실질 중복인 검증 줄은, 무엇이 바뀌어 다시
+                # 재는지 명시([변경 재검증: …])해야만 등재된다 — 산출물이 안 바뀐 재검증은 이미
+                # 있는 증거의 재구매다. 시스템은 내용을 판단하지 않는다(중복+무사유라는 형태만).
+                from .comm_helpers import _body_overlap as _bov
+                _VERIFY_W = ('verify', '검증', 'matrix', '매트릭스', 'e2e', 'smoke', '회귀',
+                             'artifacts/qa', 'full-flow')
+                _is_verify = any(w in _body.lower() for w in _VERIFY_W)
+                if _is_verify and '[변경 재검증' not in _body:
+                    _dup_done = None
+                    for _r_all in (getattr(flow, 'backlog_relays', None) or {}).values():
+                        for _b_all in (getattr(_r_all, 'backlogs', None) or []):
+                            if getattr(_b_all, 'status', '') == 'done' and _bov(_body, _b_all.body):
+                                _dup_done = _b_all; break
+                        if _dup_done: break
+                    if _dup_done is not None:
+                        _skipped += 1
+                        if flow.log:
+                            flow.log('backlog_verify_rerun_skipped',
+                                     dup_of=str(_dup_done.backlog_id), body=_body[:70])
+                        continue
                 _new_b = relay_for(flow, _st_d).submit(_who, _body, force=False)
                 if _supplement_for:
                     _new_b.supplement_for = list(_supplement_for)
