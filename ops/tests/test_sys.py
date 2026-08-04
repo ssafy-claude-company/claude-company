@@ -500,7 +500,7 @@ def test_GOAL_Error계약이_하위_false계약을_이기고_실제run전엔_최
     asyncio.run(tools["create_task"].handler({"members": "12"}))
 
     parent = (
-        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n"
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종\n"
         "공개 계약: transition(nextState)는 금지 전이에 Error를 던지고 현재 상태를 보존한다.\n"
         "- 금지 전이는 Error를 던지고 상태를 보존 | 실증: python3 test_parent_contract.py"
     )
@@ -616,7 +616,7 @@ def test_GOAL잠금은_SubTask와_백로그0개거나_미종결이면_검증자�
     f = _flow(FakeGuide())
     f.workspace = str(tmp_path)
     asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
-    goal = ("목표: 경계 검증\n"
+    goal = ("목표: 경계 검증\n내용 폭: 기능 3종\n"
             "- 최종 파일 OK | 실증: python3 verify_release.py")
     assert register_stage(f, "goal", goal, "boundary")[0]
     assert register_stage(
@@ -662,7 +662,7 @@ def test_자연어GOAL잠금은_worker도구없이_SYS가_비준exact를_실행�
     (tmp_path / "browser_check.py").write_text(
         "print('title=Home console_errors=0')\n", encoding="utf-8")
     asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
-    decision = ("목표: 브라우저 인수\n"
+    decision = ("목표: 브라우저 인수\n내용 폭: 기능 3종\n"
                 "- 홈 화면이 실제로 열린다 | 실증: 브라우저에서 홈을 열어 제목과 콘솔 오류 0건 확인")
     assert register_stage(f, "goal", decision, "natural")[0]
     preflight_missing = stage_preflight(
@@ -758,7 +758,7 @@ def test_SYS자동검증은_동일비준command의_자연어GOAL둘을_각각_fi
     asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
     assert register_stage(
         f, "goal",
-        "목표: 두 계약을 함께 인수\n"
+        "목표: 두 계약을 함께 인수\n내용 폭: 기능 3종\n"
         "- 공개 API가 요구 형태다 | 실증: 산출물에서 공개 API 계약을 확인한다\n"
         "- 상태 전이가 요구 규칙이다 | 실증: 상태 4개·허용 전이 3개·금지 전이 13개를 대조한다",
         "two-natural",
@@ -957,7 +957,7 @@ def test_마일스톤0개인_GOAL_Task는_complete와_e2e를_우회하지못함(
     asyncio.run(tools["create_task"].handler({"members": "12"}))
     assert register_stage(
         f, "goal",
-        "목표: 잠금 있는 결과물\n- 결과물 계약 | 실증: python3 verify.py",
+        "목표: 잠금 있는 결과물\n내용 폭: 기능 3종\n- 결과물 계약 | 실증: python3 verify.py",
         "zero-ms",
     )[0]
     out = asyncio.run(tools["complete_task"].handler({"result": "완료 주장"}))["content"][0]["text"]

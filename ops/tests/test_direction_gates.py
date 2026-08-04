@@ -34,7 +34,7 @@ def test_탈것_로드맵은_통과한다():
 def test_목표회의_사전검사에_배선돼_있다():
     class _F:
         origin_request = "게임 만들어줘"
-    errs = stage_preflight("goal", "[수렴안]\n목표: 2D 회피 게임. 멀티플레이 없음\n[/수렴안]", _F())
+    errs = stage_preflight("goal", "[수렴안]\n목표: 2D 회피 게임. 멀티플레이 없음\n내용 폭: 기능 3종\n[/수렴안]", _F())
     assert any("갈 수 있는 곳까지" in e for e in errs)
 
 

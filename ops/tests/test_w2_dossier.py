@@ -534,7 +534,7 @@ def test_DRAFT_공동편집_완성_안정_최종표결로_회의가_닫힌다(tm
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     seen = {"edit": 0, "ratify": 0}
-    FILLED = ("# DRAFT [stage:goal] — x\n목표: 방명록 앱 1주기\n\n완수조건:\n"
+    FILLED = ("# DRAFT [stage:goal] — x\n목표: 방명록 앱 1주기\n내용 폭: 기능 3종\n\n완수조건:\n"
               "- 등록 API 동작 | 실증: curl POST 후 GET 확인\n- 목록 표시 | 실증: playwright 로드 확인\n")
 
     async def wake(to, b, k):
