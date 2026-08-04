@@ -4270,9 +4270,10 @@ def test_팀기여의무_부른직군_실작업0이면_증거명시필요_RFC009
     assert "VFX" in txt1                                                 # 잠수 직군 지목
     # [출구 ①의 표기(2026-08-04, 사용자: '위임이 뭐야 위임이란건 존재하지 않아')] 종전 계약은
     # ①을 request(Work) 위임으로 서빙했다. 이 판의 배분 원리는 자기 등재·자기선택이라 남에게 일을
-    # 맡기는 절차가 없다 — ①은 그 도메인의 **자리를 여는 것**(set_subtask)이고, 본인이 그 회의에서
-    # 응찰해 등재한다. 관문이 없는 행동을 시키면 봇은 통과할 방법이 없다(U-478: 마감 시도 44회 거부).
-    assert "set_subtask" in txt1 and "팀에서 빼" in txt1 and "[기여 불필요]" in txt1  # 3선택지(③=명시 마커)
+    # 맡기는 절차가 없다 — ①은 그 도메인의 **자리를 여는 것**이고 본인이 등재한다. 팀 판에서 자리를
+    # 여는 것은 회의의 일이므로(단위=회의 수렴안) 마감을 멈추고 회의로 돌아가라고 서빙한다 —
+    # 관문이 부를 수 없는 도구를 지목하면 안내가 거짓말이 된다(set_subtask는 마감 턴에서 거부된다).
+    assert "회의에서 그 단위를 열어" in txt1 and "팀에서 빼" in txt1 and "[기여 불필요]" in txt1
     assert "위임" not in txt1
     assert f.current.contrib_checked is False                           # 보류는 통과 아님 → 미마킹
     r2 = asyncio.run(t["complete_task"].handler({"result": "끝"}))       # 반사적 재호출 → 여전히 보류
@@ -8196,9 +8197,22 @@ def test_마감턴은_전용_표면으로_연다():
     from system.guide_tools import make_guide_tools
     from system.sys_core import Sys
 
+    # [소스를 읽는 계약은 이 결함을 못 잡았다(2026-08-04, 실측 U-478)] 종전 계약은 close 블록의
+    # **문자열**만 봤다. 그런데 그 블록은 complete_task가 tools에 붙기 48줄 전에 놓여 있어서,
+    # 문자열엔 "complete_task"가 있는데 **실제 반환 목록엔 없었다** — 마감 표면이 마감 도구를 뺀
+    # 표면이었고 봇은 3일 동안 마감을 부를 수 없었다. 계약은 실제 반환값을 본다.
+    _g = FakeGuide()
+    _f = _flow(_g)
+    _names = {t.name for t in make_guide_tools(_f, 11, "leader", mode="close")}
+    assert "complete_task" in _names, f"마감 표면에 마감 도구가 없다 — 실제 반환: {sorted(_names)}"
+    assert "run" in _names, f"산출물 확인 수단이 없다 — 실제 반환: {sorted(_names)}"
+    assert "meet" not in _names and "vote" not in _names, "논의 도구는 열지 않는다"
+    assert "set_subtask" not in _names, (
+        "팀 판의 단위는 회의 수렴안으로만 등록된다 — 마감 턴에서 부르면 거부되므로 표면에 두지 않는다")
+
     src = inspect.getsource(make_guide_tools)
     i = src.index('if mode == "close"')
-    seg = src[i:i + 2200]
+    seg = src[i:i + 2600]
     # [개정(2026-08-04, 실측 U-478)] 원래 계약은 "run·complete_task만"이었다. 그런데 팀 기여 관문의
     # 흡수 차단은 출구 ①을 요구하면서 ③([기여 불필요])을 명시적으로 막는다 — 그 표면엔 ①을 부를
     # 수단이 없어 봇이 관문을 통과할 방법이 **구조적으로 없었다**(마감 시도 44회·판 정지 11회, 그
@@ -8206,10 +8220,8 @@ def test_마감턴은_전용_표면으로_연다():
     # 것'이므로 실행 수단 하나를 더하는 것과는 충돌하지 않는다.
     # ①은 request(Work) 위임이 아니라 **자리를 여는 것**이다 — 이 판의 배분 원리는 자기 등재·자기선택
     # 이고 남에게 일을 맡기는 절차가 없다(사용자 2026-08-04: '위임이란건 존재하지 않아').
-    assert '"run", "complete_task", "set_subtask"' in seg, \
-        "마감 표면이 관문이 요구하는 행동(자리 열기)을 할 수 없다"
+    assert '"run", "complete_task"' in seg, "마감 표면이 산출물 확인·마감만 남기지 않는다"
     assert '"request"' not in seg, "위임은 이 판에 없는 절차다 — 마감 표면에 열지 않는다"
-    assert '"meet"' not in seg and '"vote"' not in seg, "논의 도구는 여전히 열지 않는다"
 
     drive = inspect.getsource(Sys._drive_task_close)
     assert drive.count('tool_mode="close"') >= 2, \

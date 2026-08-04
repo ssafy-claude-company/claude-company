@@ -1797,22 +1797,6 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         allowed = {"run", "e2e_scope", "e2e_result", "e2e_finish"}
         return [candidate for candidate in tools if candidate.name in allowed]
 
-    if mode == "close":
-        # [마감 전용 표면(2026-07-27, U-067 실측)] 마감 관문 앞에서 봇들이 **할 일을 정확히 말하고
-        # 아무도 부르지 않았다** — 6턴 연속 "마감하면 됩니다"만 남고 호출 0회(도구는 26개 노출돼
-        # 있었다). 같은 판의 e2e 단계는 표면을 그 일에 필요한 것만 남겨 실제로 도구를 쓰게 했다.
-        # 같은 방식: 산출물을 확인하는 run과 마감만 남긴다 — 논의가 선택지로 남아 있지 않게.
-        # (관문이 요구하는 회계·의식적 드롭은 complete_task의 result에 담긴다.)
-        # [관문이 시키는 일을 할 도구는 있어야 한다(2026-08-04, 실측 U-478)] 팀 기여 관문의 흡수 차단은
-        # 출구 ①을 요구하는데 이 표면엔 run·complete_task뿐이라 부를 수단이 없었다 — 봇은 관문을 통과할
-        # 방법이 구조적으로 없어 complete_task만 반복하다 파킹됐다(마감 시도 44회·판 정지 11회, 그 사이
-        # 마디 0개). 처음엔 request(Work)를 열었으나, 그것은 '누가 누구에게 일을 맡긴다'는 이 판에
-        # 없는 절차였다(사용자: '위임이 뭐야 위임이란건 존재하지 않아'). 이 판의 ①은 **자리를 여는
-        # 것**이다 — 단위를 열면 그 회의에서 본인이 응찰해 등재하고 집는다. set_subtask만 더한다
-        # (논의 도구 meet·vote는 여전히 열지 않는다).
-        allowed = {"run", "complete_task", "set_subtask"}
-        return [candidate for candidate in tools if candidate.name in allowed]
-
     # [완료 권한 = 검수 역할(사용자 2026-07)] acceptance/'done' 판정은 QA의 일 — 종전엔 리더가 독점(complete_task
     # 리더 전용)했다. 리더의 역할은 기획·위임·조율이지 검수가 아니라, QA/PM이 '인수 PASS'로 판정해도 닫을 권한이
     # 없어 계속 검사만 하고 리더는 닫을 권한이 있는데 검증자가 아니라 계속 위임만 하는 무한 루프였다(라이브
@@ -1846,6 +1830,31 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
                 pass
             return _res
         tools.append(complete_task)
+
+    if mode == "close":
+        # [마감 전용 표면(2026-07-27, U-067 실측)] 마감 관문 앞에서 봇들이 **할 일을 정확히 말하고
+        # 아무도 부르지 않았다** — 6턴 연속 "마감하면 됩니다"만 남고 호출 0회(도구는 26개 노출돼
+        # 있었다). 같은 판의 e2e 단계는 표면을 그 일에 필요한 것만 남겨 실제로 도구를 쓰게 했다.
+        # 같은 방식: 산출물을 확인하는 run과 마감만 남긴다 — 논의가 선택지로 남아 있지 않게.
+        # (관문이 요구하는 회계·의식적 드롭은 complete_task의 result에 담긴다.)
+        #
+        # [이 필터가 지키려던 도구를 이 필터가 지우고 있었다(2026-08-04, 실측 U-478)] 종전엔 이 블록이
+        # complete_task가 **등록되기 48줄 전**에 놓여 있었다 — 마감 도구는 아래 `_holds_completion`
+        # 분기에서 tools에 붙는데, 그 전에 여기서 return해 버리니 마감 표면에 남는 것은 run 하나뿐이었다.
+        # 즉 "마감만 남긴다"는 표면이 **마감을 뺀 표면**이었고, 마감 턴의 봇은 complete_task를 부를
+        # 방법이 아예 없었다. 봇들의 말이 그대로 증거다: "현재 callable 관문은 set_subtask뿐이며
+        # complete_task는 여전히 노출되지 않았습니다"(08-04 11:27, 배포/인프라) — 6명이 차례로
+        # 마감 순번을 받아 같은 말을 남기고 판이 정지했다(task_close_stalled attempts=6 → parked).
+        # 이 표면을 만든 계기(U-067 '호출 0회')가 이 표면 때문에 재생산된 셈이다. 모든 도구가 등록된
+        # 뒤로 옮긴다.
+        #
+        # set_subtask는 넣지 않는다 — 팀 판의 단위 분해는 개인 등록이 아니라 회의 수렴안이라
+        # (rule_set_subtask) 마감 턴에서 부르면 그 자리에서 거부된다. 실제로 어제 열어 봤고
+        # 봇이 불러 거부당했다("팀 회의 수렴안에 동봉해야 한다는 이유로 등록이 거부됐습니다").
+        # 부를 수 없는 도구를 표면에 두면 관문 안내가 거짓말이 된다.
+        allowed = {"run", "complete_task"}
+        return [candidate for candidate in _audited(tools, me_id, role)
+                if candidate.name in allowed]
 
     return _audited(tools, me_id, role)
 
