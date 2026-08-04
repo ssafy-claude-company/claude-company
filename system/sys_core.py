@@ -2712,12 +2712,21 @@ class Sys:
         # 실측: 게이트가 요구한 사람은 1785686081825988·1785712162172918인데, 실제로 나간 위임 5건은
         # 전부 다른 사람(교차검증 대상)이었다. 리더의 행동은 마감 재시도에 다 쓰이고, 최근 4시간
         # 39턴 $10.34가 마디 0개로 탔다. 요구와 발송을 잇는다 — 교차검증과 같은 모양·같은 자리.
-        _absorbed = list(getattr(flow, "_close_absorbed", None) or [])
-        if _absorbed and not getattr(flow, "_close_contrib_sent", False):
+        # [남은 사람마다 보낸다(2026-08-04 재교정, 실측 U-478)] 처음엔 흐름당 한 번만 보냈는데,
+        # 흡수 차단 대상이 여럿이면 첫 사람만 풀리고 나머지는 그대로 막힌다 — 실측: 위임 한 번에
+        # absorbed가 [A, B] → [B]로 줄었고 B에게는 영영 안 갔다. 이미 보낸 사람만 빼고 다음 사람에게
+        # 보낸다(교차검증의 _cc_asked와 같은 방식).
+        _absorbed = [int(m) for m in (getattr(flow, "_close_absorbed", None) or [])]
+        _csent = getattr(flow, "_close_contrib_asked", None)
+        if _csent is None:
+            _csent = flow._close_contrib_asked = set()
+        _todo = [m for m in _absorbed if m not in _csent]
+        if _todo:
             try:
-                _peer2 = int(_absorbed[0])
-                flow._close_contrib_sent = True
-                self._log("task_close_contrib_sent", to=_peer2, n=len(_absorbed))
+                _peer2 = int(_todo[0])
+                _csent.add(_peer2)
+                self._log("task_close_contrib_sent", to=_peer2,
+                          left=len(_todo) - 1, asked=len(_csent))
                 _tls2 = {t.name: t for t in make_guide_tools(flow, actor, "leader")}
                 await _tls2["request"].handler({
                     "to_id": str(_peer2), "kind": "Work",

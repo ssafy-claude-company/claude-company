@@ -107,5 +107,5 @@ def test_흡수차단도_SYS가_위임을_보낸다():
     src2 = inspect.getsource(sys_core)
     assert "task_close_contrib_sent" in src2 and "_close_absorbed" in src2, (
         "게이트가 요구해도 보내는 자리가 없으면 리더는 마감만 반복한다")
-    i = src2.index("_close_contrib_sent")
-    assert "flow._close_contrib_sent = True" in src2[i:i + 600], "한 번만 보낸다(반복 발송 방지)"
+    i = src2.index("task_close_contrib_sent")
+    assert "_close_contrib_asked" in src2[max(0,i-400):i + 600], "이미 보낸 사람은 빼고 다음 사람에게 보낸다"
