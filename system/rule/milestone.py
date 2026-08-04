@@ -2415,25 +2415,12 @@ def claim_kick_target(flow):
         if owner and not _busy(flow, owner):
             return (owner, b, st.st_id)
 
-    # [등재자가 손이 차 있다고 그 일이 멈추지는 않는다(2026-08-03, 실측 U-478)] 위 1차는 일감을
-    # **등재자에게만** 준다(자기 등재 원칙). 그런데 러너는 검증 보고의 조건 줄마다 백로그를 소급
-    # 등재하므로(report_iter → submit(force=True)), 많이 보고한 사람일수록 자기만 집을 수 있는
-    # 일감이 쌓인다. 실측: ST-7의 미배정 24건이 전부 제출자 5명 것이고 그 5명이 모두 다른 일을
-    # 들고 있어, 판에 42명·최근 6시간에 11명이 돌고 있는데도 18시간 동안 아무도 집지 못했다.
-    # 단위가 닫히려면 모든 백로그가 종결돼야 하므로(subtask_close_check) 판은 완주할 수 없다.
-    # 등재자 우선은 그대로 두고(1차), 그 사람이 손이 차 있으면 손 빈 적임자에게 넘긴다 — 무주
-    # 백로그에 이미 쓰던 것과 같은 선택(role_fit)이다. 동시 상한(_bpw)은 위에서 그대로 지킨다.
-    for st, _r, b in rows:
-        if b.status != "open" or backlog_scope_key(st.st_id, b.backlog_id) in kicked:
-            continue
-        _own = _worker(st, b)
-        _bots = {int(k): str(v or "") for k, v in (getattr(flow, "bot_info", None) or {}).items()}
-        _free = [k for k in _bots if k != int(_own or 0) and not _busy(flow, k)]
-        if not _free:
-            continue
-        from ..role_fit import role_fit as _rf2
-        _q = f"{getattr(st, 'goal', '')} {b.body}"
-        return (int(max(_free, key=lambda k: _rf2(_q, _bots[k]))), b, st.st_id)
+    # [등재자=담당, 불변(2026-08-04, 사용자: '백로그는 백로그 등록자가 담당하고 바뀔 수 없거든')]
+    # 어제(08-03) 여기에 '등재자가 바쁘면 손 빈 적임자에게 넘긴다'는 2차 패스를 넣었다 — 정본 위반이라
+    # 회수한다. 등재자가 손이 차 있으면 그 일감은 **그 사람 차례가 올 때까지 기다린다**. 병렬은 담당을
+    # 바꿔서가 아니라 **등재자들이 각자 자기 일감을 동시에** 굴려서 온다(위 1차가 손 빈 등재자의 다음
+    # 일감을 순서대로 세운다 — 그것이 차선이다). 등재자 적체는 relay 불변식과 짝인 회의 규칙('백로그
+    # 줄은 자기가 수행할 일만')이 상류에서 줄인다.
 
     # blocked는 차단 직후 즉시 재선정하지 않는다. 모든 실행 가능분이 소진되고 차단 뒤 보충 작업의
     # 실제 완료가 남았을 때만 재방문한다. handoff가 응답 장애로 선택을 못 했을 때의 구조적 안전망이다.
@@ -2750,6 +2737,9 @@ def stage_draft_template(stage, agenda="", flow=None):
                       "각 정본 키의 `실증:` command만 비준하세요.)\n"
                       "- ⟦조건⟧ | 실증: ⟦exact command⟧\n"),
         "subtask": ("단위: ⟦작업 영역/구성요소⟧\n단위: ⟦작업 영역/구성요소⟧\n\n"
+                    "(백로그 줄은 **자기가 수행할 일만** 씁니다 — 쓴 사람이 그 일감의 담당이 되고 바뀌지 "
+                    "않습니다. 남의 도메인에서 고칠 것을 발견했으면 그 줄을 대신 쓰지 말고 '## 참고'에 "
+                    "결함으로 남기세요 — 그 도메인이 자기 줄로 등재합니다.)\n"
                     "백로그: [영역명] ⟦구체 작업 1⟧\n백로그: [영역명] ⟦구체 작업 2⟧\n"
                     "백로그: [영역명] ⟦구체 작업 …(각 영역 필요한 만큼)⟧\n"),
         # [선행 대기 칸을 골격에 둔다(2026-07-27, 전수감사)] 등록기는 blocked 원본마다

@@ -1,13 +1,10 @@
-"""[구조 픽은 배분권 밖(2026-08-04, 사용자: '시스템적으로 직렬적인 부분을 병렬로 바꾸기로 했잖아')]
+"""[등재자=담당, 불변 + 구조 픽은 배분권 밖(2026-08-04, 사용자)]
 
-병렬 차선 추가(2026-07-31)는 구조가 등재 순서대로 다음 (일감, 수행자)를 세우는 기계인데, 회의가
-등재한 일감에 개인 등재자가 박힌 판에서는 자기 등재 조건이 안 서고 배분권 게이트에 걸려 —
-실측 U-496·U-504: 24h 차선 추가 0회·거부 7회("배분권은 마지막 작업자에게"), 판이 영원히 한 줄.
-수렴안 서기(0) 등재 판만 차선 4개까지 병렬 — 같은 기계가 등재자 표기 하나로 갈렸다.
-
-배분권이 지키는 것은 '남을 마음대로 지명하지 못하게'다. 등재 순서 그 자체인 구조 픽은 배분권
-검사만 건너뛴다 — 동시 상한·상태 검사는 그대로."""
-import sys
+정본: '백로그는 백로그 등록자가 담당하고 바뀔 수 없거든'(2026-08-04). 개인이 등재한 일감의 담당은
+등재자 자신뿐이고, 무주(수렴안 서기 0)만 집는 사람이 담당이 된다. 병렬은 담당을 바꿔서가 아니라
+등재자들이 각자 자기 일감을 동시에 굴려서 온다 — 구조 픽(등재 순서대로 다음 등재자를 세우는 기계)은
+배분권 검사만 건너뛴다(실측 U-496·U-504: 개인 등재 판에서 배분권 게이트에 막혀 24h 차선 추가 0회)."""
+import os, sys
 
 sys.path.insert(0, __file__.rsplit("/ops/", 1)[0])
 import pytest
@@ -16,34 +13,56 @@ from system.rule.backlog import BacklogError, BacklogRelay
 
 def _relay():
     r = BacklogRelay("ST-1")
-    r.submit(11, "첫 일감 — 데이터 계약을 고정한다", force=True)     # 등재자 11
-    r.submit(13, "둘째 일감 — 화면 렌더링을 붙인다", force=True)     # 등재자 13(제3자)
+    r.submit(11, "첫 일감 — 데이터 계약을 고정한다", force=True)      # 등재자 11
+    r.submit(13, "둘째 일감 — 화면 렌더링을 붙인다", force=True)      # 등재자 13
     return r
 
 
-def test_개인등재_판에서도_구조_픽은_차선을_세운다():
+def test_구조_픽은_등재자를_세운다_배분권_밖():
     r = _relay()
     b1 = r.backlogs[0]
-    r.pick(11, b1.backlog_id, 11)          # 자기 등재 자기 착수 — 종전 규칙 그대로
-    r.done(11, b1.backlog_id, "완료")       # 11이 턴 홀더(배분권자)가 된다
+    r.pick(11, b1.backlog_id, 11)
+    r.done(11, b1.backlog_id, "완료")          # 11이 배분권자
     b2 = r.backlogs[1]
-    # 종전: 12의 자기선택은 배분권(11)에 막힘 — 그대로다(남 지명 방지 질서 유지)
+    # 구조 픽 — 배분권(11)이 아니어도 등재자(13)를 세운다
+    b = r.pick(13, b2.backlog_id, 13, structural=True)
+    assert b.status == "in_progress" and b.assignee == 13
+
+
+def test_등재자가_아닌_담당은_구조라도_불가():
+    """[정본] 담당은 등재자뿐 — 구조 픽이라도 남에게 배정하지 못한다."""
+    r = _relay()
+    b2 = r.backlogs[1]                          # 등재자 13
     with pytest.raises(BacklogError):
-        r.pick(12, b2.backlog_id, 12)
-    # 구조 픽(등재 순서대로 다음 차례를 세우는 기계)은 통과한다
-    b = r.pick(12, b2.backlog_id, 12, structural=True)
-    assert b.status == "in_progress" and b.assignee == 12
+        r.pick(12, b2.backlog_id, 12, structural=True)
+
+
+def test_배분권자도_남의_일감을_남에게_지명_못한다():
+    r = _relay()
+    b1 = r.backlogs[0]
+    r.pick(11, b1.backlog_id, 11)
+    r.done(11, b1.backlog_id, "완료")           # 11 = 배분권자
+    b2 = r.backlogs[1]                          # 등재자 13
+    with pytest.raises(BacklogError):
+        r.pick(11, b2.backlog_id, 12)           # 지명이어도 담당은 등재자만
+
+
+def test_무주_일감은_집는_사람이_담당():
+    r = BacklogRelay("ST-2")
+    r.submit(0, "수렴안 서기 등재 — 팀 산물", force=True)
+    b = r.backlogs[0]
+    got = r.pick(12, b.backlog_id, 12)          # 자기선택
+    assert got.assignee == 12
 
 
 def test_구조_픽도_동시_상한은_그대로():
-    import os
     os.environ["ORGANT_BACKLOG_PARALLEL"] = "1"
     try:
         r = _relay()
         b1, b2 = r.backlogs[0], r.backlogs[1]
         r.pick(11, b1.backlog_id, 11)
         with pytest.raises(BacklogError):
-            r.pick(12, b2.backlog_id, 12, structural=True)   # 상한 1 — 구조라도 못 넘는다
+            r.pick(13, b2.backlog_id, 13, structural=True)
     finally:
         os.environ.pop("ORGANT_BACKLOG_PARALLEL", None)
 
@@ -54,4 +73,4 @@ def test_구조_픽도_상태_검사는_그대로():
     r.pick(11, b1.backlog_id, 11)
     r.done(11, b1.backlog_id, "완료")
     with pytest.raises(BacklogError):
-        r.pick(12, b1.backlog_id, 12, structural=True)       # done은 못 집는다
+        r.pick(11, b1.backlog_id, 11, structural=True)
