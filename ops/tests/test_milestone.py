@@ -224,7 +224,7 @@ def test_가결_수렴안_단위줄_마일스톤과_동반등록(monkeypatch):
     from system.rule.milestone import register_consensus
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f = _flow()
-    prop = ("목표: 방명록 1주기\n등록 API 동작 | curl POST 후 GET 확인\n"
+    prop = ("목표: 방명록 1주기\n내용 폭: 기능 3종\n등록 API 동작 | curl POST 후 GET 확인\n"
             "단위: 백엔드 저장 API | curl POST 200 확인\n단위: 프론트 목록 UI | playwright 로드 확인")
     ms, n = register_consensus(f, prop, "방명록")
     assert not isinstance(ms, str) and n == 2
@@ -240,7 +240,7 @@ def test_수렴안_로드맵과_단계인식_분해회의(monkeypatch):
     from system.rule.backlog import relay_for
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f = _flow()
-    prop1 = ("단계: 달구지 — ToDo MVP\n단계: 자동차 — 계정·동기화\n목표: ToDo MVP\n"
+    prop1 = ("단계: 달구지 — ToDo MVP\n단계: 자동차 — 계정·동기화\n목표: ToDo MVP\n내용 폭: 기능 3종\n"
              "CRUD 동작 | curl POST 후 GET 확인")
     ms, n = register_consensus(f, prop1, "ToDo")
     assert not isinstance(ms, str) and f.roadmap == ["달구지 — ToDo MVP", "자동차 — 계정·동기화"]
@@ -288,7 +288,7 @@ def test_수렴안_미동봉시_재회의_코칭이_붙는다():
     # extract_consensus가 빈 응답에서 아무것도 못 뽑는지(코칭 트리거 조건) 단위 확인.
     from system.rule.milestone import extract_consensus
     assert extract_consensus("이 회의 마칩니다. [종료]") is None      # 수렴안 미동봉 → None → conv_props 빔
-    assert extract_consensus("[수렴안]\n목표: x\n조건 | run\n[/수렴안]") is not None
+    assert extract_consensus("[수렴안]\n목표: x\n내용 폭: 기능 3종\n조건 | run\n[/수렴안]") is not None
 
 
 def test_중지투표_도구가_리더셋에_등록되고_import된다():
@@ -307,7 +307,7 @@ def test_수렴안_파싱_콜론없는줄_크래시안함_단계조건_안뺏김
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f = _flow()
     # 콜론 없는 '목표 없이' 줄 + '단계별' 완수조건 — 크래시 없이 조건으로 보존돼야
-    prop = ("목표: 배포\n단계별 배포 성공 | curl -s localhost:8000 확인\n기능 동작 | playwright로 로드 확인\n단계: MVP\n단계: 확장")
+    prop = ("목표: 배포\n내용 폭: 기능 3종\n단계별 배포 성공 | curl -s localhost:8000 확인\n기능 동작 | playwright로 로드 확인\n단계: MVP\n단계: 확장")
     ms, n = register_consensus(f, prop, "t")
     assert not isinstance(ms, str)                              # 크래시 없음
     assert f.roadmap == ["MVP", "확장"]                         # '단계:'만 로드맵
@@ -326,7 +326,7 @@ def test_GOAL_구조화_회의수렴안이_Task목표를_채움(monkeypatch):
     f = _flow()
     f.current = types.SimpleNamespace(team=[11, 12], status=types.SimpleNamespace(goal=""))
     assert not f.current.status.goal                             # GOAL 미확정
-    ms, _ = register_consensus(f, "목표: ToDo MVP 배포\n동작 | curl 확인", "ToDo")
+    ms, _ = register_consensus(f, "목표: ToDo MVP 배포\n내용 폭: 기능 3종\n동작 | curl 확인", "ToDo")
     assert not isinstance(ms, str)                               # 목표 미확정이어도 수렴안이 채워 등록됨
     assert f.current.status.goal == "ToDo MVP 배포"              # Task GOAL이 회의 산물로 세팅됨
 
@@ -337,7 +337,7 @@ def test_마일스톤_완수_보고와_로드맵_다음단계_코칭(monkeypatch
     from system.rule.milestone import register_consensus, iter_verify, wrapup_done
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f = _flow()
-    ms, _ = register_consensus(f, "단계: MVP\n단계: 확장판\n목표: MVP\n동작 | curl 확인", "t")
+    ms, _ = register_consensus(f, "단계: MVP\n단계: 확장판\n목표: MVP\n내용 폭: 기능 3종\n동작 | curl 확인", "t")
     ms.criteria[0].passed = True
     ms.criteria[0].evidence = "curl 200 OK"
     ms.status = "wrapup"
@@ -351,7 +351,7 @@ def test_종결표결_수렴안_추출과_결정권자_부재(monkeypatch):
     """[결정권자 폐지] [수렴안] 블록 파서 — 종결 표결 동봉분을 시스템이 서기로 등록하는 원료.
     재협상도 누구나(사람 승인이 진짜 게이트)."""
     from system.rule.milestone import extract_consensus, open_milestone, rule_renegotiate
-    body = ("[종료]\n[수렴안]\n목표: 방명록 1주기\n등록 API 동작 | curl POST 후 GET 확인\n"
+    body = ("[종료]\n[수렴안]\n목표: 방명록 1주기\n내용 폭: 기능 3종\n등록 API 동작 | curl POST 후 GET 확인\n"
             "목록 표시 | playwright 로드 확인\n[/수렴안]")
     c = extract_consensus(body)
     assert c and "등록 API" in c and "playwright" in c
@@ -620,7 +620,7 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
                                       acceptance="", standard="", interfaces="")
     # ① GOAL 단계 — [수렴안]을 가공해 목표만 정함(통일 수렴안, 가공은 단계 몫)
     assert meeting_stage(f) == "goal"
-    ok, _ = register_stage(f, "goal", "목표: 방명록 앱\n등록 동작 | curl POST 확인")
+    ok, _ = register_stage(f, "goal", "목표: 방명록 앱\n내용 폭: 기능 3종\n등록 동작 | curl POST 확인")
     assert ok and f.current.status.goal == "방명록 앱"
     assert not getattr(f, "milestones", None)                # GOAL 회의는 마일스톤을 안 연다
 
@@ -678,7 +678,7 @@ def test_GOAL_비준전문_공개계약_완수조건_체크포인트와_하위�
     checkpoints = []
     f.checkpoint_task = lambda: checkpoints.append("saved")
     parent = (
-        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n"
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종\n"
         "공개 계약: transition(nextState)는 금지 전이에 Error를 던지고 현재 상태를 보존한다.\n"
         "- 금지 전이는 Error와 상태 불변을 보장 | 실증: node test_state_machine.js"
     )
@@ -1317,7 +1317,7 @@ def test_GOAL_MD_표결원문의_whole_bold_desc도_canonical_marker를_오염�
     )
     ok, note = register_stage(
         f, "goal",
-        f"목표: 홈 완성\n- **{desc}** | 실증: {spec}",
+        f"목표: 홈 완성\n내용 폭: 기능 3종\n- **{desc}** | 실증: {spec}",
         "whole-bold-goal",
     )
     assert ok, note
@@ -1346,7 +1346,7 @@ def test_게이트는_불량을_일괄보고():
 def test_등록_볼드키_파싱과_프리플라이트_동일계약():
     from system.rule.milestone import register_stage, stage_preflight
     f = _flow()
-    ok, _ = register_stage(f, "goal", "목표: 카운터 앱\n- 웹 로드 | 실증: curl -s localhost:3000", "t")
+    ok, _ = register_stage(f, "goal", "목표: 카운터 앱\n내용 폭: 기능 3종\n- 웹 로드 | 실증: curl -s localhost:3000", "t")
     assert ok
     prop = ("**이번 주기:** 카운터 1주기\n"
             "- 스키마 enum(a|b) 유지 | 검증: pytest tests/schema\n"

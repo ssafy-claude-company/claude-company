@@ -124,6 +124,7 @@ def task_snapshot(flow, ref) -> dict:
         "interject_retry": interject_retry,
         "result_so_far": (ref.status.result or "")[:500],
         "collab_notes": getattr(ref, "collab_notes", ""),   # 회의·표결 합의 — 재개 위임에도 동봉
+        "content_floor": list(getattr(ref, "content_floor", None) or []),   # 넓이의 결정 — 재개 후에도 조건 승계
         "acceptance": getattr(ref, "acceptance", ""),        # 수용 계약 — 동면·재개 너머 영속(없으면 마감 게이트가 매번 재정의 요구)
         "standard": getattr(ref, "standard", ""),            # [최대화] 최대 품질 표준(도메인 누적) — 동면 너머 영속(없으면 바가 증발, 라이브 확인)
         "interfaces": getattr(ref, "interfaces", ""),        # [협업] 도메인 간 인터페이스 계약 — 재개 마감 L2 검증이 같은 계약으로
@@ -511,6 +512,8 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
                   owner=int(snap.get("owner") or 0))
     if snap.get("collab_notes"):
         ref.collab_notes = snap["collab_notes"]   # 합의 기록 복원 — 재개 후 위임에도 동봉(스펙 증발 방지)
+    if snap.get("content_floor"):
+        ref.content_floor = [str(x) for x in snap["content_floor"]]
     if snap.get("acceptance"):
         ref.acceptance = snap["acceptance"]        # 수용 계약 복원 — 재개 마감이 같은 기준으로 검증(증발 방지)
     if snap.get("standard"):

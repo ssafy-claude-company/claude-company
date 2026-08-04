@@ -35,13 +35,13 @@ def test_목표회의_목표줄_없으면_반려(tmp_path):
 
 def test_목표회의_절차나열은_반려(tmp_path):
     ok, note = register_stage(_flow(tmp_path, goal=""), "goal",
-                              "[수렴안]\n목표: ①컨셉 정의 → ②검증 → ③배포\n[/수렴안]")
+                              "[수렴안]\n목표: ①컨셉 정의 → ②검증 → ③배포\n내용 폭: 기능 3종\n[/수렴안]")
     assert not ok, "목표는 '무엇을 만드는가'지 절차가 아니다"
 
 
 def test_목표회의_미룸문구는_반려(tmp_path):
     ok, note = register_stage(_flow(tmp_path, goal=""), "goal",
-                              "[수렴안]\n목표: (후속: 기획 단계에서 확정)\n[/수렴안]")
+                              "[수렴안]\n목표: (후속: 기획 단계에서 확정)\n내용 폭: 기능 3종\n[/수렴안]")
     assert not ok and "미룸" in note
 
 

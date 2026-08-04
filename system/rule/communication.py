@@ -450,7 +450,7 @@ async def meet(flow, me_id, args):
                 clear_resolved_goal_ratification_objection as _ms_clear_goal_objection,
             )
             from .._util import dossier_read as _dread, dossier_write as _dwrite
-            _tmpl = _ms_dtmpl(_stage, (_agenda or topic)[:120])
+            _tmpl = _ms_dtmpl(_stage, (_agenda or topic)[:120], flow=flow)
             if _tmpl:
                 from .milestone import draft_should_reset as _dsr
                 _ex = _dread(flow, "DRAFT.md")
