@@ -1071,7 +1071,21 @@ async def meet(flow, me_id, args):
                         _resp[m] = res
 
             for m in _voters:
+                # [응답 없음은 기권이 아니다(2026-08-04, 실측 U-496 표결 6건: '기획@556001 | 기권'
+                # 사유 없음)] 타 흐름에 바쁜 봇은 fork가 건너뛰어 res=None이 되는데, 종전엔 이것이
+                # **무사유 기권**으로 집계·게시됐다 — '빈 표는 무효, 반려' 구조(2026-07-22)가 정확히
+                # 이 경로에서만 우회됐다(반려는 res is not None만 겨냥). 기권은 판단 보류라는 **판단**
+                # 이고 사유가 있어야 한다 — 응답 자체가 없는 것은 불참이다. 사실대로 셈·표기한다
+                # (집계 영향 없음: 종전에도 기권은 셈 밖. 이름만 정직해진다).
+                if _resp.get(m) is None:
+                    _ballots.append((f"{flow._info(m) or m}@{int(m)}", "absent", ""))
+                    continue
                 _vote, _reason, _pms = _read_ballot(_resp.get(m))
+                # [반려에도 빈 표는 무효(2026-08-04)] 재요청까지 사유가 비면 원표 유지가 아니라
+                # 무효 처리 — '기권'이라는 판단으로 둔갑시키지 않는다.
+                if _vote == "abstain" and not _reason:
+                    _ballots.append((f"{flow._info(m) or m}@{int(m)}", "invalid", ""))
+                    continue
                 _premortems.extend(_pms)                                  # 찬성자도 위험(사전부검)을 내놓는다
                 if _vote == "against":
                     _dissents.append(_reason or "(사유 미기재)")
@@ -1122,7 +1136,8 @@ async def meet(flow, me_id, args):
                 # [표결 서사 동봉(2026-07-21)] 집계 줄 아래 전 투표자의 표·사유를 구조 표기로 붙인다 —
                 # feed_assembly가 '투표: 이름 | 표 | 사유' 줄을 파싱해 펼침 렌더의 원료로 승격(본문
                 # 스크래핑 아님 — 정본 표기). 사유 없는 표는 표만.
-                _vlabel = {"for": "찬성", "against": "반대", "abstain": "기권"}
+                _vlabel = {"for": "찬성", "against": "반대", "abstain": "기권",
+                           "absent": "불참(응답 없음)", "invalid": "무효(사유 없음)"}
                 _vsum += "".join(f"\n투표: {nm} | {_vlabel.get(vt, vt)}"
                                  + (f" | {rs}" if rs else "") for nm, vt, rs in _ballots)
                 _ch = (flow.current.thread_id if flow.current else None) or flow.user_channel
