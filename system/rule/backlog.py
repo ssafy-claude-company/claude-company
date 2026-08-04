@@ -985,6 +985,15 @@ def drop_unstarted_on_proven_cycle(flow, ms) -> list:
         for b in (getattr(store.get(getattr(st, "st_id", "")), "backlogs", None) or []):
             if getattr(b, "status", "") != OPEN or float(getattr(b, "ts_pick", 0) or 0):
                 continue
+            # [팀이 직접 올린 일감은 접지 않는다(2026-08-04, 실측 U-478 — 내가 낸 결함 교정)]
+            # 이 정리는 "보고가 남긴 기록"을 치우려고 만든 것인데, 착수 이력만 보고 접었더니 회의가
+            # **방금 등재한 팀의 일감까지** 쓸어버렸다. 실측: 13:44:57 회의가 단계 8개를 열고 전원이
+            # 자기 몫 15건을 등재(forced=False) → 13:45:19 이 정리가 15건 전부 접음(22초) →
+            # 13:46:25 봇 하나가 각 단계에 force 등재해 혼자 집고 혼자 완료 → 13:47:11 주기 완수.
+            # 그 결과 4명이 "회의 발언 외 실작업 0"이 되어 마감 관문이 막혔다(흡수 차단).
+            # 접어도 되는 것은 **시스템이 보고에서 소급 등재한 것**뿐이다(auto_registered).
+            if not getattr(b, "auto_registered", False):
+                continue
             b.status = DROPPED
             b.ts_done = time.time()
             try:
