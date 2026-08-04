@@ -801,13 +801,6 @@ def _gate_contrib(flow, args, third, has_product, _engx, _scopex):
             if _absorbed and flow.log:
                 flow.log("task_absorbed_blocked", task=flow.current.task_id,
                          absorbed=[int(m) for m in _absorbed])
-            # [요구와 발송을 잇는다(2026-08-04, 실측 U-478)] 이 게이트는 "이들에게 실제로 위임하라"고
-            # 하면서 그 위임을 보내는 장치가 없다 — 교차검증만 SYS가 대신 보낸다. 누구에게 보내야
-            # 하는지 신호로 남기고, 소비는 SYS 마감 구동부가 한다(동기 함수라 여기서는 못 깨운다).
-            try:
-                flow._close_absorbed = [int(m) for m in _absorbed]
-            except Exception:
-                pass
             absorbed_note = (
                 f"\n\n⚠ [흡수 차단 — {flow._names(_absorbed)}은(는) '[기여 불필요]'로 넘길 수 없습니다] "
                 f"이들은 **회의에서 의견을 냈는데 이 Task에서 Work 위임을 한 번도 못 받고** 실작업 0입니다 — "
