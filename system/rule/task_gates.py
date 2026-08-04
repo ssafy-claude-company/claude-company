@@ -745,6 +745,41 @@ def _ledger_workers(flow) -> set:
     return out
 
 
+def _had_the_floor(flow) -> set:
+    """이 흐름에서 **자기 일감을 등재할 통로가 실제로 열렸던** 사람들.
+
+    [위임은 이 판에 없다(2026-08-04, 사용자: '위임이 뭐야 위임이란건 존재하지 않아')] 흡수 차단은
+    'Work를 한 번도 못 받았다'(work_delegated_to 밖)로 흡수를 판정했다 — 리더가 전문가에게 일을
+    맡기던 시절의 척도다. 지금 판의 배분 원리는 자기 등재·자기선택이라 아무도 남에게 일을 맡기지
+    않는다: 일감은 본인이 pick_backlog로 등재해 집는다. 그래서 work_delegated_to는 영영 비고,
+    회의에 참여한 사람은 전원 영구 '흡수 차단'이 되어 마감이 구조적으로 불가능해진다.
+
+    실측 U-478(3일·4318 이벤트): 흡수로 잡힌 4명은 발언권에 59회 응찰했고 그중 2명은 자기 일감을
+    5건 등재했다 — 아무도 그들에게 '맡기지' 않았을 뿐, 기회는 갔다. 그 판은 마감 시도 44회를
+    거부당한 채 3일을 돌았다.
+
+    자기 등재 판에서 '기회가 갔다'의 사실은 둘 중 하나다:
+      · 발언권 응찰을 받았다(floor_bidders) — 등재로 가는 유일한 통로가 열렸다
+      · 실제로 일감을 등재했다(Backlog.submitter) — 통로를 썼다
+    둘 다 없으면 그 사람은 판에 한 번도 불려 나오지 않은 것이고, 그때의 흡수는 진짜다.
+    """
+    out = set()
+    for x in (getattr(flow, "floor_bidders", None) or ()):
+        try:
+            out.add(int(x))
+        except (TypeError, ValueError):
+            continue
+    for relay in (getattr(flow, "backlog_relays", None) or {}).values():
+        for b in (getattr(relay, "backlogs", None) or []):
+            try:
+                who = int(getattr(b, "submitter", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if who:
+                out.add(who)
+    return out
+
+
 def _gate_contrib(flow, args, third, has_product, _engx, _scopex):
     """[게이트] 팀 기여 의무 — RFC-009. 교차 검증(cross_checks)과 **독립**. 검증이 됐어도(검증은
     기능 위주라 폴리시 부재를 못 잡음 — RFC-009 §3), 팀에 부른 직군이 이 흐름에서 회의 발언만 하고
@@ -765,17 +800,21 @@ def _gate_contrib(flow, args, third, has_product, _engx, _scopex):
                         if flow.act_by.get(m, 0) == 0 and int(m) not in _ledger]
         _cd = bool(re.search(r"\[\s*기여\s*(?:불필요|제외|면제)\s*\]", args.get("result") or ""))
         # [흡수 차단 — [기여 불필요] 블랭킷 우회 봉쇄(2026-06-21, 라이브 P-026 규명)] 회의에 참여
-        # (participated)했는데 이 Task에서 Work를 한 번도 못 받고(work_delegated_to 밖) 실작업 0인 멤버 =
-        # 그 전문 도메인이 '흡수'된 것이다(리더가 전문가에게 위임 안 하고 제너럴리스트가 그 도메인까지 다 써버림
-        # = 리더 독점의 핵심). 이런 멤버는 [기여 불필요] 한 줄로 묵살 못 한다 — 실제로 한 번은 위임(①)하거나
-        # 팀에서 빼야(②) 한다. 위임받으면(work_delegated_to 진입) 그 뒤엔 [기여 불필요]로 마감 가능(기회는 줬다).
-        # 도달 가능자만(예비·타 흐름 점유 제외) → 맡길 사람이 없으면 통과(교착 없음).
+        # (participated)했는데 이 Task에서 기회가 한 번도 안 갔고 실작업 0인 멤버 = 그 전문 도메인이
+        # '흡수'된 것이다(제너럴리스트가 그 도메인까지 다 써버림). 이런 멤버는 [기여 불필요] 한 줄로
+        # 묵살 못 한다.
+        # [기회의 척도를 판의 원리에 맞춘다(2026-08-04, 사용자: '위임이란건 존재하지 않아')] 종전 척도는
+        # work_delegated_to(누가 누구에게 Work를 맡겼나)였다 — 자기 등재·자기선택 판에는 그 행위가 없어
+        # 영영 비고, 회의 참여자 전원이 영구 차단됐다(_had_the_floor 주석의 U-478 실측). 기회는 발언권으로
+        # 간다: 응찰을 받았거나 일감을 등재한 사람은 통로가 열렸던 것이다.
+        # 도달 가능자만(예비·타 흐름 점유 제외) → 부를 수 없는 사람이면 통과(교착 없음).
         def _reach_for_work(m):
             if str((flow._info(m) or "")).startswith("예비"):
                 return False
             return not (_engx is not None and _scopex is not None and _engx.busy_elsewhere(m, _scopex))
         _part = getattr(flow.current, "participated", None) or set()
-        _deleg = getattr(flow.current, "work_delegated_to", None) or set()
+        _deleg = set(getattr(flow.current, "work_delegated_to", None) or set())
+        _deleg |= _had_the_floor(flow)   # 기회는 발언권·자기 등재로 간다(위임은 이 판에 없다)
         _absorbed = [m for m in contrib_idle if m in _part and m not in _deleg and _reach_for_work(m)]
         if contrib_idle and (not _cd or _absorbed):
             if flow.log:
@@ -796,24 +835,24 @@ def _gate_contrib(flow, args, third, has_product, _engx, _scopex):
                 if said:
                     commits.append(f"· {role}: “{_speech_clip(' / '.join(said), 240)}”")
             commit_note = ("\n[회의 발언 대조 — 발언≠구현] 아래는 이 직군들이 회의에서 한 말입니다 — "
-                           "각 발언이 실제 산출물에 반영됐는지 직접 확인하고, 안 됐으면 ①로 맡기세요:\n"
+                           "각 발언이 실제 산출물에 반영됐는지 직접 확인하고, 안 됐으면 ①로 자리를 여세요:\n"
                            + "\n".join(commits)) if commits else ""
             if _absorbed and flow.log:
                 flow.log("task_absorbed_blocked", task=flow.current.task_id,
                          absorbed=[int(m) for m in _absorbed])
             absorbed_note = (
                 f"\n\n⚠ [흡수 차단 — {flow._names(_absorbed)}은(는) '[기여 불필요]'로 넘길 수 없습니다] "
-                f"이들은 **회의에서 의견을 냈는데 이 Task에서 Work 위임을 한 번도 못 받고** 실작업 0입니다 — "
-                f"그 전문 도메인이 다른 사람에게 **흡수**된 것입니다(리더 독점의 핵심: 전문가에게 안 맡기고 "
-                f"제너럴리스트가 그 도메인까지 다 써버림). 반드시 이들에게 request(Work)로 **실제로 맡기세요**(①) — "
-                f"그래야 흡수가 풀립니다. 정말 불필요했으면 팀에서 빼세요(②). 한 번 위임한 뒤에도 본인이 안 하면 "
-                f"그땐 [기여 불필요]로 마감 가능합니다(기회는 줬으니)." if _absorbed else "")
+                f"이들은 **회의에서 의견을 냈는데 이 Task에서 발언권 응찰도 자기 일감 등재도 한 번도 없이** "
+                f"실작업 0입니다 — 판에 한 번도 불려 나오지 않았고, 그 전문 도메인은 제너럴리스트에게 "
+                f"**흡수**됐습니다. 이 판은 각자 자기 일감을 등재해 집습니다(남에게 맡기는 절차는 없습니다) — "
+                f"그러니 이들이 등재할 자리를 여세요(①): 그 도메인의 단위를 set_subtask로 열면 그 회의에서 "
+                f"본인이 응찰해 등재합니다. 정말 불필요했으면 팀에서 빼세요(②)." if _absorbed else "")
             return (
                 f"완료 보류(팀 기여 의무 — 증거/명시 필요, 반사적 재호출로는 통과 안 됨): 팀의 "
                 f"{flow._names(contrib_idle)}이(가) 이 흐름에서 **회의 발언 외 실작업·검증이 0**입니다"
                 f"(Write/Edit/run 0회) — 이 직군의 도메인('되는가'를 넘는 그 직군의 품질·폴리시)이 "
-                f"**작품에 반영되지 않았습니다**. 셋 중 하나를 택하세요: ① 필요한 도메인이면 request(Work)로 "
-                f"맡겨 **실제로 만들게** 하고 그 산출물을 교차 검증까지 받으세요 ② 애초에 불필요했으면 "
+                f"**작품에 반영되지 않았습니다**. 셋 중 하나를 택하세요: ① 필요한 도메인이면 그 단위를 열어 "
+                f"(set_subtask) 본인이 등재·수행하게 하고 그 산출물을 교차 검증까지 받으세요 ② 애초에 불필요했으면 "
                 f"팀에서 빼세요(왜 불렀나=다음 학습) ③ 정말 불필요하면 result **첫 줄/본문에 "
                 f"'[기여 불필요] <이유>'**를 적어 재호출하세요(의식적 판단 — 그냥 재호출로는 통과 안 됨; "
                 f"'이 직군들을 뺀 채 마감'이 Task 기록에 남습니다). 특히 회의에서 '중요하다'고 한 "

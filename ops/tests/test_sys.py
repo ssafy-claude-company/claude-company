@@ -4248,7 +4248,7 @@ def test_팀기여의무_부른직군_실작업0이면_증거명시필요_RFC009
     통과'는 마감 관성에 무력했으므로(라이브 3/3 반사적 통과로 폴리시 또 빠짐), percept와 같은 원리로
     강화 — 잠수 직군이 실제로 기여(idle 해소)하거나 '[기여 불필요]'로 의식적 명시해야 통과, **반사적
     재호출로는 안 닫힌다**. 라이브 P-010: VFX·디자이너·사운드 등 폴리시 직군이 실구현 0인 채 마감돼
-    "단순 나열 웹·타격감 없는 게임"이 됨(발언≠기여). 무한 반려 아님(명시 탈출구 — 판단은 리더). ① Work 위임
+    "단순 나열 웹·타격감 없는 게임"이 됨(발언≠기여). 무한 반려 아님(명시 탈출구). ① 그 도메인의 자리 열기
     ② 팀에서 빼기 ③ 재호출 통과 — 1회만 보류(무한 반려 금지, 판단은 리더)."""
     g = FakeGuide()
     f = _flow(g)
@@ -4268,16 +4268,24 @@ def test_팀기여의무_부른직군_실작업0이면_증거명시필요_RFC009
     txt1 = r1["content"][0]["text"]
     assert "완료 보류(팀 기여 의무" in txt1 and f.current is not None      # 보류(증거/명시 필요)
     assert "VFX" in txt1                                                 # 잠수 직군 지목
-    assert "request(Work)" in txt1 and "팀에서 빼" in txt1 and "[기여 불필요]" in txt1  # 3선택지(③=명시 마커)
+    # [출구 ①의 표기(2026-08-04, 사용자: '위임이 뭐야 위임이란건 존재하지 않아')] 종전 계약은
+    # ①을 request(Work) 위임으로 서빙했다. 이 판의 배분 원리는 자기 등재·자기선택이라 남에게 일을
+    # 맡기는 절차가 없다 — ①은 그 도메인의 **자리를 여는 것**(set_subtask)이고, 본인이 그 회의에서
+    # 응찰해 등재한다. 관문이 없는 행동을 시키면 봇은 통과할 방법이 없다(U-478: 마감 시도 44회 거부).
+    assert "set_subtask" in txt1 and "팀에서 빼" in txt1 and "[기여 불필요]" in txt1  # 3선택지(③=명시 마커)
+    assert "위임" not in txt1
     assert f.current.contrib_checked is False                           # 보류는 통과 아님 → 미마킹
     r2 = asyncio.run(t["complete_task"].handler({"result": "끝"}))       # 반사적 재호출 → 여전히 보류
     assert f.current is not None and "완료 보류(팀 기여 의무" in r2["content"][0]["text"]  # no-op 차단
     # [흡수 차단] VFX는 회의 참여했는데 Work 위임을 한 번도 못 받음 → [기여 불필요]로도 못 넘긴다(흡수 묵살 차단)
     r3 = asyncio.run(t["complete_task"].handler({"result": "[기여 불필요] VFX는 이 작품에 불요"}))
     assert f.current is not None and "흡수 차단" in r3["content"][0]["text"]   # 위임 없인 [기여 불필요] 무력
-    f.current.work_delegated_to.add(14)                                 # VFX에게 실제로 Work 위임(기회 부여)
-    r4 = asyncio.run(t["complete_task"].handler({"result": "[기여 불필요] VFX는 위임했으나 추가 불요"}))
-    assert f.current is None                                            # 기회 준 뒤엔 의식적 명시로 마감(판단은 리더)
+    # [기회의 척도(2026-08-04)] 자기 등재 판에서 '기회가 갔다'는 발언권 응찰을 받았거나 자기 일감을
+    # 등재한 사실이다 — work_delegated_to는 아무도 채우지 않아 영영 비고, 회의 참여자 전원이 영구
+    # 차단됐다(U-478 실측: 흡수 4명이 발언권에 59회 응찰, 그중 2명은 자기 일감을 5건 등재).
+    f.floor_bidders.add(14)                                             # VFX에게 발언권 응찰이 갔다
+    r4 = asyncio.run(t["complete_task"].handler({"result": "[기여 불필요] 자리는 열렸으나 추가 불요"}))
+    assert f.current is None                                            # 기회 간 뒤엔 의식적 명시로 마감
 
 
 def test_팀기여의무_잠수직군이_실제기여하면_명시없이_통과_RFC009():
@@ -8191,14 +8199,16 @@ def test_마감턴은_전용_표면으로_연다():
     src = inspect.getsource(make_guide_tools)
     i = src.index('if mode == "close"')
     seg = src[i:i + 2200]
-    # [개정(2026-08-04, 실측 U-478)] 원래 계약은 "run·complete_task만"이었다. 그런데 팀 기여 관문은
-    # 세 출구 중 ①로 request(Work) 위임을, ②로 팀 제거를 요구하고, '흡수 차단' 대상에게는 ③
-    # ([기여 불필요])를 명시적으로 막는다 — 그 표면엔 ①을 부를 수단이 없어 봇이 관문을 통과할
-    # 방법이 **구조적으로 없었다**(마감 시도 41회·반복 경보 14회·판 정지 11회, 그 사이 마디 0개).
-    # 이 테스트가 막으려던 것은 '도구 26개를 열어 놓으니 논의만 하고 아무도 안 부른 것'이다 —
-    # 관문이 지목해 요구하는 request 하나는 논의가 아니라 그 요구의 실행 수단이다.
-    assert '"run", "complete_task", "request"' in seg, \
-        "마감 표면이 관문이 요구하는 행동(위임)을 할 수 없다"
+    # [개정(2026-08-04, 실측 U-478)] 원래 계약은 "run·complete_task만"이었다. 그런데 팀 기여 관문의
+    # 흡수 차단은 출구 ①을 요구하면서 ③([기여 불필요])을 명시적으로 막는다 — 그 표면엔 ①을 부를
+    # 수단이 없어 봇이 관문을 통과할 방법이 **구조적으로 없었다**(마감 시도 44회·판 정지 11회, 그
+    # 사이 마디 0개). 이 테스트가 막으려던 것은 '도구 26개를 열어 놓으니 논의만 하고 아무도 안 부른
+    # 것'이므로 실행 수단 하나를 더하는 것과는 충돌하지 않는다.
+    # ①은 request(Work) 위임이 아니라 **자리를 여는 것**이다 — 이 판의 배분 원리는 자기 등재·자기선택
+    # 이고 남에게 일을 맡기는 절차가 없다(사용자 2026-08-04: '위임이란건 존재하지 않아').
+    assert '"run", "complete_task", "set_subtask"' in seg, \
+        "마감 표면이 관문이 요구하는 행동(자리 열기)을 할 수 없다"
+    assert '"request"' not in seg, "위임은 이 판에 없는 절차다 — 마감 표면에 열지 않는다"
     assert '"meet"' not in seg and '"vote"' not in seg, "논의 도구는 여전히 열지 않는다"
 
     drive = inspect.getsource(Sys._drive_task_close)
