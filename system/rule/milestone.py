@@ -1760,6 +1760,32 @@ def cycle_delivery_error(flow) -> str:
     ws = str(getattr(flow, "workspace", "") or "")
     if not ws or not os.path.isdir(ws):
         return ""                                  # 작업공간 없는 흐름(대화형)은 배달 개념이 없다
+    # [낡은 배포는 배달이 아니다(2026-08-04, 사용자: '마일스톤 끝날때마다 배포 되어서 사용자 실측
+    # 도와야 하는거 아니야?')] 이 판이 배포 주소를 갖고 있는데 그 배포 **이후** 산출물이 바뀌었으면,
+    # 그 주소는 이번 주기의 결과물이 아니다 — 실측 U-478: MS-2에서 배포(08-01 22:00)한 neon-dodge
+    # 주소가, MS-3(08-03)에서 320×568 터치 결함을 고친 뒤에도 그대로 보고에 실렸다. 사용자 실측을
+    # 돕기는커녕 고치기 전 빌드를 열게 한다. 재배포하고 닫는다(배포가 한 번 됐던 판이니 인프라는
+    # 검증돼 있다 — 처음부터 배포가 없던 판은 아래 종전 관문이 다룬다).
+    _dts = float(getattr(flow, "_deploy_ts", 0) or 0)
+    if _url and _dts:
+        try:
+            _latest = 0.0
+            for _r, _ds, _fs in os.walk(ws):
+                if "node_modules" in _r or "/.collab" in _r or "/." in _r.replace(ws, ""):
+                    continue
+                for _f in _fs:
+                    if _f.endswith((".html", ".js", ".css", ".json", ".png", ".svg", ".mp3", ".wav")):
+                        try:
+                            _latest = max(_latest, os.path.getmtime(os.path.join(_r, _f)))
+                        except OSError:
+                            continue
+        except Exception:
+            _latest = 0.0
+        if _latest > _dts + 60:
+            return (f"주기 완수 보류: 배포 주소({_url})는 **이 주기의 결과물이 아닙니다** — 마지막 배포 "
+                    f"이후 산출물이 바뀌었습니다(사용자가 그 주소를 열면 고치기 전 빌드를 봅니다).\n"
+                    f"지금 할 일 하나: `deploy` 도구로 현재 산출물을 재배포하세요(같은 name이면 같은 "
+                    f"주소가 갱신됩니다). 배포가 라이브로 확인되면 이 관문은 자동으로 풀립니다.")
     # [웹 산출물에만 건다] 라이브러리·CLI·데이터 작업은 '열어서 쓰는 주소'라는 개념이 없다 —
     # 브라우저에서 여는 것을 만들고 있을 때만 배달을 요구한다(작업공간 형태 + 이 주기의 말).
     _texts = " ".join([str(getattr(obj_, "desc", "") or "") for obj_ in

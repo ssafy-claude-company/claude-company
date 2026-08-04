@@ -193,6 +193,7 @@ def task_snapshot(flow, ref) -> dict:
         # 안 실려 restore 흐름에선 사라지므로, 그것만 보던 완료 인식이 무효였던 근본 교정).
         "deploy_live": bool(getattr(flow, "_deploy_live", False)),
         "deploy_url": str(getattr(flow, "_deploy_url", "") or ""),   # [확인 링크] 보고 동봉용 영속
+        "deploy_ts": float(getattr(flow, "_deploy_ts", 0) or 0),      # [배포 신선도] 낡은 주소 안내 차단
         "deploy_writes": int(getattr(flow, "_deploy_writes", -1)),
         "writes_by_role": {str(k): int(v) for k, v in (getattr(flow, "writes_by_role", None) or {}).items()},
         "consec_fail": int(getattr(flow, "consec_fail", 0) or 0),
@@ -625,6 +626,8 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     flow._deploy_live = bool(snap.get("deploy_live", False))   # 배포 목표 달성 신호 복원(완료 인식 유지)
     if snap.get("deploy_url"):
         flow._deploy_url = str(snap["deploy_url"])             # [확인 링크] 재개 후 보고에도 주소 유지
+    if snap.get("deploy_ts"):
+        flow._deploy_ts = float(snap["deploy_ts"])
     flow._deploy_writes = int(snap.get("deploy_writes", -1))
     for _r, _w in (snap.get("writes_by_role") or {}).items():
         flow.writes_by_role[_r] = int(_w)
