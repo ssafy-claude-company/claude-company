@@ -159,6 +159,9 @@ def task_snapshot(flow, ref) -> dict:
         # 작업공간 파일이 복구에 보존되므로 이 사실들의 영속은 유효. verified만 리셋 유지(허위완료 백스톱).
         "act_by": {str(int(m)): int(flow.act_by.get(m, 0))
                    for m in ref.team if int((flow.act_by or {}).get(m, 0) or 0) > 0},
+        # act_by와 같은 이유 — 응찰 이력이 리셋되면 기여 관문이 '아무에게도 기회가 안 갔다'로
+        # 오판해 마감이 영영 안 닫힌다(2026-08-04).
+        "floor_bidders": sorted(int(x) for x in (getattr(flow, "floor_bidders", None) or ())),
         "contrib_checked": bool(getattr(ref, "contrib_checked", False)),
         "cross_check_offdomain": int(getattr(ref, "cross_check_offdomain", 0) or 0),
         "last_verify_writes": int(getattr(ref, "last_verify_writes", -1)),
@@ -600,6 +603,11 @@ async def restore_open_task(sys, flow, proj) -> Optional[dict]:
     ref.peer_info_pairs = {frozenset(int(x) for x in pr) for pr in snap.get("peer_info_pairs", [])}
     for _m, _c in (snap.get("act_by") or {}).items():
         flow.act_by[int(_m)] = int(_c)
+    for _b in (snap.get("floor_bidders") or ()):
+        try:
+            flow.floor_bidders.add(int(_b))
+        except (AttributeError, TypeError, ValueError):
+            break
     flow._deploy_count = int(snap.get("deploy_count", 0) or 0)
     flow._deployed_once = bool(snap.get("deployed_once", False))
     flow._deploy_live = bool(snap.get("deploy_live", False))   # 배포 목표 달성 신호 복원(완료 인식 유지)

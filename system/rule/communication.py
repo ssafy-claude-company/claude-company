@@ -952,6 +952,12 @@ async def meet(flow, me_id, args):
                     _c = _stage_extract(_stage, res)
                     if _c:
                         conv_props.append(_c)
+                # [기회는 발언권으로 간다(2026-08-04)] 응찰을 물었다 = 이 사람에게 등재할 통로가
+                # 열렸다. 점수·낙찰과 무관하게(스스로 패스한 것도 본인 판단) 사실만 남긴다.
+                try:
+                    flow.floor_bidders.add(int(m))
+                except (AttributeError, TypeError, ValueError):
+                    pass
                 if flow.log:
                     flow.log("floor_bid", surface="meet", who=m, score=s,
                              vote=(purpose == CLOSE_VOTE))
