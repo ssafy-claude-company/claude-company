@@ -519,6 +519,10 @@ class Sys:
     # 증류(전문가 자기판단)가 한다** — 버퍼는 전문가가 검토하기 전 유실만 막는 역할. 주입은 여전히
     # craft_note의 exp[-6:]라 프롬프트 무증가. env로 조정(ORGANT_EXP_KEEP).
     _EXP_KEEP = int(os.environ.get("ORGANT_EXP_KEEP", "40"))
+    # 하네스의 도구 노출 상태를 결론의 전제로 삼은 문장 — 코드가 바뀌면 거짓이 되므로 기억이 아니다.
+    _DEFECT_LESSON_RE = re.compile(
+        r"(도구|endpoint|엔드포인트|API|관문)[^\n]{0,24}(노출|없을|없으면|없다|부재|미제공|제공되지|열리지)"
+        r"|((노출|제공)되지\s*않|열리지\s*않)[^\n]{0,24}(도구|endpoint|엔드포인트|API|관문)")
 
     async def _absorb_role_profiles(self, text: str, me=None) -> str:
         """보고 속 [직무기준]·[경험] 블록을 흡수한다 — 메모리에 영속하고 본문에서 제거.
@@ -550,6 +554,15 @@ class Sys:
                 lines = [ln.strip() for ln in body.splitlines()
                          if ln.strip() and ln.strip().rstrip(".") not in
                          ("없음", "없다", "-", "특이사항 없음", "(교훈 또는 '없음')")]
+                # [결함은 교훈이 아니다(2026-08-04, 실측 U-478)] 마감 표면 필터가 complete_task를
+                # 등록 전에 걸러 내는 코드 결함이 있었다(3일 교착). 봇들은 그 결함을 **규범으로
+                # 증류해 영구 기억에 박았다** — "마감 API가 없을 때 완료로 보고하지 않습니다",
+                # "관문 endpoint가 노출되지 않은 상태에서는 검증 PASS만으로 완료를 선언하지
+                # 않습니다", "상태 전이 도구가 없으면 완료 선언을 보류한다" 등 5줄(전체 75줄의 7%).
+                # 결함을 고쳐도 이 기억은 남아 매 턴 재주입되고, 다음 판의 봇이 그 규범을 물려받는다.
+                # 도구·엔드포인트의 노출 여부는 **도메인 사실이 아니라 하네스의 그때 상태**다 —
+                # 코드가 바뀌면 거짓이 되는 문장은 교훈으로 굳히지 않는다(그건 버그 신고다).
+                lines = [ln for ln in lines if not self._DEFECT_LESSON_RE.search(ln)]
                 if not lines:
                     return ""
                 bc = self.bot_experience.setdefault(int(me), [])   # 자기 원석 풀만 — distill_bot이 개인 기준으로 압축
