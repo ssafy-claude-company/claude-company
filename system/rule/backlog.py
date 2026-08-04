@@ -424,7 +424,7 @@ class BacklogRelay:
         return b
 
     # ── 규칙 ① 지명 ───────────────────────────────────────────────────────
-    def pick(self, picker: int, backlog_id: str, assignee: int) -> Backlog:
+    def pick(self, picker: int, backlog_id: str, assignee: int, structural: bool = False) -> Backlog:
         """마무리자(턴 홀더)가 다음 (백로그, 수행자)를 정한다. 자기 지명 허용(자기 일 고르기).
         blocked 백로그의 pick = 재방문(재개)이다 — 차단 이력(block_count)은 보존된다.
         [순차 1활성(2026-07-14, 사용자: '순차 돌리기')] 이미 다른 백로그가 in_progress면 새 착수 거부 —
@@ -437,6 +437,14 @@ class BacklogRelay:
         # 무주 항목은 self-claim 불가 + 선정 시 수행자=제출자(0=SYS)로 배분이 깨졌다(회의→릴레이 접합 결함).
         _self_claim = (int(picker) == int(assignee)
                        and int(b0.submitter or 0) in (0, int(picker)))
+        # [구조 픽은 배분권 밖(2026-08-04, 사용자: '시스템적으로 직렬적인 부분을 병렬로 바꾸기로
+        # 했잖아')] 병렬 차선 추가(sys_core 2026-07-31: '일하는 사람이 있어도 다음 사람은 시작한다')는
+        # 구조가 **등재 순서대로** 다음 (일감, 수행자)를 세우는 기계다 — 그런데 회의가 등재한 일감에
+        # 개인 등재자가 박힌 판(U-496·U-504 실측)에서는 자기 등재 조건이 안 서고 배분권 게이트에
+        # 걸려 24h 동안 차선 추가 0회·거부 7회, 판이 영원히 한 줄로 돌았다(수렴안 서기(0) 등재 판만
+        # 차선 4개까지 병렬 — 같은 기계가 등재자 표기 하나로 갈렸다). 배분권이 지키는 것은 '남을
+        # 마음대로 지명하지 못하게'다 — 등재 순서 그 자체인 구조 픽까지 막으면 자기가 지키는 질서의
+        # 집행자를 막는 셈이다. structural 픽은 배분권 검사만 건너뛴다(동시 상한·상태 검사는 그대로).
         # [겹칠 때만 순차(2026-07-30, 사용자 지시)] 종전엔 무조건 1활성이었다 — 안전하지만 판 시간의
         # 28%를 한 줄로 세운다. 쓰기 영역을 선언한 일감끼리 **겹치지 않으면** 동시에 간다.
         # 선언이 없으면 종전처럼 순차(알 수 없는 것은 모두와 겹친다고 본다 — fail-closed).
@@ -447,7 +455,8 @@ class BacklogRelay:
         if _actives and len(_actives) + 1 > backlog_parallel_width():
             raise BacklogError(
                 f"동시 진행 상한({backlog_parallel_width()})에 도달했습니다 — 하나가 끝나면 이어집니다.")
-        if not _self_claim and self.turn_holder is not None and int(picker) != self.turn_holder:
+        if (not structural and not _self_claim
+                and self.turn_holder is not None and int(picker) != self.turn_holder):
             raise BacklogError(
                 f"배분권은 마지막 작업자({self.turn_holder})에게 있습니다 — 지명은 마무리한 사람의 몫.")
         b = self.get(backlog_id)

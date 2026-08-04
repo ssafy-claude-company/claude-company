@@ -2233,7 +2233,8 @@ class Sys:
                         if _kk is None:
                             _kk = flow._claim_kicked = set()
                         _kk.add(backlog_scope_key(_st2, _b2.backlog_id))
-                        _r2.pick(int(_w2), _b2.backlog_id, int(_w2))
+                        # 구조 픽 — 등재 순서 그 자체이므로 배분권 밖(2026-08-04, 병렬 차선 복구)
+                        _r2.pick(int(_w2), _b2.backlog_id, int(_w2), structural=True)
                         from .rule.milestone import _ckpt as _ck2
                         _ck2(flow)
                         _b2._drive_n = 1
@@ -2280,7 +2281,7 @@ class Sys:
             r = self._backlog_relay(flow, st_id)
             if r is None:
                 return False
-            r.pick(int(who), b.backlog_id, int(who))
+            r.pick(int(who), b.backlog_id, int(who), structural=True)
             from .rule.milestone import _ckpt
             _ckpt(flow)                            # worker가 도는 동안에도 ▶ 상태가 크래시 내구
             b._drive_n = 1
