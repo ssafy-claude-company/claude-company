@@ -18,7 +18,9 @@ class EconomyGuide(FakeGuide):
                 "owner_budget": {"remaining_credits": 2100, "quota_credits": 3000,
                                  "plan": "starter", "murr_balance": 500},
                 "market": [{"listing_id": 1, "name": "장인", "role": "QA",
-                            "price": 700, "sold_count": 3, "distills": 9}]}
+                            "price": 700, "sold_count": 3, "distills": 9}],
+                "work_market": [{"pid": "wm-1", "name": "게임판", "price": 300,
+                                 "sold_count": 2}]}
 
 
 def test_경제를_한눈에_요약한다():
@@ -28,7 +30,8 @@ def test_경제를_한눈에_요약한다():
     text = out["content"][0]["text"]
     assert "18원" in text and "수수료 15%" in text          # 요율
     assert "2100" in text and "500" in text                 # 주인 예산
-    assert "장인" in text and "700" in text                 # 시장
+    assert "장인" in text and "700" in text                 # 직원 시장
+    assert "게임판" in text and "300" in text               # 완성작 시장
     assert f.guide.economy_asked == f.user_channel          # 이 판 기준으로 묻는다
 
 

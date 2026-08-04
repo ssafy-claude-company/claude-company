@@ -1645,7 +1645,13 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
         if mk:
             top = " · ".join(f"{m.get('name')}({m.get('role')}) {m.get('price')}{cur}"
                              f"/증류{m.get('distills')}" for m in mk[:5])
-            lines.append(f"[시장] {top}")
+            lines.append(f"[직원 시장] {top}")
+        wm = d.get("work_market") or []
+        if wm:
+            top = " · ".join(f"{w.get('name')} {w.get('price')}{cur}"
+                             + (f"({w.get('sold_count')}명 구매)" if w.get('sold_count') else "")
+                             for w in wm[:5])
+            lines.append(f"[완성작 시장] {top} — 이 판의 완성작도 주인이 설정에서 이용권으로 팔 수 있다")
         return _ok("\n".join(lines))
     tools.append(economy)
 
