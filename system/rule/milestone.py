@@ -2351,6 +2351,30 @@ def ledger_signature(flow):
     return tuple(sig)
 
 
+def domain_expert_owner(query, pool, author):
+    """[도메인 전문가가 선점한다(2026-08-04, 사용자: '무조건 도메인 전문가가 백로그를 선점하는게
+    맞을듯해 너무 많아지면 일손이 부족한거지')] 회의 등재 일감의 등재자(=담당, 불변)를 정하는 자 —
+    줄을 쓴 사람이 아니라 **그 일의 도메인 적임자**다.
+
+    실측 U-496 ST-8: 재검증 회의의 의제 원료가 QA의 결함 보고라(정보 비대칭 — 결함을 아는 사람이
+    발언권을 이기고 DRAFT 편집을 주도), 제품 수리 줄까지 QA가 썼고 '발제자=주인'(2026-07-16) 귀속이
+    그 줄들을 QA 담당으로 등재했다. 담당은 등재로 굳으므로(등재자=담당 불변) 등재 시점이 도메인을
+    정하는 유일한 자리다. 작성자의 적합도가 팀 최적과 같으면 작성자 유지(발제자=주인 존중), 낮으면
+    적임자에게 — 부하가 몰려도 다른 사람에게 흘리지 않는다(적임자 적체 = 일손 부족 신호 → 충원).
+
+    pool: {bot_id: 직군}, author: 줄 작성자(0=무주). 반환: 등재자 bot_id.
+    """
+    _pool = {int(k): str(v or "") for k, v in (pool or {}).items()}
+    if not _pool:
+        return int(author or 0)
+    from ..role_fit import role_fit as _rf
+    _best = max(_pool, key=lambda k: (_rf(query, _pool[k]), -int(k)))
+    _a = int(author or 0)
+    if _a in _pool and _rf(query, _pool[_a]) >= _rf(query, _pool[_best]):
+        return _a
+    return int(_best)
+
+
 def claim_kick_target(flow):
     """[첫 선점 킥 — 2026-07-19 e2e(P-032) 교착 수리] 작업 단계에서 '깨워 선점시킬' 다음 대상 하나를
     고른다 — (봇 id, Backlog, st_id) 또는 None(킥 불요).
@@ -4308,6 +4332,22 @@ def register_stage(flow, stage, prop, origin=""):
                         getattr(_backlog_existing, "assignee", 0)):
                     if int(_owner_existing or 0):
                         _existing_producer_owners.add(int(_owner_existing))
+
+        # [도메인 전문가가 선점한다(2026-08-04, 사용자)] 줄 작성자가 누구든 등재자(=담당)는 이 판
+        # 팀의 도메인 적임자다 — QA가 대신 쓴 제품 수리 줄이 QA 담당으로 굳던 것을 등재 지점에서
+        # 바로잡는다. 독립성 패스(제작자·검증자 분리)보다 먼저 돌아 그 제약은 그대로 지켜진다.
+        for row in _planned:
+            # 독립 검증 항목은 제외 — 그 담당은 독립성 패스(제작자·검증자 분리)의 관할이다.
+            if _independent_review(row[2], getattr(row[1], 'goal', '')):
+                continue
+            # 질의는 줄 본문만 — 단위 goal을 섞으면 goal의 '검증' 같은 단어가 구현 줄을 QA로
+            # 끌고 간다(도메인 신호 오염).
+            _fit_owner = domain_expert_owner(str(row[2]), _fb_pool, int(row[4] or 0))
+            if _fit_owner and _fit_owner != int(row[4] or 0):
+                if flow.log:
+                    flow.log("backlog_domain_reassigned", frm=int(row[4] or 0),
+                             to=int(_fit_owner), body=str(row[2])[:80])
+                row[4] = int(_fit_owner)
 
         _producer_owners = _existing_producer_owners | {
             int(row[4])

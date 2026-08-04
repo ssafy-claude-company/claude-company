@@ -1245,7 +1245,10 @@ def test_독립실행과_서로다른브라우저는_담당자분리계약이아
     )
     assert ok, note
     rows = f.backlog_relays[f.milestones[-1].subtasks[0].st_id].backlogs
-    assert [row.submitter for row in rows] == [11, 11]
+    # [도메인 전문가가 선점한다(2026-08-04, 사용자)] 이 테스트의 원 목적(브라우저 언급이 독립성
+    # 계약으로 오인되지 않는다)은 그대로다 — 다만 QA 도메인 줄의 등재자는 이제 도메인 패스가
+    # QA 적임자(12)로 세운다(발제자=주인은 적합도 동률일 때만).
+    assert [row.submitter for row in rows] == [11, 12]
 
 
 def test_독립QA줄이_구현보다_먼저와도_제작자를_피함(monkeypatch, tmp_path):
