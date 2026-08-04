@@ -1,3 +1,11 @@
+"""BacklogRelay 계약.
+
+[등재자=담당, 불변(2026-08-04, 사용자: '백로그는 백로그 등록자가 담당하고 바뀔 수 없거든')]
+이 파일의 배분권·지명 계약(규칙 ①②③·핸드오프·차단 턴이동)은 **무주 일감(수렴안 서기 0 —
+팀 산물)의 계약**이다. 개인이 등재한 일감은 등재자 자신만 수행하며 지명·이관이 불가하다
+(relay.pick 불변식·test_structural_pick_parallel). 종전 표본이 개인 등재(A·B·C)에 지명을 걸어
+정본과 충돌했으므로 표본을 무주(0)로 정정했다 — 계약의 문장(배분 흐름)은 그대로다.
+"""
 """[S2 백로그 릴레이 — 계약 테스트] PIPELINE_REWORK_2026-07-09 §3·§9·§11 고정.
 
 여기서 고정하는 계약:
@@ -35,26 +43,26 @@ def _relay(events=None):
 
 def test_제출_중복게이트_차단과_force_우회():
     r = _relay()
-    b1 = r.submit(A, "프론트 카드 컴포넌트 렌더링")
+    b1 = r.submit(0, "프론트 카드 컴포넌트 렌더링")
     assert b1.status == OPEN and b1.backlog_id == "B1"
     # 표현만 바꾼 같은 일 → 차단 + 기존 id 안내(변형 게이트 동형 — 시스템이 병합하지 않는다)
     with pytest.raises(DuplicateBacklog) as e:
-        r.submit(B, "카드 컴포넌트 프론트 렌더")
+        r.submit(0, "카드 컴포넌트 프론트 렌더")
     assert e.value.existing_id == "B1"
     # 제출자가 '진짜 다른 일'을 명시(force)하면 통과
-    assert r.submit(B, "카드 컴포넌트 프론트 렌더", force=True).backlog_id == "B2"
+    assert r.submit(0, "카드 컴포넌트 프론트 렌더", force=True).backlog_id == "B2"
     # 이질 제출은 그냥 통과
-    assert r.submit(B, "백엔드 저장 API 설계").backlog_id == "B3"
+    assert r.submit(0, "백엔드 저장 API 설계").backlog_id == "B3"
 
 
 def test_빈_제출_거부():
     with pytest.raises(BacklogError):
-        _relay().submit(A, "   ")
+        _relay().submit(0, "   ")
 
 
 def test_백로그_작업생각은_체크포인트에_영속():
     r = _relay()
-    b = r.submit(A, "프론트 카드 구현")
+    b = r.submit(0, "프론트 카드 구현")
     r.pick(A, b.backlog_id, B)
     b.activity.extend(["[프론트엔드] 💭 구조 확인", "[프론트엔드] 💭 렌더 구현"])
     restored = BacklogRelay.from_ckpt(r.to_ckpt())
@@ -69,29 +77,31 @@ def test_참조표기_백로그_반려_모든경로(monkeypatch):
     r = _relay()
     for ref in ("B4", "B2 점수 공식 정의", "#3", "BL-2 저장", "B 12 뭔가"):
         with pytest.raises(BacklogError):
-            r.submit(A, ref)
+            r.submit(0, ref)
         with pytest.raises(BacklogError):
-            r.submit(A, ref, force=True)        # force도 우회 불가(참조는 '진짜 다른 일'이 아님)
+            r.submit(0, ref, force=True)        # force도 우회 불가(참조는 '진짜 다른 일'이 아님)
     # 참조로 오인될 수 없는 실작업은 통과
-    assert r.submit(A, "Board 상태 직렬화 구현").backlog_id == "B1"   # 'Board'는 B\d 아님
+    assert r.submit(0, "Board 상태 직렬화 구현").backlog_id == "B1"   # 'Board'는 B\d 아님
 
 
 # ══ 규칙 ① 지명 ════════════════════════════════════════════════════════════
 
 def test_규칙1_첫배분은_자유_이후는_마무리자만():
     r = _relay()
-    b1 = r.submit(A, "프론트 카드")
-    b2 = r.submit(A, "백엔드 API")
+    b1 = r.submit(0, "프론트 카드")
+    b2 = r.submit(0, "백엔드 API")
     r.pick(C, b1.backlog_id, B)                 # 첫 배분: 아직 마무리자 없음 → 누구든
     r.done(B, b1.backlog_id)                    # B가 마무리 → 배분권은 B에게
+    # [무주 자기선택은 배분권 밖] C가 자기 자신을 세우는 것은 자기선택이라 허용 — 규칙이 막는 것은
+    # 마무리자 아닌 사람이 **남**을 지명하는 것이다(2026-08-04 정본 정합).
     with pytest.raises(BacklogError):
-        r.pick(C, b2.backlog_id, C)             # 마무리자 아닌 C의 지명 → 거부
+        r.pick(C, b2.backlog_id, D)             # 마무리자 아닌 C가 남(D) 지명 → 거부
     assert r.pick(B, b2.backlog_id, C).assignee == C
 
 
 def test_규칙1_지명은_open_blocked만():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     r.pick(A, b.backlog_id, B)
     with pytest.raises(BacklogError):
         r.pick(A, b.backlog_id, C)              # in_progress 재지명 불가
@@ -102,7 +112,7 @@ def test_규칙1_지명은_open_blocked만():
 
 def test_거절은_open으로_되돌린다():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     r.pick(A, b.backlog_id, B)
     r.decline(B, b.backlog_id, "도메인 밖")
     assert b.status == OPEN and b.assignee is None
@@ -114,7 +124,7 @@ def test_거절은_open으로_되돌린다():
 
 def test_규칙2_유일최고점_배정():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     won, tie = r.bid_round(b.backlog_id, {B: 3, C: 7, D: 0})   # 0점 = 패스
     assert won is b and tie is None
     assert b.status == IN_PROGRESS and b.assignee == C
@@ -122,7 +132,7 @@ def test_규칙2_유일최고점_배정():
 
 def test_규칙2_동률은_배정없음_결정권자_해소():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     won, tie = r.bid_round(b.backlog_id, {B: 7, C: 7})
     assert won is None and tie == [B, C]
     assert b.status == OPEN                      # 시스템이 임의로 깨지 않는다(권한은 결정권자 ②)
@@ -132,7 +142,7 @@ def test_규칙2_동률은_배정없음_결정권자_해소():
 
 def test_규칙2_무응찰은_규칙3으로():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     assert r.bid_round(b.backlog_id, {}) == (None, None)
     assert r.bid_round(b.backlog_id, {B: 0}) == (None, None)   # 전원 패스 = 무응찰
     assert b.status == OPEN
@@ -142,8 +152,8 @@ def test_규칙2_무응찰은_규칙3으로():
 
 def test_규칙3_마지막작업자만_지정():
     r = _relay()
-    b1 = r.submit(A, "프론트 카드")
-    b2 = r.submit(A, "백엔드 API")
+    b1 = r.submit(0, "프론트 카드")
+    b2 = r.submit(0, "백엔드 API")
     r.pick(A, b1.backlog_id, B)
     r.done(B, b1.backlog_id)                     # 마지막 작업자 = B
     r.bid_round(b2.backlog_id, {})               # 무응찰
@@ -154,8 +164,8 @@ def test_규칙3_마지막작업자만_지정():
 
 def test_규칙3_재무산도_같은사람이_재지정():
     r = _relay()
-    b1 = r.submit(A, "프론트 카드")
-    b2 = r.submit(A, "백엔드 API")
+    b1 = r.submit(0, "프론트 카드")
+    b2 = r.submit(0, "백엔드 API")
     r.pick(A, b1.backlog_id, B)
     r.done(B, b1.backlog_id)
     r.pass_to(B, b2.backlog_id, C)               # B 지정 → C
@@ -166,7 +176,7 @@ def test_규칙3_재무산도_같은사람이_재지정():
 
 def test_규칙3_마무리자_없으면_pick으로():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     with pytest.raises(BacklogError):
         r.pass_to(A, b.backlog_id, B)            # 아직 아무도 일 안 함 → pass_to 아님
 
@@ -175,7 +185,7 @@ def test_규칙3_마무리자_없으면_pick으로():
 
 def test_차단_보존과_턴이동():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     r.pick(A, b.backlog_id, B)
     blocked, deadlock = r.block(B, b.backlog_id, next_starter=C, reason="API 스펙 선행 필요")
     assert blocked.status == BLOCKED and not deadlock    # 미완 보존(버리지 않는다)
@@ -188,7 +198,7 @@ def test_차단_보존과_턴이동():
 
 def test_교착신호_같은백로그_2회차단():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     r.pick(A, b.backlog_id, B)
     _, dl1 = r.block(B, b.backlog_id, C, "선행 1")
     assert not dl1
@@ -205,8 +215,8 @@ def test_백로그_소진시_회의코칭_아니면_다음선정():
     f, st, ev = _pipe_flow()
     f._pipeline_notes = []
     r = relay_for(f, st)
-    r.submit(A, "저장 API")
-    r.submit(B, "프론트 카드")
+    r.submit(0, "저장 API")
+    r.submit(0, "프론트 카드")
     r.pick(A, "B1", A); r.done(A, "B1")
     handoff_note(f, r, A, "완료됐습니다")
     assert any("[다음]" in n for n in f._pipeline_notes)          # 아직 B2 남음
@@ -221,12 +231,15 @@ def test_중단_배분권_우회_봉합():
     """[배분권 우회 봉합(2026-07-14, 정합 감사)] 착수(in_progress)한 백로그의 중단만 마무리자 자격 —
     대기 중 멤버가 자기 미착수(OPEN) 백로그를 버려 turn_holder(배분권)를 탈취하던 것 차단."""
     r = _relay()
-    r.submit(A, "저장 API"); r.submit(B, "프론트 카드")
+    r.submit(0, "저장 API"); r.submit(0, "프론트 카드")
     r.pick(A, "B1", A); r.done(A, "B1")            # A가 마무리 → 배분권 A
     assert r.turn_holder == A
-    r.drop(B, "B2", "안 할래")                      # B가 자기 미착수(OPEN) B2를 중단
+    # [정본 정합(2026-08-04)] 무주 일감은 B의 것이 아니므로 중단 자체가 거부된다 — 종전(제출자 B
+    # 표본)보다 더 강한 봉합이다(배분권 탈취는 물론 임의 폐기도 불가).
+    with pytest.raises(BacklogError):
+        r.drop(B, "B2", "안 할래")
     assert r.turn_holder == A                       # 배분권 그대로 A (B가 탈취 못 함)
-    assert r.get("B2").status == "dropped"
+    assert r.get("B2").status == "open"
 
 
 def test_차단_배선_선행필요_출구():
@@ -234,8 +247,8 @@ def test_차단_배선_선행필요_출구():
     보존하는 출구. 2회째 차단이면 deadlock 신호(→ renegotiate/vote_stop 라우팅).
     (2026-07-31: 순차 잠금 자체가 폐기돼 '잠금 풀림' 축은 사라졌고, 보존·재방문·신호만 남는다.)"""
     r = _relay()
-    b1 = r.submit(A, "저장 API")
-    b2 = r.submit(B, "프론트 카드")
+    b1 = r.submit(0, "저장 API")
+    b2 = r.submit(0, "프론트 카드")
     r.pick(A, "B1", A)                                # A 착수
     _bl, dl = r.block(A, "B1", next_starter=A, reason="스키마 선행 필요")
     assert _bl.status == BLOCKED and not dl           # 보존(버리지 않음 — 차단 출구의 핵심)
@@ -250,8 +263,8 @@ def test_각자_자기_일감을_동시에_진행한다():
     """[전원 병렬(2026-07-31, 사용자: '전체 직원이 계속 자기꺼 하면 되잖아')] 종전 '한 번에 한
     백로그'는 폐기됐다 — 다른 일감이 돈다는 이유로 착수를 막지 않는다(U-442 실측: 96분 내내 동시 1)."""
     r = _relay()
-    r.submit(A, "저장 API")
-    r.submit(B, "프론트 카드")
+    r.submit(0, "저장 API")
+    r.submit(0, "프론트 카드")
     r.pick(A, "B1", A)                                # A 착수(self-claim)
     assert r.pick(A, "B2", B).status == IN_PROGRESS   # B도 곧바로 착수 — 기다리지 않는다
     assert [b.status for b in r.backlogs] == [IN_PROGRESS, IN_PROGRESS]
@@ -261,8 +274,8 @@ def test_동시_진행_상한만_남는다(monkeypatch):
     """남는 제한은 자원 보호용 상한 하나뿐이다."""
     monkeypatch.setenv("ORGANT_BACKLOG_PARALLEL", "1")
     r = _relay()
-    r.submit(A, "저장 API")
-    r.submit(B, "프론트 카드")
+    r.submit(0, "저장 API")
+    r.submit(0, "프론트 카드")
     r.pick(A, "B1", A)
     with pytest.raises(BacklogError, match="동시 진행 상한"):
         r.pick(A, "B2", B)
@@ -270,7 +283,7 @@ def test_동시_진행_상한만_남는다(monkeypatch):
 
 def test_완료는_수행자만():
     r = _relay()
-    b = r.submit(A, "프론트 카드")
+    b = r.submit(0, "프론트 카드")
     r.pick(A, b.backlog_id, B)
     with pytest.raises(BacklogError):
         r.done(C, b.backlog_id)
@@ -282,8 +295,8 @@ def test_완료는_수행자만():
 
 def test_iter_정리_잔여는_done_참칭_안함_풀종료():
     r = _relay()
-    b1 = r.submit(A, "프론트 카드")
-    b2 = r.submit(A, "백엔드 API")
+    b1 = r.submit(0, "프론트 카드")
+    b2 = r.submit(0, "백엔드 API")
     r.pick(A, b1.backlog_id, B)
     r.done(B, b1.backlog_id)
     left = r.close_iter()                        # 완수조건 충족(검증은 S1 게이트) 후의 정리
@@ -291,16 +304,16 @@ def test_iter_정리_잔여는_done_참칭_안함_풀종료():
     assert r.get("B2").status == OPEN            # 정직: 정리 ≠ 완료(상태 참칭 없음, note만)
     assert "정리" in r.get("B2").note
     with pytest.raises(BacklogError):
-        r.submit(A, "새 백로그")                  # 종료 후 제출 불가
+        r.submit(0, "새 백로그")                  # 종료 후 제출 불가
     with pytest.raises(BacklogError):
         r.pick(B, "B2", C)                       # 종료 후 배분 불가
 
 
 def test_주기중_추가는_허용():
     r = _relay()
-    b1 = r.submit(A, "프론트 카드")
+    b1 = r.submit(0, "프론트 카드")
     r.pick(A, b1.backlog_id, B)
-    assert r.submit(C, "배포 파이프라인 점검").backlog_id == "B2"   # 진행 중 제출 OK(§2)
+    assert r.submit(0, "배포 파이프라인 점검").backlog_id == "B2"   # 진행 중 제출 OK(§2)
 
 
 # ══ §9 저장 — ckpt 왕복 후 중간 재개 ════════════════════════════════════════
@@ -308,9 +321,9 @@ def test_주기중_추가는_허용():
 def test_ckpt_왕복_릴레이_중간재개():
     ev1 = []
     r = _relay(ev1)
-    b1 = r.submit(A, "프론트 카드")
-    b2 = r.submit(A, "백엔드 API")
-    b3 = r.submit(A, "배포 점검")
+    b1 = r.submit(0, "프론트 카드")
+    b2 = r.submit(0, "백엔드 API")
+    b3 = r.submit(0, "배포 점검")
     r.pick(A, b1.backlog_id, B)
     r.done(B, b1.backlog_id)                     # 마무리자 B
     r.pick(B, b2.backlog_id, C)
@@ -339,8 +352,8 @@ def test_ckpt_왕복_릴레이_중간재개():
 def test_이벤트사슬_대본관측():
     ev = []
     r = _relay(ev)
-    b1 = r.submit(A, "프론트 카드 컴포넌트")
-    b2 = r.submit(A, "백엔드 저장 API")
+    b1 = r.submit(0, "프론트 카드 컴포넌트")
+    b2 = r.submit(0, "백엔드 저장 API")
     r.pick(A, b1.backlog_id, A)                  # 자기 지명 허용
     r.done(A, b1.backlog_id)
     r.pick(A, b2.backlog_id, B)
@@ -367,7 +380,7 @@ def test_관측실패가_규칙을_죽이지_않는다():
     def boom(ev, **f):
         raise RuntimeError("로그 다운")
     r = BacklogRelay(subtask_id="ST1", log=boom)
-    b = r.submit(A, "프론트 카드")               # 로그가 죽어도 제출·전이는 정상
+    b = r.submit(0, "프론트 카드")               # 로그가 죽어도 제출·전이는 정상
     r.pick(A, b.backlog_id, B)
     assert r.done(B, b.backlog_id).status == DONE
 
@@ -406,7 +419,7 @@ def test_배선_마커위임이_배분이_된다(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, ev = _pipe_flow()
     r = relay_for(f, st)
-    b = r.submit(A, "프론트 카드 컴포넌트")
+    b = r.submit(0, "프론트 카드 컴포넌트")
     assert sync_delegation(f, A, B, "[백로그 B1] 카드 컴포넌트 만들어줘") is None
     assert b.status == IN_PROGRESS and b.assignee == B
     assert B in st.participants and st.backlog_ids == ["B1"]   # S1 접점 동기
@@ -419,7 +432,7 @@ def test_배선_어휘겹침으로도_매칭(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, _ = _pipe_flow()
     r = relay_for(f, st)
-    b = r.submit(A, "백엔드 저장 API 설계")
+    b = r.submit(0, "백엔드 저장 API 설계")
     assert sync_delegation(f, A, C, "백엔드 저장 API 설계 맡아주세요 — 스키마부터") is None   # 마커 없이도
     assert b.assignee == C
     # 조사 변형 등으로 겹침이 60% 미달이면 매칭 안 됨 = 장부 밖 통과(안전한 저하 — 위임은 그대로 감).
@@ -430,8 +443,8 @@ def test_배선_턴규칙_남의_배분_거부(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, _ = _pipe_flow()
     r = relay_for(f, st)
-    b1 = r.submit(A, "프론트 카드")
-    b2 = r.submit(A, "백엔드 API")
+    b1 = r.submit(0, "프론트 카드")
+    b2 = r.submit(0, "백엔드 API")
     assert sync_delegation(f, A, B, "[백로그 B1] 카드") is None
     sync_completion(f, B)                        # 마무리자 = B(배분권)
     msg = sync_delegation(f, C, D, "[백로그 B2] API")
@@ -444,7 +457,7 @@ def test_배선_겹침방지_남의_진행분_위임_거부(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, _ = _pipe_flow()
     r = relay_for(f, st)
-    r.submit(A, "프론트 카드")
+    r.submit(0, "프론트 카드")
     assert sync_delegation(f, A, B, "[백로그 B1] 카드") is None
     msg = sync_delegation(f, A, C, "[백로그 B1] 카드")           # 같은 백로그를 다른 사람에게
     assert msg and "손에 있습니다" in msg
@@ -459,7 +472,7 @@ def test_배선_백로그밖_위임은_그대로_통과(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, ev = _pipe_flow()
     r = relay_for(f, st)
-    r.submit(A, "프론트 카드")
+    r.submit(0, "프론트 카드")
     assert sync_delegation(f, A, B, "배포 계정 설정 확인 부탁") is None   # 겹침 없음 → 장부 밖
     assert r.get("B1").status == OPEN
     assert len(r.backlogs) == 1                                        # 날조된 항목 없음(B2 미생성)
@@ -474,8 +487,8 @@ def test_중단_dropped_본인만_처리제외_핸드오프(monkeypatch):
     from system.rule.backlog import handoff_note, BacklogError
     f, st, ev = _pipe_flow()
     r = relay_for(f, st)
-    b1 = r.submit(A, "저장 API 스키마 설계")
-    b2 = r.submit(B, "프론트 카드 렌더")
+    b1 = r.submit(0, "저장 API 스키마 설계")
+    b2 = r.submit(0, "프론트 카드 렌더")
     r.pick(A, "B1", A)
     try:
         r.drop(B, "B1", "남의 것")                              # 본인 아님 — 거부
@@ -500,8 +513,8 @@ def test_배선_wrapup_정리와_장부요지(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     f, st, _ = _pipe_flow()
     r = relay_for(f, st)
-    r.submit(A, "프론트 카드")
-    r.submit(A, "백엔드 API")
+    r.submit(0, "프론트 카드")
+    r.submit(0, "백엔드 API")
     sync_delegation(f, A, B, "[백로그 B1] 카드")
     sync_completion(f, B)
     st.iter_n = 1
@@ -517,7 +530,7 @@ def test_배선_ckpt_동승_왕복(monkeypatch):
     from system.sys_recovery import checkpoint_open_task, restore_open_task
     f, st, _ = _pipe_flow()
     r = relay_for(f, st)
-    r.submit(A, "프론트 카드")
+    r.submit(0, "프론트 카드")
     sync_delegation(f, A, B, "[백로그 B1] 카드")
     sync_completion(f, B)                        # 턴 홀더 = B인 중간 상태
     proj = {}

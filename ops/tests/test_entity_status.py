@@ -83,9 +83,10 @@ def test_작업생각은_현재수행자의_유일한_백로그에만_귀속(mon
     monkeypatch.delenv("ORGANT_PJT", raising=False)
     f = _mk_flow()
     r1, r2 = BacklogRelay("ST-1"), BacklogRelay("ST-2")
-    b1 = r1.submit(101, "화면 구현")
+    # [등재자=담당(2026-08-04 정본)] 202의 일감은 202가 등재한 것 — 표본을 정본에 맞춘다.
+    b1 = r1.submit(202, "화면 구현")
     b2 = r2.submit(101, "API 구현")
-    r1.pick(101, b1.backlog_id, 202)
+    r1.pick(202, b1.backlog_id, 202)
     f.backlog_relays = {"ST-1": r1, "ST-2": r2}
     checkpoints = []
     f.checkpoint_task = lambda: checkpoints.append(list(b1.activity))

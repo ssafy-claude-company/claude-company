@@ -462,6 +462,14 @@ class BacklogRelay:
         b = self.get(backlog_id)
         if b.status not in (OPEN, BLOCKED):
             raise BacklogError(f"{b.backlog_id}는 {b.status} — 지명은 open/blocked만 가능합니다.")
+        # [등재자=담당, 불변(2026-08-04, 사용자: '백로그는 백로그 등록자가 담당하고 바뀔 수 없거든')]
+        # 실측 U-496 ST-8: QA가 회의에서 제품 수리 줄까지 써 등재자가 됐고, 그 일감이 다른 도메인에게
+        # 배정될 수 있었다 — 등재와 수행이 갈라지면 '누가 한 일인가'가 장부에서 무너진다. 개인이 등재한
+        # 일감의 담당은 등재자 자신뿐이다. 무주(수렴안 서기 0)만 집는 사람이 담당이 된다(자기선택).
+        if int(b.submitter or 0) not in (0, int(assignee)):
+            raise BacklogError(
+                f"{b.backlog_id}의 담당은 등재자({b.submitter})입니다 — 등재한 사람이 수행합니다"
+                f"(바뀌지 않습니다). 남의 도메인 일이 필요하면 그 도메인이 직접 등재하게 하세요.")
         b.status, b.assignee = IN_PROGRESS, int(assignee)
         # 재방문 창은 과거 작업 창과 분리한다. 종전 ``or``는 첫 선정 시각을 영구 보존해 새 생각이
         # 예전 창에 섞이고, ts_done도 남아 UI가 작업 중 항목을 이미 끝난 것으로 볼 수 있었다.

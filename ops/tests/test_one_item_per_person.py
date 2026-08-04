@@ -34,37 +34,29 @@ def test_사람이_다르면_동시에_간다():
     assert "동시 진행 상한" in src
 
 
-def test_등재자가_바쁘면_손_빈_적임자가_집는다(monkeypatch):
-    """[2026-08-03, 실측 U-478] 1차 선정은 일감을 등재자에게만 준다(자기 등재 원칙). 그런데
-    러너가 검증 보고의 조건 줄마다 백로그를 소급 등재하므로, 많이 보고한 사람일수록 자기만 집을 수
-    있는 일감이 쌓인다. ST-7의 미배정 24건이 전부 제출자 5명 것이었고 그 5명이 모두 다른 일을 들고
-    있어, 판에 42명이 있는데도 18시간 동안 아무도 집지 못했다. 단위는 모든 백로그가 종결돼야 닫히니
-    판이 완주할 수 없다. 등재자가 손이 차 있으면 손 빈 적임자에게 넘어가야 한다."""
+def test_등재자가_바쁘면_그_일감은_기다린다(monkeypatch):
+    """[등재자=담당, 불변(2026-08-04, 사용자: '백로그는 백로그 등록자가 담당하고 바뀔 수 없거든')]
+    08-03의 '손 빈 적임자에게 넘긴다' 2차 패스는 정본 위반이라 회수됐다. 등재자가 손이 차 있으면
+    그 일감은 그 사람 차례까지 기다리고, 구조 선정은 손 빈 **다른 등재자의** 일감을 세운다 —
+    병렬은 담당 이관이 아니라 등재자들이 각자 자기 일감을 동시에 굴려서 온다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     from system.flow import Flow
     from system.rule.backlog import BacklogRelay
-    from system.rule.milestone import Milestone, SubTask, claim_kick_target
+    from system.rule.milestone import claim_kick_target
 
-    class _G:
-        async def post(self, *a, **k):
-            return None
-
-    flow = Flow(_G(), channel_id=501, guild_id=1, leader_id=11,
-                bot_info={11: "리더", 12: "구현", 22: "QA", 33: "배포"})
-    milestone = Milestone("MS-Y", "판정 계약", [])
-    st = SubTask("MS-Y/ST-1", "구현", [])
-    milestone.subtasks = [st]
-    flow.milestones = [milestone]
-
-    relay = BacklogRelay(st.st_id)
-    held = relay.submit(12, "먼저 든 일", force=True)
-    waiting = relay.submit(12, "같은 사람이 등재한 다음 일", force=True)
-    flow.backlog_relays = {st.st_id: relay}
-    relay.pick(12, held.backlog_id, 12)          # 등재자 12는 손이 찼다
-
+    class _G:  # 최소 guide
+        pass
+    flow = Flow(_G(), channel_id=1, guild_id=1, leader_id=11, bot_info={11: "프론트", 12: "백엔드"})
+    import types
+    ms = types.SimpleNamespace(status="open", subtasks=[types.SimpleNamespace(st_id="ST-1", status="open")])
+    flow.milestones = [ms]
+    r = BacklogRelay("ST-1")
+    r.submit(11, "프론트 화면 붙이기", force=True)     # 등재자 11
+    r.submit(12, "백엔드 API 붙이기", force=True)      # 등재자 12
+    flow.backlog_relays = {"ST-1": r}
+    # 11이 이미 손에 든 상태(다른 일감 in_progress)
+    r.pick(11, r.backlogs[0].backlog_id, 11)
     t = claim_kick_target(flow)
-    assert t is not None, "등재자가 바쁘다고 남은 일감이 아무에게도 안 간다"
-    who, b, st_id = t
-    assert b.backlog_id == waiting.backlog_id and st_id == st.st_id
-    assert who != 12, "손이 찬 등재자에게 두 번째 일감을 주면 '한 사람은 한 번에 하나'가 깨진다"
-    assert who in (11, 22, 33)
+    assert t is not None
+    who, b, st = t
+    assert who == 12 and b.submitter == 12   # 손 빈 다른 등재자의 자기 일감 — 이관 없음
