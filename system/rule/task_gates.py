@@ -795,6 +795,11 @@ def _gate_contrib(flow, args, third, has_product, _engx, _scopex):
     import re
     from .._util import _speech_clip
     if has_product and not flow.current.contrib_checked:
+        # [채용봇은 시스템 존재(2026-08-04, 사용자)] 채용·예비는 판의 구성원이 아니다 — 팀 명단에
+        # 남아 있어도 기여 의무의 분모에서 뺀다(빼지 않으면 이제 회의·작업 표면에서 배제된 채용이
+        # 영구 실작업 0으로 잡혀 마감이 다시 구조적으로 막힌다 — U-478 흡수 교착의 재판).
+        from .comm_helpers import _is_spare as _sysx
+        third = [m for m in third if not _sysx(flow, m)]
         _ledger = _ledger_workers(flow)   # 흐름 카운터가 비어도 장부의 완료 백로그는 실작업이다
         contrib_idle = [m for m in third
                         if flow.act_by.get(m, 0) == 0 and int(m) not in _ledger]

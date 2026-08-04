@@ -3549,7 +3549,12 @@ class Sys:
         # 선택(flow.bot_info)이 자동으로 같은 범위를 본다.
         flow = Flow(self.guide, channel_id, self.guild_id, lead, self._channel_roster(channel_id))
         # [참여 응찰 = 팀] 공고 응찰자 전원이 이 판의 팀 — create_task가 2차 공고 없이 그대로 쓴다
-        flow.join_bidders = list(_joined_team)
+        # [채용봇은 시스템 존재(2026-08-04, 사용자: '채용 봇은 Organt가 아니고 시스템적인 존재야')]
+        # 채용 역할은 응찰해도 팀이 되지 않는다 — 실측 U-504: 채용 봇이 팀 채용 없이 백로그 75건
+        # 전부를 혼자 등재·수행하며 판을 뛰었다. 온보딩·공고는 팀 밖 SYS 경로로 그대로 돈다.
+        from .rule.comm_helpers import _norm_job as _nj0
+        flow.join_bidders = [b for b in _joined_team
+                             if _nj0(str((flow.bot_info or {}).get(int(b), ''))) != '채용']
         flow.was_elect = bool(elect)   # [완료 참칭 방지] 선거로 연 새 제작 요청 — 앵커가 Task도 안 열고
         #   평문만 뱉으면(meet 미호출) 미완인데 완료로 마감되던 것 판정에 쓴다(kickoff 강제·중단 마킹).
         flow.root_kind = request_kind
