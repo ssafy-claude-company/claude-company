@@ -30,6 +30,16 @@ def unit_alive(unit: str) -> bool:
     return r.returncode == 0
 
 
+def main_pid(unit: str) -> int:
+    """유닛이 실제로 돌리고 있는 pid(없으면 0)."""
+    out = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", unit],
+                         capture_output=True, text=True).stdout.strip()
+    try:
+        return int(out or 0)
+    except ValueError:
+        return 0
+
+
 def spawn(name: str, entry: dict) -> int:
     appdir = Path(entry.get("dir") or (APPS / name))
     port = int(entry["port"])
@@ -69,6 +79,15 @@ def main():
             print(f"  – {name}: 디렉터리 없음({appdir}) — 건너뜀")
             continue
         if unit_alive(unit_of(name)):
+            # [장부의 pid가 사실에서 떠내려간다(2026-08-05 실측)] Restart=on-failure로 유닛이 스스로
+            # 다시 뜨면 MainPID가 바뀌는데 장부는 옛 pid를 들고 있는다. pool_app_url은 그 pid의
+            # /proc 존재로 '앱이 살아 있나'를 판정하므로, **200을 답하는 앱이 죽은 것으로 읽혀**
+            # 봇도 보고도 앱 주소를 못 받았다(실측 4앱 전부 스테일 — U-505·U-504 포함).
+            _cur = main_pid(unit_of(name))
+            if _cur and str(entry.get("pid")) != str(_cur):
+                print(f"  ↻ {name}: 장부 pid {entry.get('pid')} → 실제 {_cur}")
+                entry["pid"] = _cur
+                changed = True
             continue
         pid = spawn(name, entry)
         if pid:
