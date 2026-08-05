@@ -386,6 +386,11 @@ class Organt:
                 read_only=bool(getattr(self, "_codex_read_only", False)),
                 on_activity=self.on_activity, on_narrate=self.narrate,
                 on_usage=_take_usage,
+                # [손잡이는 시작할 때 잡는다(2026-08-05)] 세션 id를 턴이 끝난 뒤에만 저장하면,
+                # 러너가 중간에 죽은 턴은 이어붙일 수 없어 처음부터 다시 돈다(입력 토큰 전액 재지불).
+                # 신선 micro는 기억을 남기지 않는 프로브라 그대로 제외한다 — 아래 종전 규칙과 동일.
+                on_session=(None if (micro and os.environ.get("ORGANT_MICRO_FRESH", "1") != "0")
+                            else self._save_session_id),
                 # [턴 예산(2026-07-28)] 호출이 곧 일인 턴(마감·e2e)에서만 침묵 턴을 이어 붙인다 —
                 # SYS가 그 턴에 표식을 단다. 회의 발언 턴은 종전 그대로 한 판에 끝난다.
                 expect_tool=bool(getattr(self, "_codex_expect_tool", False)) and not micro,
