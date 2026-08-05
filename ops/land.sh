@@ -201,16 +201,22 @@ if git -C "$MS" diff --name-only "$pre_cc..HEAD" 2>/dev/null | grep -qE '^(syste
     _oldest_turn() {
       ps -eo etimes,args | awk '/[c]odex exec/ { if ($1 > m) m = $1 } END { print m + 0 }'
     }
+    # [기다림은 손실의 대가였다 — 손실을 고쳤으니 대가도 줄인다(2026-08-05, 현준-1)] 위 20분 대기는
+    # '죽은 턴은 통째로 잃는다'는 전제 위에 있었다. 그 전제의 뿌리는 세션 손잡이(codex thread_id)를
+    # **턴이 끝난 뒤에야** 영속시킨 것이다 — 중간에 죽으면 이어붙일 id가 없어 처음부터 다시 돌았다.
+    # 이제 thread.started에서 즉시 저장하므로(codex_mcp_bridge on_session) 죽은 턴은 다음 턴에서
+    # 같은 세션으로 이어진다. 남는 손실은 '그 턴의 남은 몇 분'뿐이라, 판 4개가 도는 지금 착지마다
+    # 20분씩 전역 락을 쥐는 비용이 더 크다. 3분만 예의로 기다리고 진행한다.
     _w=0
-    while [ "$_w" -lt 1200 ] && [ "$(_oldest_turn)" -ge 300 ]; do
+    while [ "$_w" -lt 180 ] && [ "$(_oldest_turn)" -ge 300 ]; do
       if [ "$_w" = 0 ]; then
-        echo "  ⏳ 오래 돈 턴이 있어 기다립니다(재시작이 그 턴을 죽입니다) — 가장 오래된 턴 $(_oldest_turn)초"
+        echo "  ⏳ 오래 돈 턴이 있어 잠깐 기다립니다(최대 3분 — 죽어도 세션은 이어집니다) — 가장 오래된 턴 $(_oldest_turn)초"
       fi
       sleep 15
       _w=$((_w + 15))
     done
     if [ "$(_oldest_turn)" -ge 300 ]; then
-      echo "  ⚠ 20분을 기다렸는데도 오래 돈 턴이 있습니다($(_oldest_turn)초) — 그대로 재시작합니다(그 턴은 유실됩니다)"
+      echo "  ⚠ 3분 뒤에도 오래 돈 턴이 있습니다($(_oldest_turn)초) — 그대로 재시작합니다(그 턴은 다음 턴에서 세션 재개로 이어집니다)"
     else
       echo "  ✓ 가장 오래된 턴 $(_oldest_turn)초 — 잃을 것이 적은 순간에 재시작합니다"
     fi
