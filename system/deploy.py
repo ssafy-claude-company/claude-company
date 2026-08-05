@@ -504,7 +504,30 @@ def _spawn_app(appdir: Path, port: int, start_cmd: str) -> int:
     unit = _app_unit(appdir)
     subprocess.run(["systemctl", "reset-failed", unit], capture_output=True)
     subprocess.run(["systemctl", "stop", unit], capture_output=True)
+    # 앱이 organt로 도니 그 자리도 organt 것이어야 한다(로그·데이터를 제 자리에 쓴다). root로
+    # 만들어진 폴더는 여기서 넘긴다 — 넘길 수 있는 건 root뿐이므로 root일 때만 시도한다.
+    if os.geteuid() == 0:
+        subprocess.run(["chown", "-R", "organt:organt", str(appdir)], capture_output=True)
+        # 소유만 넘겨서는 못 들어간다 — 위 폴더를 지날 수 있어야 한다. 라이브 자리는 ACL로
+        # 이미 열려 있지만(그래서 여태 안 보였다) 임시 경로로 배포하면 0700이라 막힌다.
+        # 앱 풀 폴더 한 단계만 통과 권한을 준다(읽기는 주지 않는다 — 지나가기만).
+        try:
+            os.chmod(appdir.parent, os.stat(appdir.parent).st_mode | 0o011)
+        except OSError:
+            pass
+    # [봇이 쓴 코드가 root로 돌고 있었다(2026-08-05 감사, 현준-4 — 사용자 지시 '해결해')]
+    # 러너 본체는 User=organt로 낮춰 두고도 여기서 띄우는 앱에는 아무 사용자 지정이 없어, 배포된
+    # 앱이 전부 UID 0으로 떴다(실측 13개 중 12개). 그 앱은 /etc/murmur-web.env(600 root:root)를
+    # 그냥 읽는다 — 거기엔 ORGANT_VAULT_KEY(모든 사용자 금고의 열쇠)·DJANGO_SECRET_KEY(서명 위조)·
+    # ORGANT_GUIDE_TOKEN·결제/DB/음성 열쇠가 다 들어 있다. 봇은 사람이 시키는 대로 코드를 쓰므로,
+    # 한 줄 요청이 서버 장악으로 이어질 수 있었다.
+    # 앱은 러너와 같은 자리(organt)에서 돈다 — 앱 디렉터리는 이미 그 소유다. 권한 상승·임시파일
+    # 공유·시스템 경로 쓰기도 함께 막는다(/root 아래라 ProtectHome은 못 건다 — 앱 자리가 거기다).
     r = subprocess.run(["systemd-run", "--unit", unit, "--collect",
+                        "--uid=organt", "--gid=organt",
+                        "-p", "NoNewPrivileges=yes",
+                        "-p", "ProtectSystem=full", "-p", "ProtectKernelTunables=yes",
+                        "-p", "ProtectControlGroups=yes", "-p", "RestrictSUIDSGID=yes",
                         "-p", "Restart=on-failure", "-p", "RestartSec=2",
                         "-p", f"WorkingDirectory={appdir}",
                         "-p", f"Environment=PORT={port}", "-p", "Environment=NODE_ENV=production",
