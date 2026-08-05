@@ -63,6 +63,6 @@ def test_목표회의는_완수조건_없이도_등록된다(tmp_path):
 
     f = _flow()
     f.workspace = str(tmp_path)
-    ok, note = register_stage(f, "goal", "[수렴안]\n목표: 2인 턴제 카드 대전\n내용 폭: 기능 3종\n[/수렴안]")
+    ok, note = register_stage(f, "goal", "[수렴안]\n목표: 2인 턴제 카드 대전\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n[/수렴안]")
     assert ok, note
     assert f.current.status.goal.startswith("2인 턴제")

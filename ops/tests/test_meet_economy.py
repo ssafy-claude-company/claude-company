@@ -278,7 +278,7 @@ def test_초안_빈칸표식은_이중대괄호만_봇의_꺾쇠는_자유():
     ⟦ ⟧로 바꿔, 봇이 정상 문서에 쓴 < >(<500ms·<마일스톤 정의> 등)가 '미완 빈칸'으로 오집계돼 회의가
     정체하던 것(목표 회의 25분 맴돔의 원인)을 뿌리 차단. ⟦ ⟧만 빈칸으로 집계."""
     from system.rule.milestone import draft_status
-    filled = ("## 결정\n목표: 2인 턴제 카드게임 (응답 <500ms, 세부는 다음 회의<마일스톤 정의>에서)\n내용 폭: 기능 3종\n"
+    filled = ("## 결정\n목표: 2인 턴제 카드게임 (응답 <500ms, 세부는 다음 회의<마일스톤 정의>에서)\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
               "완수조건:\n- 규칙 명시 | 실증: run으로 확인\n\n## 참고\n메모\n")
     assert draft_status(filled)[0] == 0        # 봇의 < >(참조·값·비교)는 빈칸 아님 → 표결 가능
     empty = "## 결정\n목표: ⟦이 Task로 무엇을 만들지⟧\n## 참고\n"
@@ -642,7 +642,7 @@ def test_하위회의_R1과_실질편집턴에_GOAL_비준계약전문_무절단
     )
     ok, note = register_stage(
         f, "goal",
-        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종\n"
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
         + contract + "\n"
         "- 금지 전이는 Error와 상태 불변 | 실증: node test_state_machine.js",
         "U-052",
@@ -778,14 +778,14 @@ def test_DRAFT쓰기실패_표결중_사람개입은_등록전_실질슬롯_대�
             return (
                 "[답변] 사용자 교정을 반영했습니다.\n"
                 "[수렴안]\n"
-                "목표: 사용자 교정 방명록\n내용 폭: 기능 3종\n"
+                "목표: 사용자 교정 방명록\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                 "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
                 "[/수렴안]"
             )
         if "발언권 획득" in body or "차례입니다" in body:
             return (
                 "[수렴안]\n"
-                "목표: 최초 방명록\n내용 폭: 기능 3종\n"
+                "목표: 최초 방명록\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                 "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
                 "[/수렴안]"
             )
@@ -874,7 +874,7 @@ def test_DRAFT쓰기실패_wakecap경계_사람개입은_등록보류하고_큐�
         if "차례입니다" in body:
             return (
                 "[수렴안]\n"
-                "목표: 경계 방명록\n내용 폭: 기능 3종\n"
+                "목표: 경계 방명록\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                 "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
                 "[/수렴안]"
             )
@@ -1075,37 +1075,37 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     assert deferred_only("(후속: 기획·설계 단계에서 게임 정체성 확정 — 담당: 게임 기획자, 기획 마감: 2026-07-23 정오)")
     assert not deferred_only("2인 턴제 카드 대전 웹게임 (후속: 세부 밸런스)")   # 결정+세부 미룸은 정상
     f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L"})
-    ok, note = register_stage(f, "goal", "목표: (후속: 기획 단계에서 확정 — 담당: 게임 기획자)\n내용 폭: 기능 3종", "게임")
+    ok, note = register_stage(f, "goal", "목표: (후속: 기획 단계에서 확정 — 담당: 게임 기획자)\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소", "게임")
     assert not ok and "후속 미룸" in note and "recruit" in note
-    ok2, _n2 = register_stage(f, "goal", "목표: 2인 턴제 카드 대전 웹게임\n내용 폭: 기능 3종\n"
+    ok2, _n2 = register_stage(f, "goal", "목표: 2인 턴제 카드 대전 웹게임\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                                          "- 30턴 완주 | 실증: run으로 30턴 재현", "게임")
     assert ok2, _n2                                            # 실결정은 종전대로 등록(무회귀)
     # [목표=절차 금지(2026-07-21, U-040 실측: '①정의→②검증→③정량 정의'가 목표로 확정 — 봇들이
     # 2:2로 두 번 막았는데 소진 확정이 밀었다)] ①②③ 나열·'→' 연쇄는 형태 신호로 반려.
-    ok3, note3 = register_stage(f, "goal", "목표: ① 컨셉 정의 → ② 페이퍼 검증 → ③ 호흡 정량 정의\n내용 폭: 기능 3종\n"
+    ok3, note3 = register_stage(f, "goal", "목표: ① 컨셉 정의 → ② 페이퍼 검증 → ③ 호흡 정량 정의\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                                            "- 검증 로그 | 실증: run 재현", "게임")
     assert not ok3 and "절차 나열" in note3
-    ok4, _n4 = register_stage(f, "goal", "목표: 카드 대전 → 온라인 확장 가능한 웹게임\n내용 폭: 기능 3종\n"
+    ok4, _n4 = register_stage(f, "goal", "목표: 카드 대전 → 온라인 확장 가능한 웹게임\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                                          "- 30턴 완주 | 실증: run 재현", "게임")
     assert ok4                                                 # 단일 화살표(표현)는 허용 — 연쇄만 반려
     # [U-051 라이브 2026-07-25] 인라인 코드의 상태 전이를 화살표 수로 세어, 9명 전원 찬성한 정상
     # GOAL을 두 번 거부한 뒤 meet_gate_exhausted로 공전했다. 코드 계약은 절차 나열이 아니다.
-    code_goal = ("목표: JS 상태 전이 검사기 1세트로 `idle→working`, `working→done`, \n내용 폭: 기능 3종"
+    code_goal = ("목표: JS 상태 전이 검사기 1세트로 `idle→working`, `working→done`, \n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소"
                  "`working→stopped` 계약을 확인한다\n"
                  "- 전이 테스트 통과 | 실증: node test.js")
     ok5, note5 = register_stage(f, "goal", code_goal, "상태 전이")
     assert ok5, note5
-    circled_code_goal = ("목표: JS 상태 전이 검사기 1세트로 `①idle→②working→③done` 계약을 확인한다\n내용 폭: 기능 3종\n"
+    circled_code_goal = ("목표: JS 상태 전이 검사기 1세트로 `①idle→②working→③done` 계약을 확인한다\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                          "- 전이 테스트 통과 | 실증: node test.js")
     ok6, note6 = register_stage(f, "goal", circled_code_goal, "상태 전이")
     assert ok6, note6
     draft = "## 결정\n" + code_goal + "\n\n## 참고 (자유 — 판정 대상 아님)\n"
     assert stage_preflight("goal", draft) == []                 # 비싼 찬성 표결 전 검사도 같은 판정
-    prose_draft = ("## 결정\n목표: 컨셉 정의 → 페이퍼 검증 → 호흡 정량 정의\n내용 폭: 기능 3종\n"
+    prose_draft = ("## 결정\n목표: 컨셉 정의 → 페이퍼 검증 → 호흡 정량 정의\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n"
                    "- 검증 로그 | 실증: run 재현\n\n## 참고\n")
     assert any("절차 나열" in e for e in stage_preflight("goal", prose_draft))
-    assert draft_missing_key("goal", "## 결정\n목표: (후속: 나중에)\n내용 폭: 기능 3종\n\n## 참고") == "목표"
-    assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n내용 폭: 기능 3종\n\n## 참고") is None
+    assert draft_missing_key("goal", "## 결정\n목표: (후속: 나중에)\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n\n## 참고") == "목표"
+    assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n\n## 참고") is None
 
 
 def test_백로그_발제귀속_R1_원저자_전사자아님(monkeypatch, tmp_path):

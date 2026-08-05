@@ -28,7 +28,7 @@ def test_주기_목표와_실증_명령은_잘리지_않는다(monkeypatch, tmp_
                 "--url=http://127.0.0.1:3000 --headless --replay=complete --candidates=6 "
                 "--hire-count=1 --budget=1000000")
     assert len(long_goal) > 140 and len(long_cmd) > 160
-    ok, note = register_stage(f, "goal", "목표: 채용 의사결정 게임\n내용 폭: 기능 3종\n- 한 판이 끝난다 | 실증: node v.js", "U-442")
+    ok, note = register_stage(f, "goal", "목표: 채용 의사결정 게임\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n- 한 판이 끝난다 | 실증: node v.js", "U-442")
     assert ok, note
     ok2, note2 = register_stage(
         f, "milestone",
