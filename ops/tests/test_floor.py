@@ -157,12 +157,12 @@ def test_orchestrated_사회자순서_소진시_종결():
 
 def test_floor_mode_선택규칙(monkeypatch):
     monkeypatch.delenv("ORGANT_FLOOR", raising=False)
-    assert floor_mode() == "request-response"                      # 미설정 = 현행 구조(불변)
+    assert floor_mode() == "turn-taking"                           # 미설정 = 현행 구조(2026-08-05 현행화)
     monkeypatch.setenv("ORGANT_FLOOR", "turn-taking")
     assert floor_mode() == "turn-taking"
     assert floor_mode("orchestrated") == "orchestrated"            # 명시 인자 > env
     monkeypatch.setenv("ORGANT_FLOOR", "잘못된값")
-    assert floor_mode() == "request-response"                      # 오타 = 기본 폴백(오배선 무해화)
+    assert floor_mode() == "turn-taking"                           # 오타 = 기본 폴백(오배선 무해화)
 
 
 def test_make_floor_orchestrated는_allocator_필수():
@@ -504,15 +504,18 @@ def _seg_setup(tmp_path):
     return s, f
 
 
-def test_세그먼트open_기본은_noop(tmp_path):
+def test_세그먼트open_RR명시면_noop(tmp_path):
+    # [2026-08-05 현행화] 종전 '기본은 noop'(=미설정이 베턴 시대 동작을 고정)이던 못.
+    # 기본이 turn-taking이 된 뒤의 보호 가치는 'request-response를 명시하면 종전 no-op 그대로'다.
     s, f = _seg_setup(tmp_path)
+    f.floor_mode = "request-response"
     calls = []
 
     async def wake(to, b, k):
         calls.append(to)
         return "발언"
     f.wake = wake
-    assert asyncio.run(s._floor_segment_open(f, 11)) == "" and calls == []   # 라이브 불변
+    assert asyncio.run(s._floor_segment_open(f, 11)) == "" and calls == []   # RR 경로 불변
 
 
 def test_세그먼트open_TT_무응찰이면_리더계속과_동형(tmp_path):

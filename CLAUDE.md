@@ -26,7 +26,7 @@
 
 ## 불변식 (깨면 안 됨)
 1. **매체중립**: SYS는 Guide 구현체를 모른다 — `system/`이 murmur/discord 특정 import 하지 않음.
-2. 협업 규칙: **단일 활성 베턴·LIFO·완료 게이트**.
+2. 협업 규칙: **대화 구조는 교체 가능한 층**(`system/rule/floor.py` — 라이브 기본 turn-taking·자율 응찰. 베턴/LIFO는 선택지 중 하나일 뿐 불변식 아님). **완료 게이트**(산출물 검증)는 유지. 봇의 자기착수 허용 — "흐름은 반드시 User에서 시작"이라는 명세서 시대 규약은 폐기(2026-08-05).
 3. **브레인 검증 = `bash ops/verify.sh`** — `ops/tests/`(455 pytest)가 실 system/guide/organt를 직접 검증(단일 진실원, M5 완료). PJT 미러 폐지 — 두 곳 동기 불필요. (`organt_discord.main`은 `organt_discord/main.py` shim이 실코드로 재수출.)
 4. 라이브 인프라(systemd `organt-runner`·`/etc`·Render·env파일) **직접 수정·배포·러너 재시작은 사용자 승인 후**.
 5. 문자열 `claude-opus-4-8`을 코드·커밋·문서·주석 어디에도 쓰지 마라.
@@ -42,7 +42,7 @@
 | 코드 구조·파일 지도 | `murmur/docs/CODEBASE_MAP.md` |
 | 런타임·설정·흐름 사실 | `murmur/docs/RUNTIME_FACTS.md` |
 | 정밀 수치(커버리지·복잡도) | `murmur/docs/METRICS.md` |
-| 규칙 스펙(베턴·게이트) | `murmur/docs/RULE_SPEC.md` |
+| 규칙 프리미티브 유래(사료) | `murmur/docs/RULE_SPEC.md` — 규범 아님(2026-08-05 강등) |
 | 배포 | 웹=VPS: `systemctl restart murmur-web`(백엔드)/`npm run build`(프론트) — STATE 참조 |
 | 남은 일·설계안 | `murmur/docs/` 의 날짜문서 / (M2 후) `BACKLOG.md` |
 | 문서 색인 | `murmur/docs/README.md` |

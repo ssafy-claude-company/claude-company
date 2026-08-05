@@ -37,9 +37,11 @@ CLOSE = "close"         # 대화 종결
 _MODES = ("request-response", "turn-taking", "orchestrated")
 
 
-def floor_mode(explicit: Optional[str] = None, default: str = "request-response") -> str:
+def floor_mode(explicit: Optional[str] = None, default: str = "turn-taking") -> str:
     """대화 구조 선택 — 명시 인자 > env ORGANT_FLOOR > 기본. 미설정/오타는 기본(현행 구조)으로
-    폴백해 라이브 동작 불변(default-OFF 관례). '언제든 교체'는 이 한 값을 바꾸는 것으로 성립한다."""
+    폴백해 라이브 동작 불변(default-OFF 관례). '언제든 교체'는 이 한 값을 바꾸는 것으로 성립한다.
+    [2026-08-05 현행화] 기본=turn-taking — 라이브가 이 값으로 넘어온 지 오래인데 기본이
+    베턴(request-response)이라 env 유실 시 명세서 시대로 조용히 회귀하는 지뢰였다."""
     v = (explicit or os.environ.get("ORGANT_FLOOR") or "").strip().lower()
     return v if v in _MODES else default
 
