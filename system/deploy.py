@@ -128,9 +128,15 @@ def _git(args, cwd):
 
 def _check_live(url, tries=6):
     """배포된 URL이 실제로 응답하는지 확인(콜드스타트 감안 재시도) → HTTP 코드 또는 None."""
+    # [엔진의 신분을 싣는다(2026-08-05)] 비공개 판의 앱 문(/apps/)은 멤버·표·엔진만 연다. 토큰 없이
+    # 물으면 살아 있는 앱도 404로 보여 '배포 안 됨'으로 오판한다(U-505 실측: 직접 포트 200·문 404).
+    _req = urllib.request.Request(url)
+    _tok = (os.environ.get("ORGANT_GUIDE_TOKEN") or "").strip()
+    if _tok:
+        _req.add_header("Authorization", f"Bearer {_tok}")
     for _ in range(tries):
         try:
-            with urllib.request.urlopen(url, timeout=20) as r:
+            with urllib.request.urlopen(_req, timeout=20) as r:
                 return r.status
         except urllib.error.HTTPError as e:
             return e.code           # 4xx/5xx도 서버가 응답한 것(라우팅은 됨)
