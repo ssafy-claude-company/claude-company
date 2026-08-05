@@ -2219,13 +2219,28 @@ class Sys:
             # 일감들은 구동도 함께여야 의미가 있다 — 하나씩 밀면 병렬 착수가 직렬 대기로 되돌아간다.
             # 서로 다른 봇이 서로 다른 파일을 만지므로 같은 시각에 돌아도 충돌하지 않는다.
             from .rule.backlog import active_backlog_rows as _act_rows
-            _rows = [x for x in _act_rows(flow) if int(getattr(x[2], "assignee", 0) or 0)]
+            # [기다리는 사람은 깨우지 않는다(2026-08-04, 전수 스캔 실측)] 위임을 걸어 둔 요청자는
+            # SYS가 결과로 이어줄 때까지 할 일이 없다 — 그런데 릴레이 구동이 그의 in_progress
+            # 백로그를 보고 계속 깨워, "자동 위임 결과를 기다리는 중… 추가 행동 없이 마칩니다"
+            # 무도구 턴이 U-504에서 46분간 15턴, U-496에서 같은 꼴 7턴 탔다(마감 경로의 drain
+            # 가드는 이 일반 경로를 안 덮는다). 인플라이트 위임이 살아 있는 사람은 구동·첫 착수
+            # 대상에서 제외 — 결과가 도착하면 _deliver가 그를 직접 잇는다.
+            def _awaiting_handoff(_w):
+                _t = (getattr(flow, "handoff_inflight", None) or {}).get(int(_w or 0))
+                return bool(_t is not None and not _t.done())
+            _rows = [x for x in _act_rows(flow)
+                     if int(getattr(x[2], "assignee", 0) or 0)
+                     and not _awaiting_handoff(x[2].assignee)]
             # [일하는 사람이 있어도 다음 사람은 시작한다(2026-07-31, 사용자 지시)] 종전엔 활성이
             # 있으면 그것만 밀고 새 착수는 다음 라운드로 미뤘다 — 라인이 늘지 않아 늘 한 줄이었다.
             # 여력이 남으면 이번 라운드에서 한 명을 더 세우고, 전부 같은 시각에 민다.
+            _t2 = None
             if _rows and claim_kick_target(flow) is not None:
                 _t2 = claim_kick_target(flow)
                 _w2, _b2, _st2 = _t2
+                if _awaiting_handoff(_w2):
+                    _t2 = None
+            if _rows and _t2 is not None:
                 _r2 = self._backlog_relay(flow, _st2)
                 if _r2 is not None:
                     try:
@@ -2271,6 +2286,8 @@ class Sys:
             if not t:
                 return False
             who, b, st_id = t
+            if _awaiting_handoff(who):
+                return False    # 기다리는 사람 — 위임 결과 배달이 그를 잇는다(헛깨움 금지)
             kicked = getattr(flow, "_claim_kicked", None)
             if kicked is None:
                 kicked = flow._claim_kicked = set()
