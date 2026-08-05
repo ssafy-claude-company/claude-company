@@ -918,9 +918,10 @@ def iter_verify(flow, obj, results):
         # 완수조건이 전부 실증된 이 자리에서 사유와 함께 접는다. 한 번이라도 손을 댄 일감은 그대로
         # 남아 이 게이트를 막는다 — 실제로 벌어진 일은 끝나야 끝이다.
         try:
-            from .backlog import drop_unstarted_on_proven_cycle
+            from .backlog import drop_unstarted_on_proven_cycle, fold_blocked_on_proven_cycle
             if isinstance(obj, Milestone):
                 drop_unstarted_on_proven_cycle(flow, obj)
+                fold_blocked_on_proven_cycle(flow, obj)
         except Exception:
             pass
         _pending = _backlogs_pending(flow, obj)
@@ -1859,8 +1860,9 @@ def wrapup_done(flow, obj) -> str:
                 # [실증된 주기는 끝난다(2026-08-03, 사용자 지시)] 완수조건이 전부 실증된 뒤에도
                 # 아무도 착수하지 않은 일감이 장부에 남아 단계가 소진되지 않는다 — 그 기록이
                 # 목표가 증명된 주기를 붙잡는다. 착수 이력이 없는 것만 먼저 접고 다시 센다.
-                from .backlog import drop_unstarted_on_proven_cycle
+                from .backlog import drop_unstarted_on_proven_cycle, fold_blocked_on_proven_cycle
                 drop_unstarted_on_proven_cycle(flow, obj)
+                fold_blocked_on_proven_cycle(flow, obj)
             except Exception:
                 pass
             try:
@@ -4751,8 +4753,9 @@ def rule_report_iter(flow, me_id, args) -> str:
             if _pms is not None:
                 _m0, _t0 = _cnt_active(getattr(_pms, "criteria", None) or [])
                 if _t0 >= 1 and _m0 >= _t0:
-                    from .backlog import drop_unstarted_on_proven_cycle
+                    from .backlog import drop_unstarted_on_proven_cycle, fold_blocked_on_proven_cycle
                     drop_unstarted_on_proven_cycle(flow, _pms)
+                    fold_blocked_on_proven_cycle(flow, _pms)
         except Exception:
             pass
         _r2 = relay_for(flow, tgt)

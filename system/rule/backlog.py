@@ -978,6 +978,40 @@ def sync_completion(flow, worker) -> None:
     close_subtask_if_drained(flow, st, r)
 
 
+def fold_blocked_on_proven_cycle(flow, ms) -> list:
+    """완수조건이 전부 실증된 주기에서, blocked 잔여를 사유 보존과 함께 이월 종결한다.
+
+    [실증된 주기는 끝난다 — blocked까지(2026-08-05, 사용자: '아직도 산출물 결과가 안나오는게
+    말이 안되지')] 위 unstarted 정리(08-03)는 미착수 기록만 접었다. 그런데 실측 세 판이 전부
+    **blocked 인질**로 멎어 있었다: U-504는 조건 1/1 실증인데 blocked 4건(선행 프론트 산출물·
+    배포 URL 404)이 남아 주기가 28시간+ 안 닫혔고, 실험 A·B도 같은 모양(WebKit 전수·배포 후
+    검증 계열). blocked의 사유는 대부분 환경·선행 인프라라 시간이 지나도 판 안에서는 풀리지
+    않는다 — 조건이 실증된 이상 그 기록이 주기를 막을 근거가 없다(2026-08-03 정본: '근본 문제가
+    해결됐는데 잔여 문제여도 끝나도록 구조적으로 유도'). 종전 07-14 계약('손 댄 일감은 남아 마감을
+    막는다')은 이 새 정본이 대체한다 — 단, 지우지 않고 **사유째 이월 보존**으로 남긴다(다음 주기·
+    Task 기록의 원료).
+    """
+    store = getattr(flow, "backlog_relays", None) or {}
+    folded = []
+    for st in (getattr(ms, "subtasks", None) or []):
+        if getattr(st, "status", "") in (DONE, "superseded"):
+            continue
+        for b in (getattr(store.get(getattr(st, "st_id", "")), "backlogs", None) or []):
+            if getattr(b, "status", "") != BLOCKED:
+                continue
+            b.status = DROPPED
+            _why = str(getattr(b, "block_reason", "") or "")[:200]
+            try:
+                b.activity.append(f"[주기 실증 후 이월 보존] {_why}")
+            except Exception:
+                pass
+            b.note = (f"주기 실증 후 이월: {_why}")[:200]
+            folded.append(f"{getattr(st, 'st_id', '')}::{b.backlog_id}")
+    if folded and getattr(flow, "log", None):
+        flow.log("blocked_folded_on_proven_cycle", n=len(folded), backlogs=folded[:8])
+    return folded
+
+
 def drop_unstarted_on_proven_cycle(flow, ms) -> list:
     """완수조건이 실증된 주기에서, **아무도 착수한 적 없는** 일감을 그 주기와 함께 종결한다.
 
@@ -1102,6 +1136,7 @@ def sweep_drained_subtasks(flow) -> int:
         # 05:57에 실증하고도 상태 open, Task 마감 48회 거절). 이 훑기는 세그먼트마다 돌고 적용
         # 범위도 같다(완수조건이 이미 전부 충족된 주기) — 막힘이 관측되는 자리에서 함께 푼다.
         drop_unstarted_on_proven_cycle(flow, ms)
+        fold_blocked_on_proven_cycle(flow, ms)
         for st in (getattr(ms, "subtasks", None) or []):
             r = (getattr(flow, "backlog_relays", None) or {}).get(getattr(st, "st_id", ""))
             if r is None:
