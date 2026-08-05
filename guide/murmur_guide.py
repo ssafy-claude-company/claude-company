@@ -126,12 +126,13 @@ class MurmurGuide:
         ch = channel_id if channel_id is not None else getattr(self, "_origin_channel", None)
         if ch is None:
             return ""
+        # [죽은 조회였다(2026-08-05, 사용자: '마일스톤 보고에 링크가 보고가 안되는 느낌')] 종전
+        # /projects/ 목록 조회는 ①/api 누락(SPA HTML 수신) ②익명이라 비공개 판 미노출 ③anon
+        # 스로틀 429 — 셋 다에 걸려 링크가 늘 빈 값으로 떨어졌다. 가이드 토큰 인증 엔드포인트가
+        # 서버 지식(앱 풀 정본 우선)으로 직접 답한다.
         try:
-            rows = (self._get_sync("/projects/", {"limit": 200}) or {}).get("results") or []
-            row = next((r for r in rows if str(r.get("id")) == str(int(ch))), None)
-            if not row or not row.get("has_work"):
-                return ""
-            return f"{pub}/api/projects/{row.get('pid')}/works/"
+            u = str((self._get_sync("/api/guide/work_link/", {"channel": int(ch)}) or {}).get("url") or "")
+            return f"{pub}{u}" if u.startswith("/") else u
         except Exception:
             return ""
 
