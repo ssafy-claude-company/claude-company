@@ -478,6 +478,7 @@ async def _run_codex_process(
     mcp_url: str | None,
     read_only: bool = False,
     on_usage=None,
+    on_session=None,
     extra_env=None,
 ):
     """Codex subprocess 하나를 실행하고 stdout/stderr/프로세스 그룹을 전부 회수한다."""
@@ -584,7 +585,19 @@ async def _run_codex_process(
                 if _m and not api_error:
                     api_error = str(_m)[:600]
             if typ == "thread.started":
-                sid = ev.get("thread_id") or sid
+                _new = ev.get("thread_id")
+                sid = _new or sid
+                # [죽은 턴을 이어붙일 손잡이는 시작할 때 잡아야 한다(2026-08-05)] 종전엔 이 id를
+                # **프로세스가 끝난 뒤**에야 호출자에게 돌려줬다(organt.py의 _save_session_id).
+                # 러너가 재시작·OOM으로 중간에 죽으면 그 반환이 영영 안 와서, 작업공간에 파일은
+                # 남았는데 대화 세션을 이을 손잡이가 사라진다 — 봇은 턴을 처음부터 다시 시작하고
+                # 입력 토큰을 통째로 다시 낸다(백로그 턴 실측 입력 4.55M). 착지 때 러너 재시작 앞에서
+                # 20분을 기다리던 것도 이 손실 때문이다. 시작 이벤트에서 바로 넘겨 영속시킨다.
+                if _new and on_session:
+                    try:
+                        on_session(str(_new))
+                    except Exception:
+                        pass
             elif typ == "item.completed":
                 it = ev.get("item") or {}
                 if it.get("type") == "agent_message":
@@ -753,7 +766,7 @@ def _engine_env(endpoint, credential):
 async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
                          on_activity=None, on_narrate=None, stderr=None,
                          read_only=False, on_usage=None, expect_tool=False, on_tool=None,
-                         endpoint=None, credential=None):
+                         endpoint=None, credential=None, on_session=None):
     """GPT 봇 한 턴. guide 도구가 있을 때만 전용 port/bridge를 턴 수명 동안 임대한다."""
     tool_names = {
         getattr(tool, "name", None)
@@ -776,6 +789,7 @@ async def run_codex_turn(*, prompt, cwd, session_id, tools, model, effort=None,
         "stderr": stderr,
         "read_only": bool(read_only),
         "on_usage": on_usage,
+        "on_session": on_session,        # 세션 손잡이는 시작 즉시 호출자에게 넘긴다
         # 도구 없는 턴도 같은 엔진으로 돌아야 한다 - 여기서 한 번만 조립한다.
         "extra_env": _engine_env(endpoint, credential),
     }
