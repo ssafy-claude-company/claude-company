@@ -1021,6 +1021,13 @@ _STAMP_SKIP_SUFFIXES = {
     ".coverage", ".log", ".pid", ".pyc", ".pyo", ".swp", ".tmp",
 }
 _STAMP_BROAD_ROOTS = {"/", "/tmp", "/var", "/var/tmp", "/home", "/root", "/opt", "/srv"}
+# [배달 신선도가 보는 것은 '사람이 받는 것'뿐이다(2026-08-05, U-504 실측)] 검증이 낳은 증거
+# (스크린샷·리포트·실행 산출)는 사람이 열어 쓰는 결과물이 아니다. 이것을 세면 QA를 돌 때마다
+# 산출물이 '바뀐' 것이 되어 재배포 관문이 영영 안 풀린다(주기가 wrapup에서 갇힘).
+_DELIVERY_SKIP_DIRS = {
+    "artifacts", "evidence", "screenshots", "reports", "test-results",
+    "playwright-report", "coverage", "htmlcov", "__pycache__", "node_modules",
+}
 
 
 def write_revision(flow) -> int:
@@ -1771,10 +1778,24 @@ def cycle_delivery_error(flow) -> str:
     if _url and _dts:
         try:
             _latest = 0.0
+            _skip = set(getattr(flow, "run_outputs", None) or ())
             for _r, _ds, _fs in os.walk(ws):
                 if "node_modules" in _r or "/.collab" in _r or "/." in _r.replace(ws, ""):
                     continue
+                # [검증이 낳은 증거는 산출물이 아니다(2026-08-05, U-504 실측)] 이 관문은 '배포 뒤
+                # 산출물이 바뀌었으면 재배포하라'인데, 대상에 QA 증거(스크린샷·리포트)까지 세고 있었다.
+                # QA를 한 번 돌 때마다 qa/evidence/*.png가 새로 생기므로 조건이 영영 안 풀린다 —
+                # 실측 U-504: 조건 1/1 실증·SubTask 9개 전부 done·백로그 전건 종결인데도 주기가
+                # wrapup에서 못 나가고 재픽 5회 뒤 stalled_stopped, 판이 '사람 조치 필요'로 멈췄다.
+                # 재배포해도 그 배포를 검증하는 순간 또 새 증거가 생겨 같은 자리로 돌아온다.
+                # '실행이 낳은 파일은 저작 입력이 아니다'(2026-07-27 U-067)와 같은 눈으로 본다.
+                _rel = _r.replace(ws, "").strip("/")
+                if _rel and any(seg in _DELIVERY_SKIP_DIRS for seg in _rel.split("/")):
+                    _ds[:] = []
+                    continue
                 for _f in _fs:
+                    if os.path.join(_rel, _f) in _skip:
+                        continue          # run 도구가 실행 산출로 기록한 파일
                     if _f.endswith((".html", ".js", ".css", ".json", ".png", ".svg", ".mp3", ".wav")):
                         try:
                             _latest = max(_latest, os.path.getmtime(os.path.join(_r, _f)))
