@@ -11,3 +11,7 @@ __pycache__/
 ops/var/
 /.dburl
 .venv/
+
+# 착지 파이프라인 런타임 파일(08-06) — 정본 dirty 가드에 걸리면 안 됨
+ops/.land.*
+ops/.FULL_VERIFY_RED

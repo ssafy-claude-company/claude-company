@@ -2365,6 +2365,30 @@ class Sys:
         # 이미-done 최종 주기도 여기서 다시 열리므로 아래 기존 direct/bot 검증기를 그대로 탄다.
         promote_final_locked_criteria(flow)
         ms = next_milestone(flow)
+        # [wrapup은 무인지대였다(2026-08-06, U-504 실측)] 이 구동기는 open만 받고, e2e 판정은 '전 주기
+        # done'을 요구하고, 회의 체인은 열 게 없다 — iter를 통과해 wrapup으로 전이한 주기는 어느
+        # 구동기도 잡지 않아, 판은 일반 이어가기 턴만 돌다 '무진전'으로 정체했다(재개 3회 반복 실측:
+        # 매번 3~4분 잡담 후 stalled_stopped, 마감 시도 0회). wrapup 주기는 여기서 닫기를 구동한다 —
+        # 막히면 사유(이미 '지금 할 일 하나' 형태)를 담당 턴에 실어 처리시키고 곧장 재시도한다.
+        if ms is not None and ms.status == "wrapup" and self._backlog_in_progress(flow) is None:
+            if self._wrapup_close(flow, ms):
+                return True
+            _why = str(getattr(flow, "_wrapup_blocked_note", "") or "")
+            _n = int(getattr(flow, "_wrapup_drive_n", 0) or 0)
+            _who = (int(getattr(getattr(flow, "current", None), "owner", 0) or 0)
+                    or int(getattr(flow, "anchor", 0) or 0))
+            if _why and _who and _n < 3:
+                flow._wrapup_drive_n = _n + 1
+                await self.run_turn(
+                    flow, _who,
+                    "[주기 마감 보류 — 지금 이것 하나만 처리하세요] " + _why[:500]
+                    + "\n처리했으면 report_iter(wrapup='done')로 주기를 닫으세요. "
+                    "새 작업·회의를 열지 마세요.",
+                    Kind.INFO, "worker")
+                if self._wrapup_close(flow, ms):
+                    return True
+            # 구동했다는 사실이 진전이다 — 상한(3회) 뒤엔 정직 정체로 넘긴다(사유는 이미 게시됨).
+            return _n < 3
         if (ms is None or ms.status != "open"
                 or self._backlog_in_progress(flow) is not None
                 or claim_kick_target(flow) is not None):

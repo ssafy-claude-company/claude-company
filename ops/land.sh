@@ -12,8 +12,25 @@ W="/root/wt/$S"
 REPOS="claude-company:$MS:$W  murmur:$MS/murmur:$W/murmur"
 
 exec 9>"$MS/ops/.land.lock"
-echo "착지 큐 대기(다른 세션 착지 중이면 기다림)…"
-flock 9
+# [큐 가시성·중복 방지 2026-08-06] 대기가 불투명해 세션들이 "멈췄나?" 하고 같은 착지를
+# 두 번 큐잉했다(실측: 현준-2 중복 대기, 꼬리 30분+). 보유자를 파일로 공개하고,
+# 같은 세션의 중복 진입은 거부한다.
+HOLDER_F="$MS/ops/.land.holder"
+# 같은 세션의 land.sh가 이미 떠 있으면(보유 중이든 대기 중이든) 중복 진입 거부.
+# [08-06 수선] pgrep 카운트는 sudo/래퍼 프로세스도 세어 정상 1건을 중복으로 오판했다 —
+# 세션별 flock(-n)으로 교체: 커널이 정확히 판정하고 프로세스 종료 시 자동 해제된다.
+exec 8>"$MS/ops/.land.$S.lock"
+if ! flock -n 8; then
+  echo "⛔ '$S' 착지가 이미 진행/대기 중 — 중복 실행 안 함. 기존 것을 기다리세요."; exit 1
+fi
+if ! flock -n 9; then
+  h="$(cat "$HOLDER_F" 2>/dev/null || echo '?')"
+  echo "착지 큐 대기 — 현재 착지 중: ${h:-?}"
+  echo "  (착지 1건 ≈ 8분. 재실행하지 말 것 — 이 프로세스가 순서대로 진행됩니다)"
+  flock 9
+fi
+printf '%s (since %s)\n' "$S" "$(date '+%H:%M:%S')" > "$HOLDER_F"
+trap 'rm -f "$HOLDER_F"' EXIT
 echo "════ '$S' 착지 시작 ════"
 
 # 0) 정본 브랜치 고정 가드 (2026-07-29 추가)
@@ -148,15 +165,46 @@ _snap_drop() {
   rm -rf "$(dirname "$snap")" 2>/dev/null
   git -C "$MS" worktree prune 2>/dev/null; git -C "$MS/murmur" worktree prune 2>/dev/null
 }
-trap _snap_drop EXIT
+trap '_snap_drop; rm -f "$HOLDER_F"' EXIT   # holder 정리 유지(trap 덮어쓰기 주의 — 08-06 수선)
 if _snap_make; then
   snap_ok=1; VR="$snap"
   echo "════ 검증(스냅샷 — 남의 동시 편집에 흔들리지 않게) ════"
 else
   _snap_drop; snap=""; VR="$MS"
-  echo "════ 정본 전체 검증 (⚠ 스냅샷 실패 — 동시 편집에 흔들릴 수 있음) ════"
+  echo "════ 검증 (⚠ 스냅샷 실패 — 동시 편집에 흔들릴 수 있음) ════"
 fi
-if ! MURMUR_ROOT="$VR" bash "$VR/ops/verify.sh"; then
+# [처리량 A안 2026-08-06, 사용자 승인] 착지 검증은 **변경 영역 슬라이스**만 돈다.
+#   전체 검증(1368+ 브레인 ≈8분)이 flock 직렬과 겹쳐 대기열 30분+를 만들었다(실측 4건 적체).
+#   전체 게이트는 시간당 타이머(murmur-verify-full.timer)가 캐치넷으로 돌고, red면
+#   ops/.FULL_VERIFY_RED 마커로 다음 착지들에 경고한다. 전체를 원하면 LAND_FULL=1.
+_changed() { git -C "$1" diff --name-only "$2..HEAD" 2>/dev/null; }
+slices=""
+if [ "${LAND_FULL:-}" = "1" ]; then
+  slices="FULL"
+else
+  ch_cc="$(_changed "$MS" "$pre_cc")"; ch_mm="$(_changed "$MS/murmur" "$pre_mm")"
+  # murmur: .md 뿐이면 스킵, 아니면 murmur 슬라이스
+  if echo "$ch_mm" | grep -qvE '(^$|\.md$)'; then slices="$slices murmur"; fi
+  # 루트 레포: 디렉터리별 매핑(.md 뿐이면 스킵). ops/기타 → system(가장 넓은 브레인 슬라이스)
+  if echo "$ch_cc" | grep -qvE '(^$|\.md$)'; then
+    echo "$ch_cc" | grep -qE '^guide/'  && slices="$slices guide"
+    echo "$ch_cc" | grep -qE '^organt/' && slices="$slices organt"
+    echo "$ch_cc" | grep -qvE '(^$|\.md$|^guide/|^organt/)' && slices="$slices system"
+  fi
+  [ -z "$slices" ] && echo "  문서만 변경 — 테스트 슬라이스 생략(전체 게이트는 시간당 타이머가 커버)"
+fi
+_verify_run() {
+  if [ "$slices" = "FULL" ]; then MURMUR_ROOT="$VR" bash "$VR/ops/verify.sh"; return; fi
+  for sl in $slices; do
+    echo "── 슬라이스: $sl ──"
+    MURMUR_ROOT="$VR" bash "$VR/ops/verify.sh" --only "$sl" || return 1
+  done
+}
+if [ -f "$MS/ops/.FULL_VERIFY_RED" ]; then
+  echo "⚠⚠ 전체 검증(시간당)이 현재 RED 상태다 — $(head -1 "$MS/ops/.FULL_VERIFY_RED" 2>/dev/null)"
+  echo "    이 착지의 슬라이스와 무관할 수 있으나, 원인 미상이면 LAND_FULL=1로 재확인 권장."
+fi
+if ! _verify_run; then
   echo "❌ 검증 실패 — 자동 롤백 판단(브랜치 s/$S 는 그대로 남음)."
   rollback_one() { # <이름> <경로> <merged?> <pre> <post>
     [ "$3" = 1 ] || { echo "   $1: 이번 착지에서 병합 없음 — 손대지 않음"; return; }

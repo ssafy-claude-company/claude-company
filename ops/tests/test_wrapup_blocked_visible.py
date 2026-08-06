@@ -63,3 +63,42 @@ def test_닫히면_True_게시_없음():
     ok = o._wrapup_close(flow, ms)
     assert ok is True and ms.status == "done"
     assert not flow.posts
+
+
+# ── [wrapup은 무인지대였다(2026-08-06)] 구동기 결선 — open만 받던 검증 구동기가 wrapup도 닫는다 ──
+
+def test_wrapup_주기는_구동기가_직접_닫는다():
+    import asyncio
+    from system.sys_core import Sys
+    o = _sys()
+    flow, ms = _flow_ms(status="wrapup")
+    flow.backlog_relays = {}
+    flow.current = types.SimpleNamespace(owner=11)
+    flow.anchor = 11
+    o._backlog_in_progress = lambda f: None
+    ok = asyncio.run(Sys._verify_exhausted_milestone(o, flow))
+    assert ok is True and ms.status == "done"
+
+
+def test_막힌_wrapup은_담당_턴으로_사유를_실어_보낸다():
+    import asyncio
+    from system.sys_core import Sys
+    o = _sys()
+    flow, ms = _flow_ms(status="wrapup")
+    flow.backlog_relays = {}
+    flow.current = types.SimpleNamespace(owner=11)
+    flow.anchor = 11
+    o._backlog_in_progress = lambda f: None
+    # 배달 게이트 흉내 — wrapup_done이 막힘 사유를 돌려주게 미완 ST를 심는다
+    from system.rule import milestone as M
+    st = M.SubTask(st_id="MS-1-1/ST-1", goal="미완 단위", criteria=[])
+    st.status = "open"
+    ms.subtasks = [st]
+    turns = []
+    async def _rt(f, who, prompt, kind, role):
+        turns.append((who, prompt))
+        st.status = "done"                      # 담당이 처리했다고 가정
+    o.run_turn = _rt
+    ok = asyncio.run(Sys._verify_exhausted_milestone(o, flow))
+    assert turns and "주기 마감 보류" in turns[0][1]
+    assert ok is True and ms.status == "done"   # 처리 후 재시도가 닫았다
