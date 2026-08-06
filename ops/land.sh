@@ -85,9 +85,11 @@ for spec in $REPOS; do
     #   STATE.md는 착지 기록 자체라 커밋이 정상 귀결이다 - 남의 '작업 중 코드'가 아니다.
     if [ -n "$dirty" ] && [ -z "$(echo "$dirty" | sed -E 's/^.{3}//' | grep -v '^ops/STATE\.md$')" ]; then
       echo "  $name 정본에 STATE.md 기록만 미커밋 - 착지 기록으로 함께 커밋합니다."
+      # [-- 경로 지정: 남의 스테이징을 쓸어 담지 않는다(2026-08-06 감사, 현준-4)]
       git -C "$main" add ops/STATE.md 2>/dev/null \
         && LAND_OK=1 git -C "$main" -c user.email=o@l -c user.name="$S" \
-           commit -q -m "state: 착지 기록 미커밋분 커밋(land.sh, $S 착지 중)" 2>/dev/null || true
+           commit -q -m "state: 착지 기록 미커밋분 커밋(land.sh, $S 착지 중)" \
+           -- ops/STATE.md 2>/dev/null || true
       dirty="$(git -C "$main" status --porcelain 2>/dev/null)"
     fi
     if [ -n "$dirty" ]; then
@@ -130,7 +132,13 @@ done
 #    과거 착지 기록의 해시가 매번 최신으로 밀렸다(현준-4 실측, 9e3b108 diff).
 m=$(git -C "$MS/murmur" rev-parse --short HEAD)
 sed -i -E "0,/^(murmur[[:space:]]+)[0-9a-f]+/s//\1$m/" "$MS/ops/STATE.md"
-git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" 2>/dev/null || true
+# [남의 스테이징이 내 스탬프에 딸려 들어갔다(2026-08-06 감사, 현준-4)] git commit은 경로를
+# 안 주면 **인덱스에 올라온 것을 전부** 커밋한다. 정본 체크아웃은 여러 세션이 함께 쓰는
+# 트리라, 누가 `git add`만 해 두고 커밋하지 않았으면 그것이 남의 착지 스탬프에 통째로
+# 실린다. 실측: 이 줄이 STATE.md 한 줄 대신 9파일 515줄(남의 진행 중 회의 리팩터)을
+# 커밋했고, 코드만 커밋되고 짝이 되는 시험은 남아 정본 브레인 시험 26건이 깨졌다.
+# 경로를 지정하면 인덱스에 무엇이 있든 이 파일만 커밋된다.
+git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" -- ops/STATE.md 2>/dev/null || true
 
 # 4) 정본 전체 검증 — 실패 시 자동 롤백. 단 ①이번에 병합한 레포만 ②HEAD가 아직 우리
 #    결과(post_*)일 때만 되돌린다. 검증 중 끼어든 남의 커밋은 절대 리셋하지 않는다.
