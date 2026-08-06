@@ -103,3 +103,29 @@ drop-in 파일 하나만 지우고 `systemctl daemon-reload && systemctl restart
     sudo -u organt    head -c1 /etc/murmur-web.env    # 막혀야 한다
     sudo -u murmurweb head -c1 /etc/murmur-web.env    # 이것만 읽혀야 한다
     sudo -u organt    head -c1 /root/.claude/.credentials.json   # 막혀야 한다
+
+## 밖에 서 있는 문 (2026-08-06 실측)
+
+nginx는 레포에 사본을 두지 않으므로 상태를 여기 적는다.
+
+닫혀 있는 것(확인):
+
+    /api/guide/     deny all → 403    두뇌 브리지. 러너만 127.0.0.1:8000 직결로 쓴다
+    /api/atelier/   deny all → 403    작업 승격 어댑터
+    /gpt-…/         404               옛 ttyd(원격 root 셸) — 2026-07-29 폐쇄
+    /admin/         404               MURMUR_DJANGO_ADMIN 꺼짐(2026-08-05)
+    /api/           403               DRF 라우터 인덱스(경로 목록) — 기본 권한을 닫으며 함께
+    /\.             404               숨은파일(.env·.git)
+
+이번에 닫은 것:
+
+    /dev/           404               127.0.0.1:8100 프록시였는데 그 포트에 아무도 없다(502).
+                                      atelier는 자기 도메인에서 8200으로 돈다 — 옛 길이다.
+                                      죽어서가 아니라, 누군가 8100에 무엇을 띄우면 그 순간
+                                      인증 없이 공개되기 때문에 끊는다.
+
+열려 있어야 하는 것:
+
+    /api/relay/     커넥터가 **밖에서 우리를 폴링**하는 구조다(집 LLM 연동). 커넥터 토큰은
+                    sha256 저장·256비트라 추측 불가.
+    /livekit/       음성 시그널링(WebSocket). 표(JWT)로 방을 가른다.
