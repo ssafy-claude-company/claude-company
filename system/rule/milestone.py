@@ -1001,6 +1001,17 @@ def roadmap_done_count(flow) -> int:
                if m.status == "done" and not str(getattr(m, "origin", "") or "").startswith("e2e:"))
 
 
+
+def roadmap_settled(flow) -> bool:
+    """[사다리는 한 번 오르기 시작하면 다시 그리지 않는다(2026-08-06, U-496 실측)] 로드맵이 이미
+    있고 그 계획 주기가 하나라도 완주됐으면 정착된 것 — 이후 회의의 '단계:' 줄은 정본을 덮지 않는다.
+    실측: 첫 회의가 '기본 피하기 게임판 → 피하기·수집 완성 게임' 2단을 정했는데, 다음 회의부터 매번
+    '완성판' 1단으로 **덮어써** 사다리가 소진 판정을 영영 못 받았다("이번 주기 = 6단계"까지 자람).
+    원래 사다리대로면 2주기에서 e2e 경계였다. 완주 전(첫 주기 진행 중 재협상)은 종전대로 다듬을 수
+    있다 — 정착의 기준은 '계획 주기의 완주'다."""
+    return bool(getattr(flow, "roadmap", None)) and roadmap_done_count(flow) > 0
+
+
 def roadmap_phases(flow):
     """[로드맵 phase 정규화(2026-07-20, 사용자: '개입 최대한 줄여')] 로드맵 항목을 phase 목록으로 —
     회의 골격이 '단계: 최소버전 → 확장 → 완성' 한 줄을 유도하므로, **띄운 화살표(' → ')만** 구분자로
@@ -2299,9 +2310,11 @@ def register_consensus(flow, prop: str, origin: str = ""):
     err = gate_new_cycle(flow)         # 신설 분기만 검문(목표 선행 등) — 단위 추가 분기는 위에서 자체 게이트
     if err:
         return err, 0
-    if stages:
+    if stages and not roadmap_settled(flow):
         flow.roadmap = stages          # 전체 구조(로드맵) — ckpt 동승(sys_recovery), 주기 완수마다 다음 단계 코칭
         _pnote(flow, "[로드맵] " + " → ".join(_clip(s, 120) for s in stages[:8]) + " (순차 1주기 — 각 주기 완수 시 보고 후 다음 단계 회의)")
+    elif stages:
+        _pnote(flow, "[로드맵 유지] 이번 수렴안의 '단계:'는 반영하지 않습니다 — 계획은 첫 회의의 사다리가 정본입니다(주기 완수 후 재정의 금지).")
     ms = open_milestone(flow, goal, parse_criteria_lines(crit), origin=f"회의 가결: {origin[:60]}")
     if isinstance(ms, str):
         return ms, 0
@@ -3961,7 +3974,7 @@ def register_stage(flow, stage, prop, origin=""):
         verifier_errors = _milestone_verifier_errors(flow, milestone_entries, stages)
         if verifier_errors:
             return False, "\n".join(verifier_errors)
-        if stages:
+        if stages and not roadmap_settled(flow):
             # 거부될 수 있는 검사를 전부 통과한 뒤에만 로드맵을 상태에 반영한다. 종전에는 verifier
             # 거부인데도 roadmap만 먼저 남아 다음 preflight의 최종주기 판정을 바꾸는 부분 착지가 있었다.
             flow.roadmap = stages
