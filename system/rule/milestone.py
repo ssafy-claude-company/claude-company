@@ -3225,7 +3225,15 @@ def _unique_inline_verifier(spec, workspace="") -> str:
 
 
 def _final_milestone_proposal(flow, proposed_phases=None) -> bool:
-    phases = list(proposed_phases or roadmap_phases(flow))
+    # [정착된 사다리에선 제안이 최종 여부를 못 바꾼다(2026-08-06, U-506 실측)] 종전엔 수렴안의
+    # '단계:' 줄이 길면 이 판정이 비최종이 되어 GOAL@ 비준 요구를 피해 갔다 — 회의마다 새 사다리를
+    # 선언해 '아직 최종 아님'을 만들며 비준 없는 중복 주기를 무한 등록(U-496 MS-4~7·U-506 MS-4).
+    # 주기 하나가 완주된 뒤(roadmap_settled)에는 정본 사다리로만 판정한다(제안 무시 — 등록부도
+    # 같은 조건으로 사다리 덮어쓰기를 거부하므로 판정과 상태가 일치한다).
+    if roadmap_settled(flow):
+        phases = list(roadmap_phases(flow))
+    else:
+        phases = list(proposed_phases or roadmap_phases(flow))
     done_n = sum(
         1 for m in (getattr(flow, "milestones", None) or [])
         if getattr(m, "status", "") == "done"
@@ -3974,6 +3982,24 @@ def register_stage(flow, stage, prop, origin=""):
         verifier_errors = _milestone_verifier_errors(flow, milestone_entries, stages)
         if verifier_errors:
             return False, "\n".join(verifier_errors)
+        # [비준 회의는 비준 없이 주기를 낳을 수 없다(2026-08-06, 사용자: '어떻게 주기 3에서 했던게
+        # 거의 똑같이 주기 4의 목표로 잡을 수 있는거지')] e2e가 'GOAL 조건에 비준된 verifier 없음'으로
+        # 막혀 이 회의를 열었는데, 회의 골격의 질문은 '이번에 보여줄 딱 하나'라 팀은 비준 대신 거의
+        # 같은 목표의 새 주기를 등록했다(실측 U-506 MS-4: 직전과 유사도 0.79 / U-496 MS-4~7 네 개가
+        # 같은 공장 산물 — 주기당 하루·수십$). 그 주기를 다 돌아도 비준이 없으니 e2e가 또 막히고
+        # 회의가 또 열린다(영구 공장). 비준 모드에서는 미비준 GOAL 조건을 전부 덮는 수렴안만 주기가
+        # 될 수 있다 — 내용 판단이 아니라 '이 회의가 열린 이유를 답했는가'라는 형태 검사다.
+        if (int(getattr(flow, "_e2e_ratify_tries", 0) or 0) > 0
+                or int(getattr(flow, "_goal_ratify_tries", 0) or 0) > 0):
+            _pending_refs = _natural_goal_refs(flow)
+            _cov = {str(r.get("desc") or "").strip() for r in milestone_entries}
+            _miss = [ref for ref in _pending_refs if ref.desc.strip() not in _cov]
+            if _miss:
+                return False, ("이 회의는 e2e가 요청한 **GOAL 실증 명령 비준** 회의입니다 — 새 주기를 "
+                               "정의하는 자리가 아닙니다. SYS가 DRAFT에 붙인 GOAL@ 정본 키마다 "
+                               "`GOAL@spec-hash | 실증: <exact command>` 행으로 비준하세요. 미비준: "
+                               + " · ".join(m.desc[:40] for m in _miss[:4])
+                               + ". 이미 완주한 것과 같은 목표의 새 주기는 등록되지 않습니다.")
         if stages and not roadmap_settled(flow):
             # 거부될 수 있는 검사를 전부 통과한 뒤에만 로드맵을 상태에 반영한다. 종전에는 verifier
             # 거부인데도 roadmap만 먼저 남아 다음 preflight의 최종주기 판정을 바꾸는 부분 착지가 있었다.
