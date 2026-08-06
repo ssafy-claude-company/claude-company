@@ -12,8 +12,22 @@ W="/root/wt/$S"
 REPOS="claude-company:$MS:$W  murmur:$MS/murmur:$W/murmur"
 
 exec 9>"$MS/ops/.land.lock"
-echo "착지 큐 대기(다른 세션 착지 중이면 기다림)…"
-flock 9
+# [큐 가시성·중복 방지 2026-08-06] 대기가 불투명해 세션들이 "멈췄나?" 하고 같은 착지를
+# 두 번 큐잉했다(실측: 현준-2 중복 대기, 꼬리 30분+). 보유자를 파일로 공개하고,
+# 같은 세션의 중복 진입은 거부한다.
+HOLDER_F="$MS/ops/.land.holder"
+# 같은 세션의 land.sh가 이미 떠 있으면(보유 중이든 대기 중이든) 중복 진입 거부.
+if [ "$(pgrep -cf "ops/land\.sh $S\$")" -gt 1 ]; then
+  echo "⛔ '$S' 착지가 이미 진행/대기 중 — 중복 실행 안 함. 기존 것을 기다리세요."; exit 1
+fi
+if ! flock -n 9; then
+  h="$(cat "$HOLDER_F" 2>/dev/null || echo '?')"
+  echo "착지 큐 대기 — 현재 착지 중: ${h:-?}"
+  echo "  (착지 1건 ≈ 8분. 재실행하지 말 것 — 이 프로세스가 순서대로 진행됩니다)"
+  flock 9
+fi
+printf '%s (since %s)\n' "$S" "$(date '+%H:%M:%S')" > "$HOLDER_F"
+trap 'rm -f "$HOLDER_F"' EXIT
 echo "════ '$S' 착지 시작 ════"
 
 # 0) 정본 브랜치 고정 가드 (2026-07-29 추가)
