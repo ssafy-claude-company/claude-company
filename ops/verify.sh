@@ -55,6 +55,10 @@ if [ -z "$FAST" ]; then
   ( cd "$R/murmur/frontend" && node tools/check_alpha.mjs ) || fail=1
   # [줄 변경 계약(2026-07-31)] 내가 본 뒤 어느 줄이 바뀌었나 — 틀리면 멀쩡한 줄을 의심하게 된다
   ( cd "$R/murmur/frontend" && node tools/check_linediff.mjs ) || fail=1
+  # [날것 HTML 계약(2026-08-06 감사)] v-html에 붙는 글은 거의 다 봇·사람이 쓴 것이다. 이스케이프가
+  # 파일마다 따로 적힌 여섯 벌이라 일곱 번째가 빠뜨리면 우리 출처에서 스크립트가 돈다 - 그 출처에
+  # 세션 열쇠가 있다. v-html 자리를 전부 훑어 아는 렌더러만 쓰게 한다.
+  ( cd "$R/murmur/frontend" && node tools/check_vhtml.mjs ) || fail=1
 fi
 echo "== 5) STATE.md 신선도 (heads 대조) =="
 # 2레포: claude-company(루트=병합, STATE가 이 안에 있어 순환→정보표시) + murmur(별도→강제)

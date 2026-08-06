@@ -91,9 +91,26 @@ for spec in $REPOS; do
       dirty="$(git -C "$main" status --porcelain 2>/dev/null)"
     fi
     if [ -n "$dirty" ]; then
-      echo "  ⚠ $name 정본 체크아웃($main)에 미커밋 변경(타 세션 작업 중일 수 있음) — 병합 보류."
-      echo "     그 트리가 정리된 뒤 다시 land.sh 하거나, 통합 담당에게 브랜치($br)를 맡기세요."
-      exit 1
+      # [겹칠 때만 막는다(2026-08-06 감사, 현준-4)] 가드의 취지는 "남의 미커밋 위에서 checkout/
+      # merge 하지 않는다"이다. 그런데 판정이 '트리가 조금이라도 더러운가'라, **내 병합이 건드리지도
+      # 않는 파일** 하나 때문에 착지 전체가 멈췄다. 실측: 정본 두 곳이 각각 다른 세션 작업으로
+      # 85분·75분 더러웠고 겹치는 파일은 0이었는데 19건이 밀렸다. 게다가 레포 목록의 앞쪽이 막히면
+      # 뒤쪽(murmur)까지 함께 멈춘다 — 무관한 레포가 서로를 붙잡는다.
+      #
+      # 취지를 그대로 지키면서 자만 정확히 한다: 내 병합이 바꿀 파일과 남이 손대고 있는 파일이
+      # **겹칠 때만** 막는다. 겹치지 않으면 merge는 남의 작업을 건드리지 않는다(겹치면 git 자신이
+      # 거부한다 — 이 검사는 그 앞에서 이유를 사람 말로 밝히는 자리다).
+      _mine="$(git -C "$main" diff --name-only "$base...$br" 2>/dev/null | LC_ALL=C sort -u)"
+      _theirs="$(git -C "$main" -c core.quotepath=false status --porcelain 2>/dev/null \
+                 | sed -E 's/^.{3}//' | sed -E 's/^"(.*)"$/\1/' | LC_ALL=C sort -u)"
+      _clash="$(LC_ALL=C comm -12 <(printf '%s\n' "$_mine") <(printf '%s\n' "$_theirs") | grep -v '^$' || true)"
+      if [ -n "$_clash" ]; then
+        echo "  ⚠ $name 정본($main)에 **내가 병합할 파일과 같은 파일**의 미커밋 변경이 있다 — 병합 보류."
+        echo "$_clash" | sed 's/^/     겹침: /'
+        echo "     그 트리가 정리된 뒤 다시 land.sh 하거나, 통합 담당에게 브랜치($br)를 맡기세요."
+        exit 1
+      fi
+      echo "  ℹ $name 정본에 남의 미커밋 변경이 있으나 내 병합과 겹치지 않는다 — 그대로 두고 진행."
     fi
     echo "  $name: $br → $base 병합 ($ahead 커밋)"
     git -C "$main" checkout -q "$base"
