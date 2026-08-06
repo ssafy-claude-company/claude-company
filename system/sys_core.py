@@ -437,6 +437,30 @@ class Sys:
         """role_profiles.json 원자 저장 — sys_store.save_profiles로 추출(위임만)."""
         return sys_store.save_profiles(self)
 
+
+    def _wrapup_close(self, flow, obj) -> bool:
+        """[마지막 한 칸이 침묵 속에 막힌다(2026-08-06, U-504 실측)] iter 검증이 1/1 통과하고 주기가
+        wrapup으로 전이했는데도 판이 닫히지 않고 '무진전'으로 정체됐다 — wrapup_done의 반환(막힘
+        사유: 배달 게이트·미완 ST 등)을 호출부들이 전부 버리고 있어서, 왜 안 닫히는지 로그에도
+        피드에도 없었다. 사유를 장부(log)와 피드(post_system)에 남긴다 — 사유 문구는 이미 '지금 할 일
+        하나'를 지시하는 형태라(예: deploy 재배포), 드러나기만 하면 다음 턴이 그것을 처리한다."""
+        from .rule.milestone import wrapup_done
+        r = wrapup_done(flow, obj)
+        if r == "done":
+            return True
+        why = str(r or "")[:400]
+        self._log("wrapup_blocked", id=getattr(obj, "ms_id", None) or getattr(obj, "st_id", ""),
+                  why=why[:180])
+        if why and getattr(flow, "_wrapup_blocked_note", "") != why:
+            flow._wrapup_blocked_note = why            # 같은 사유 반복 게시 방지
+            _p = getattr(flow, "post_system", None)
+            if callable(_p):
+                try:
+                    _p("[주기 마감 보류] " + why)
+                except Exception:
+                    pass
+        return False
+
     def _log(self, event, **f):
         # [관측 v1] 봉투 seq·trace_id 부여(하위호환 — 소비측이 결측 허용). f에 명시 trace_id 있으면 우선.
         self._obs_seq += 1
@@ -2383,7 +2407,7 @@ class Sys:
                 return False
             passed, _ = iter_verify(flow, ms, [])
             if passed:
-                wrapup_done(flow, ms)
+                self._wrapup_close(flow, ms)
             return True
         # verify는 역사적으로 "curl로 200 확인" 같은 자연어 절차도 허용한다. 순수 셸과, 최종
         # 마일스톤 회의가 canonical GOAL@ marker에 1:1 비준한 자연어 GOAL의 exact command만 SYS가
@@ -2449,7 +2473,7 @@ class Sys:
                     result["_verified_artifact_stamp"] = final_stamp
             passed, _ = iter_verify(flow, ms, results)
             if passed:
-                wrapup_done(flow, ms)
+                self._wrapup_close(flow, ms)
                 return True
 
         who = (int(getattr(getattr(flow, "current", None), "owner", 0) or 0)
@@ -2490,7 +2514,7 @@ class Sys:
                 "숨기지 마세요 — SYS가 부족한 작업 영역 보충 회의를 구조적으로 엽니다.\n" + rows,
                 Kind.INFO, "worker")
             if ms.status == "wrapup":
-                wrapup_done(flow, ms)
+                self._wrapup_close(flow, ms)
                 return True
             # 봇이 report_iter를 생략해도 실패 검증을 장부에 남겨 보충 회의가 같은 사실에서 출발한다.
             if ms.iter_n == iter_before:
