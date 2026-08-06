@@ -2531,6 +2531,16 @@ def meeting_stage(flow):
         _done_n = roadmap_done_count(flow)
         if not _mss or (_road and _done_n < len(_road)):
             return "milestone"
+        # [끝의 기준이 없는 Task는 끝날 수 없다(2026-08-06, U-496 실측)] 완수조건 회의는 위에서
+        # **마일스톤이 하나도 없을 때만** 열린다(`and not _mss0`). 그 창을 놓친 판은 조건이 빈
+        # 채로 주기를 돌고, 로드맵을 다 돈 뒤에도 e2e가 열리지 못한다 — 분모(조건 축)가 없어서다.
+        # 그러면 아래 비준 분기가 **마일스톤 회의**를 열고, 그 회의의 골격은 '이번에 완성해 보여줄
+        # 하나'를 묻는다. 팀은 새 주기를 정의하고, 그 주기가 끝나면 같은 자리로 돌아온다.
+        # 실측 U-496: GOAL.md의 `## Acceptance`가 비어 있는 채 3.5일·6주기·$219, e2e 이벤트 0건.
+        # 필요한 회의는 '무엇이 되면 끝인가'(criteria) 하나다 — 사람이 매번 방향을 틀어 주는 대신
+        # 구조가 그 회의로 인도한다. 조건이 서면 e2e 분모가 서고, 판은 경계로 나아간다.
+        if not str(getattr(_cur, "acceptance", "") or "").strip():
+            return "criteria"
         # [실행할 수 없는 실증에 묶인 GOAL은 마지막 주기가 푼다(2026-08-01, U-442 실측)] 로드맵을
         # 다 돌았는데 GOAL 조건이 **이 작업공간에서 실행할 수 없는 명령**에 묶여 있으면 e2e가 영영
         # 열리지 않는다(실측: `node scripts/verify-recruitment-game.mjs` — 그런 파일이 없다).
