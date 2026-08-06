@@ -66,7 +66,7 @@ drop-in 파일 하나만 지우고 `systemctl daemon-reload && systemctl restart
 
     iptables -A INPUT -p tcp --dport 4100:4199 ! -i lo -j DROP
 
-미디어(SFU UDP 50000-50100 · TCP 7881)는 건드리지 않는다 — 그건 밖에서 들어와야 하는 길이다.
+미디어(SFU UDP 443 · TCP 7881)는 건드리지 않는다 — 그건 밖에서 들어와야 하는 길이다.
 `nginx → 127.0.0.1:<포트>`는 루프백이라 그대로 산다.
 
 확인:
@@ -163,3 +163,22 @@ nginx는 레포에 사본을 두지 않으므로 상태를 여기 적는다.
                                 부르는 쪽(러너)은 좁은 문 127.0.0.1:8004로 온다
                                 (conf.d, 이 경로 전용 — engine_resolve가 내주는 주소가
                                 MURMUR_INTERNAL_URL 기본값 그대로 8004다). 안 깨진다.
+
+밖에 실제로 열린 것 — 실측 (2026-08-06 감사, 현준-4)
+
+    이 기계의 INPUT 정책은 ACCEPT다(4100-4199만 DROP). 그래서 "밖에서 닿는가"는 방화벽이
+    아니라 **바인드 주소 + 공유기 포워딩** 두 가지가 정한다. 방화벽만 보고 판단하면 틀린다.
+
+    공인 IP에서 두드려 본 결과:
+        443/tcp   열림   nginx
+        7881/tcp  열림   LiveKit TCP 폴백(미디어) — HTTP를 답하지 않는 생 포트로 확인
+        7880/tcp  닫힘   LiveKit 시그널링 — /livekit/ 로 nginx가 대신 받는다
+        22/tcp    닫힘   SSH는 80(sslh)으로 들어온다
+
+    공유기 매핑(upnpc -l)도 정확히 넷이다: 80/tcp · 443/tcp · 443/udp · 7881/tcp.
+    murmur-ports 타이머가 30분마다 재주장한다(공유기가 재부팅되면 사라진다).
+
+    [지도가 옛것이었다] 여기 적혀 있던 "SFU UDP 50000-50100"은 2026-07-31에 없어진 설계다 —
+    ICE mux로 UDP 443 한 구멍에 모았다(livekit.yaml 주석). 안 쓰는 구멍 100개가 공유기에
+    남아 있지는 않았다(위 매핑 확인). murmur-ports.service의 Description 문구도 아직
+    "50000/udp"라고 적고 있다 — 실제 스크립트는 443/udp를 연다. 문구만 옛것이다.
