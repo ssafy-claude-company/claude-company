@@ -182,3 +182,27 @@ nginx는 레포에 사본을 두지 않으므로 상태를 여기 적는다.
     ICE mux로 UDP 443 한 구멍에 모았다(livekit.yaml 주석). 안 쓰는 구멍 100개가 공유기에
     남아 있지는 않았다(위 매핑 확인). murmur-ports.service의 Description 문구도 아직
     "50000/udp"라고 적고 있다 — 실제 스크립트는 443/udp를 연다. 문구만 옛것이다.
+
+봇 셸의 경계 — 실측 (2026-08-06 감사, 현준-4)
+
+    프롬프트 주입으로 봇이 조종당하는 것이 이 제품의 현실적 위협이고, 봇이 가진 가장 큰
+    능력은 셸 실행이다. 그 사슬을 봇과 같은 자리에서 끝까지 두드려 확인했다.
+
+        판별 uid로 떨어진다          uid=300012 (organt·root 아님)
+        러너 environ 못 읽는다       /proc/<러너>/environ 거부 — 가이드 토큰이 거기 있다
+        비밀 파일 못 읽는다          /etc/organt-runner.env · /etc/murmur-web.env 거부
+        남의 판 못 본다              옆 작업공간 접근 거부
+        제 작업공간 위로 못 쓴다     뿌리에 touch 거부, 제 안에는 쓰기 OK
+        직행 egress 없다             127.0.0.1:8000 차단 · 인터넷 직행 차단
+        허용목록 프록시로만 나간다   :8118 경유 npm 200, 같은 프록시로 우리 API는 차단
+
+    [남의 flush가 내 규칙을 지웠다] /etc/nftables.conf는 `flush ruleset`으로 시작한다.
+    요즘 iptables는 iptables-nft라 앱 포트(4100-4199) DROP도 같은 nft 테이블에 산다 —
+    nftables를 다시 실으면 그 DROP까지 사라지는데, organt-apps-firewall은 oneshot+
+    RemainAfterExit라 스스로 다시 돌지 않는다. 앱 포트가 조용히 인터넷에 열린 채 남는다.
+    부팅 순서는 원래 옳다(nftables=sysinit, 앱 방화벽=multi-user) — 문제는 부팅 **뒤**의
+    재시작이다. PartOf=nftables.service로 묶어 함께 다시 서게 했다. 실측으로 확인:
+    nftables 재시작 뒤 skuid 규칙 2개·앱 DROP 1개가 모두 제자리, 봇 경계도 그대로.
+
+    [부팅 경로가 처음 검증됐다] nftables 유닛은 이번 부팅(07-20)에 한 번도 안 돌았다 —
+    설정이 07-30에 쓰였고 규칙은 손으로 실려 있었다. 위 재시작이 그 경로의 첫 실행이다.
