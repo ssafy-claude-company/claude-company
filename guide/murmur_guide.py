@@ -260,6 +260,18 @@ class MurmurGuide:
         except Exception:
             return None
 
+    async def report_turn_window(self, channel_id, bot_id, started_ts, ended_ts):
+        """[파일에 이름을 붙인다(2026-08-06, 사용자: '모두 해')] 이 턴이 언제부터 언제까지 돌았는지
+        웹에 남긴다. 작업공간은 여럿이 함께 쓰므로 파일 시각만으로는 '누가'를 알 수 없다 —
+        구간을 남겨 두면 그 안에 바뀐 파일의 임자를 웹이 안다(구간이 겹치면 웹이 단정하지 않는다).
+        실패는 무해하다(이름이 안 붙을 뿐, 파일도 흐름도 그대로다)."""
+        try:
+            return await self._post("/api/guide/turn_window/", {
+                "channel": int(channel_id), "bot_id": int(bot_id),
+                "started_ts": float(started_ts), "ended_ts": float(ended_ts)})
+        except Exception:
+            return None
+
     async def report_usage(self, channel_id, cost_usd, tokens_out,
                            tokens_in=0, tokens_cached=0, purpose="", bot_id=None):
         """[사용량 귀속(2026-07-18, 운영/과금)] 봇 턴 비용을 채널 단위로 웹에 보고(HTTP) → 웹이 보드 주인
