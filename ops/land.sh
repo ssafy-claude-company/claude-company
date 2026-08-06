@@ -17,7 +17,10 @@ exec 9>"$MS/ops/.land.lock"
 # 같은 세션의 중복 진입은 거부한다.
 HOLDER_F="$MS/ops/.land.holder"
 # 같은 세션의 land.sh가 이미 떠 있으면(보유 중이든 대기 중이든) 중복 진입 거부.
-if [ "$(pgrep -cf "ops/land\.sh $S\$")" -gt 1 ]; then
+# [08-06 수선] pgrep 카운트는 sudo/래퍼 프로세스도 세어 정상 1건을 중복으로 오판했다 —
+# 세션별 flock(-n)으로 교체: 커널이 정확히 판정하고 프로세스 종료 시 자동 해제된다.
+exec 8>"$MS/ops/.land.$S.lock"
+if ! flock -n 8; then
   echo "⛔ '$S' 착지가 이미 진행/대기 중 — 중복 실행 안 함. 기존 것을 기다리세요."; exit 1
 fi
 if ! flock -n 9; then
