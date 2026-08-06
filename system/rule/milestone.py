@@ -2664,7 +2664,8 @@ _STAGE_META = {
              "[수렴안]\n목표: ⟦이 Task로 정확히 무엇을 만드는지 — '게임'이 아니라 '2인 턴제 카드 대전'처럼 구체적으로⟧\n"
              "내용 폭: ⟦이 산출물이 '알차다'의 하한을 수치로 — 예: 적 유형 4종 · 성장 축 2개 · 스테이지 변화 3단 / "
              "todo앱이면 기능 6종 · 화면 3개. 항목마다 숫자⟧\n"
-             "창의 설계: ⟦요구에 없지만 이 산출물을 낫게 만드는 기여 1건 이상 — 무엇이 어떻게 달라지는지 동작으로(예: '방패병 — 앞 열이 받는 피해 40% 감소' · '결과 화면에 판정 근거 표시')⟧\n[/수렴안]\n"
+             "창의 설계: ⟦요구에 없지만 이 산출물을 낫게 만드는 기여 1건 이상 — 무엇이 어떻게 달라지는지 동작으로(예: '방패병 — 앞 열이 받는 피해 40% 감소' · '결과 화면에 판정 근거 표시')⟧\n"
+             "최대 표준: ⟦이 종류의 **실제 훌륭한 예**를 WebSearch로 찾아 대조하고, 그 최대판이 당연히 갖춘 **구성요소를 분해**해 체크 가능한 항목 목록으로 — 기능 나열만이 아니라 **주 사용 흐름(진짜 사용자가 핵심 목표를 어떻게 달성하나)**까지. 최대화할 차원이 정말 없으면 '[최대화 N/A: 사유]'⟧\n[/수렴안]\n"
              # [내용 폭도 이 회의의 결정이다(2026-08-04, 사용자: '구현은 최소 단위로 되며 안좋은
              # 결과물' — 실측 U-478: 완주작 어휘에 wave/upgrade/skill/boss 0회, 노동의 14%만 제품)]
              # 완수조건은 '되는가'를 실증할 수 있는 것으로 수렴하므로, 넓이를 아무도 결정하지 않으면
@@ -2784,6 +2785,45 @@ def stage_agenda(stage):
 # SYS가 골격을 깔고, 참여자들이 자기 도메인 몫을 직접 편집·이의 코멘트·해소하며 파일에서 통합된다.
 # 종결 = 골격 완성(자리표시 0)+미해소 이의 0+직전 턴 무변경 → 전원 최종 표결 → 그 파일이 결론.
 
+
+def _product_parts(flow):
+    """goal 회의가 정한 제품 부품 목록(내용 폭 + 최대 표준). 영역 분해가 딛고 설 정본."""
+    _cur = getattr(flow, "current", None)
+    out = []
+    for it in (getattr(_cur, "content_floor", None) or []):
+        t = str(it or "").strip()
+        if t:
+            out.append(t)
+    for t in re.split(r"[·,;\n]", str(getattr(_cur, "standard", "") or "")):
+        t = t.strip()
+        if t and not t.startswith("["):
+            out.append(t)
+    seen, uniq = set(), []
+    for t in out:
+        k = t[:24]
+        if k not in seen:
+            seen.add(k)
+            uniq.append(t)
+    return uniq[:12]
+
+
+def _product_part_hints(flow) -> str:
+    """[영역이 관문 모양으로 굳는다(2026-08-06, U-496 실측)] 영역 분해 회의는 '무엇으로 나눌지'를
+    자유롭게 묻는다 — 그래서 팀은 자기가 통과해야 할 **관문 모양**(배포 증거·QA 수용·회귀 게이트·
+    증적)으로 영역을 잡았다. 실측 U-496 상위 14개 영역 중 9개가 검증·배포 계열(백로그 ~112건),
+    제품 부품 계열은 4개(~55건) — 작품이 엉성한 것은 솜씨가 아니라 **노동이 놓인 자리** 탓이다.
+    goal이 이미 정한 부품(내용 폭·최대 표준)을 골격에 후보로 실어, 영역이 제품에서 출발하게 한다.
+    강제가 아니라 출발점 제공 — 검증 영역도 그대로 열 수 있다."""
+    try:
+        parts = _product_parts(flow)
+    except Exception:
+        parts = []
+    if not parts:
+        return ""
+    return ("(goal이 정한 제품 부품 — 이 중 필요한 것을 영역으로 세우고, 검증·배포 영역은 그 위에 "
+            "더하세요)\n" + "".join(f"단위: {p}\n" for p in parts[:8]) + "\n")
+
+
 def stage_draft_template(stage, agenda="", flow=None):
     """회의 개시 때 SYS가 까는 DRAFT.md 골격. 알 수 없는 단계면 None.
 
@@ -2812,6 +2852,7 @@ def stage_draft_template(stage, agenda="", flow=None):
         "goal": ("목표: ⟦이 Task로 정확히 무엇을 만드는지 — 구체적으로⟧\n"
                  "내용 폭: ⟦'알차다'의 하한을 수치로 — 항목마다 숫자(예: 적 유형 4종 · 성장 축 2개)⟧\n"
                  "창의 설계: ⟦요구에 없지만 이 산출물을 낫게 만드는 기여 1건 이상 — 동작으로(예: '방패병 — 앞 열이 받는 피해 40% 감소')⟧\n"
+                 "최대 표준: ⟦실제 훌륭한 예를 WebSearch로 찾아 대조 → 최대판 구성요소 분해(체크 가능한 항목 목록 + 주 사용 흐름). 없으면 '[최대화 N/A: 사유]'⟧\n"
                  # [이 회의는 '무엇을 만들지'만 정한다(2026-07-30, 사용자 지적)] 골격에 완수조건 칸이
                  # 남아 있어, 단계를 쪼갠 뒤에도 봇들이 그 칸을 채우느라 이 회의에서 검증 명령·수치
                  # (150ms·exit 0·verify_ui.py)를 확정했다(U-436 실측). 끝의 기준은 다음 회의 몫이다.
@@ -2830,7 +2871,7 @@ def stage_draft_template(stage, agenda="", flow=None):
                       "GOAL 조건을 SYS가 `GOAL@spec-hash` 정본 키로 붙입니다. 조건 문장을 다시 쓰지 말고 "
                       "각 정본 키의 `실증:` command만 비준하세요.)\n"
                       "- ⟦조건⟧ | 실증: ⟦exact command⟧\n"),
-        "subtask": ("단위: ⟦작업 영역/구성요소⟧\n단위: ⟦작업 영역/구성요소⟧\n\n"
+        "subtask": (_product_part_hints(flow) + "단위: ⟦작업 영역/구성요소⟧\n단위: ⟦작업 영역/구성요소⟧\n\n"
                     "(백로그 줄은 **자기가 수행할 일만** 씁니다 — 쓴 사람이 그 일감의 담당이 되고 바뀌지 "
                     "않습니다. 남의 도메인에서 고칠 것을 발견했으면 그 줄을 대신 쓰지 말고 '## 참고'에 "
                     "결함으로 남기세요 — 그 도메인이 자기 줄로 등재합니다.)\n"
@@ -3225,7 +3266,15 @@ def _unique_inline_verifier(spec, workspace="") -> str:
 
 
 def _final_milestone_proposal(flow, proposed_phases=None) -> bool:
-    phases = list(proposed_phases or roadmap_phases(flow))
+    # [정착된 사다리에선 제안이 최종 여부를 못 바꾼다(2026-08-06, U-506 실측)] 종전엔 수렴안의
+    # '단계:' 줄이 길면 이 판정이 비최종이 되어 GOAL@ 비준 요구를 피해 갔다 — 회의마다 새 사다리를
+    # 선언해 '아직 최종 아님'을 만들며 비준 없는 중복 주기를 무한 등록(U-496 MS-4~7·U-506 MS-4).
+    # 주기 하나가 완주된 뒤(roadmap_settled)에는 정본 사다리로만 판정한다(제안 무시 — 등록부도
+    # 같은 조건으로 사다리 덮어쓰기를 거부하므로 판정과 상태가 일치한다).
+    if roadmap_settled(flow):
+        phases = list(roadmap_phases(flow))
+    else:
+        phases = list(proposed_phases or roadmap_phases(flow))
     done_n = sum(
         1 for m in (getattr(flow, "milestones", None) or [])
         if getattr(m, "status", "") == "done"
@@ -3903,9 +3952,40 @@ def register_stage(flow, stage, prop, origin=""):
             return False, ("'창의 설계:'가 후속 미룸 문구뿐입니다 — 무엇을 얹을지는 이 회의가 "
                            "정합니다(세부 구현은 미뤄도 됩니다).")
         _creative_items = [x.strip() for x in _re.split(r"[·;]", _creative_raw) if x.strip()]
+        # [최대 표준이 빠지면 판은 '문자 그대로 최소'로 간다(2026-08-06, 사용자: '너무 Task가 최소로
+        # 잡히는걸로 바뀐 느낌')] 디스코드 시절 Task GOAL은 set_goal의 최대화 관문을 통과해야 섰다 —
+        # '실제 훌륭한 예를 WebSearch로 찾아 최대판 구성요소를 분해해 standard에 항목 목록으로'.
+        # 그 관문은 rule/task.py:set_goal에 있고, 지금 파이프라인의 GOAL은 goal 회의(register_stage)가
+        # 낳는다 — 즉 **최대화 관문을 한 번도 지나지 않는다**. 그래서 GOAL.md의 `## Standard`가 늘
+        # 비었다(실측: 현행 판 전부 빈칸). 대조 실측 — 디코 p-012 GOAL은 14개 절·Acceptance 15항목·
+        # Standard('상용 캐주얼 웹게임 완성도, placeholder 금지')였고, 지금 U-496 GOAL은 두 문장에
+        # Acceptance 0줄이다. 관문을 이 회의로 옮겨 온다(형태 검사 — 기록이 있는지만 본다).
+        _std_raw = strip_internal_citation(_val("최대 표준"))
+        _max_na = bool(_re.search(r"\[\s*최대화\s*(?:N\s*/?\s*A|면제|불필요)\s*[:：]\s*\S",
+                                  goal + "\n" + _std_raw))
+        if not _max_na:
+            if not _std_raw:
+                return False, ("수렴안에 '최대 표준:' 줄이 필요합니다 — 이 시스템의 전제는 '요청을 문자 "
+                               "그대로 최소로'가 아니라 **가용 자원으로 만들 수 있는 최대 품질**입니다. "
+                               "이 종류의 **실제 훌륭한 예를 WebSearch로 찾아**(상상 금지 — 자기 산출을 "
+                               "기준 삼으면 '평범=충분'으로 수렴합니다) 그 최대판의 **구성요소를 분해**해 "
+                               "체크 가능한 항목 목록으로 쓰세요(기능 나열 + 주 사용 흐름). 최대화할 "
+                               "차원이 정말 없으면 '[최대화 N/A: 사유]'.")
+            if deferred_only(_std_raw):
+                return False, "'최대 표준:'이 후속 미룸 문구뿐입니다 — 최대판 분해는 이 회의가 합니다."
+            _std_items = [x for x in _re.split(r"[·,;\n]", _std_raw) if x.strip()]
+            if len(_std_items) < 3:
+                return False, ("'최대 표준:'이 한 문장입니다 — 최대판이 당연히 갖춘 **구성요소를 분해**해 "
+                               "**항목 목록**(3개 이상, `·`로 구분)으로 쓰세요. 모호한 한 문장은 마감에서 "
+                               "대조할 수 없습니다(마감은 '좋은가?'가 아니라 '최대판 부품이 다 있나'를 "
+                               "항목별로 봅니다).")
         if _cur is not None:
             _cur.content_floor = _numbered   # 넓이의 결정 — criteria 골격이 조건 초안으로 승계
             _cur.creative = _creative_items  # 요구 밖의 결정 — 같은 통로로 조건이 된다
+            try:
+                _cur.standard = (_std_raw or "").strip()   # GOAL.md `## Standard`로 흘러 마감 대조의 잣대가 된다
+            except Exception:
+                pass
             # [회의 하나에 결론 하나(2026-07-30, 사용자 지시)] 완수조건은 다음 회의(criteria)가 정한다.
             # 여기서 함께 요구하면 두 결정이 한 표결에 묶여, 먼저 쓴 사람의 골격이 통째로 통과한다.
             # 같은 수렴안에 조건이 딸려 왔으면 버리지 않고 받아 둔다(형식이 맞을 때만).
@@ -3974,6 +4054,24 @@ def register_stage(flow, stage, prop, origin=""):
         verifier_errors = _milestone_verifier_errors(flow, milestone_entries, stages)
         if verifier_errors:
             return False, "\n".join(verifier_errors)
+        # [비준 회의는 비준 없이 주기를 낳을 수 없다(2026-08-06, 사용자: '어떻게 주기 3에서 했던게
+        # 거의 똑같이 주기 4의 목표로 잡을 수 있는거지')] e2e가 'GOAL 조건에 비준된 verifier 없음'으로
+        # 막혀 이 회의를 열었는데, 회의 골격의 질문은 '이번에 보여줄 딱 하나'라 팀은 비준 대신 거의
+        # 같은 목표의 새 주기를 등록했다(실측 U-506 MS-4: 직전과 유사도 0.79 / U-496 MS-4~7 네 개가
+        # 같은 공장 산물 — 주기당 하루·수십$). 그 주기를 다 돌아도 비준이 없으니 e2e가 또 막히고
+        # 회의가 또 열린다(영구 공장). 비준 모드에서는 미비준 GOAL 조건을 전부 덮는 수렴안만 주기가
+        # 될 수 있다 — 내용 판단이 아니라 '이 회의가 열린 이유를 답했는가'라는 형태 검사다.
+        if (int(getattr(flow, "_e2e_ratify_tries", 0) or 0) > 0
+                or int(getattr(flow, "_goal_ratify_tries", 0) or 0) > 0):
+            _pending_refs = _natural_goal_refs(flow)
+            _cov = {str(r.get("desc") or "").strip() for r in milestone_entries}
+            _miss = [ref for ref in _pending_refs if ref.desc.strip() not in _cov]
+            if _miss:
+                return False, ("이 회의는 e2e가 요청한 **GOAL 실증 명령 비준** 회의입니다 — 새 주기를 "
+                               "정의하는 자리가 아닙니다. SYS가 DRAFT에 붙인 GOAL@ 정본 키마다 "
+                               "`GOAL@spec-hash | 실증: <exact command>` 행으로 비준하세요. 미비준: "
+                               + " · ".join(m.desc[:40] for m in _miss[:4])
+                               + ". 이미 완주한 것과 같은 목표의 새 주기는 등록되지 않습니다.")
         if stages and not roadmap_settled(flow):
             # 거부될 수 있는 검사를 전부 통과한 뒤에만 로드맵을 상태에 반영한다. 종전에는 verifier
             # 거부인데도 roadmap만 먼저 남아 다음 preflight의 최종주기 판정을 바꾸는 부분 착지가 있었다.
@@ -3997,6 +4095,23 @@ def register_stage(flow, stage, prop, origin=""):
         if _open is None:
             return False, "열린 마일스톤이 없습니다 — 마일스톤 회의가 먼저입니다."
         units = parse_units(lines)
+        # [제품에서 출발했는가(2026-08-06)] goal이 부품을 정해 뒀는데 영역이 전부 관문 모양이면,
+        # 이 주기의 노동은 통과 절차에만 놓인다(실측 U-496: 제품 백로그 15%). 부품 하나도 영역에
+        # 닿지 않을 때만 반려한다 — 내용 판단이 아니라 '이미 정한 결정을 딛었는가'라는 형태 검사다.
+        try:
+            _parts = _product_parts(flow)
+        except Exception:
+            _parts = []
+        if units and _parts:
+            _utxt = " ".join(units)
+            _hit = any(any(len(w) >= 2 and w in _utxt
+                           for w in re.findall(r"[가-힣A-Za-z]{2,}", p))
+                       for p in _parts)
+            if not _hit:
+                return False, ("작업 영역이 전부 절차(검증·배포·증적) 모양입니다 — goal이 정한 제품 "
+                               "부품 중 하나도 영역이 되지 않았습니다: "
+                               + " · ".join(p[:24] for p in _parts[:6])
+                               + ". 제품 부품을 영역으로 세우고 검증·배포 영역은 그 위에 더하세요.")
         if not units:
             return False, ("수렴안에 '단위: ⟦작업 영역⟧' 줄이 1개 이상 필요합니다"
                         " — 단위는 순수 작업 영역 묶음이라 완수조건·실증을 붙이지 않습니다"
