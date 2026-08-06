@@ -168,8 +168,22 @@ async def deploy(flow, args, me_id=None):
     # 확인도 없이 또 덮어쓰지 마라"다. 그런데 직전 배포가 라이브를 만들지 못했다면 검증할 대상 자체가
     # 없고, 동료는 확인할 수 없는 것을 확인해야 보류가 풀린다 — 판이 그대로 정지했다
     # (deploy_blind_held → complete_task_refused → stalled_stopped). 라이브가 선 뒤부터 건다.
+    # [바뀐 산출물의 재배포는 맹목이 아니다(2026-08-06, U-504 실측 13분 교착)] 이 보류의 표적은
+    # '같은 코드'를 검증 없이 되풀이 배포하는 스핀(P-028: 23회)이다. 그런데 배달 신선도 관문이
+    # "산출물이 바뀌었으니 재배포하라"고 요구하는 순간에도 이 보류가 걸려, 두 관문이 서로를 막았다
+    # (wrapup_blocked '재배포하라' ↔ deploy_blind_held '검증 먼저' 9회 — 주기가 영영 못 닫힘).
+    # 산출물 스탬프가 직전 배포와 다르면 '새 정보'가 이미 있는 것 — 맹목 정의에서 제외한다.
+    # 같은 스탬프의 재배포는 종전대로 동료 검증을 요구한다(스핀 방지 불변).
+    _stamp_now = ""
+    try:
+        from .milestone import workspace_artifact_stamp as _was0
+        _stamp_now = str(_was0(flow) or "")
+    except Exception:
+        _stamp_now = ""
+    _artifacts_changed = bool(_stamp_now) and _stamp_now != str(getattr(flow, "_deploy_stamp", "") or "")
     if (getattr(flow, "_deployed_once", False) and _cc_at0 >= 0
-            and _cc_now0 <= _cc_at0 and _peers and getattr(flow, "_deploy_live", False)):
+            and _cc_now0 <= _cc_at0 and _peers and getattr(flow, "_deploy_live", False)
+            and not _artifacts_changed):
         if flow.log:
             flow.log("deploy_blind_held", cross=_cc_now0)
         # SYS 강제배포(_ensure_deploy)가 이 보류를 우회하지 않게 — 종전 deploy_capped와 같은 하류 의미.
