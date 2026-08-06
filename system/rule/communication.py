@@ -227,7 +227,6 @@ async def meet(flow, me_id, args):
 
     async def _run_meet():
         nonlocal members   # [심의단 자기선택] 응찰 선발로 재바인딩 — 클로저 지역화 방지
-        nonlocal topic     # [단계 제목 강제(2026-08-06)] 아래에서 재바인딩 — 같은 이유로 지역화 방지
         from .._util import doc_collab_on, dossier_append, dossier_rel
         minutes = []
         r1_full = []       # [B-11] (발언자, 전문) — R2+ '전원 1R 압축' 합성 원료(시스템 기계 압축)
@@ -247,16 +246,6 @@ async def meet(flow, me_id, args):
         from .milestone import meeting_stage as _ms_stage, stage_agenda as _ms_agenda
         from .milestone import register_stage as _ms_regstage, stage_frame as _ms_frame
         from .milestone import canonical_parent_contract as _ms_parent
-        # [무엇을 만들지·무엇이 되면 끝인가는 전원이 독립으로 말한다(2026-08-06, 사용자: '1명이 너무
-        # 이상한 설계를 냈어 … 다른 얘들은 회의 참여도 안했고')] 07-09에 강제 R1(전원 의무 발화)을
-        # 폐지하며 "제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다"고
-        # 적어 뒀다. 그 데이터가 나왔다 — 단계별 표결 참여 중앙값: 마일스톤 6 · 작업영역 7 · 백로그 6
-        # 인데 **goal 2 · criteria 2**다(실측 U-516 goal은 1명, 발언 2건, 찬성 1·반대 0으로 확정).
-        # 뒤 단계는 앞 결론이라는 딛을 자리가 있어 응찰이 붙지만, 백지에서 시작하는 앞 두 단계는
-        # 먼저 쓴 사람의 초안이 곧 결론이 된다. 그래서 '3레인 좌우 이동 60초'가 Task 전체가 됐다.
-        # 앞 두 단계만 R1을 되살린다 — 서로를 못 보는 독립 의견 동시 수집이라 앵커링이 없고,
-        # 중앙 지시도 없다(각자 자기 도메인 관점으로 말할 뿐). 뒤 단계는 종전 turn-taking 그대로.
-        _R1_STAGES = ("goal", "criteria")
         _no_r1 = _ms_on()
         # [회의 하나당 결론 하나(2026-07-14, 사용자)] 이 회의가 정할 단 하나를 상태에서 유도 —
         # GOAL/마일스톤/서브태스크/백로그. 안건·수렴안 템플릿이 그 단계로 좁혀지고, 채택 시 그 단계만 등록.
@@ -270,20 +259,6 @@ async def meet(flow, me_id, args):
         if _agenda:
             from .milestone import stage_context as _ms_sctx
             _agenda = _agenda + _ms_sctx(flow, _stage)   # [정합 A] 어느 단위/주기 회의인지 안건에 명시
-        # [첫 프레임이 회의의 정체를 정한다(2026-08-06, 사용자: '회의의 첫 시작자는 뭔가 이상하게
-        # 말하는 느낌이 있는데')] 봇이 자기 topic으로 회의를 열면 그 문장이 개시 행·회의록·모든
-        # 라운드 프롬프트의 '주제'가 된다. 실측 U-514: 파이프라인은 criteria(무엇이 되면 끝인가)인데
-        # 봇이 '이번에 보여줄 하나 — 첫 플레이 가능한 수직 슬라이스'로 열었고, 여는 의견도 마일스톤
-        # 질문에 답했다(범위 논의). 등록 관문이 형식은 잡아 줘도 그 회의 전체가 엉뚱한 질문을 돌았다.
-        # 단계가 정해져 있으면 **제목은 그 단계의 것**으로 세우고, 봇이 쓴 문장은 범위로 뒤에 붙인다.
-        if _stage:
-            from .milestone import stage_title as _ms_title
-            _canon = _ms_title(_stage)
-            _own = topic.strip()
-            if _own and _canon and _canon not in _own:
-                topic = f"{_canon} — {_own[:80]}"
-            elif not _own:
-                topic = _canon
         _stage_frame = _ms_frame(_stage) if _stage else ""   # 매 발언 턴에 주입할 '이 회의의 정체' 프레임
         _parent_contract = (_ms_parent(flow) if _stage and _stage != "goal" else "")
         _parent_frame = (
@@ -322,59 +297,13 @@ async def meet(flow, me_id, args):
             # [중립 어휘(2026-07-14, 사용자: '소집자 의견 이러니 자기가 리더인줄 아나')] '발제/소집자'는
             # 폐지된 발제자 권위처럼 읽힌다 — 회의 연 사람도 한 참여자일 뿐이라 '회의 시작 / 여는 의견'으로
             # 중립화(권한 착시 제거). 기능은 동일: 주제 제시 + 자기 의견, 이후 전 발언이 응찰.
-            # [의장은 없다(2026-08-06, 사용자: '의장이라는 개념 자체가 없어졌을텐데 더 깊게 봐봐')]
-            # 07-14에 어휘만 중립화하고('소집자 의견'→'여는 의견') **자리**는 남겼다: 회의를 연 사람의
-            # 의견이 개시 메시지에 붙어 맨 앞에 서고, 나머지가 그 아래 붙는다. 백지 단계에서 그 한 줄이
-            # 곧 결론이 되던 것이 08-06 독립 라운드 복원의 이유였는데, 정작 그 특권 자리는 그대로였다
-            # (실측 U-520 goal: 개시 메시지의 여는 의견이 '60초짜리 2D 아케이드'였다).
-            # 백지 단계에서는 개시 메시지에 주제만 싣는다 — 연 사람의 의견도 아래 독립 라운드에서
-            # 남들과 같은 자격의 [독립 의견] 한 건으로 선다.
-            _blank_stage = bool(_stage in _R1_STAGES)
-            _preface = topic if _blank_stage else (
-                topic + (f"\n[여는 의견] {my_view}" if str(my_view or "").strip() else ""))
+            _preface = topic + (f"\n[여는 의견] {my_view}" if str(my_view or "").strip() else "")
             minutes.append(f"[회의 시작] {flow._info(me_id) or me_id}: {_speech_clip(_preface)}")
             # [단계는 필드로(2026-07-17, 사용자: '공용처리·안정적 관리')] 개시 메시지에 런타임 단계를
             # 기계 마커로 스탬프 — 봇이 자기 topic으로 재개설해도 피드가 같은 단계 회의로 병합·라벨링.
             # (표시층 guide_format이 마커를 벗기고, feed_assembly가 필드로 승격 — 본문 스크래핑 아님.)
             await _say_speech(flow, me_id,
                               "[회의 시작]" + (f"[단계:{_stage}]" if _stage else ""), _preface)
-            # [백지 단계는 전원이 먼저 독립으로 말한다(2026-08-06, 사용자: '1명이 너무 이상한 설계를
-            # 냈어 … 다른 얘들은 회의 참여도 안했고')] 07-09에 강제 R1을 폐지하며 "다양성에 주는 영향은
-            # floor_bid 분포로 관측해 데이터로 판단한다"고 적어 뒀다 — 그 데이터가 나왔다. 단계별 표결
-            # 참여 중앙값: 마일스톤 6 · 작업영역 7 · 백로그 6인데 **goal 2 · criteria 2**(실측 U-516의
-            # goal은 1명·발언 2건·찬성 1로 확정, 결과가 '3레인 좌우 이동 60초'). 뒤 단계는 앞 결론이라는
-            # 딛을 자리가 있어 응찰이 붙지만, 백지에서 시작하는 앞 두 단계는 먼저 쓴 사람의 초안이 곧
-            # 결론이 된다. 그 두 단계만 독립 의견을 **동시 수집**한 뒤 DRAFT 수렴으로 넘어간다 —
-            # 서로를 못 보고 각자 자기 도메인 관점으로 말하므로 앵커링도 중앙 지시도 없다.
-            _indep_spoke = set()          # 독립 라운드에서 실제로 의견을 낸 사람 — 표결 자격의 근거
-            if _stage in _R1_STAGES and members:
-                _seed = (f"[독립 의견 — 서로의 발언이 보이지 않습니다(앵커링 방지)] 주제: {topic}\n"
-                         f"{_stage_frame}\n당신({{who}})의 **자기 도메인 관점**에서 이 주제에 대한 "
-                         f"입장을 3~5줄로, 근거와 함께 내세요. 남의 초안을 다듬는 것이 아니라 "
-                         f"**당신이라면 무엇을 만들 것인가**를 말하세요(도구 호출 금지, 텍스트로만).")
-                for _m, _res, _note in await _fork_collect(
-                        flow, me_id, members,
-                        lambda m: _seed.format(who=flow._info(m) or m)):
-                    _txt = _res or _note
-                    if not str(_txt or "").strip():
-                        continue
-                    minutes.append(f"[독립] {flow._info(_m) or _m}: {_speech_clip(_txt)}")
-                    r1_full.append((flow._info(_m) or _m, _txt))
-                    last_full = (flow._info(_m) or _m, _txt)
-                    # [독립 의견도 그 회의의 말이다(2026-08-06)] 단계 마커를 함께 찍는다 — 화면이
-                    # 이 발언을 같은 단계 회의 블록으로 병합할 유일한 근거(본문 스크래핑 아님).
-                    await _say_speech(flow, _m, f"[독립 의견][단계:{_stage}]", _txt)
-                    _indep_spoke.add(int(_m))
-                    if _res is not None and _m in flow.current.team and _m != flow.leader:
-                        flow.current.participated.add(_m)
-                # 연 사람의 의견은 이미 손에 있다(SYS가 회의 전에 받아 둔 my_view) — 다시 깨우지 않고
-                # 같은 자격의 독립 의견으로 등재한다. 남들 뒤에 세워 '먼저 말한 사람'의 자리를 없앤다.
-                if str(my_view or "").strip():
-                    minutes.append(f"[독립] {flow._info(me_id) or me_id}: {_speech_clip(my_view)}")
-                    r1_full.append((flow._info(me_id) or me_id, my_view))
-                    last_full = (flow._info(me_id) or me_id, my_view)
-                    await _say_speech(flow, me_id, f"[독립 의견][단계:{_stage}]", my_view)
-                    _indep_spoke.add(int(me_id))
             dossier_append(flow, "MINUTES.md",
                            f"## 회의 — {topic} [완전 TT(§4): 강제 R1 없음]\n"
                            f"{flow._info(me_id) or me_id}: {_preface}")
@@ -1069,17 +998,7 @@ async def meet(flow, me_id, args):
             # 조건만 덧붙였고, 도메인이 안 걸린 사람들은 판단 근거 없이 찬성했다 — 결정의 무게가
             # 발언과 어긋나 한 사람의 첫 안이 사실상 독식했다. 응찰한 사람들끼리 정한다.
             # 심의단이 안 섰을 때(무응찰)만 종전처럼 전원이 유권자다.
-            # [말한 사람이 정한다 — 독립 라운드도 말이다(2026-08-06, 사용자: '그 표결 참여 문제등
-            # 구조적으로 해결하고')] 2026-07-30 계약은 '응찰한 사람들끼리 정한다'인데, 유권자를
-            # **응찰(members)로만** 잡았다. 오늘 복원한 독립 라운드는 fork로 동시에 걷는 발언이라
-            # 응찰을 거치지 않는다 — 전원이 자기 설계를 냈는데 표결은 한 명이었다(실측 U-519 goal:
-            # 독립 의견 2건·회의 발언 3건인데 '찬성 1 · 반대 0'). 계약을 어기는 것이 아니라 지킨다:
-            # 독립 라운드에서 실제로 의견을 낸 사람은 말한 사람이므로 유권자다.
-            _voters = list(dict.fromkeys(list(members) + sorted(_indep_spoke)))
-            # 회의를 연 사람은 종전에 표결에서 통째로 빠졌다(의장은 표를 던지지 않는다는 자리). 의장이
-            # 없는 지금, 독립 라운드에서 자기 설계를 낸 사람은 말한 사람이므로 유권자다 — 말하지 않았으면
-            # 종전대로 빠진다(딛을 결론이 있는 단계에서 회의를 돌리기만 한 경우).
-            _voters = [v for v in _voters if v != me_id or int(me_id) in _indep_spoke]
+            _voters = list(dict.fromkeys(list(members)))
             _yes, _dissents, _premortems, _against_ids = 0, [], [], []
             try:
                 _vlabel = "단독 결정" if len(_voters) == 1 else f"응찰 {len(_voters)}명"

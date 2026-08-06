@@ -137,16 +137,6 @@ def _unwrap_auto_continue(text) -> str:
     return s
 
 
-
-def _stage_is_goal(flow) -> bool:
-    """지금 파이프라인 단계가 'goal'인가 — 로스터 게이트가 목표 단계에만 정족수를 요구한다."""
-    try:
-        from .rule.milestone import meeting_stage as _ms
-        return _ms(flow) == "goal"
-    except Exception:
-        return False
-
-
 class Sys:
     def __init__(self, guide, guild_id, organt_builder, bot_info: Optional[Dict[int, str]] = None,
                  workspace=None, projects_path=None, session_dir=None, max_continue=6,
@@ -779,16 +769,6 @@ class Sys:
             f"- 겹치는 교훈은 별도 추가가 아니라 합쳐 더 일반적인 한 원칙으로.\n"
             f"- **예산: 전체 {cap}자 이내** — 넘치면 가장 덜 중요한 줄을 버리세요.\n"
             f"- 일회성 디테일·특정 프로젝트 한정 사항은 버리세요.\n"
-            # [기준이 한쪽으로 굳는다(2026-08-06, 사용자: '왜 자꾸 봇이 60초 60초 거리고 단일 피하는
-            # 게임이나 반복적인 모습을 보이는 듯 하지?')] 실측: 봇 개인 기준 151건의 축별 비율 —
-            # 검증·증거 94% · 범위 축소 54% · 완성도·경험 35% · **성장·깊이 7%**. 관문이 '닫힘'만
-            # 보상하니 경험이 검증으로만 쌓였고, 그 기준이 매 첫 wake에 주입돼 다음 설계도 '검증하기
-            # 쉬운 최소'로 나온다(60초 단일 루프는 헤드리스로 완벽히 판정된다 — 로그라이크의 성장은
-            # 아니다). 자기강화 고리다. 증류가 '어떻게 확인하나'뿐 아니라 '무엇이 좋은 산출물인가'도
-            # 남기게 한다 — 내용을 지시하지 않고, 두 축이 다 있는지만 묻는다.
-            f"- 두 축을 **모두** 남기세요: ①어떻게 확인하나(검증·증거) ②무엇이 좋은 산출물인가"
-            f"(완성도·사용자 경험·깊이). 한쪽만 쌓이면 다음 작업이 '검증하기 쉬운 최소'로 흐릅니다 "
-            f"— 당신의 기준에 지금 ②가 없다면 이번에 한 줄이라도 세우세요.\n"
             f"반드시 아래 형식만으로 답하세요:\n[개인기준] {label}\n(개선된 개인 기준 줄들)\n[/개인기준]"
         )
         try:
@@ -1496,66 +1476,10 @@ class Sys:
             return True
         roster = [m for m in (getattr(cur, "team", None) or [])
                   if m != flow.anchor and not _is_spare(flow, m)]
-        # [무엇을 만들지는 만들 사람들이 모인 뒤 정한다(2026-08-06, 사용자: '기획 회의가 지금 그냥
-        # 1명이서 매우 간단한 주제를 뱉어버렸어 … 이게 최대 접근 가능 범위의 최대 산출물이야?')]
-        # 실측 U-516: goal 회의 참석 1명(게임 기획 혼자), 표결 찬성 1·반대 0으로 Task 전체가 확정됐고
-        # QA·배포·사운드·비주얼·클라이언트 다섯 직군은 **그 뒤에** 채용됐다. 한 사람이 30초에 떠올릴
-        # 수 있는 범위로 목표가 굳는 구조다 — '3레인 좌우 이동'이 그렇게 나왔다. 로그라이크·성장·증강
-        # 같은 두께는 여러 도메인이 같은 방에 있을 때 나온다.
-        # goal_quorum_hold(2026-08-01)는 심의 3인을 요구하지만 로스터가 3 미만이면 건너뛴다 —
-        # 그 예외가 이 자리를 만들었다. 목표 단계에서는 로스터가 정족수에 닿을 때까지 회의를 열지
-        # 않는다(채용이 먼저 — 이 판의 다섯 직군은 실제로 그 경로로 뽑혔다). 다른 단계는 종전대로.
-        if str(getattr(flow, "_stage_now", "") or "") == "goal" or _stage_is_goal(flow):
-            from .rule.milestone import GOAL_QUORUM_MIN as _QMIN
-            # [채용은 정족수에 세지 않는다(2026-08-06, 사용자: '이상하게 회의가 열리고 자기가 회의
-            # 표결을 열고 반대를 누른건가')] +1은 '앵커 자신'을 세는 자리인데, 실측 U-520의 앵커는
-            # 채용 봇(정하준)이었다 — 판의 사람은 게임 클라이언트 엔지니어 한 명뿐인데 산술이 2가 돼
-            # 관문을 통과했고, 그 한 명이 발언·초안·표결을 전부 혼자 했다(반대 1 → 수정 → 찬성 1).
-            # 채용은 시스템 존재라 심의자가 아니다(08-04 계약) — 세지 않는다.
-            _anchor_counts = 0 if _is_spare(flow, flow.anchor) else 1
-            if len(roster) + _anchor_counts < int(_QMIN):
-                self._log("goal_meeting_deferred_thin_roster",
-                          roster=len(roster) + _anchor_counts, need=int(_QMIN),
-                          ch=int(getattr(flow, "user_channel", 0) or 0))
-                return False
         if roster:
             return True
         self._log("stage_meeting_skipped_empty_roster",
                   ch=int(getattr(flow, "user_channel", 0) or 0))
-        return False
-
-    def _ensure_working_anchor(self, flow) -> bool:
-        """회의 사회는 판의 사람이 본다 — 앵커가 채용이면 실무자에게 넘긴다.
-
-        [실측 U-520] 새 요청을 받은 봇이 그대로 앵커가 되는데, 그 자리에 있던 것은 채용 봇이었다.
-        채용은 시스템 존재라 팀·회의·표결에서 빠지지만(08-04 계약) **앵커 자리에서는 빠지지
-        않았다** — 그래서 채용 봇이 goal·criteria·milestone 회의를 전부 열고 닫았고, 화면에서는
-        그 발언이 필터로 지워져 회의 제목과 결론이 통째로 사라졌다(사용자: '회의 제목 왜저래').
-        심의는 한 명(유일한 실무자)이 혼자 했다.
-
-        앵커가 채용이고 판에 실무자가 있으면 그 사람에게 돌린다. 돌릴 사람이 없으면 그대로 둔다 —
-        이 자리는 채용을 벌하는 곳이 아니라 '사람이 사회를 보게' 하는 곳이고, 사람이 없으면
-        정족수 관문이 이미 회의를 막는다."""
-        try:
-            from .rule.comm_helpers import _is_spare
-        except ImportError:
-            return False
-        if not _is_spare(flow, flow.anchor):
-            return False
-        cur = getattr(flow, "current", None)
-        cand = [m for m in (getattr(cur, "team", None) or [])
-                if m != flow.anchor and not _is_spare(flow, m)]
-        if not cand:
-            return False
-        new = int(cand[0])
-        try:
-            if flow.comm.rotate_origin_holder(new):
-                old = int(flow.anchor)
-                flow.anchor = new
-                self._log("anchor_rotated", to=new, frm=old, reason="recruiter_is_not_a_member")
-                return True
-        except Exception:
-            pass
         return False
 
     async def _drain_inflight(self, flow) -> str:
@@ -4320,7 +4244,6 @@ class Sys:
                     # 거절할 것을 알면서 두드리지 않는다 — 위임을 먼저 완주(단일 활성·완료 게이트)하고 연다.
                     if any(not x.done() for x in getattr(flow, "inflight_tasks", ())):
                         await self._drain_inflight(flow)
-                    self._ensure_working_anchor(flow)
                     _stg = _ms_stage(flow)
                     _ag, _ = _stage_agenda(_stg)
                     from .rule.milestone import stage_context as _sctx
