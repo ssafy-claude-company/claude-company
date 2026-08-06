@@ -62,14 +62,29 @@ class EndpointError(Exception):
     """등록 주소가 안전하지 않다 — 저장도 호출도 하지 않는다."""
 
 
+# 사업자 대역(CGNAT) — 공개 인터넷이 아닌데 파이썬 is_private에는 안 잡힌다. 오버레이 망
+# (예: Tailscale)이 쓰는 대역이라, 그런 망에 붙는 날 이 주소가 내부로 가는 문이 된다.
+_CARRIER4 = ipaddress.ip_network("100.64.0.0/10")
+_CARRIER6 = ipaddress.ip_network("::ffff:100.64.0.0/106")
+
+
 def _is_public_ip(raw):
+    """공인 주소인가.
+
+    [목록이 갈리면 그 틈이 구멍이다(2026-08-06 감사, 현준-4)] 서버가 바깥으로 나가는 자리는
+    여럿인데(링크 미리보기·배포 링크 생존 확인·여기), 각자 목록을 적고 있었다. murmur 쪽은
+    한 자리(sns/link_preview._blocked)로 모았다 — 러너는 다른 레포라 코드를 못 나누므로
+    **목록만 같게** 맞춘다. 한쪽에 항목을 더하면 반드시 다른 쪽도 더할 것.
+    """
     try:
         ip = ipaddress.ip_address(raw)
     except ValueError:
         return False
     # 사설·루프백·링크로컬(169.254.169.254 메타데이터 포함)·유니크로컬·멀티캐스트·예약 전부 거부.
-    return not (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
+    if (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+        return False
+    return not (ip in _CARRIER4 or ip in _CARRIER6)
 
 
 def validate_endpoint(url, resolve=True):
