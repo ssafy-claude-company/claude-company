@@ -396,6 +396,35 @@ async def parallel_work(flow, me_id, args):
         raise
 
 
+# [상위어 한 단어는 직군이 아니다(2026-08-06)] 공고·genesis·합류가 같은 눈을 쓴다.
+_UMBRELLA_ROLES = {"개발", "개발자", "엔지니어", "기술", "제작", "구현", "코딩", "프로그래머",
+                   "프로그래밍", "운영", "기획", "디자인", "테스트", "검증", "dev", "developer",
+                   "engineer", "engineering", "tech", "ops"}
+# [영역 + '개발'은 여전히 범용이다(2026-08-06, 사용자: '게임 개발 자체도 범용이야 … 백엔드 프론트를
+# 풀스택으로 하는거랑 뭐가 달라')] '게임 개발'은 클라이언트·서버·툴을 한 사람이 다 가진다는 뜻이라
+# 풀스택과 같은 자리다. 상위어 앞에 영역 이름만 붙인 형태(<영역> + 개발/제작/엔지니어링…)를
+# 같은 눈으로 본다 — 구체 도메인은 그 뒤에 **직능**이 붙는다(게임 클라이언트 엔지니어 · 게임 서버
+# 개발 · 게임플레이 프로그래머). 판정은 마지막 낱말이 상위어이고 앞이 영역 하나뿐일 때만.
+_DOMAIN_HEADS = {"게임", "웹", "앱", "모바일", "서비스", "플랫폼", "제품", "프로덕트", "시스템",
+                 "소프트웨어", "프로그램", "콘텐츠", "미디어"}
+# '<영역> + 만드는 일'만 범용이다. '기획'·'디자인'·'엔지니어'는 영역이 붙으면 실제 직능이 된다
+# (게임 기획 · 데이터 엔지니어 · 게임 비주얼 디자이너) — 그것까지 막으면 뽑을 이름이 없어진다.
+_BUILD_UMBRELLA = {"개발", "개발자", "제작", "구현", "코딩", "프로그래밍", "dev", "development"}
+
+
+def _is_umbrella_role(name: str) -> bool:
+    """직군명이 범주(범용)인가 — 한 낱말 상위어, 또는 '<영역> <만드는 일>' 두 낱말 형태.
+
+    '게임 개발'은 클라이언트·서버·툴을 한 사람이 다 가진다는 뜻이라 '풀스택'과 같은 자리다.
+    구체 도메인은 그 뒤에 **직능**이 붙는다 — 게임 클라이언트 엔지니어 · 게임 서버 개발 ·
+    게임플레이 프로그래머처럼 무엇을 만드는 사람인지가 이름에 있다."""
+    n = _norm_job(name)
+    if not n:
+        return False
+    if n in _UMBRELLA_ROLES:
+        return True
+    parts = n.split()
+    return (len(parts) == 2 and parts[0] in _DOMAIN_HEADS and parts[1] in _BUILD_UMBRELLA)
 _INVALID_ROLES = {"none", "null", "na", "n/a", "nan", "nil", "undefined", "unknown", "any", "all",
                   "tbd", "미정", "없음", "무", "무직", "역할", "직군", "placeholder", "temp", "임시", "-", "x"}
 
@@ -431,6 +460,14 @@ async def recruit(flow, me_id, role, args):
     # 자유텍스트 직군명을 받다 보니 봇이 'none'·'미정' 같은 placeholder를 넘기면 그대로 '직군'이 돼
     # 정체불명 봇이 생성됐다(직군=전문 도메인이라는 불변식 위반). 실제 전문 도메인만 통과시킨다 —
     # 공고의 참고 role과 지원서의 [직군: X] 선언(아래 선발부) 모두 이 검사를 지난다.
+    # [채용은 뽑는 직군이 아니다(2026-08-06, U-512 실측)] 후보에서 리크루터를 빼자 유찰→genesis가
+    # 정상 발동했는데, 그 genesis가 **role='채용'으로 새 리크루터를 빚었다**(recruit_posted role=채용
+    # → recruit_genesis role=채용). 배제해 온 시스템 존재를 팀 직군으로 새로 만들어 넣는 셈이라,
+    # 같은 문제가 신품으로 되돌아온다. 공고·선발·genesis 입구에서 이 직군명을 거부한다.
+    if role_name and _norm_job(role_name) == "채용":
+        return ("채용 거부(시스템 존재): '채용'은 신입을 빚는 리크루터라 판의 직군으로 뽑지 않습니다 "
+                "— 이 판에 필요한 **실무 전문 도메인**을 role로 지정하세요(예: 게임 클라이언트 "
+                "엔지니어 / 게임 기획 / QA / 사운드).")
     if role_name and _invalid_role(role_name):
         return (f"채용 거부: '{role_name}'은(는) 직군이 아닙니다(placeholder). 직군은 **실제 전문 도메인**이어야 "
                 f"합니다 — 이 일이 어떤 전문성을 요구하는지 보고 구체 도메인을 role로 지정하세요"
@@ -438,6 +475,18 @@ async def recruit(flow, me_id, role, args):
                 f"아니라 기존 동료에게 request(Work)로 맡기거나 need만으로 공고하는 겁니다.")
     # [전문화 정책 — 범용 직군 금지(사용자 결정)] 범용(풀스택 등)은 모든 일을 흡수해 전문 채용을
     # 억제하고(라이브: AI·서버·데이터가 한 봇에 22건 집중) 병렬의 병목이 된다. 전문 직군으로 나눠 뽑는다.
+    # [상위어 한 단어는 직군이 아니다(2026-08-06, 사용자: '개발이라는 범용 직군은 못하도록 했던거
+    # 같은데 왜 개발이 나왔지')] 종전 범용 게이트는 '풀스택·제너럴·만능'만 봤다 — 그래서 '개발'
+    # '엔지니어' 같은 **상위 범주 한 단어**가 그대로 직군이 됐다(실측 U-509 공고: '직군 참고: 개발').
+    # 상위어는 모든 일을 흡수해 전문 채용을 막는 것이 풀스택과 같다. 다만 수식이 붙은 이름
+    # ('게임 클라이언트 개발'·'프론트엔드 엔지니어')은 실제 도메인이라 막지 않는다 — 이름 **전체가**
+    # 상위어 한 단어일 때만 거부한다.
+    if role_name and _is_umbrella_role(role_name):
+        return (f"채용 거부(범용 직군): '{role_name}'은(는) 직군이 아니라 **범주**입니다 — 그 안의 "
+                f"클라이언트·서버·툴·기획을 한 사람이 다 가진다는 뜻이라 백엔드+프론트를 '풀스택'으로 "
+                f"묶는 것과 같습니다. 이 판이 지금 필요한 **구체 도메인**을 지정하세요(예: 게임 "
+                f"클라이언트 엔지니어 / 게임 서버 엔지니어 / 게임플레이 프로그래머 / 게임 기획 / "
+                f"게임 비주얼 / 사운드 / QA). 범용은 모든 일을 흡수해 전문 채용과 병렬을 막습니다.")
     if role_name and any(gw in _norm_job(role_name)
                          for gw in ("풀스택", "풀 스택", "fullstack", "full stack", "full-stack",
                                     "제너럴", "generalist", "만능", "올라운드")):
@@ -652,8 +701,14 @@ async def recruit(flow, me_id, role, args):
     def _free(m):
         return not (eng is not None and scope is not None and eng.busy_elsewhere(m, scope))
 
+    # [리크루터는 후보가 아니다(2026-08-06, U-511 실측)] 합류부에서 채용봇 선발을 막았더니(085f441)
+    # 이번엔 **공고 루프**가 생겼다: 후보 풀에 채용봇이 남아 매번 지원 → 선발 거부 → 재공고. 실측
+    # U-511은 공고 4회를 그렇게 돌았다("채용 담당자만 반복 지원하고 실무 참여자로는 합류할 수 없는
+    # 상태"). 유찰 → genesis 폴백은 `not applicants`일 때만 도는데, 채용봇의 지원이 그 조건을 깨서
+    # 신규 채용으로 넘어가지 못했다. 후보에서 빼면 지원 0 → 유찰 → genesis가 정상 발동한다.
     cands = [m for m in flow.pool
-             if m != me_id and m not in flow.current.team and _free(m)]
+             if m != me_id and m not in flow.current.team and _free(m)
+             and _norm_job(str(flow._info(m) or "")) != "채용"]
 
     posting = ("[채용 공고] " + (need or f"'{role_name}' 일손이 필요합니다")
                + (f" (직군 참고: {role_name})" if role_name and need else "")
@@ -721,6 +776,23 @@ async def recruit(flow, me_id, role, args):
             await _say(flow, me_id, "[채용] 공고 유찰 — 지원자가 없습니다.")
             return ("공고 유찰: 지원자가 없습니다. 필요를 더 구체화해 재공고하거나, 새로 뽑아야 "
                     "한다면 role='직군'을 붙여 다시 공고하세요(그 직군 전문가를 신규 생성해 채웁니다).")
+        # [증원은 사람을 부르는 것이지 만들어 내는 것이 아니다(2026-08-06, 사용자: '게임 기획 둘에
+        # 개발에 난장판')] 같은 직군 증원 공고는 사용자가 이미 허용한 계약이다(지원자가 있으면 선발).
+        # 그런데 그 공고가 **유찰**되면 genesis가 같은 직군의 두 번째 봇을 새로 빚는다 — 실측 U-514:
+        # 마일스톤 회의가 파킹된 뒤 자동 공고가 나가 게임 기획이 백하람·배민재 둘이 됐다. 이 판에 이미
+        # 그 직군 담당이 있으면 새로 빚지 않고 그 사람에게 돌려보낸다(증원이 정말 필요하면 지원자를
+        # 받거나 new_role로 명시).
+        _have_same = [m for m in (getattr(flow.current, "team", None) or [])
+                      if any(_same_job(j, role_name) for j in _jobs_of(flow._info(m) or ""))]
+        if _have_same and _norm_job(args.get("new_role") or "") not in ("yes", "y", "true", "1"):
+            if flow.log:
+                flow.log("recruit_genesis_skipped_same_job", role=role_name, who=_have_same[0])
+            _nm0 = flow._info(_have_same[0]) or _have_same[0]
+            await _say(flow, me_id, f"[채용] '{role_name}' 공고 유찰 — 이 판에 이미 담당({_nm0})이 "
+                                    f"있어 새로 뽑지 않습니다.")
+            return (f"공고 유찰(신규 생성 안 함): 이 판에는 '{role_name}' 담당이 이미 있습니다 — {_nm0}. "
+                    f"그 사람에게 request(Work)로 맡기세요. 정말 증원이 필요하면 new_role='yes'로 "
+                    f"명시하거나, 다른 일이면 그 일의 구체 도메인을 role로 지정하세요.")
         # 유찰 → genesis 폴백(신규 채용 — 채용 상속). 신입은 지원 절차 없이 합류(신규 생성이므로).
         await _say(flow, me_id, f"[채용] '{role_name}' 공고 유찰(후보 {len(cands)}·지원 0) — 신규 채용으로 전환합니다.")
         _mk = getattr(g, "create_agent", None)
@@ -766,6 +838,24 @@ async def _recruit_join(flow, mid, role_name, via="선발", fresh=False):
     if not fresh and role_name:
         # 예비/무직 → 그 직군으로 잠정 채용(일로 직업 획득 — 첫 실작업 시 영속)
         cur = flow._info(mid)
+        # [채용봇은 자기 공고에 지원해 팀원이 될 수 없다(2026-08-06, U-509 실측 — 사용자: '무슨
+        # 기획자 한명만 있고 채용은 어떻게 참여한거지')] 08-04 계약은 '채용은 판의 구성원이 아니다'인데,
+        # 이 합류부는 채용 역할을 `_is_spare`로 묶어 **예비/무직과 같은 취급**을 했다 — 즉 채용봇이
+        # 자기가 낸 공고에 지원해 그대로 선발됐다(실측: 유찰 1회 뒤 [지원][직군: 웹 게임 개발·QA] →
+        # [채용 확정]). 게다가 그 합류는 tentative라 매체 역할이 갱신되지 않아, 화면엔 계속 '채용'으로
+        # 뜨고(사용자가 본 것) 판은 기획 1명 + 채용봇으로 돌아갔다. 공고의 출구는 **신규 채용
+        # (genesis)**이다 — 리크루터를 팀원으로 소비하면 다음 신입을 빚을 존재가 사라진다.
+        # [상위어 직군 봇도 합류시키지 않는다(2026-08-06)] 공고·genesis 입구는 막았지만, 그 수리
+        # 이전에 만들어진 '개발' 같은 상위어 봇이 기존 로스터에 남아 판에 들어온다(실측 U-514: 표서준
+        # — 개발). 상위어는 모든 일을 흡수해 전문 소유를 흐린다 — 구체 도메인 담당을 뽑게 돌려보낸다.
+        if _is_umbrella_role(str(cur or "")):
+            return (f"선발 불가(상위어 직군): {cur}(id {mid})의 직군은 범주 이름이라 이 판의 소유를 "
+                    f"흐립니다 — 필요한 **구체 도메인**을 role로 지정해 공고하세요(예: 게임 클라이언트 "
+                    f"엔지니어 / 프론트엔드 / QA).")
+        if _norm_job(str(cur or "")) == "채용":
+            return ("선발 불가(시스템 존재): 채용은 신입을 빚는 리크루터라 판의 구성원이 될 수 "
+                    "없습니다 — 자기 공고에 지원해 합류할 수 없습니다. 유찰이면 **신규 채용"
+                    "(genesis)**으로 그 직군의 새 동료를 빚으세요.")
         if _is_spare(flow, mid) or not cur:
             flow.bot_info[mid] = role_name
             flow.tentative_roles[mid] = role_name
