@@ -1001,6 +1001,17 @@ def roadmap_done_count(flow) -> int:
                if m.status == "done" and not str(getattr(m, "origin", "") or "").startswith("e2e:"))
 
 
+
+def roadmap_settled(flow) -> bool:
+    """[사다리는 한 번 오르기 시작하면 다시 그리지 않는다(2026-08-06, U-496 실측)] 로드맵이 이미
+    있고 그 계획 주기가 하나라도 완주됐으면 정착된 것 — 이후 회의의 '단계:' 줄은 정본을 덮지 않는다.
+    실측: 첫 회의가 '기본 피하기 게임판 → 피하기·수집 완성 게임' 2단을 정했는데, 다음 회의부터 매번
+    '완성판' 1단으로 **덮어써** 사다리가 소진 판정을 영영 못 받았다("이번 주기 = 6단계"까지 자람).
+    원래 사다리대로면 2주기에서 e2e 경계였다. 완주 전(첫 주기 진행 중 재협상)은 종전대로 다듬을 수
+    있다 — 정착의 기준은 '계획 주기의 완주'다."""
+    return bool(getattr(flow, "roadmap", None)) and roadmap_done_count(flow) > 0
+
+
 def roadmap_phases(flow):
     """[로드맵 phase 정규화(2026-07-20, 사용자: '개입 최대한 줄여')] 로드맵 항목을 phase 목록으로 —
     회의 골격이 '단계: 최소버전 → 확장 → 완성' 한 줄을 유도하므로, **띄운 화살표(' → ')만** 구분자로
@@ -1021,6 +1032,13 @@ _STAMP_SKIP_SUFFIXES = {
     ".coverage", ".log", ".pid", ".pyc", ".pyo", ".swp", ".tmp",
 }
 _STAMP_BROAD_ROOTS = {"/", "/tmp", "/var", "/var/tmp", "/home", "/root", "/opt", "/srv"}
+# [배달 신선도가 보는 것은 '사람이 받는 것'뿐이다(2026-08-05, U-504 실측)] 검증이 낳은 증거
+# (스크린샷·리포트·실행 산출)는 사람이 열어 쓰는 결과물이 아니다. 이것을 세면 QA를 돌 때마다
+# 산출물이 '바뀐' 것이 되어 재배포 관문이 영영 안 풀린다(주기가 wrapup에서 갇힘).
+_DELIVERY_SKIP_DIRS = {
+    "artifacts", "evidence", "screenshots", "reports", "test-results",
+    "playwright-report", "coverage", "htmlcov", "__pycache__", "node_modules",
+}
 
 
 def write_revision(flow) -> int:
@@ -1771,10 +1789,24 @@ def cycle_delivery_error(flow) -> str:
     if _url and _dts:
         try:
             _latest = 0.0
+            _skip = set(getattr(flow, "run_outputs", None) or ())
             for _r, _ds, _fs in os.walk(ws):
                 if "node_modules" in _r or "/.collab" in _r or "/." in _r.replace(ws, ""):
                     continue
+                # [검증이 낳은 증거는 산출물이 아니다(2026-08-05, U-504 실측)] 이 관문은 '배포 뒤
+                # 산출물이 바뀌었으면 재배포하라'인데, 대상에 QA 증거(스크린샷·리포트)까지 세고 있었다.
+                # QA를 한 번 돌 때마다 qa/evidence/*.png가 새로 생기므로 조건이 영영 안 풀린다 —
+                # 실측 U-504: 조건 1/1 실증·SubTask 9개 전부 done·백로그 전건 종결인데도 주기가
+                # wrapup에서 못 나가고 재픽 5회 뒤 stalled_stopped, 판이 '사람 조치 필요'로 멈췄다.
+                # 재배포해도 그 배포를 검증하는 순간 또 새 증거가 생겨 같은 자리로 돌아온다.
+                # '실행이 낳은 파일은 저작 입력이 아니다'(2026-07-27 U-067)와 같은 눈으로 본다.
+                _rel = _r.replace(ws, "").strip("/")
+                if _rel and any(seg in _DELIVERY_SKIP_DIRS for seg in _rel.split("/")):
+                    _ds[:] = []
+                    continue
                 for _f in _fs:
+                    if os.path.join(_rel, _f) in _skip:
+                        continue          # run 도구가 실행 산출로 기록한 파일
                     if _f.endswith((".html", ".js", ".css", ".json", ".png", ".svg", ".mp3", ".wav")):
                         try:
                             _latest = max(_latest, os.path.getmtime(os.path.join(_r, _f)))
@@ -2278,9 +2310,11 @@ def register_consensus(flow, prop: str, origin: str = ""):
     err = gate_new_cycle(flow)         # 신설 분기만 검문(목표 선행 등) — 단위 추가 분기는 위에서 자체 게이트
     if err:
         return err, 0
-    if stages:
+    if stages and not roadmap_settled(flow):
         flow.roadmap = stages          # 전체 구조(로드맵) — ckpt 동승(sys_recovery), 주기 완수마다 다음 단계 코칭
         _pnote(flow, "[로드맵] " + " → ".join(_clip(s, 120) for s in stages[:8]) + " (순차 1주기 — 각 주기 완수 시 보고 후 다음 단계 회의)")
+    elif stages:
+        _pnote(flow, "[로드맵 유지] 이번 수렴안의 '단계:'는 반영하지 않습니다 — 계획은 첫 회의의 사다리가 정본입니다(주기 완수 후 재정의 금지).")
     ms = open_milestone(flow, goal, parse_criteria_lines(crit), origin=f"회의 가결: {origin[:60]}")
     if isinstance(ms, str):
         return ms, 0
@@ -2510,6 +2544,16 @@ def meeting_stage(flow):
         _done_n = roadmap_done_count(flow)
         if not _mss or (_road and _done_n < len(_road)):
             return "milestone"
+        # [끝의 기준이 없는 Task는 끝날 수 없다(2026-08-06, U-496 실측)] 완수조건 회의는 위에서
+        # **마일스톤이 하나도 없을 때만** 열린다(`and not _mss0`). 그 창을 놓친 판은 조건이 빈
+        # 채로 주기를 돌고, 로드맵을 다 돈 뒤에도 e2e가 열리지 못한다 — 분모(조건 축)가 없어서다.
+        # 그러면 아래 비준 분기가 **마일스톤 회의**를 열고, 그 회의의 골격은 '이번에 완성해 보여줄
+        # 하나'를 묻는다. 팀은 새 주기를 정의하고, 그 주기가 끝나면 같은 자리로 돌아온다.
+        # 실측 U-496: GOAL.md의 `## Acceptance`가 비어 있는 채 3.5일·6주기·$219, e2e 이벤트 0건.
+        # 필요한 회의는 '무엇이 되면 끝인가'(criteria) 하나다 — 사람이 매번 방향을 틀어 주는 대신
+        # 구조가 그 회의로 인도한다. 조건이 서면 e2e 분모가 서고, 판은 경계로 나아간다.
+        if not str(getattr(_cur, "acceptance", "") or "").strip():
+            return "criteria"
         # [실행할 수 없는 실증에 묶인 GOAL은 마지막 주기가 푼다(2026-08-01, U-442 실측)] 로드맵을
         # 다 돌았는데 GOAL 조건이 **이 작업공간에서 실행할 수 없는 명령**에 묶여 있으면 e2e가 영영
         # 열리지 않는다(실측: `node scripts/verify-recruitment-game.mjs` — 그런 파일이 없다).
@@ -3930,7 +3974,7 @@ def register_stage(flow, stage, prop, origin=""):
         verifier_errors = _milestone_verifier_errors(flow, milestone_entries, stages)
         if verifier_errors:
             return False, "\n".join(verifier_errors)
-        if stages:
+        if stages and not roadmap_settled(flow):
             # 거부될 수 있는 검사를 전부 통과한 뒤에만 로드맵을 상태에 반영한다. 종전에는 verifier
             # 거부인데도 roadmap만 먼저 남아 다음 preflight의 최종주기 판정을 바꾸는 부분 착지가 있었다.
             flow.roadmap = stages

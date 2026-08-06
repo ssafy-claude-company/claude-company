@@ -634,6 +634,14 @@ def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
     _git(["commit", "-q", "-m", f"deploy {name}"], str(ws))
     repo_note = _push_best_effort(ws, name, gh_pat, gh_user)
 
+    # [슬롯이 어느 판의 것인지 남긴다(2026-08-06)] 슬롯 이름은 봇이 정하므로 organt-<id> 규칙을
+    # 따르지 않을 수 있다(실측: neon-dodge, p-085). 이름만으로는 판을 되찾을 수 없어 웹이
+    # ①실행 중인 앱을 그 채널의 것으로 인식하지 못하고 ②규칙 밖 슬롯에 접근 문지기를 걸지
+    # 못했다. 배포 시점에는 출처가 확실하므로 여기서 적어 둔다. dir은 복사본이라 쓸 수 없다.
+    try:
+        _src = str(ws.resolve())
+    except OSError:
+        _src = str(ws)
     with _RegistryLock():
         reg = _load_registry()
         entry = reg.get(name) or {}
@@ -650,10 +658,11 @@ def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
             port = _alloc_port(reg, name)
             pid = _spawn_app(appdir, port, start_cmd)
             reg[name] = {"port": port, "pid": pid, "dir": str(appdir),
-                         "static": False, "cmd": start_cmd, "ts": time.time()}
+                         "workspace": _src, "static": False,
+                         "cmd": start_cmd, "ts": time.time()}
         else:
             reg[name] = {"port": None, "pid": None, "dir": str(appdir),
-                         "static": True, "ts": time.time()}
+                         "workspace": _src, "static": True, "ts": time.time()}
         _save_registry(reg)
 
     url = f"{_apps_base_url()}/{name}/"

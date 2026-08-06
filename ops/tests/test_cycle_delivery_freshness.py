@@ -48,3 +48,42 @@ def test_배포_이력이_없는_판은_종전_관문_그대로(tmp_path):
     flow._deploy_url = ""
     flow._deploy_ts = 0
     assert cycle_delivery_error(flow) == ""
+
+
+# ── [검증이 낳은 증거는 산출물이 아니다(2026-08-05, U-504 실측)] ────────────────────────
+# 실측: 조건 1/1 실증 · SubTask 9개 전부 done · 백로그 전건 종결인데도 주기가 wrapup에서 못 나가고
+# 재픽 5회 뒤 stalled_stopped → 판이 '사람 조치 필요'로 멈췄다. 원인은 이 관문이 QA 증거까지
+# '바뀐 산출물'로 세는 것 — 워크스페이스에서 가장 새 파일이 qa/evidence/*.png(배포 후 QA 실행분)였다.
+# 재배포해도 그 배포를 검증하는 순간 또 새 증거가 생겨 같은 자리로 돌아온다(영구 루프).
+
+def _evidence(ws, rel, ago=10):
+    p = os.path.join(ws, *rel.split("/"))
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p, "w").write("x")
+    t = time.time() - ago
+    os.utime(p, (t, t))
+    return p
+
+
+def test_QA증거는_재배포를_요구하지_않는다(tmp_path):
+    ws = _ws(tmp_path, mtime_ago=7200)            # 제품은 배포보다 오래됨(변경 없음)
+    _evidence(ws, "qa/evidence/chromium-smoke.png")   # 배포 뒤에 생긴 증거
+    _evidence(ws, "artifacts/run-1/report.json")
+    _evidence(ws, "test-results/x.png")
+    assert cycle_delivery_error(_Flow(ws)) == ""
+
+
+def test_증거_옆에서_제품이_바뀌면_여전히_재배포다(tmp_path):
+    """증거를 빼는 것이 관문을 무력화하면 안 된다 — 제품이 바뀌면 그대로 막는다."""
+    ws = _ws(tmp_path, mtime_ago=60)              # 제품이 배포 뒤 수정됨
+    _evidence(ws, "qa/evidence/chromium-smoke.png")
+    err = cycle_delivery_error(_Flow(ws))
+    assert err and "재배포" in err
+
+
+def test_run도구가_기록한_실행산출도_제외된다(tmp_path):
+    ws = _ws(tmp_path, mtime_ago=7200)
+    _evidence(ws, "out/run-log.json")
+    flow = _Flow(ws)
+    flow.run_outputs = ["out/run-log.json"]
+    assert cycle_delivery_error(flow) == ""
