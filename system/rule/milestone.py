@@ -2785,6 +2785,45 @@ def stage_agenda(stage):
 # SYS가 골격을 깔고, 참여자들이 자기 도메인 몫을 직접 편집·이의 코멘트·해소하며 파일에서 통합된다.
 # 종결 = 골격 완성(자리표시 0)+미해소 이의 0+직전 턴 무변경 → 전원 최종 표결 → 그 파일이 결론.
 
+
+def _product_parts(flow):
+    """goal 회의가 정한 제품 부품 목록(내용 폭 + 최대 표준). 영역 분해가 딛고 설 정본."""
+    _cur = getattr(flow, "current", None)
+    out = []
+    for it in (getattr(_cur, "content_floor", None) or []):
+        t = str(it or "").strip()
+        if t:
+            out.append(t)
+    for t in re.split(r"[·,;\n]", str(getattr(_cur, "standard", "") or "")):
+        t = t.strip()
+        if t and not t.startswith("["):
+            out.append(t)
+    seen, uniq = set(), []
+    for t in out:
+        k = t[:24]
+        if k not in seen:
+            seen.add(k)
+            uniq.append(t)
+    return uniq[:12]
+
+
+def _product_part_hints(flow) -> str:
+    """[영역이 관문 모양으로 굳는다(2026-08-06, U-496 실측)] 영역 분해 회의는 '무엇으로 나눌지'를
+    자유롭게 묻는다 — 그래서 팀은 자기가 통과해야 할 **관문 모양**(배포 증거·QA 수용·회귀 게이트·
+    증적)으로 영역을 잡았다. 실측 U-496 상위 14개 영역 중 9개가 검증·배포 계열(백로그 ~112건),
+    제품 부품 계열은 4개(~55건) — 작품이 엉성한 것은 솜씨가 아니라 **노동이 놓인 자리** 탓이다.
+    goal이 이미 정한 부품(내용 폭·최대 표준)을 골격에 후보로 실어, 영역이 제품에서 출발하게 한다.
+    강제가 아니라 출발점 제공 — 검증 영역도 그대로 열 수 있다."""
+    try:
+        parts = _product_parts(flow)
+    except Exception:
+        parts = []
+    if not parts:
+        return ""
+    return ("(goal이 정한 제품 부품 — 이 중 필요한 것을 영역으로 세우고, 검증·배포 영역은 그 위에 "
+            "더하세요)\n" + "".join(f"단위: {p}\n" for p in parts[:8]) + "\n")
+
+
 def stage_draft_template(stage, agenda="", flow=None):
     """회의 개시 때 SYS가 까는 DRAFT.md 골격. 알 수 없는 단계면 None.
 
@@ -2832,7 +2871,7 @@ def stage_draft_template(stage, agenda="", flow=None):
                       "GOAL 조건을 SYS가 `GOAL@spec-hash` 정본 키로 붙입니다. 조건 문장을 다시 쓰지 말고 "
                       "각 정본 키의 `실증:` command만 비준하세요.)\n"
                       "- ⟦조건⟧ | 실증: ⟦exact command⟧\n"),
-        "subtask": ("단위: ⟦작업 영역/구성요소⟧\n단위: ⟦작업 영역/구성요소⟧\n\n"
+        "subtask": (_product_part_hints(flow) + "단위: ⟦작업 영역/구성요소⟧\n단위: ⟦작업 영역/구성요소⟧\n\n"
                     "(백로그 줄은 **자기가 수행할 일만** 씁니다 — 쓴 사람이 그 일감의 담당이 되고 바뀌지 "
                     "않습니다. 남의 도메인에서 고칠 것을 발견했으면 그 줄을 대신 쓰지 말고 '## 참고'에 "
                     "결함으로 남기세요 — 그 도메인이 자기 줄로 등재합니다.)\n"
@@ -4056,6 +4095,23 @@ def register_stage(flow, stage, prop, origin=""):
         if _open is None:
             return False, "열린 마일스톤이 없습니다 — 마일스톤 회의가 먼저입니다."
         units = parse_units(lines)
+        # [제품에서 출발했는가(2026-08-06)] goal이 부품을 정해 뒀는데 영역이 전부 관문 모양이면,
+        # 이 주기의 노동은 통과 절차에만 놓인다(실측 U-496: 제품 백로그 15%). 부품 하나도 영역에
+        # 닿지 않을 때만 반려한다 — 내용 판단이 아니라 '이미 정한 결정을 딛었는가'라는 형태 검사다.
+        try:
+            _parts = _product_parts(flow)
+        except Exception:
+            _parts = []
+        if units and _parts:
+            _utxt = " ".join(units)
+            _hit = any(any(len(w) >= 2 and w in _utxt
+                           for w in re.findall(r"[가-힣A-Za-z]{2,}", p))
+                       for p in _parts)
+            if not _hit:
+                return False, ("작업 영역이 전부 절차(검증·배포·증적) 모양입니다 — goal이 정한 제품 "
+                               "부품 중 하나도 영역이 되지 않았습니다: "
+                               + " · ".join(p[:24] for p in _parts[:6])
+                               + ". 제품 부품을 영역으로 세우고 검증·배포 영역은 그 위에 더하세요.")
         if not units:
             return False, ("수렴안에 '단위: ⟦작업 영역⟧' 줄이 1개 이상 필요합니다"
                         " — 단위는 순수 작업 영역 묶음이라 완수조건·실증을 붙이지 않습니다"

@@ -637,7 +637,8 @@ def test_회의단계_체인_goal_마일스톤_서브태스크_백로그_순차(
 
     # ③ 서브태스크 단계 — 마일스톤 섰고 단위 없음
     assert meeting_stage(f) == "subtask"
-    ok, _ = register_stage(f, "subtask", "단위: 백엔드 API | curl 확인\n단위: 프론트 폼 | playwright 확인")
+    ok, _ = register_stage(f, "subtask", "단위: 기능 3종 백엔드 API | curl 확인\n"
+                              "단위: 프론트 폼 | playwright 확인")   # 부품(내용 폭) 하나는 영역이어야 한다(2026-08-06)
     assert ok and len([s for s in _ms.subtasks if s.status != "superseded"]) == 2
 
     # ④ 백로그 단계 — 첫 미충원 단위부터 (단위마다 별도 백로그 회의)
