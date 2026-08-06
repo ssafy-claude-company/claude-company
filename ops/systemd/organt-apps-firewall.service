@@ -1,0 +1,12 @@
+[Unit]
+Description=앱 풀 포트(4100-4199)를 루프백 전용으로 — 봇 배포 앱은 게이트웨이로만 닿는다
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/organt-apps-firewall
+
+[Install]
+WantedBy=multi-user.target

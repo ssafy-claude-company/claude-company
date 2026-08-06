@@ -55,3 +55,22 @@ drop-in 파일 하나만 지우고 `systemctl daemon-reload && systemctl restart
     systemctl show murmur-web -p User      # murmurweb
     sudo -u organt head -c1 /etc/murmur-web.env   # 막혀야 한다
     ops/tests/test_app_not_root.py         # 배포 앱을 띄우는 두 자리가 uid를 낮추는지
+
+## 앱 풀 포트는 로컬 전용이다 (2026-08-06)
+
+`system/deploy.py`는 4100–4199를 "로컬 전용 — 게이트웨이만 접근"이라 적어 두지만, 앱은 봇이 쓴
+코드라 대개 `0.0.0.0`에 바인딩한다. 그러면 `/apps/<슬롯>/`에 건 멤버 확인을 **포트로 직접 가면
+지나친다**. 공유기가 80/443만 넘겨서 인터넷에서는 못 닿지만, 같은 랜에서는 닿는다.
+
+뜻을 규칙으로 강제한다 — `organt-apps-firewall.service`가 부팅마다 세운다:
+
+    iptables -A INPUT -p tcp --dport 4100:4199 ! -i lo -j DROP
+
+미디어(SFU UDP 50000-50100 · TCP 7881)는 건드리지 않는다 — 그건 밖에서 들어와야 하는 길이다.
+`nginx → 127.0.0.1:<포트>`는 루프백이라 그대로 산다.
+
+확인:
+
+    iptables -S INPUT | grep 4100        # 규칙이 서 있는가
+    curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4100/   # 200 (게이트웨이 경로)
+    # 랜의 다른 기기에서 http://<서버>:4100/ → 막혀야 한다(같은 서버에서는 lo로 배달돼 확인 불가)
