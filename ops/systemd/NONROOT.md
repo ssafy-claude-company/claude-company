@@ -74,3 +74,32 @@ drop-in 파일 하나만 지우고 `systemctl daemon-reload && systemctl restart
     iptables -S INPUT | grep 4100        # 규칙이 서 있는가
     curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4100/   # 200 (게이트웨이 경로)
     # 랜의 다른 기기에서 http://<서버>:4100/ → 막혀야 한다(같은 서버에서는 lo로 배달돼 확인 불가)
+
+## 비특권 전환이 기존 파일 권한과 만나는 자리 (2026-08-06)
+
+서비스를 비특권으로 내리면 그 사용자에게 `/root` 통과 권한을 줘야 한다. 그 순간 **그 아래
+`0644` 파일이 전부 그 사용자에게 열린다.** 내리는 일과 함께 반드시 이 축을 훑어야 한다.
+
+실측으로 나온 것(전부 좁혔다):
+
+| 파일 | 상태였던 것 | 누가 읽었나 |
+|---|---|---|
+| `/root/.claude/.credentials.json` · `daemon/control.key` | `/root/.claude`에 `organt:rwx` ACL | **러너가 운영자 Claude 자격증명·데몬 제어 키를 읽었다** |
+| `/var/lib/postgresql/murmur.dump` | 0644 | 서비스 사용자 전부 (DB 전체 사본) |
+| `/root/atelier/var/tokens.env` | 0644 | 러너·웹 |
+| `/root/wt/*/.dburl` | 0644 | 러너·웹 (값은 비밀번호 교체로 이미 무효) |
+| `/root/backups/murmur/*.sql.gz` | 0644 | 러너·웹 (별도 절에 기록) |
+
+정당한 ACL(그대로 둔다):
+
+    /root/ClaudeCompany/ops/var       organt:rwx    러너가 쓰는 자리
+    /root/ClaudeCompany/logs          organt:rwx    러너 로그
+    /root/.codex                      organt:rwx    러너가 codex를 직접 돌린다(auth.json 포함)
+    /root                             organt:--x · murmurweb:--x   통과만
+
+확인:
+
+    # 각 사용자가 읽을 수 있는 비밀이 자기 것뿐인가
+    sudo -u organt    head -c1 /etc/murmur-web.env    # 막혀야 한다
+    sudo -u murmurweb head -c1 /etc/murmur-web.env    # 이것만 읽혀야 한다
+    sudo -u organt    head -c1 /root/.claude/.credentials.json   # 막혀야 한다
