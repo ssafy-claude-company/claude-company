@@ -59,6 +59,9 @@ if [ -z "$FAST" ]; then
   # 파일마다 따로 적힌 여섯 벌이라 일곱 번째가 빠뜨리면 우리 출처에서 스크립트가 돈다 - 그 출처에
   # 세션 열쇠가 있다. v-html 자리를 전부 훑어 아는 렌더러만 쓰게 한다.
   ( cd "$R/murmur/frontend" && node tools/check_vhtml.mjs ) || fail=1
+  # [가입 퍼즐(2026-08-07, 현준-4)] 화면이 쓰는 SHA-256이 서버(표준)와 어긋나면
+  # 답이 영영 안 맞아 **아무도 가입하지 못한다**. 눈으로는 안 보이는 고장이라 계약으로 건다.
+  ( cd "$R/murmur/frontend" && node tools/check_pow.mjs ) || fail=1
 fi
 echo "== 5) STATE.md 신선도 (heads 대조) =="
 # 2레포: claude-company(루트=병합, STATE가 이 안에 있어 순환→정보표시) + murmur(별도→강제)
