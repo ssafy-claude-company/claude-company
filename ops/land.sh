@@ -251,6 +251,22 @@ else
   echo "  ⚠ 프론트 빌드 실패 — 화면이 낡은 채 남는다. /tmp/land-build.log 확인 후 수동 빌드:"
   echo "     cd $MS/murmur/frontend && npm run build"
 fi
+# [스키마도 함께 간다(2026-08-07, 현준-4 실사고)] 종전 이 절차엔 migrate가 아예 없었다 —
+# 코드만 정본에 가고 표는 안 가서, 새 모델을 쓰는 문이 전부 500이었다(실측: 계정 되찾기 4개 문).
+# 시험은 제 DB를 새로 만들어 돌기 때문에 초록이고, 라이브만 깨진다 — 검증이 못 보는 구멍이다.
+# 재시작 **앞**에 둔다: 표가 없는 채로 새 코드가 뜨면 그 사이 요청이 죽는다.
+# 안 미룬 마이그레이션이 없으면 아무 일도 하지 않는다(멱등).
+if [ -f "$MS/murmur/backend/manage.py" ]; then
+  _mig=$( set -a; . /etc/murmur-web.env 2>/dev/null; set +a
+          cd "$MS/murmur/backend" && DJANGO_SETTINGS_MODULE=config.settings           PYTHONPATH=/root/ClaudeCompany ORGANT_PJT=/root/ClaudeCompany           /root/ClaudeCompany/.venv/bin/python manage.py migrate --noinput 2>&1 )
+  if [ $? -eq 0 ]; then
+    _n=$(printf '%s\n' "$_mig" | grep -c '  Applying ')
+    [ "${_n:-0}" -gt 0 ] && echo "  DB 마이그레이션 ${_n}건 적용" || echo "  DB 마이그레이션 — 적용할 것 없음"
+  else
+    echo "  ⚠ DB 마이그레이션 실패 — 새 표를 쓰는 문이 500이 된다. 아래 확인 후 수동 실행:"
+    printf '%s\n' "$_mig" | tail -5 | sed 's/^/     /'
+  fi
+fi
 # 2026-07-28 SSE 도입으로 웹은 2프로세스(murmur-web :8000 + murmur-sse :8002) — 둘 다 재시작.
 for svc in murmur-web murmur-sse; do
   systemctl restart "$svc" && echo "  $svc 재시작 — 반영 완료" \
