@@ -187,22 +187,6 @@ def _make_builder(cfg: Config, audit: AuditLog, bot_info=None, model_map=None, p
                         _t.add_done_callback(_quota_check)
                 except Exception:   # 실행 루프 없음(테스트)·기타 → 스킵(과금은 best-effort)
                     pass
-                # [파일에 이름을 붙인다(2026-08-06, 사용자: '모두 해')] 이 턴이 돈 구간을 웹에 남긴다 —
-                # 그 사이에 바뀐 작업공간 파일의 임자가 이 봇이다(겹치면 웹이 단정하지 않는다).
-                # 과금과 같은 결: fire-and-forget이고 실패는 무해하다(이름이 안 붙을 뿐).
-                try:
-                    _rw = getattr(getattr(flow, "guide", None), "report_turn_window", None)
-                    _ch2 = getattr(flow, "user_channel", None)
-                    _ms2 = int(rec.get("duration_ms") or 0)
-                    if _rw and _ch2 is not None and _ms2 > 0:
-                        import asyncio as _aio2, time as _tm2
-                        _end2 = _tm2.time()
-                        _tw = _aio2.get_running_loop().create_task(
-                            _rw(int(_ch2), organt_id, _end2 - (_ms2 / 1000.0), _end2))
-                        _USAGE_BG.add(_tw)
-                        _tw.add_done_callback(_USAGE_BG.discard)
-                except Exception:   # 실행 루프 없음(테스트)·기타 → 스킵
-                    pass
         # organt의 파일 도구(cwd)는 '현재 흐름의 작업공간'을 따른다 — 프로젝트별 폴더 분리와 정합
         # (cwd가 base 고정이면 run은 프로젝트 폴더, Write는 base로 가는 분열이 생긴다).
         cwd = str(getattr(flow, "workspace", None) or cfg.workspace_dir)

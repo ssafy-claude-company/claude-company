@@ -1754,6 +1754,89 @@ def make_guide_tools(flow: Flow, me_id: int, role: str, mode: str = "collab"):
 
 
 
+        @tool("state",
+              "이 판의 현재 결정 상태를 **필요한 조각만** 조회 — what: team(동료와 직군) / goal(목표) / acceptance(완수조건) / "
+              "cycle(이번 주기와 조건 충족) / areas(열린 작업 영역) / mine(내가 집은 일감). "
+              "빈 값이면 무엇을 물을 수 있는지 목록만 돌려준다. 문서를 통째로 Read하지 말고 이걸 쓰세요 — "
+              "GOAL.md·DRAFT.md·MINUTES.md는 한 줄이 필요할 때도 전문이 문맥에 실린다.",
+              {"what": str})
+        async def state(args):
+            # [읽는 대신 묻는다(2026-08-07, 사용자: '의도적으로 계속 주입하는 거 보다는 직접 필요한
+            # 만큼 가져다 쓰는 정보 구조 체계가 중요하겠지?')]
+            # [실측] audit 61,540건 중 Read 20,532 · Glob 7,147 · Grep 2,256이고, 그중 **같은 봇이 같은
+            # 경로를 다시 읽은 것이 27,169회(91%)**다. 한 봇이 TURNS.md를 203회, DRAFT.md를 164회 읽었다.
+            # 읽은 전문은 그 턴의 문맥에 남아 이후 모든 스텝에 다시 실린다 — 한 턴 입력이 26M~42M까지
+            # 부푸는 경로가 이것이다(p50은 88K다).
+            # 문제는 봇이 묻는다는 것이 아니라 **묻는 단위가 문서 한 채**라는 것이다. 한 줄이 필요해도
+            # 전문이 온다. 조각 단위로 답하는 창구를 주면, 밀어 넣지 않아도 필요한 만큼만 오간다.
+            cur = getattr(flow, "current", None)
+            if cur is None:
+                return _ok("(진행 중인 Task가 없습니다)")
+            what = str((args or {}).get("what") or "").strip().lower()
+            def _goal():
+                g = str(getattr(getattr(cur, "status", None), "goal", "") or "").strip()
+                return f"목표: {g}" if g else "(목표 미정 — goal 회의가 정합니다)"
+            def _acceptance():
+                rows = [x for x in str(getattr(cur, "acceptance", "") or "").splitlines() if x.strip()]
+                return ("완수조건 %d개:\n" % len(rows)) + "\n".join(rows) if rows else \
+                    "(완수조건 미정 — criteria 회의가 정합니다)"
+            def _cycle():
+                ms = next((m for m in (getattr(flow, "milestones", None) or [])
+                           if getattr(m, "status", "") not in ("done", "superseded")), None)
+                if ms is None:
+                    return "(열린 주기 없음)"
+                c = list(getattr(ms, "criteria", None) or [])
+                ok = sum(1 for x in c if getattr(x, "passed", False))
+                out = [f"주기 {getattr(ms, 'ms_id', '')}: {str(getattr(ms, 'goal', '') or '')}",
+                       f"조건 {ok}/{len(c)} 충족"]
+                for x in c:
+                    out.append(("  [충족] " if getattr(x, "passed", False) else "  [미충족] ")
+                               + str(getattr(x, "desc", "") or "")[:120])
+                return "\n".join(out)
+            def _areas():
+                ms = next((m for m in (getattr(flow, "milestones", None) or [])
+                           if getattr(m, "status", "") not in ("done", "superseded")), None)
+                sts = [x for x in (getattr(ms, "subtasks", None) or []) if ms is not None
+                       and getattr(x, "status", "") not in ("done", "superseded")]
+                if not sts:
+                    return "(열린 작업 영역 없음)"
+                return "\n".join(f"{getattr(x, 'st_id', '')} — {str(getattr(x, 'goal', '') or '')}"
+                                 for x in sts)
+            def _mine():
+                rows = []
+                for r in (getattr(flow, "backlog_relays", None) or {}).values():
+                    for b in (getattr(r, "backlogs", None) or []):
+                        if int(getattr(b, "assignee", 0) or 0) != int(me_id):
+                            continue
+                        if getattr(b, "status", "") not in ("open", "in_progress"):
+                            continue
+                        rows.append(f"{getattr(b, 'backlog_id', '')} [{getattr(b, 'status', '')}] "
+                                    + str(getattr(b, 'desc', '') or ''))
+                return "\n".join(rows) if rows else "(집은 일감 없음 — pick_backlog로 자기 몫을 집으세요)"
+            def _team():
+                # [제일 먼저 묻는 것이 빠져 있었다(2026-08-07, 실측 U-534)] 유일한 실무자가
+                # state(what="team")을 불렀는데 목록에 없어 안내문만 돌아갔다. 그러자 그 봇은
+                # 정족수를 스스로 채우려고 **자기 자신과 채용 봇을 recruit**하고, 자기 혼자만
+                # 참가자로 넣은 meet를 두 번 열었다. 누가 이 판에 있는지가 첫 질문이다.
+                rows = []
+                for m in (getattr(cur, "team", None) or []):
+                    _lbl = str(flow._info(m) or "").strip() or "(직군 미정)"
+                    rows.append(f"{_lbl} (id {m})" + ("  ← 당신" if int(m) == int(me_id) else ""))
+                if not rows:
+                    return ("(이 판에 아직 동료가 없습니다 — 채용이 먼저입니다. 회의는 실무자가 "
+                            "모인 뒤 시스템이 엽니다.)")
+                return (f"이 판의 동료 {len(rows)}명:\n" + "\n".join(rows)
+                        + "\n(채용은 판의 구성원이 아니라 시스템 존재라 이 목록에 없습니다.)")
+            table = {"team": _team, "goal": _goal, "acceptance": _acceptance, "cycle": _cycle,
+                     "areas": _areas, "mine": _mine}
+            if what in table:
+                return _ok(table[what]())
+            return _ok("무엇을 물을지 what으로 지정하세요 — "
+                       "team(동료와 직군) · goal(목표) · acceptance(완수조건) · cycle(이번 주기·조건 충족) · "
+                       "areas(열린 작업 영역) · mine(내가 집은 일감). "
+                       "문서 전문이 필요할 때만 GOAL.md 등을 Read하세요.")
+        tools.append(state)
+
         @tool("list_projects",
               "회사가 진행/배포해 온 프로젝트 전체 목록(P-번호·이름·요약)을 조회 — 신규성 판단·중복 회피·"
               "기존 작품 이어가기 판단에 사실 근거가 더 필요할 때(프롬프트의 회사 이력은 최근 일부만).",

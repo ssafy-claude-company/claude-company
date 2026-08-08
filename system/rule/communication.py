@@ -154,6 +154,46 @@ def _bid_score(res) -> int:
     return 1 if _is_substantive(t) else 0
 
 
+def _hiring_note(flow) -> str:
+    """[반복 공고를 막는 것은 숫자와 명단이다(2026-08-06, 사용자: '클라이언트 1명만 채용되서 혼자서
+    개발하고 있는')] 관문이 '채용을 먼저 하세요'라고만 말하면, 채용 봇은 **이미 있는 직군을 다시**
+    공고한다 — 실측 U-524: 게임플레이 프로그래머를 뽑은 직후 같은 직군을 재공고해
+    recruit_genesis_skipped_same_job으로 튕겼고, 판은 1명으로 멈췄다. 몇 명이 더 필요한지와 이미
+    있는 직군을 함께 준다(무엇을 뽑을지는 여전히 판이 정한다 — 직군 목록을 시스템이 지정하지 않는다).
+    """
+    try:
+        from .milestone import GOAL_QUORUM_MIN as _QM
+        _work = [m for m in (getattr(flow.current, "team", None) or []) if not _is_spare(flow, m)]
+        _have = [str(flow._info(m) or "").strip() for m in _work]
+        _have = [h for h in _have if h]
+        _need = max(int(_QM) - len(_work), 0)
+        if not _need:
+            return ""
+        _cur = (" 이미 있는 직군: " + " · ".join(_have) + " —") if _have else ""
+        return (f"\n[채용 지시] {_need}명이 더 필요합니다.{_cur} **같은 직군을 다시 공고하지 마세요** "
+                f"— 이 산출물에 필요한 **다른 도메인**을 role로 지정해 한 번에 하나씩 공고하세요.")
+    except Exception:
+        return ""
+
+
+def _hiring_done_note(flow) -> str:
+    """[회의를 열 사람은 뽑는 것이 아니다(2026-08-07, 실측 U-527)] 정족수를 채운 뒤에도 채용 봇이
+    공고를 두 건 더 냈다: '첫 회의를 소집하고 공동 DRAFT.md에 결론을 정리할 담당자',
+    '실제 플레이 흐름을 독립적으로 확인할 담당자'. 둘 다 이미 그 직군이 있어 튕겼다
+    (recruit_genesis_skipped_same_job). 폐지된 사회자 자리를 직군 이름으로 되살리려는 시도다.
+    거절문이 '담당자에게 넘기세요'라고만 하니 '담당자를 뽑아야겠다'로 읽힌 것이다.
+    회의는 시스템이 자동으로 연다는 사실을 그 자리에서 말한다."""
+    try:
+        _work = [m for m in (getattr(flow.current, "team", None) or []) if not _is_spare(flow, m)]
+        if not _work:
+            return ""
+        return (f"\n[채용 그만] 이 판에는 이미 실무자 {len(_work)}명이 있습니다 — 회의는 **시스템이 자동으로 "
+                f"엽니다**(회의를 소집할 사람이나 결론을 정리할 사람을 따로 뽑을 필요가 없습니다). "
+                f"추가 공고를 내지 마세요. 정말 없는 도메인이 생기면 그때 그 도메인으로 공고하세요.")
+    except Exception:
+        return ""
+
+
 async def meet(flow, me_id, args):
     """[Communication Rule 로직] meet — guide_tools에서 이관(평문 반환, @tool이 _ok 래핑)."""
     from .._util import _speech_clip, _react, _dbg
@@ -177,9 +217,76 @@ async def meet(flow, me_id, args):
         members = [me_id] + members
     if not [m for m in members if m != me_id]:
         return ("오류: 회의할 멤버가 없습니다.")
+    # [열린 회의를 남긴 채 새 회의를 열지 않는다(2026-08-07)] 앞 회의가 상위 개입(채용 성사·위임
+    # 회수·취소)으로 마무리 없이 끊겼으면 여기서 먼저 닫는다 — 화면에 결론 없는 블록이 쌓이지 않게.
+    _unc = getattr(flow, "_meet_unclosed", None)
+    if _unc:
+        try:
+            _ust, _uhead = str(_unc[0] or ""), str(_unc[1] or "이 단계")
+            # [끊긴 회의도 결론을 남긴다(2026-08-07, 사용자: '어떤 회의든 결론을 뭐라도 내야하지
+            # 않음?')] 여기는 상위 처리가 끼어 회의가 중간에 끝난 자리다. 종전엔 '결론을 내지 못한
+            # 채 끊겼습니다' 한 줄이라, 그때까지 초안에 쌓인 합의가 기록에서 사라졌다 —
+            # 실측 U-536 subtask: 발언 10건이 오갔는데 마무리에는 아무 내용도 없었다.
+            _usofar = ""
+            try:
+                from .._util import dossier_read as _dread1
+                from .milestone import draft_decision_region as _dregion1
+                from .._util import clip as _clip1
+                _usofar = _clip1(str(_dregion1(str(_dread1(flow, "DRAFT.md") or "")) or "")
+                                 .strip().replace("\n", " "), 300)
+            except Exception:
+                _usofar = ""
+            await _say_speech(
+                flow, me_id, "[회의 마무리]" + (f"[단계:{_ust}]" if _ust else ""),
+                f"중지 ({_uhead}) — 여기까지 정한 것: "
+                f"{_usofar or '아직 문장으로 남은 합의가 없습니다'}\n"
+                f"막은 것: 회의 도중 상위 처리(채용 성사·위임 회수 등)가 끼어들었습니다 "
+                f"(같은 단계를 이어서 다시 엽니다)",
+                meta={"meet": {"role": "close", "stage": _ust, "resolved": False,
+                               "conclusion": str(_usofar or "")[:400]}})
+            if flow.log:
+                flow.log("meet_closed_interrupted", stage=_ust)
+        except Exception:
+            pass
+        try:
+            flow._meet_unclosed = None
+        except Exception:
+            pass
     _hold = _clarify_hold(flow, me_id)   # [G2 — clarify 행동 잠금(B-02)]
     if _hold:
         return _hold
+    # [관문은 회의 자체에 있어야 한다(2026-08-06, 사용자: '채용 시스템과 회의나 여러 시스템적 구조적
+    # 안정성을 확실화')] 목표 단계 정족수·채용 배제는 SYS 단계 루프(_stage_roster_ready)에만 걸려
+    # 있었다. 그런데 봇이 meet 도구를 직접 부르면 그 루프를 타지 않는다 — 실측 U-522: 로그에
+    # stage_meeting_opened가 없는데 goal 회의가 섰고, 연 것은 채용 봇, 참여 실무자는 1명이었다.
+    # 회의가 열리는 길은 이 함수 하나이므로 관문을 여기로 내린다(호출처마다 붙이지 않는다).
+    # [팀이 아닌 사람은 회의를 열지 않는다(2026-08-07, 실측 U-535)] _is_spare는 flow.bot_info의
+    # 직군 라벨로 판정하는데, 그 목록은 채널로 좁힌 로스터라 시스템 존재인 채용 봇이 빠질 수 있다.
+    # 라벨이 ''이면 판정이 False가 되어 '채용은 회의를 열 수 없다' 관문이 통과됐다 — 실측 13956:
+    # 채용이 goal 회의를 열고 여는 의견까지 냈다(실무자는 1명뿐이었다).
+    # 라벨이 없고 이 Task의 팀도 아니면 구성원이 아니다 — 같은 자리에서 돌려보낸다.
+    _in_team = int(me_id) in [int(x) for x in (getattr(flow.current, "team", None) or [])]
+    if _is_spare(flow, me_id) or (not str(flow._info(me_id) or "").strip() and not _in_team):
+        if flow.log:
+            flow.log("meet_denied_system_role", who=int(me_id))
+        _hn = _hiring_note(flow)
+        return ("[불가] 채용은 판의 구성원이 아니라 회의를 열 수 없습니다(2026-08-04 계약) — "
+                "이 판의 담당자에게 request(Work)로 넘기세요. 당신의 몫은 사람을 모으는 일입니다."
+                + (_hn or _hiring_done_note(flow)))
+    try:
+        from .milestone import GOAL_QUORUM_MIN as _QM, meeting_stage as _mg1
+        if str(_mg1(flow) or "") == "goal":
+            _work = [m for m in (flow.current.team or []) if not _is_spare(flow, m)]
+            if me_id not in _work and not _is_spare(flow, me_id):
+                _work = _work + [me_id]
+            if len(_work) < int(_QM):
+                if flow.log:
+                    flow.log("meet_denied_thin_roster", stage="goal", roster=len(_work), need=int(_QM))
+                return (f"[대기] 무엇을 만들지는 만들 사람들이 모인 뒤 정합니다 — 지금 이 판의 실무 "
+                        f"인원은 {len(_work)}명이고 {int(_QM)}명이 필요합니다. 회의 대신 채용을 "
+                        f"먼저 진행하세요(필요한 도메인을 role로 지정해 공고)." + _hiring_note(flow))
+    except Exception:
+        pass
     # [작업 단계 회의 가드(2026-07-17, ch78 실측)] 백로그가 서 있는 작업 단계의 회의는 등록 경로가
     # 없는(단계 None) 자유 회의 — 결론 없이 발언 예산만 태운다(재시작 복원·봇 습관 양쪽에서 반복 관측,
     # 회당 ~$5). '회의 하나=결론 하나' 계약: 지금 정할 것이 없으면 회의가 아니라 릴레이가 맞다.
@@ -227,6 +334,7 @@ async def meet(flow, me_id, args):
 
     async def _run_meet():
         nonlocal members   # [심의단 자기선택] 응찰 선발로 재바인딩 — 클로저 지역화 방지
+        nonlocal topic     # [단계 제목 강제(2026-08-06)] 아래에서 재바인딩 — 같은 이유로 지역화 방지
         from .._util import doc_collab_on, dossier_append, dossier_rel
         minutes = []
         r1_full = []       # [B-11] (발언자, 전문) — R2+ '전원 1R 압축' 합성 원료(시스템 기계 압축)
@@ -246,10 +354,27 @@ async def meet(flow, me_id, args):
         from .milestone import meeting_stage as _ms_stage, stage_agenda as _ms_agenda
         from .milestone import register_stage as _ms_regstage, stage_frame as _ms_frame
         from .milestone import canonical_parent_contract as _ms_parent
+        # [무엇을 만들지·무엇이 되면 끝인가는 전원이 독립으로 말한다(2026-08-06, 사용자: '1명이 너무
+        # 이상한 설계를 냈어 … 다른 얘들은 회의 참여도 안했고')] 07-09에 강제 R1(전원 의무 발화)을
+        # 폐지하며 "제거가 의견 다양성에 주는 영향은 floor_bid 분포로 관측해 데이터로 판단한다"고
+        # 적어 뒀다. 그 데이터가 나왔다 — 단계별 표결 참여 중앙값: 마일스톤 6 · 작업영역 7 · 백로그 6
+        # 인데 **goal 2 · criteria 2**다(실측 U-516 goal은 1명, 발언 2건, 찬성 1·반대 0으로 확정).
+        # 뒤 단계는 앞 결론이라는 딛을 자리가 있어 응찰이 붙지만, 백지에서 시작하는 앞 두 단계는
+        # 먼저 쓴 사람의 초안이 곧 결론이 된다. 그래서 '3레인 좌우 이동 60초'가 Task 전체가 됐다.
+        # 앞 두 단계만 R1을 되살린다 — 서로를 못 보는 독립 의견 동시 수집이라 앵커링이 없고,
+        # 중앙 지시도 없다(각자 자기 도메인 관점으로 말할 뿐). 뒤 단계는 종전 turn-taking 그대로.
+        _R1_STAGES = ("goal", "criteria")
         _no_r1 = _ms_on()
         # [회의 하나당 결론 하나(2026-07-14, 사용자)] 이 회의가 정할 단 하나를 상태에서 유도 —
         # GOAL/마일스톤/서브태스크/백로그. 안건·수렴안 템플릿이 그 단계로 좁혀지고, 채택 시 그 단계만 등록.
         _stage = _ms_stage(flow) if _no_r1 else None
+        # 이 회의가 도는 동안의 소속 단계 — _say_speech가 모든 회의 발언에 이 마커를 찍는다.
+        # (meeting_stage()를 그때그때 다시 묻지 않는다: 결론이 등록되는 순간 다음 단계로 넘어가므로
+        #  같은 회의의 마무리 발언이 다음 단계 소속으로 잘못 찍힌다.)
+        try:
+            flow._meet_stage_now = str(_stage or "")
+        except Exception:
+            pass
         if _stage:
             # [전역 회의 소속 태깅] 이 회의가 도는 동안 run_turn의 파이프라인 태깅이 SubTask를 생략
             # (주기까지만) — 전역 회의가 특정 단계 폴더로 접히는 오배치 차단. 해제는 meet() 완료 콜백.
@@ -259,6 +384,24 @@ async def meet(flow, me_id, args):
         if _agenda:
             from .milestone import stage_context as _ms_sctx
             _agenda = _agenda + _ms_sctx(flow, _stage)   # [정합 A] 어느 단위/주기 회의인지 안건에 명시
+        # [첫 프레임이 회의의 정체를 정한다(2026-08-06, 사용자: '회의의 첫 시작자는 뭔가 이상하게
+        # 말하는 느낌이 있는데')] 봇이 자기 topic으로 회의를 열면 그 문장이 개시 행·회의록·모든
+        # 라운드 프롬프트의 '주제'가 된다. 실측 U-514: 파이프라인은 criteria(무엇이 되면 끝인가)인데
+        # 봇이 '이번에 보여줄 하나 — 첫 플레이 가능한 수직 슬라이스'로 열었고, 여는 의견도 마일스톤
+        # 질문에 답했다(범위 논의). 등록 관문이 형식은 잡아 줘도 그 회의 전체가 엉뚱한 질문을 돌았다.
+        # 단계가 정해져 있으면 **제목은 그 단계의 것**으로 세우고, 봇이 쓴 문장은 범위로 뒤에 붙인다.
+        if _stage:
+            from .milestone import stage_title as _ms_title
+            # [단계 회의의 안건은 시스템 상수다(2026-08-07, 사용자: '회의가 여러개에 … 그냥 전체적으로
+            # 이상하잖아')] 07-30에 제목을 강제하면서 봇이 지은 제목을 뒤에 붙여 뒀다. 그 결과 같은
+            # 단계 회의가 제목만 다른 여러 건으로 보인다 — 실측 U-527 subtask 4건:
+            #   '작업 영역 분해 — 이번에 만들 것을 어떤 작업 영역들로 나눌지…'   (SYS 개시)
+            #   '작업 영역 분해 — 플레이어가 1초 안에 읽어야 할 시각 계층과…'    (게임 비주얼)
+            #   '작업 영역 분해 — 실제로 열어 플레이·검증할 수 있도록…'          (게임 비주얼)
+            #   '작업 영역 분해 — 프론트엔드 합류 후 구현·검증을 담당할…'        (게임 비주얼)
+            # 한 봇이 자기 관심사를 제목으로 회의를 세 번 더 열었다. 안건은 단계가 정하는 하나이고
+            # 봇의 관심사는 발언으로 말할 것이다 — 제목에서 떨어낸다(본문 안건은 그대로 실린다).
+            topic = _ms_title(_stage) or topic.strip()
         _stage_frame = _ms_frame(_stage) if _stage else ""   # 매 발언 턴에 주입할 '이 회의의 정체' 프레임
         _parent_contract = (_ms_parent(flow) if _stage and _stage != "goal" else "")
         _parent_frame = (
@@ -297,13 +440,92 @@ async def meet(flow, me_id, args):
             # [중립 어휘(2026-07-14, 사용자: '소집자 의견 이러니 자기가 리더인줄 아나')] '발제/소집자'는
             # 폐지된 발제자 권위처럼 읽힌다 — 회의 연 사람도 한 참여자일 뿐이라 '회의 시작 / 여는 의견'으로
             # 중립화(권한 착시 제거). 기능은 동일: 주제 제시 + 자기 의견, 이후 전 발언이 응찰.
-            _preface = topic + (f"\n[여는 의견] {my_view}" if str(my_view or "").strip() else "")
+            # [의장은 없다(2026-08-06, 사용자: '의장이라는 개념 자체가 없어졌을텐데 더 깊게 봐봐')]
+            # 07-14에 어휘만 중립화하고('소집자 의견'→'여는 의견') **자리**는 남겼다: 회의를 연 사람의
+            # 의견이 개시 메시지에 붙어 맨 앞에 서고, 나머지가 그 아래 붙는다. 백지 단계에서 그 한 줄이
+            # 곧 결론이 되던 것이 08-06 독립 라운드 복원의 이유였는데, 정작 그 특권 자리는 그대로였다
+            # (실측 U-520 goal: 개시 메시지의 여는 의견이 '60초짜리 2D 아케이드'였다).
+            # 백지 단계에서는 개시 메시지에 주제만 싣는다 — 연 사람의 의견도 아래 독립 라운드에서
+            # 남들과 같은 자격의 [독립 의견] 한 건으로 선다.
+            _blank_stage = bool(_stage in _R1_STAGES)
+            _preface = topic if _blank_stage else (
+                topic + (f"\n[여는 의견] {my_view}" if str(my_view or "").strip() else ""))
             minutes.append(f"[회의 시작] {flow._info(me_id) or me_id}: {_speech_clip(_preface)}")
             # [단계는 필드로(2026-07-17, 사용자: '공용처리·안정적 관리')] 개시 메시지에 런타임 단계를
             # 기계 마커로 스탬프 — 봇이 자기 topic으로 재개설해도 피드가 같은 단계 회의로 병합·라벨링.
             # (표시층 guide_format이 마커를 벗기고, feed_assembly가 필드로 승격 — 본문 스크래핑 아님.)
-            await _say_speech(flow, me_id,
-                              "[회의 시작]" + (f"[단계:{_stage}]" if _stage else ""), _preface)
+            # [회의를 여는 것은 시스템이다(2026-08-07, 사용자: '회의 첫 시작 메시지의 이상함이 있어')]
+            # 개시 행은 안건이다. 그런데 사람 명의로 나가서, 백지 단계에서 여는 의견을 뗀 뒤로는
+            # 화면에 '송도경/게임개발 — Task 목표 정의' 한 줄로 선다(실측 U-528 12:28). 그 사람이
+            # 안건을 읽은 것처럼 보인다. 안건은 단계가 정하는 시스템의 말이므로 SYS 명의로 남긴다
+            # (블록 제목·단계 마커는 그대로 — 명의만 바뀐다). 그 사람의 의견은 아래 독립 라운드에서
+            # 자기 이름으로 따로 선다.
+            # [끊긴 회의도 닫는다(2026-08-07, 실측 U-528)] 08-06의 미결 마감은 _run_meet의 **정상 반환
+            # 경로**에만 있었다. 회의 도중 채용이 성사되거나(13495·13509) 위임 회수가 끼면(13537)
+            # 코루틴이 그 자리에서 끝나 마무리가 안 나간다 — 개시 6건 중 4건이 열린 채 남았다.
+            # 개시 순간 '열린 회의' 표시를 세우고, 다음 회의가 열릴 때 앞것을 먼저 닫는다.
+            try:
+                flow._meet_unclosed = (str(_stage or ""), str(_agenda or topic or "")[:80])
+            except Exception:
+                pass
+            _open_label = "[회의 시작]" + (f"[단계:{_stage}]" if _stage else "")
+            # [제목은 데이터로 받는다(2026-08-07, 사용자: '첫 글을 제목으로 … 가 아니라 정확히
+            # 데이터 적으로 관리해서 결론 따로 받고 제목 따로 받아야지')] 화면이 본문에서 안건을
+            # 되짚지 않게, 회의의 제목·단계를 구조 필드로 함께 보낸다.
+            _meta_open = {"meet": {"role": "open", "stage": str(_stage or ""),
+                                   "topic": str(topic or "")[:120]}}
+            if _blank_stage:
+                try:
+                    await flow.guide.post(int(flow.current.thread_id), 0,
+                                          f"{_open_label} {_preface}", meta=_meta_open)
+                except Exception:
+                    await _say_speech(flow, me_id, _open_label, _preface, meta=_meta_open)
+            else:
+                await _say_speech(flow, me_id, _open_label, _preface, meta=_meta_open)
+            # [백지 단계는 전원이 먼저 독립으로 말한다(2026-08-06, 사용자: '1명이 너무 이상한 설계를
+            # 냈어 … 다른 얘들은 회의 참여도 안했고')] 07-09에 강제 R1을 폐지하며 "다양성에 주는 영향은
+            # floor_bid 분포로 관측해 데이터로 판단한다"고 적어 뒀다 — 그 데이터가 나왔다. 단계별 표결
+            # 참여 중앙값: 마일스톤 6 · 작업영역 7 · 백로그 6인데 **goal 2 · criteria 2**(실측 U-516의
+            # goal은 1명·발언 2건·찬성 1로 확정, 결과가 '3레인 좌우 이동 60초'). 뒤 단계는 앞 결론이라는
+            # 딛을 자리가 있어 응찰이 붙지만, 백지에서 시작하는 앞 두 단계는 먼저 쓴 사람의 초안이 곧
+            # 결론이 된다. 그 두 단계만 독립 의견을 **동시 수집**한 뒤 DRAFT 수렴으로 넘어간다 —
+            # 서로를 못 보고 각자 자기 도메인 관점으로 말하므로 앵커링도 중앙 지시도 없다.
+            _indep_spoke = set()          # 독립 라운드에서 실제로 의견을 낸 사람 — 표결 자격의 근거
+            if _stage in _R1_STAGES and members:
+                _seed = (f"[독립 의견 — 서로의 발언이 보이지 않습니다(앵커링 방지)] 주제: {topic}\n"
+                         f"{_stage_frame}\n당신({{who}})의 **자기 도메인 관점**에서 이 주제에 대한 "
+                         f"입장을 3~5줄로, 근거와 함께 내세요. 남의 초안을 다듬는 것이 아니라 "
+                         f"**당신이라면 무엇을 만들 것인가**를 말하세요(도구 호출 금지, 텍스트로만).")
+                for _m, _res, _note in await _fork_collect(
+                        flow, me_id, members,
+                        lambda m: _seed.format(who=flow._info(m) or m)):
+                    # [빠진 사람을 발언자로 세우지 않는다(2026-08-06)] fork에서 제외된 사람(다른
+                    # 프레임 보유 등)은 _res=None이고 _note에 시스템 사유가 담긴다. 종전엔 그 사유를
+                    # 본문 삼아 발언으로 게시하고 발언자로까지 셌다 — 실측 U-525: '(이 흐름에서
+                    # 진행 중인 위임 보유 — 이번 수집에서 제외)'가 독립 의견 한 건으로 서고, 말한 적
+                    # 없는 사람이 유권자가 됐다. 기록(회의록)에만 남기고 발언·표결에서는 뺀다.
+                    _txt = _res
+                    if not str(_txt or "").strip():
+                        if str(_note or "").strip():
+                            minutes.append(f"[독립 — 불참] {flow._info(_m) or _m}: {_speech_clip(_note)}")
+                        continue
+                    minutes.append(f"[독립] {flow._info(_m) or _m}: {_speech_clip(_txt)}")
+                    r1_full.append((flow._info(_m) or _m, _txt))
+                    last_full = (flow._info(_m) or _m, _txt)
+                    # [독립 의견도 그 회의의 말이다(2026-08-06)] 단계 마커를 함께 찍는다 — 화면이
+                    # 이 발언을 같은 단계 회의 블록으로 병합할 유일한 근거(본문 스크래핑 아님).
+                    await _say_speech(flow, _m, f"[독립 의견][단계:{_stage}]", _txt)
+                    _indep_spoke.add(int(_m))
+                    if _res is not None and _m in flow.current.team and _m != flow.leader:
+                        flow.current.participated.add(_m)
+                # 연 사람의 의견은 이미 손에 있다(SYS가 회의 전에 받아 둔 my_view) — 다시 깨우지 않고
+                # 같은 자격의 독립 의견으로 등재한다. 남들 뒤에 세워 '먼저 말한 사람'의 자리를 없앤다.
+                if str(my_view or "").strip():
+                    minutes.append(f"[독립] {flow._info(me_id) or me_id}: {_speech_clip(my_view)}")
+                    r1_full.append((flow._info(me_id) or me_id, my_view))
+                    last_full = (flow._info(me_id) or me_id, my_view)
+                    await _say_speech(flow, me_id, f"[독립 의견][단계:{_stage}]", my_view)
+                    _indep_spoke.add(int(me_id))
             dossier_append(flow, "MINUTES.md",
                            f"## 회의 — {topic} [완전 TT(§4): 강제 R1 없음]\n"
                            f"{flow._info(me_id) or me_id}: {_preface}")
@@ -387,7 +609,11 @@ async def meet(flow, me_id, args):
             try:
                 from ..role_fit import role_fit as _prf
                 # 적합 질의 = 주제+원문(도메인 어휘가 실린 곳) — 단계 안건은 일반문이라 부적합.
-                _fitq = f"{topic} {str(getattr(flow, 'origin_request', '') or '')[:200]}"
+                # [적합도는 안건 본문으로 잰다(2026-08-07)] 같은 날 단계 제목을 상수로 정본화하면서
+                # 제목에서 도메인 신호가 사라졌다('작업 영역 분해'는 어느 판이든 같은 글자다).
+                # 제목은 화면용 이름이고, 이 회의가 무엇을 다루는지는 안건 본문(_agenda — 단계 문맥·
+                # 이번 주기 목표가 실려 있다)과 원문에 있다. 그쪽으로 잰다.
+                _fitq = (f"{_agenda or topic} {str(getattr(flow, 'origin_request', '') or '')[:200]}")
                 _fit = lambda m0: _prf(_fitq, str(flow.bot_info.get(int(m0)) or ""))
                 _top = max(members, key=_fit)
                 if _fit(_top) > 0 and _top not in _sel:
@@ -697,11 +923,18 @@ async def meet(flow, me_id, args):
                 _ph, _obj = _ms_dstat(_dtxt)
                 from .milestone import draft_missing_key as _dmk
                 _mkey = _dmk(_stage, _dtxt)
-                if _mkey and _ph == 0 and _obj == 0 and "@형식" not in _dtxt:
-                    # 등록 필수 키 부재 — SYS가 형식 이의를 기계 기록(가결-등록거부 루프 선차단)
+                # [기계 이의는 매 패스 새로 쓴다(2026-08-07, 실측 U-536)] 종전엔 이미 있으면 안 쓰고
+                # (`"@형식" not in _dtxt`), 봇이 지우면 다시 썼다 — 지우기와 다시 쓰기가 서로를 부르는
+                # 핑퐁이었다. 이제 낡은 기계 이의를 먼저 걷고 **지금 검사 결과만** 남긴다: 형식을
+                # 고치면 다음 패스에 저절로 사라지고, 안 고치면 지워도 그대로 다시 선다.
+                from .milestone import strip_form_objections as _strip_fo
+                if _mkey and _ph == 0 and _obj == 0:
+                    _dtxt = _strip_fo(_dtxt)
                     _ref0 = _dtxt.find("\n## 참고")
                     _line0 = (f"> [이의 @형식] 결정 구획에 '{_mkey}' 줄이 **실제 결정으로** 필요합니다 — "
-                              f"없거나 '(후속: …)' 미룸뿐이면 등록되지 않습니다(예: '{_mkey} 실제 한 줄 결정').")
+                              f"없거나 '(후속: …)' 미룸뿐이면 등록되지 않습니다(예: '{_mkey} 실제 한 줄 결정'). "
+                              f"이 줄은 기계 검사 결과입니다 — **지워도 다음 패스에 다시 섭니다**. "
+                              f"형식을 고치면 저절로 사라집니다.")
                     _nd = (_dtxt[:_ref0].rstrip("\n") + "\n" + _line0 + "\n" + _dtxt[_ref0:]) if _ref0 > 0 else (_dtxt.rstrip("\n") + "\n" + _line0 + "\n")
                     _dwrite(flow, "DRAFT.md", _nd)
                     _dtxt = _nd; _ph, _obj = _ms_dstat(_dtxt)
@@ -718,6 +951,7 @@ async def meet(flow, me_id, args):
                     except Exception:
                         _pf_errs = []
                     if _pf_errs:
+                        _dtxt = _strip_fo(_dtxt)          # 낡은 기계 이의를 걷고 지금 결과만 남긴다
                         _ref1 = _dtxt.find("\n## 참고")
                         _lines1 = "\n".join(f"> [이의 @형식] {str(e).strip()}" for e in _pf_errs[:3])
                         _nd1 = ((_dtxt[:_ref1].rstrip("\n") + "\n" + _lines1 + "\n" + _dtxt[_ref1:])
@@ -998,7 +1232,17 @@ async def meet(flow, me_id, args):
             # 조건만 덧붙였고, 도메인이 안 걸린 사람들은 판단 근거 없이 찬성했다 — 결정의 무게가
             # 발언과 어긋나 한 사람의 첫 안이 사실상 독식했다. 응찰한 사람들끼리 정한다.
             # 심의단이 안 섰을 때(무응찰)만 종전처럼 전원이 유권자다.
-            _voters = list(dict.fromkeys(list(members)))
+            # [말한 사람이 정한다 — 독립 라운드도 말이다(2026-08-06, 사용자: '그 표결 참여 문제등
+            # 구조적으로 해결하고')] 2026-07-30 계약은 '응찰한 사람들끼리 정한다'인데, 유권자를
+            # **응찰(members)로만** 잡았다. 오늘 복원한 독립 라운드는 fork로 동시에 걷는 발언이라
+            # 응찰을 거치지 않는다 — 전원이 자기 설계를 냈는데 표결은 한 명이었다(실측 U-519 goal:
+            # 독립 의견 2건·회의 발언 3건인데 '찬성 1 · 반대 0'). 계약을 어기는 것이 아니라 지킨다:
+            # 독립 라운드에서 실제로 의견을 낸 사람은 말한 사람이므로 유권자다.
+            _voters = list(dict.fromkeys(list(members) + sorted(_indep_spoke)))
+            # 회의를 연 사람은 종전에 표결에서 통째로 빠졌다(의장은 표를 던지지 않는다는 자리). 의장이
+            # 없는 지금, 독립 라운드에서 자기 설계를 낸 사람은 말한 사람이므로 유권자다 — 말하지 않았으면
+            # 종전대로 빠진다(딛을 결론이 있는 단계에서 회의를 돌리기만 한 경우).
+            _voters = [v for v in _voters if v != me_id or int(me_id) in _indep_spoke]
             _yes, _dissents, _premortems, _against_ids = 0, [], [], []
             try:
                 _vlabel = "단독 결정" if len(_voters) == 1 else f"응찰 {len(_voters)}명"
@@ -1355,6 +1599,9 @@ async def meet(flow, me_id, args):
         from collections import Counter
         _confirm_note = ""
         _landed, _conclusion = False, ""        # 이 단계 결론이 착지했나 + 결론 요지(회의 마무리 게시용)
+        _last_block = ""                        # 착지 못 한 이유(마지막 관문 반려 문구)
+        _last_dissents = []                     # 마지막 표결에서 남은 쟁점(반대 요지)
+
         _pipe = bool(_no_r1 and tt)
         # [R1 브레인라이팅(2026-07-22, 사용자: 집단지능 문헌 반영 — NGT/브레인라이팅: 침묵 독립 기고가
         # 앵커링·발언 편중·생산 차단을 줄인다(Diehl&Stroebe·NGT 실증), Woolley 2010: 기회 균등이 c와
@@ -1532,7 +1779,10 @@ async def meet(flow, me_id, args):
                         # [차단≠기록(2026-07-17, ch78 실측)] 봇이 이의 줄을 참고로 옮기면 '파일에 이미
                         # 있음' 중복 억제가 차단까지 꺼버려 표결→등록거부 루프 재발 — 차단은 검사 결과로,
                         # 기록만 중복 억제한다.
-                        _pre_new = [e for e in _pre_errs if e[:40] not in _dtxt]
+                        # 낡은 기계 이의를 걷고 지금 검사 결과만 남긴다 — 지워도 다시 서고, 고치면 사라진다.
+                        from .milestone import strip_form_objections as _strip_fo2
+                        _dtxt = _strip_fo2(_dtxt)
+                        _pre_new = list(_pre_errs)
                         if _pre_new:
                             _blk0 = "\n".join(f"> [이의 @형식] {e[:900]}" for e in _pre_new[:6])
                             _ref0 = _dtxt.find("\n## 참고")
@@ -1616,7 +1866,34 @@ async def meet(flow, me_id, args):
                         if flow.log:
                             flow.log("meet_ratify_skipped_budget", passes=_pass)
                     elif not _passed:
-                        _ready_rejects += 1
+                        # [새 결함을 짚은 부결은 광택이 아니다(2026-08-07, 사용자: '527은 다 부결이면
+                        # 계속 가야지')] 이 계수는 '완성 파일에 다듬기 반대가 무한히 붙는 것'을 끊으려고
+                        # 넣었다(07-17). 그런데 부결마다 **다른 결함**을 짚어도 똑같이 센다 —
+                        # 실측 U-527 subtask: 1회 '프론트엔드·게임플레이 구현 영역이 빠졌다',
+                        # 2회 '사건 결과 6종이 일감으로 명시되지 않았다'. 서로 다른 지적이고 그 사이
+                        # 팀은 프론트엔드를 채용하고 영역을 추가했다. 고쳐 가는 중인데 소진으로 센다.
+                        # 결정 구획이 지난 부결 때와 달라졌으면 진전이다 — 계수를 턴다.
+                        # [마감 문구는 마지막으로 막은 것을 말한다(2026-08-07, 실측 U-535)]
+                        # `_last_block`은 등록 관문 반려에서만 쓰였다. 그래서 관문 반려를 팀이
+                        # 고쳐 넣은 뒤(13995 `[존재이유]` 추가) 표결이 세 번 부결돼 끝났는데,
+                        # 마무리에는 이미 해소된 '존재이유 테스트가 없습니다'가 실렸다 — 사람이
+                        # 읽고 조치할 수 없는 거짓 사유다. 부결도 회의를 막은 사건이므로 여기에
+                        # 기록한다(뒤에 일어난 것이 마무리 문구를 이긴다).
+                        _last_block = ("합의에 이르지 못했습니다 — 마지막 반대: "
+                                       + str((_diss or [""])[0])[:200]) if _diss else _last_block
+                        if _diss:
+                            _last_dissents = [str(d)[:150] for d in _diss[:3]]
+                        _now_sig = str(_dregion2(_dtxt) or "")[:4000]
+                        if _now_sig and _now_sig != getattr(flow, "_ratify_sig", None):
+                            _ready_rejects = 0
+                            if flow.log:
+                                flow.log("ratify_reject_progress", passes=_pass)
+                        else:
+                            _ready_rejects += 1
+                        try:
+                            flow._ratify_sig = _now_sig
+                        except Exception:
+                            pass
                     # [소진-확정에 다수결 바닥(2026-07-22, 사용자 U-044 실측: '찬성2·반대3인데 3회
                     # 소진으로 통과')] 3회 소진 이월-확정은 무한 교착 방지 장치지만, 마지막 라운드가
                     # 반대 우세(찬성<반대)면 확정하면 안 된다 — 소수 반대는 다수결로 넘기되(교착 방지
@@ -1677,6 +1954,7 @@ async def meet(flow, me_id, args):
                             flow.log("stage_register_rejected", stage=str(_stage), reason=str(_note)[:80])
                         await _say_speech(flow, me_id, "[회의]",
                                           f"결론 파일이 등록 게이트에 보류됐습니다 — {_note} (DRAFT를 다듬어 재수렴)")
+                        _last_block = str(_note or "")[:300]   # 회의를 못 닫은 사유 — 마무리에 싣는다
                         _file_reg_objection(_note)   # 채널 게시만으론 다음 라운드 wake에 안 실려 봇이 모른다 → 이의로 걸어 해소 강제
                         await _r1_coverage_recover(_note)   # 얼어붙은 R1 미응답 → 기회 재부여 → 묵시 패스(무한 반려 차단)
                         await _independence_recover(_note)   # 팀에 검증 적합자 부재 → 구조가 충원 집행(U-062)
@@ -1920,6 +2198,13 @@ async def meet(flow, me_id, args):
             _ckpt(flow)   # 합의는 크래시-세이프(재개 위임에도 동봉되도록 스냅샷에 포함)
         if _landed:
             flow._consec_stuck = 0            # [착지=진전] 막힘 카운터 리셋
+            # [막힘 표시는 풀리는 자리가 있어야 한다(2026-08-07, 실측 U-536)] 카운터만 0으로
+            # 되돌리고 **표시(_stage_stuck)는 그대로 뒀다.** 그래서 단계가 실제로 착지한 뒤에도
+            # 파킹 안내가 한 번 더 나갔다:
+            #   14259 [회의 마무리][단계:milestone] 결론 — 마일스톤 MS-138398995-2 등록(조건 1개)
+            #   14260 [막혀서 멈췄어요] … 계획 회의가 같은 형식 검사에 3회 막혔습니다
+            # 성사된 판이 멈춘 판으로 보이고, 사람이 재개를 눌러야 다시 돈다. 착지가 곧 해소다.
+            flow._stage_stuck = None
         if _pipe and not _landed and not _confirm_note:
             # 게이트 미충족으로 비용 소진 종료 — 거짓 완료로 넘기지 않고 정직히 상신(사용자 확인 필요)
             if flow.log:
@@ -1933,10 +2218,75 @@ async def meet(flow, me_id, args):
             # 집행(파킹 권한은 오케스트레이터 소관). 무한 재루프(관측: 소진→재회의→소진 4회+)를 끊는다.
             flow._consec_stuck = getattr(flow, "_consec_stuck", 0) + 1
             if flow._consec_stuck >= 2:
-                flow._stage_stuck = str(_agenda or topic or "이 단계")[:80]
+                # [사람이 한 줄로 답하려면 무엇이 막았는지를 알아야 한다(2026-08-07, 실측 U-535)]
+                # 파킹 안내('막혀서 멈췄어요')는 이 값을 '막힌 지점'으로 그대로 싣는다. 그런데 여기엔
+                # **안건**만 들어갔다 — 화면에는 '무엇이 되면 이 Task가 끝인가를 정한다'만 떴고,
+                # 실제로 막은 것(마지막 반대: '위험 유형별 움직임 차이를 검증하는 인수 조건이 빠졌다')은
+                # 어디에도 없었다. 사람은 답할 거리를 못 받는다. 안건 + 막은 것을 함께 싣는다.
+                flow._stage_stuck = (str(_agenda or topic or "이 단계")[:80]
+                                     + (f"\n\n막은 것: {str(_last_block)[:400]}" if _last_block else ""))
         # [회의 마무리 결론 게시(2026-07-14, 사용자: '회의를 접었을 때 발제된 이유와 결론이 보이면 좋겠다')]
         # 단계 결론이 착지하면 그 결론을 [회의 마무리] 발언으로 회의 블록 안에 넣어, 접힌 회의가 '왜
         # 열렸나(안건)+무엇으로 맺었나(결론)'로 읽히게 한다(collab_kind가 [회의 마무리]=meeting이라 같은 블록).
+        # [모든 회의는 마무리로 닫힌다(2026-08-06, 사용자: '회의에 종료라는건 존재하면 안되는거
+        # 아니야?' · '데이터 계속 모두 보면서 정확한 실측으로')] 전수 계측: 회의 개시 213건 중
+        # **마무리는 93건**이고 120건이 결론 없이 남았다(같은 단계 재개설 129회). 사유 흔적조차 없는
+        # 것이 71건 — 회의는 돌았는데(발언·심의단·독립 의견) 닫는 기록만 없다. 원인은 이 조건문이다:
+        # 마무리는 **착지했을 때만** 게시됐고, 다른 모든 출구(관문 반려·합의 부결·발언 소진·예산)는
+        # 아무 기록도 없이 회의를 열어 둔 채 빠져나갔다. 화면은 그 블록을 '종료'로 그린다.
+        # 닫는 기록은 결과와 무관하게 남긴다 — 결론이 있으면 결론을, 없으면 무엇이 막았는지.
+        if not _landed:
+            try:
+                from .._util import clip as _clip0
+                if str(_last_block or "") == "" and getattr(flow, "_quota_over", False):
+                    _last_block = ("이 판의 크레딧이 소진돼 턴을 실행할 수 없습니다 — 충전·요금제 변경 "
+                                   "뒤 재개하면 이 단계부터 이어집니다(팀의 합의 문제가 아닙니다).")
+                _head0 = _clip0(str(_agenda or "").split(" [")[0].strip(), 60)
+                _why0 = (_last_block or str(getattr(flow, "_stage_stuck", "") or "")
+                         or "합의에 이르지 못했습니다").strip()
+                # [마감 문구가 거짓말을 하면 안 된다(2026-08-07, 사용자: '무슨 다시연다 이러고 있고
+                # 다시 여는 것 같지도 않고')] 08-06에 미결 마감을 만들며 '같은 단계를 이어서 다시
+                # 엽니다'를 무조건 붙였다. 그런데 재개설에는 상한이 있어(ORGANT_STAGE_REOPEN_CAP)
+                # 소진되면 다시 열지 않고 판이 멈춘다 — 실측 U-527: 미결 2건 뒤 '막혀서 멈췄어요'.
+                # 화면에는 다시 연다고 적혀 있는데 실제로는 끝난 것이다. 다음에 무엇이 일어나는지를
+                # 그 시점 상태로 말한다.
+                _nxt = ("같은 단계를 이어서 다시 엽니다"
+                        if not getattr(flow, "_stage_stuck", None)
+                        else "여기서 멈추고 사람에게 묻습니다 — 재개설 여력이 소진됐습니다")
+                # [어떤 회의든 결론을 낸다(2026-08-07, 사용자: '회의는 미결일 수 없지 않나?
+                # 중지겠지 어떤 회의든 결론을 뭐라도 내야하지 않음?')] 08-06에 만든 미결 마감은
+                # '결론을 내지 못했습니다' 한 줄이 전부였다 — 회의는 실제로 돌았고(발언·심의·표결)
+                # 초안에는 합의된 문장이 쌓였는데, 닫는 기록은 그것을 하나도 싣지 않았다.
+                # 회의가 미결인 것이 아니라, **여기까지 정하고 중지된 것**이다. 세 가지를 남긴다:
+                # 여기까지 정한 것(초안 결정 구획) · 남은 쟁점(마지막 반대) · 막은 것.
+                _sofar = ""
+                try:
+                    from .._util import dossier_read as _dread0
+                    from .milestone import draft_decision_region as _dregion0
+                    _sofar = _clip0(str(_dregion0(str(_dread0(flow, "DRAFT.md") or "")) or "")
+                                    .strip().replace("\n", " "), 300)
+                except Exception:
+                    _sofar = ""
+                _open0 = " · ".join(_last_dissents[:2])
+                _txt0 = (f"중지 ({_head0}) — 여기까지 정한 것: "
+                         f"{_sofar or '아직 문장으로 남은 합의가 없습니다'}"
+                         + (f"\n남은 쟁점: {_open0}" if _open0 else "")
+                         + f"\n막은 것: {_why0} ({_nxt})")
+                await _say_speech(flow, me_id, "[회의 마무리]", _txt0,
+                                  meta={"meet": {"role": "close", "stage": str(_stage or ""),
+                                                 "resolved": False,
+                                                 "conclusion": str(_sofar or "")[:400]}})
+                minutes.append(f"[회의 마무리] {flow._info(me_id) or me_id}: {_txt0}")
+                if flow.log:
+                    flow.log("meet_closed_without_conclusion", stage=str(_stage or ""),
+                             why=str(_why0)[:80])
+            except Exception as _e0:
+                if flow.log:
+                    flow.log("meet_conclusion_post_failed", err=str(_e0)[:100])
+        try:
+            flow._meet_unclosed = None      # 이 회의는 기록으로 닫혔다
+        except Exception:
+            pass
         if _landed and _conclusion:
             try:
                 # [안건 에코는 제목까지만(2026-07-30, U-442 실측)] 기계 안건 전문을 괄호에 넣어
@@ -1944,7 +2294,10 @@ async def meet(flow, me_id, args):
                 from .._util import clip as _clip
                 _head = _clip(str(_agenda or "").split(" [")[0].strip(), 60)
                 _concl = f"결론 ({_head}) — " + str(_conclusion).replace("[표결 확정] ", "").strip()
-                await _say_speech(flow, me_id, "[회의 마무리]", _concl)
+                await _say_speech(flow, me_id, "[회의 마무리]", _concl,
+                                  meta={"meet": {"role": "close", "stage": str(_stage or ""),
+                                                 "resolved": True,
+                                                 "conclusion": str(_conclusion or "")[:400]}})
                 minutes.append(f"[회의 마무리] {flow._info(me_id) or me_id}: {_concl}")
             except Exception as _e:
                 if flow.log:

@@ -137,6 +137,16 @@ def _unwrap_auto_continue(text) -> str:
     return s
 
 
+
+def _stage_is_goal(flow) -> bool:
+    """지금 파이프라인 단계가 'goal'인가 — 로스터 게이트가 목표 단계에만 정족수를 요구한다."""
+    try:
+        from .rule.milestone import meeting_stage as _ms
+        return _ms(flow) == "goal"
+    except Exception:
+        return False
+
+
 class Sys:
     def __init__(self, guide, guild_id, organt_builder, bot_info: Optional[Dict[int, str]] = None,
                  workspace=None, projects_path=None, session_dir=None, max_continue=6,
@@ -166,6 +176,9 @@ class Sys:
         # (=진짜 행) 포기하고 '인프라 실패'로 반환한다. 벽시계 총 실행시간이 아니라 '무활동' 기준이라,
         # 오래 걸려도 일하는 워커는 안 자르고 완전히 멈춘 것만 끊는다(일하는 owner 절단·좀비의 근본 교정).
         self.turn_timeout = int(os.environ.get("ORGANT_TURN_TIMEOUT", "480"))   # 기본 8분(무활동 기준)
+        # 도구를 부를 일이 없는 턴(회의 발언·응찰·표결·보고)의 상한 — 도구 심박이 없어 위 값이
+        # 사실상 벽시계가 된다(2026-08-06 실측: agent_timeout 316건 전부 tool_ran=false).
+        self._text_turn_timeout = int(os.environ.get("ORGANT_TEXT_TURN_TIMEOUT", "900"))
         # 흐름 '무진행(행)' 워치독: 요청·파일작성·실행 등 어떤 진행도 이 시간(초) 동안 없으면 흐름이 행으로
         # 멈춘 것(리더 서브프로세스 행 포함 — 리더 턴엔 타임아웃이 없어 생기는 구멍)으로 보고 자동 중단·보고한다.
         # 워커 타임아웃(turn_timeout=8분)보다 넉넉히 커야 워커 1회 행→복구를 '무진행'으로 오인하지 않는다.
@@ -488,10 +501,10 @@ class Sys:
     _PRINCIPLE_LAYOUT = sys_prompt.PRINCIPLE_LAYOUT
     _PRINCIPLE = sys_prompt.PRINCIPLE
 
-    def _craft_note(self, me, first_wake=True) -> str:
+    def _craft_note(self, me, first_wake=True, working=False) -> str:
         """직무 기준·개인 기준·[경험] 요청 노트 — sys_prompt.craft_note로 추출(위임만).
         first_wake=False(resume)면 전부 생략 — 정체성(개인 기준)은 대화 기억이, [경험]은 report 툴이 담보."""
-        return sys_prompt.craft_note(self, me, first_wake)
+        return sys_prompt.craft_note(self, me, first_wake, working=working)
 
     def _portfolio_note(self) -> str:
         """회사 이력(프로젝트 목록) 노트 — sys_prompt.portfolio_note로 추출(위임만)."""
@@ -769,6 +782,16 @@ class Sys:
             f"- 겹치는 교훈은 별도 추가가 아니라 합쳐 더 일반적인 한 원칙으로.\n"
             f"- **예산: 전체 {cap}자 이내** — 넘치면 가장 덜 중요한 줄을 버리세요.\n"
             f"- 일회성 디테일·특정 프로젝트 한정 사항은 버리세요.\n"
+            # [기준이 한쪽으로 굳는다(2026-08-06, 사용자: '왜 자꾸 봇이 60초 60초 거리고 단일 피하는
+            # 게임이나 반복적인 모습을 보이는 듯 하지?')] 실측: 봇 개인 기준 151건의 축별 비율 —
+            # 검증·증거 94% · 범위 축소 54% · 완성도·경험 35% · **성장·깊이 7%**. 관문이 '닫힘'만
+            # 보상하니 경험이 검증으로만 쌓였고, 그 기준이 매 첫 wake에 주입돼 다음 설계도 '검증하기
+            # 쉬운 최소'로 나온다(60초 단일 루프는 헤드리스로 완벽히 판정된다 — 로그라이크의 성장은
+            # 아니다). 자기강화 고리다. 증류가 '어떻게 확인하나'뿐 아니라 '무엇이 좋은 산출물인가'도
+            # 남기게 한다 — 내용을 지시하지 않고, 두 축이 다 있는지만 묻는다.
+            f"- 두 축을 **모두** 남기세요: ①어떻게 확인하나(검증·증거) ②무엇이 좋은 산출물인가"
+            f"(완성도·사용자 경험·깊이). 한쪽만 쌓이면 다음 작업이 '검증하기 쉬운 최소'로 흐릅니다 "
+            f"— 당신의 기준에 지금 ②가 없다면 이번에 한 줄이라도 세우세요.\n"
             f"반드시 아래 형식만으로 답하세요:\n[개인기준] {label}\n(개선된 개인 기준 줄들)\n[/개인기준]"
         )
         try:
@@ -1476,11 +1499,74 @@ class Sys:
             return True
         roster = [m for m in (getattr(cur, "team", None) or [])
                   if m != flow.anchor and not _is_spare(flow, m)]
+        # [무엇을 만들지는 만들 사람들이 모인 뒤 정한다(2026-08-06, 사용자: '기획 회의가 지금 그냥
+        # 1명이서 매우 간단한 주제를 뱉어버렸어 … 이게 최대 접근 가능 범위의 최대 산출물이야?')]
+        # 실측 U-516: goal 회의 참석 1명(게임 기획 혼자), 표결 찬성 1·반대 0으로 Task 전체가 확정됐고
+        # QA·배포·사운드·비주얼·클라이언트 다섯 직군은 **그 뒤에** 채용됐다. 한 사람이 30초에 떠올릴
+        # 수 있는 범위로 목표가 굳는 구조다 — '3레인 좌우 이동'이 그렇게 나왔다. 로그라이크·성장·증강
+        # 같은 두께는 여러 도메인이 같은 방에 있을 때 나온다.
+        # goal_quorum_hold(2026-08-01)는 심의 3인을 요구하지만 로스터가 3 미만이면 건너뛴다 —
+        # 그 예외가 이 자리를 만들었다. 목표 단계에서는 로스터가 정족수에 닿을 때까지 회의를 열지
+        # 않는다(채용이 먼저 — 이 판의 다섯 직군은 실제로 그 경로로 뽑혔다). 다른 단계는 종전대로.
+        if str(getattr(flow, "_stage_now", "") or "") == "goal" or _stage_is_goal(flow):
+            from .rule.milestone import GOAL_QUORUM_MIN as _QMIN
+            # [채용은 정족수에 세지 않는다(2026-08-06, 사용자: '이상하게 회의가 열리고 자기가 회의
+            # 표결을 열고 반대를 누른건가')] +1은 '앵커 자신'을 세는 자리인데, 실측 U-520의 앵커는
+            # 채용 봇(정하준)이었다 — 판의 사람은 게임 클라이언트 엔지니어 한 명뿐인데 산술이 2가 돼
+            # 관문을 통과했고, 그 한 명이 발언·초안·표결을 전부 혼자 했다(반대 1 → 수정 → 찬성 1).
+            # 채용은 시스템 존재라 심의자가 아니다(08-04 계약) — 세지 않는다.
+            _anchor_counts = 0 if _is_spare(flow, flow.anchor) else 1
+            if len(roster) + _anchor_counts < int(_QMIN):
+                self._log("goal_meeting_deferred_thin_roster",
+                          roster=len(roster) + _anchor_counts, need=int(_QMIN),
+                          ch=int(getattr(flow, "user_channel", 0) or 0))
+                return False
         if roster:
             return True
         self._log("stage_meeting_skipped_empty_roster",
                   ch=int(getattr(flow, "user_channel", 0) or 0))
         return False
+
+    def _ensure_working_anchor(self, flow) -> bool:
+        """회의 사회는 판의 사람이 본다 — 앵커가 채용이면 실무자에게 넘긴다.
+
+        [실측 U-520] 새 요청을 받은 봇이 그대로 앵커가 되는데, 그 자리에 있던 것은 채용 봇이었다.
+        채용은 시스템 존재라 팀·회의·표결에서 빠지지만(08-04 계약) **앵커 자리에서는 빠지지
+        않았다** — 그래서 채용 봇이 goal·criteria·milestone 회의를 전부 열고 닫았고, 화면에서는
+        그 발언이 필터로 지워져 회의 제목과 결론이 통째로 사라졌다(사용자: '회의 제목 왜저래').
+        심의는 한 명(유일한 실무자)이 혼자 했다.
+
+        앵커가 채용이고 판에 실무자가 있으면 그 사람에게 돌린다. 돌릴 사람이 없으면 그대로 둔다 —
+        이 자리는 채용을 벌하는 곳이 아니라 '사람이 사회를 보게' 하는 곳이고, 사람이 없으면
+        정족수 관문이 이미 회의를 막는다.
+
+        반환값 = 이 회의를 열 사람의 id(바꿀 필요가 없거나 바꿀 수 없으면 0)."""
+        try:
+            from .rule.comm_helpers import _is_spare
+        except ImportError:
+            return 0
+        if not _is_spare(flow, flow.anchor):
+            return 0
+        cur = getattr(flow, "current", None)
+        cand = [m for m in (getattr(cur, "team", None) or [])
+                if m != flow.anchor and not _is_spare(flow, m)]
+        if not cand:
+            return 0
+        new = int(cand[0])
+        # 회전은 최선 노력이다 — 원자 회전은 루트 프레임 하나만 열려 있을 때만 성립하므로(comm_engine)
+        # 위임이 겹친 순간에는 실패한다. 실패해도 이 회의를 열 사람은 정해져야 한다: SYS 개시 경로는
+        # 개시자를 alive로 세우므로(_sys_open) 회전 없이도 그 사람 명의로 열 수 있다.
+        try:
+            if flow.comm.rotate_origin_holder(new):
+                old = int(flow.anchor)
+                flow.anchor = new
+                self._log("anchor_rotated", to=new, frm=old, reason="recruiter_is_not_a_member")
+            else:
+                self._log("stage_opener_substituted", to=new, frm=int(flow.anchor),
+                          reason="anchor_is_system_role")
+        except Exception:
+            pass
+        return new
 
     async def _drain_inflight(self, flow) -> str:
         """완주 중인 위임(detach 포함)이 있으면 끝까지 기다리고, 도착한 위임 결과를 이어가기 리더에게
@@ -1876,7 +1962,13 @@ class Sys:
         bids = []
         flow._suppress_activity = True
         try:
-            for m, res, _note in await _fork_collect(flow, lead, cands, _probe_body):
+            # [응찰 한 줄에 작업 스레드를 통째로 싣지 않는다(2026-08-07, 실측 U-536)]
+            # 2026-07-30에 '짧은 상호작용은 세션을 물지 않는다'로 회의 응찰·표결을 micro로 돌렸는데,
+            # **작업 단계의 자기선택 응찰(이 자리)만 빠져 있었다.** 이 프롬프트도 자족적이다
+            # (지금 벌어지는 일 + 한 줄 답). 실측 U-536 판 하나: 표결 평균 입력 13,062 · 짧은
+            # 상호작용 14,071인데 **발언권 응찰은 415,009**(32배)였고, 그 18턴이 판 비용의 9.1%
+            # ($1.43/$15.59)를 먹었다. 한 세션은 20턴에 누적 입력 1,600만 토큰까지 자랐다.
+            for m, res, _note in await _fork_collect(flow, lead, cands, _probe_body, micro=True):
                 s = 0 if res is None else _bid_score(res)
                 bids.append((int(m), s))
                 # 연속 거절 장부 — 나서면 0으로, 아니면 +1(다음부터 간격이 벌어진다).
@@ -1960,12 +2052,21 @@ class Sys:
         self._log("hard_block_probe_failed", who=int(who))
         return False
 
-    async def _run_until_silent(self, coro_factory, flow) -> str:
+    async def _run_until_silent(self, coro_factory, flow, cap=None) -> str:
         """coro를 실행하되, '도구 활동(flow.last_activity)이 turn_timeout 동안 한 번도 갱신되지 않은'
         경우(=진짜 행)에만 취소하고 TimeoutError를 낸다. 도구가 하나라도 돌면 시계가 갱신되어 무한정
         허용된다 → '퀄리티 있게 오래 일하는 owner'는 안 자르고 '완전히 멈춘 것'만 끊는다(벽시계 고정
         타임아웃이 일하는 워커를 잘라 좀비·미완을 만들던 결함의 근본 교정)."""
         flow.last_activity = time.monotonic()
+        # [글만 쓰는 턴에는 심박이 없다(2026-08-06, 실측 5일 316건)] 이 워치독의 유일한 생존 신호는
+        # **도구 활동**(audit PostToolUse 훅이 last_activity를 갱신)이다. 그런데 회의 발언·응찰·표결·
+        # 인수 보고처럼 "도구 호출 금지, 텍스트로만"인 턴은 도구를 부르지 않는다 — 심박이 영영 안 뛰고
+        # own_idle이 턴 시작부터의 벽시계가 되어, 진행 중이든 아니든 8분에 잘린다.
+        # 실측: agent_timeout 316건 **전부** tool_ran=false · first_tool_s=null. 하나도 예외가 없다.
+        # 08-03에 붙인 계측이 이걸 갈라 줬다(느린 게 아니라 도구를 쓸 일이 없는 턴이었다).
+        # 이것이 '독립 QA 인수검증이 계속 timeout'(U-478, 위임 5회 반복)의 기계적 원인이다.
+        # 도구 없는 턴은 더 넉넉한 상한으로 본다 — 없애지는 않는다(진짜 행도 끊어야 하므로).
+        _cap = float(cap or self.turn_timeout)   # 정수화 금지 — 테스트·미세 상한이 0으로 죽는다
         # [계측 — 잘린 턴이 느린 것인지 멈춘 것인지(2026-08-03, 실측 U-478)] 이 워치독은 '도구
         # 무활동'으로 끊는데, 로그에는 끊었다는 사실과 임계값(sec)만 남는다. 그래서 그 봇이
         # **첫 도구 호출에 오래 걸린 것**인지 **아예 멈춘 것**인지 구분할 수 없다 — 24시간에
@@ -2002,8 +2103,10 @@ class Sys:
                 _t0w = float(getattr(flow, "_turn_t0", 0) or 0)
                 if _t0w:
                     own_idle = max(idle, time.monotonic() - max(_lm, _t0w))
-                if own_idle > self.turn_timeout and not task.done():
+                if own_idle > _cap and not task.done():
                     timed_out = True
+                    self._log("turn_watchdog_cut", cap=round(_cap, 1),
+                              tool_ran=bool(getattr(flow, "_turn_first_tool", None)))
                     task.cancel()
                     return
 
@@ -3041,7 +3144,12 @@ class Sys:
         ("[소집자 의견]", "회의 발언"), ("[회의록]", "회의 기록"),
         ("[표", "표결"), ("[확정 표결", "표결"),
         ("[참여 응찰]", "참여 응찰"), ("[다음 백로그 응찰]", "인계 응찰"),
-        ("[다음 백로그 선정]", "인계 선정"), ("[발언권", "발언권 응찰"),
+        ("[다음 백로그 선정]", "인계 선정"),
+        # [응찰과 발언은 성질이 다르다(2026-08-07, 실측 U-536)] 둘 다 "[발언권"으로 시작해
+        # 한 이름으로 집계됐다 — 응찰은 자족적 한 줄(micro, 1.4만 토큰)이고 낙찰 발언은 세션을
+        # 잇는 실제 발언(27만+)이다. 섞여 있으면 비용표가 "응찰이 비싸다"는 거짓 신호를 준다.
+        # 더 긴 접두를 먼저 둔다(앞에서 걸려야 한다).
+        ("[발언권 획득", "발언 낙찰"), ("[발언권", "발언권 응찰"),
         ("[작업중 — 이어서]", "백로그 작업"), ("[위임", "위임 작업"),
         ("[SYS — 마감 전 독립 검증]", "독립 검증"), ("[SYS — 보고 형식 재요청", "보고 반려"),
         ("[e2e", "경계 e2e"), ("[마감", "마감"),
@@ -3180,6 +3288,20 @@ class Sys:
                 from .rule.backlog import active_backlog_rows as _act_rows
                 _mine = next((f"{st.st_id}::{b.backlog_id}" for st, _r, b in _act_rows(flow)
                               if int(getattr(b, "assignee", 0) or 0) == int(organt_id)), "")
+                # [회의 발언도 단계 경계에서 끊는다(2026-08-07, 실측 U-536)] 일감이 없는 턴(회의
+                # 발언)은 _mine이 ''이라 표식이 서지 않고 스레드가 판이 끝날 때까지 이어졌다.
+                # 실측: 같은 판에서 회의 발언 평균 입력이 초반 78,597 → 후반 414,960(5.3배)으로
+                # 자랐다 — 늘어난 것은 그 봇 스레드의 재전송분이다(캐시 95%가 그 증거다).
+                # 단계가 바뀌면 앞 단계의 발언 기록을 통째로 다시 실어 나를 이유가 없다:
+                # 회의 프롬프트가 '못 본 발언'을 싣고, 결정은 DRAFT 파일과 채널이 들고 있다.
+                # 08-01의 '일감 경계에서 끊는다'와 같은 규칙을 같은 성질의 자리에 적용한다.
+                if not _mine:
+                    try:
+                        from .rule.milestone import meeting_stage as _mstage
+                        _st_now = str(getattr(flow, "_meet_stage_now", "") or "") or str(_mstage(flow) or "")
+                        _mine = f"stage::{_st_now}" if _st_now else ""
+                    except Exception:
+                        pass
                 organt._work_scope = _mine
             except Exception:
                 pass
@@ -3271,7 +3393,10 @@ class Sys:
                 if role == "leader":
                     _out = await self._absorb_role_profiles(await _do(), me=organt_id)
                 else:
-                    _out = await self._absorb_role_profiles(await self._run_until_silent(_do, flow), me=organt_id)
+                    # 도구 없는 턴(micro·텍스트 전용)은 도구 심박이 원천적으로 없다 — 별도 상한.
+                    _tcap = (int(self._text_turn_timeout) if micro else None)
+                    _out = await self._absorb_role_profiles(
+                        await self._run_until_silent(_do, flow, cap=_tcap), me=organt_id)
                 if flow is not None and role == "leader" and not micro:
                     # 첫 실질 턴 실패 판정은 이 leader Organt 인스턴스의 결산만 쓴다. 같은 Flow에서
                     # 중첩 실행된 worker/micro 결산이 공유 신호를 앞뒤로 덮는 경합을 막는다.
@@ -4197,7 +4322,10 @@ class Sys:
                                               # [무엇을 답해야 하는지 보여준다(2026-07-27)] 종전엔 사유가
                                               # 로그에만 있어, 사람이 판을 열어봐도 무엇을 한 줄로 답해야
                                               # 하는지 알 수 없었다 — 막힌 지점을 그대로 싣는다.
-                                              + (f"\n\n— 막힌 지점 —\n{_stuck_why[:600]}"
+                                              # [사람이 답하려면 거부된 줄까지 보여야 한다(2026-08-07, 실측 U-536)] 600자 컷이
+                                              # "— 거부된 줄 (왼쪽=조건, 오른" 에서 문장을 끊었다 —
+                                              # 가장 조치 가능한 부분이 잘려 나갔다.
+                                              + (f"\n\n— 막힌 지점 —\n{_stuck_why[:1800]}"
                                                  if _stuck_why and len(_stuck_why) > 12 else ""))
                     except Exception:
                         pass
@@ -4244,12 +4372,16 @@ class Sys:
                     # 거절할 것을 알면서 두드리지 않는다 — 위임을 먼저 완주(단일 활성·완료 게이트)하고 연다.
                     if any(not x.done() for x in getattr(flow, "inflight_tasks", ())):
                         await self._drain_inflight(flow)
+                    # [회의를 여는 사람은 판의 사람이다] 앵커가 채용이면 실무자로 바꾼다 — 회전에
+                    # 실패해도 개시자만은 그 사람으로 세운다(그러지 않으면 meet 관문이 채용을 거절하고
+                    # 판이 파킹된다 — 실측 U-523: meet_denied_system_role 뒤 '막혀서 멈췄어요').
+                    _opener = self._ensure_working_anchor(flow) or flow.anchor
                     _stg = _ms_stage(flow)
                     _ag, _ = _stage_agenda(_stg)
                     from .rule.milestone import stage_context as _sctx
                     _ag = f"{_ag}{_sctx(flow, _stg)}"   # [정합 A] 어느 단위/주기 회의인지 안건에 명시
                     _op = await self.run_turn(
-                        flow, flow.anchor,
+                        flow, _opener,
                         f"다음 회의 안건은 '**{_ag}**'입니다 — 이에 대한 **여는 의견**만 3~5줄으로 "
                         "내세요(**도구 호출 금지, 텍스트로만**).", Kind.INFO, "leader")
                     # [제목은 이름, 안건은 본문(2026-07-30, 사용자 지적)] 종전엔 지시문 전체가
@@ -4263,7 +4395,7 @@ class Sys:
                         _st0 = next((x for x in (getattr(_ms0, "subtasks", None) or [])
                                      if x.st_id == _tgt), None)
                         _scope = str(getattr(_st0, "goal", "") or "").split(" — ")[0][:40]
-                    result = await _stage_meet(flow, flow.anchor, {
+                    result = await _stage_meet(flow, _opener, {
                         "topic": f"{_stitle(_stg, _scope)} — {_ag}",
                         "my_opinion": (str(_op or "").strip() or "여는 의견 없음")[:1500], "_sys_open": True})
                     self._log("stage_meeting_opened", stage=str(_stg), ch=int(flow.user_channel or 0))
@@ -4272,13 +4404,40 @@ class Sys:
                     # 회의가 매번 **성공**해 단계가 바뀌면 카운터가 0으로 리셋되므로, 같은 단계가
                     # 12번 다시 열려 단위 36개를 만드는 동안 한 번도 안 걸렸다. 성공 착지도 세어
                     # 같은 단계의 반복 개설을 끊는다(정상 파이프는 단계당 1회라 무영향).
+                    # [맴도는 것과 고쳐 가는 것은 다르다(2026-08-07, 사용자: '무슨 부결 됐다고
+                    # 끊어버리고 이러한 이상 행동들')] 종전엔 회의를 다시 열 때마다 무조건 셌다.
+                    # 실측 U-527 subtask: 부결 두 번 만에 파킹됐는데 그 반대 사유가 서로 달랐다 —
+                    #   1회 '실제로 열어 플레이할 프론트엔드·게임플레이 구현 영역이 빠졌다'
+                    #   2회 '사건 결과 6종 이상이 일감으로 명시되지 않았다'
+                    # 그 사이 팀은 프론트엔드를 채용하고 DRAFT에 구현·QA·배포 영역을 추가했다.
+                    # 고쳐 가며 다시 여는 중인데 기계는 '같은 자리를 반복한다'고 판정했다.
+                    # 결정 구획이 지난 개설 때와 달라졌으면 진전이다 — 그때는 세지 않는다.
                     _seen_st = getattr(flow, "_stage_open_n", None) or {}
-                    _seen_st[str(_stg)] = int(_seen_st.get(str(_stg), 0) or 0) + 1
+                    _dsig = ""
+                    try:
+                        from .rule.milestone import draft_decision_region as _ddr
+                        from ._util import dossier_read as _dread0
+                        _dsig = str(_ddr(str(_dread0(flow, "DRAFT.md") or "")) or "")[:4000]
+                    except Exception:
+                        _dsig = ""
+                    _prev_sig = (getattr(flow, "_stage_open_sig", None) or {}).get(str(_stg))
+                    _progressed = bool(_dsig) and _dsig != _prev_sig
+                    try:
+                        _sig_map = getattr(flow, "_stage_open_sig", None) or {}
+                        _sig_map[str(_stg)] = _dsig
+                        flow._stage_open_sig = _sig_map
+                    except Exception:
+                        pass
+                    if _progressed:
+                        _seen_st[str(_stg)] = 0          # 결론 구획이 자랐다 — 맴돌이가 아니다
+                        self._log("stage_reopen_progress", stage=str(_stg))
+                    else:
+                        _seen_st[str(_stg)] = int(_seen_st.get(str(_stg), 0) or 0) + 1
                     try:
                         flow._stage_open_n = _seen_st
                     except Exception:
                         pass
-                    if _ms_stage(flow) == _stg:
+                    if _ms_stage(flow) == _stg and not _progressed:
                         _stage_stall += 1
                     else:
                         _stage_stall = 0
@@ -4940,6 +5099,19 @@ class Sys:
             # 처리 완료 후 수행 — 어느 단계가 실패해도 신호가 남아 다음 폴이 재시도한다.
             try:
                 stop_channels = list(await guide.all_stops())
+                # [닫은 판은 다시 열지 않는다(2026-08-07, 사용자: '왜 굳이 3개를 돌리는 중이지?')]
+                # 중지 신호는 '도는 흐름'만 끊었다(실측 로그: 흐름취소=False) — 흐름이 없을 때는
+                # 러너가 체크포인트에서 열린 Task를 **다시 복원**해 계속 돌렸다. 닫힌 채널을 기억해
+                # 복원 자체를 막는다(sys_recovery.restore_open_task가 이 집합을 본다).
+                try:
+                    _cc = set(getattr(self, "closed_channels", None) or ())
+                    for _si in stop_channels:
+                        _c0 = int(_si.get("channel") if isinstance(_si, dict) else _si)
+                        if _c0:
+                            _cc.add(_c0)
+                    self.closed_channels = _cc
+                except Exception:
+                    pass
             except Exception as exc:
                 log.warning("중지 신호 조회 실패(다음 폴 재시도): %s", exc)
                 return

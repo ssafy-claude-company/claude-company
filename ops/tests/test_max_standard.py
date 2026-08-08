@@ -23,7 +23,7 @@ import types
 sys.path.insert(0, __file__.rsplit("/ops/", 1)[0])
 from system.rule.milestone import register_stage, stage_draft_template
 
-_BASE = ("목표: 2인 턴제 카드 대전 게임\n내용 폭: 카드 12종 · 보스 3종\n"
+_BASE = ("목표: 2인 턴제 카드 대전 게임\n내용 폭: 카드 12종 · 보스 3종 · 해금 20종\n"
          "창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n")
 _STD = "최대 표준: 실제 예 3종 대조 · 핵심 루프 완결 · 성장 축 2개 · 주 사용 흐름 원탭 시작"
 

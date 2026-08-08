@@ -60,7 +60,7 @@ def test_완수조건회의_실증_없으면_반려(tmp_path):
 def test_완수조건회의_형식_맞으면_통과(tmp_path):
     f = _flow(tmp_path, acceptance="")
     ok, note = register_stage(f, "criteria",
-                              "[수렴안]\n조건: 한 판이 끝난다 | 실증: node test/play.js\n[/수렴안]")
+                              "[수렴안]\n조건: 한 판이 끝난다 | 실증: node test/play.js\n[존재이유] 강화 없이는 5웨이브 생존 불가 | 실증: node test/play.js --no-upgrade\n[/수렴안]")
     assert ok and "node test/play.js" in f.current.acceptance
 
 

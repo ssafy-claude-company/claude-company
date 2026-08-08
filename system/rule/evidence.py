@@ -54,12 +54,21 @@ _PROBE_RE = re.compile(
       r"python\d*\s+manage\.py\s+test(?:\s|$)|"
       r"manage\.py\s+test(?:\s|$)|"
       r"npm\s+(?:test|run\s+(?:test|build|check|lint))(?:\s|$)|"
-      r"npx\s+(?:playwright|vitest|jest|cypress)(?:\s|$)|"
+      # [러너 앞의 플래그도 명령의 일부다(2026-08-07, 실측 U-536 주기 3)] 종전엔 러너 이름이
+      # **npx 바로 뒤**에 와야 했다. 팀이 `npx --no-install playwright test …`(네트워크 설치를
+      # 금지해 오히려 더 결정적인 형태)를 비준하려 하자 다섯 번 거부됐고 판이 조용히 멈췄다.
+      r"npx(?:\s+--?[\w-]+(?:=\S+)?)*\s+(?:playwright|vitest|jest|cypress|mocha)(?:\s|$)|"
       r"curl(?:\s|$)|grep(?:\s|$)|test(?:\s|$)|"
       r"node\s+--test(?:\s|$)|"
       r"node\s+\S*(?:test|spec|check|verify|browser|e2e)\S*\.m?js(?:\s|$)|"
       r"python\d*\s+\S*(?:test|spec|check|verify|browser|e2e)\S*\.py(?:\s|$)|"
-      r"(?:bash|sh|\./)\s*\S*(?:test|spec|check|verify|browser|e2e)\S*"
+      r"(?:bash|sh|\./)\s*\S*(?:test|spec|check|verify|browser|e2e)\S*|"
+      # [설치된 러너를 제 경로로 부르는 것도 명령이다(2026-08-07, 실측 U-536)] `npx playwright`는
+      # 통과하는데 **같은 바이너리**를 실제 경로로 부른 `./node_modules/.bin/playwright test …`는
+      # 거부됐다 — 위 `\./` 갈래가 '경로 안에 test|spec|… 이 들어갈 것'을 요구하기 때문이다.
+      # 팀은 세 번 변형만 시도하다 계획 회의가 파킹됐다(U-536 주기 2). npx보다 오히려 결정적인
+      # 형태를 막을 이유가 없다 — 아는 러너 이름으로 끝나는 경로를 받는다(임의 실행 파일은 아님).
+      r"[./\w-]*/(?:playwright|vitest|jest|cypress|mocha|pytest)(?:\s|$)"
     r")",
     re.I,
 )
@@ -148,8 +157,16 @@ def _existing_verifier_targets(tokens, workspace: str, require_existing=True) ->
         positional = [token for token in tokens[1:] if not token.startswith("-")]
         return len(positional) >= 2 and exists(positional[-1])
     if exe == "npx":
-        if len(tokens) < 3:
+        # [러너 앞의 플래그를 건너뛴다(2026-08-07, 실측 U-536 주기 3)] 종전엔 tokens[1]을 곧바로
+        # 도구 이름으로 읽었다. `npx --no-install playwright test …`(네트워크 설치를 금지해 오히려
+        # 더 결정적인 형태)는 tool='--no-install'이 되어 통과할 수 없었고, 팀이 다섯 번 비준을
+        # 시도하다 판이 멈췄다. npx 자체 플래그는 도구가 아니다.
+        _rest = tokens[1:]
+        while _rest and _rest[0].startswith("-"):
+            _rest = _rest[1:]
+        if len(_rest) < 2:
             return False
+        tokens = [tokens[0]] + _rest        # 아래 인자 검사도 같은 기준으로 본다
         tool = tokens[1].lower()
         action = tokens[2].lower()
         if tool == "cypress" and action == "run":

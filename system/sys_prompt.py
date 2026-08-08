@@ -268,7 +268,25 @@ def status_text(sys, flow, t0, final=None) -> str:
             f"마지막 활동: <t:{last_ts}:R>")
 
 
-def craft_note(sys, me, first_wake=True) -> str:
+# [품질 축 판정(2026-08-06)] 기준에 '무엇이 좋은 산출물인가'가 들어 있는지 — 어휘 유무만 본다.
+_QUALITY_AXIS_RE = _re.compile(
+    r"(완성도|사용자 경험|사용성|접근성|재미|몰입|손맛|연출|미감|아름|품질|깊이|"
+    r"성장|해금|강화|증강|조합|빌드|난이도 곡선|콘텐츠|풍부|다양성|만족)")
+
+
+def _holds_open_work(flow, me) -> bool:
+    """이 봇이 지금 자기 일감을 쥐고 있는가 — 이 턴이 '끝내는 턴'일 수 있다는 신호."""
+    try:
+        for r in (getattr(flow, "backlog_relays", None) or {}).values():
+            for b in (getattr(r, "backlogs", None) or []):
+                if int(getattr(b, "assignee", 0) or 0) == int(me) and getattr(b, "status", "") == "in_progress":
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def craft_note(sys, me, first_wake=True, working=False) -> str:
     """[봇별 완전 격리 — 2026-07-06] '당신의 직무 기준' = 이 봇 자신의 개인 기준(bot_profiles)뿐.
     직군 공용 기준 주입 폐지 — 탄생 시 채용 제네시스(리크루터)가 직군 유산을 '이 사람의 시작 기준'으로
     빚어 넣고(기계적 시드 아님), 이후 자기 경험→distill_bot 증류로만 발전한다. 같은 직군 동료와도
@@ -279,12 +297,37 @@ def craft_note(sys, me, first_wake=True) -> str:
     if not jobs:
         return ""
     notes = []
+    # [증류가 굶고 있었다(2026-08-07, 사용자: '지식 증류적 활용이 오히려 이득 아니야?')]
+    # 실측 — 원석(bot_experience) 보유 봇 54명의 줄 수 분포:
+    #     1줄 17명 · 2줄 15명 · 3줄 9명 · 4줄 13명 · **5줄 이상 0명**
+    # 증류 임계는 5다(_BOT_DISTILL_MIN). 아무도 닿지 못한다. 원료 공급이 이 함수 하나뿐인데
+    # 이 함수는 first_wake에만 불리기 때문이다 — 세션이 길어질수록 요청이 안 나가고, 그래서
+    # 일을 오래 할수록 배운 것이 덜 남는다(정확히 거꾸로다).
+    # 자기 일감을 쥔 턴은 그 턴이 '끝내는 턴'일 수 있다 — 교훈이 가장 신선한 자리다.
+    # resume이어도 그 자리에서만 경험 블록을 다시 요청한다(정체성·기준 재주입은 그대로 안 한다).
+    if not first_wake and working:
+        return (f"[경험 — 이번 일감을 마무리한다면 보고 끝에 이 블록을 포함하세요] 다음 작업에도 "
+                f"일반화 가치가 있는 교훈 1~2줄만(함정·효과적이었던 방법). 없으면 '없음'.\n"
+                f"[경험] {jobs[0]}\n(교훈 또는 '없음')\n[/경험]\n\n")
     mine = (sys.bot_profiles.get(me) or "").strip()
     exp = sys.bot_experience.get(me)
     if first_wake:      # 개인 기준·원시 경험은 불변이라 재-wake엔 대화에 이미 있음 → 첫 wake만 주입
         if mine:
             notes.append(f"[당신의 직무 기준 — {jobs[0]} 전문가인 '당신 자신'의 자기검수 기준(당신의 경험으로 "
                          f"빚어져 수면 증류로 발전하는, 당신만의 것). 이 기준을 충족한 산출물만 인도하세요]\n" + mine)
+            # [굳은 기준은 다음 증류를 기다리지 않는다(2026-08-06, 사용자: '모든지 최대로 해야하지
+            # 않나? 그게 우리의 목표잖아')] 실측: 개인 기준 151건 중 검증·증거 94%인데 성장·깊이는 7%.
+            # 증류 프롬프트는 고쳤지만(f3a6c92) 그건 원석 8건이 다시 쌓여야 도는 일이라 며칠이 걸린다.
+            # 품질 축이 빠진 기준은 **이번 wake에서 한 줄 세우게** 한다 — 무엇이 좋은지는 각자가 정하고,
+            # 시스템은 그 축이 비었는지만 본다. 한 번 세워지면 이 요청은 사라진다(형태 검사).
+            if not _QUALITY_AXIS_RE.search(mine):
+                notes.append(
+                    f"[당신의 기준에 빠진 축 — 이번 한 번만] 위 기준은 '어떻게 확인하나'(검증·증거)로만 "
+                    f"차 있고 **'무엇이 좋은 산출물인가'**가 없습니다. 검증만 남으면 다음 작업이 늘 "
+                    f"'검증하기 쉬운 최소'로 흐릅니다(실측: 같은 요청이 판마다 60초 단일 루프로 수렴). "
+                    f"'{jobs[0]}' 전문가로서 **좋은 산출물의 조건**을 1~3줄 세워 이번 보고 끝에 "
+                    f"[개인기준] 블록으로 덧붙이세요 — 완성도·사용자 경험·깊이(성장·해금·조합·"
+                    f"난이도 곡선) 가운데 당신 도메인에서 중요한 것으로. 무엇이 좋은지는 당신이 정합니다.")
         elif exp:
             notes.append("[당신의 최근 경험 — 당신이 실제 작업에서 직접 얻은 교훈. 같은 함정을 반복하지 마세요]\n"
                          + "\n".join(f"- {e}" for e in exp[-6:]))
@@ -411,6 +454,17 @@ def env_note(sys) -> str:
         "학습→예측 JSON을 Node가 서빙; 런타임 Python 서버는 배포 게이트가 막음).\n"
         "- 외부 소스는 다 닿지 않음 → 데이터·에셋 소스는 **착수 전 test-fetch로 도달 확인** 후 진행.\n\n"
     )
+
+
+# [주입하지 않는다(2026-08-07, 사용자: '주입이 아니라 직접 찾아볼 때 쓰도록 해야지 … 잊으면
+# 부딪히고 반려되거나 해서 그때 다시 필요한거 직접 보고 문제를 해결해야지')]
+# 판 상태(목표·완수조건·주기·작업 영역·내 일감)를 프롬프트에 싣던 자리였다. 세 번 틀렸다:
+#   ① 입력 상한으로 자르기      → 일하는 턴이 끊기고 다음 턴이 처음부터 다시 읽는다
+#   ② 상태 전체를 매 턴 주입     → 안 쓰는 턴에도 실린다(재독 절감분을 주입으로 도로 태움)
+#   ③ 바뀔 때만 주입            → 여전히 push이고, 바뀌면 전체가 다시 간다
+# 도구는 이미 세션에 선적재된다(ENABLE_TOOL_SEARCH=false) — 봇은 `state`가 있다는 것을 도구
+# 목록으로 알고, 필요할 때 필요한 조각만 부른다. 잊으면 관문이 반려하고 그 반려문이 다시 알려
+# 준다(구조가 가르치지, 프롬프트가 미리 말해 주지 않는다). 그래서 이 자리는 비운다.
 
 
 def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True, micro=False):
@@ -551,7 +605,7 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
             f"일')로 집어 **직접** 만듭니다 — **각자 자기 것을 동시에**(남을 기다리지 않음), "
             f"끝내면(report_iter 실증 / 불가면 drop_backlog) 다음 것을 집습니다. ③ 전 조건 "
             f"실증되면 주기가 닫히고 **사용자 보고 후 다음 단계**로. ④ 조건이 환경상 불가면 renegotiate_criterion.\n"
-            f"{sys._craft_note(me, first_wake)}"
+            f"{sys._craft_note(me, first_wake, working=_holds_open_work(flow, me))}"
         )
     if role == "leader":
         my_role = f"{domain}(담당자)" if domain else "담당자"
@@ -599,8 +653,8 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
             f"{portfolio}"
             f"[환경 경계(사실) — 상세는 PLAYBOOK] GPU 없음 · 배포는 Render Node-웹 전용 · run 1회 ~1분(큰 "
             f"단일 다운로드 불가) — 상세 능력·경계와 레이아웃 관례는 작업공간 `.collab/PLAYBOOK.md`를 Read하세요.\n"
-            f"받은 형태: {body}\n{peers_note}\n"
-            f"{sys._craft_note(me, first_wake)}"
+                f"받은 형태: {body}\n{peers_note}\n"
+            f"{sys._craft_note(me, first_wake, working=_holds_open_work(flow, me))}"
             f"{spare_lead_note}{team_note}\n"
             f"{leader_rules(sys, first_wake)}"
         )
@@ -610,8 +664,9 @@ def prompt(sys, body, kind, role, me, leader_id=None, flow=None, first_wake=True
     # SYS _auto_coordinate가 큐를 기계적으로 비운다. [B-18①] 레이아웃 관례는 워커 push 유지(A-6).
     return (
         f"당신은 자율적으로 일하는 팀원입니다(당신도 필요하면 동료에게 먼저 묻습니다). "
-        f"당신의 역할: {my_role}\n{origin_note}{inbound_note}{human_info_note}받은 요청({getattr(kind, 'value', kind)}): {body}\n{peers_note}\n"
-        f"{sys._craft_note(me, first_wake)}"
+        f"당신의 역할: {my_role}\n{origin_note}{inbound_note}{human_info_note}"
+        f"받은 요청({getattr(kind, 'value', kind)}): {body}\n{peers_note}\n"
+        f"{sys._craft_note(me, first_wake, working=_holds_open_work(flow, me))}"
         # [레이아웃 wake-aware] 레이아웃 관례는 컨텍스트 지도가 'PLAYBOOK에 있음'을 이미 가리키고 재-wake엔
         # 대화에도 있음 → fresh만 push(봇이 배움·게이트 백스톱 없어 첫 학습은 유지), resume 드롭.
         f"{member_principle(sys, first_wake)}\n{sys._PRINCIPLE_LAYOUT + chr(10) if first_wake else ''}"

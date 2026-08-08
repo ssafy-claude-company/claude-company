@@ -210,17 +210,29 @@ class MurmurGuide:
         return status_msg_id
 
     # ── 메시지 ─────────────────────────────────────────────────────
-    async def post(self, channel_id, sender_id, content, reply_to=None):
+    async def post(self, channel_id, sender_id, content, reply_to=None, meta=None):
         # 스레드→채널 해석(send_request/response와 동일) — _say(회의·표결·병렬)가 합성 thread_id로
         # 호출돼도 사용자가 보는 실제 채널에 뜨게 한다. 안 그러면 협업 토의가 유령 채널로 새서
         # 흐름이 '리더 혼자' 중앙집권적으로 보인다. [고스트 라우팅 수정] 재기동으로 _thread_channel이
         # 비거나(맵 유실) 재개가 옛 task-thread를 복원하면 미등록 → 흐름의 ORIGIN_CHANNEL로 라우팅(재기동 생존).
         ch = self._thread_channel.get(int(channel_id)) or ORIGIN_CHANNEL.get() or self._origin_channel or int(channel_id)
+        # [종류는 데이터로 실린다(2026-08-07, 사용자: '체계에 맞지 않게 해서 깨트리는 이상한 구조가
+        # 나오지 않도록')] 종전엔 라벨이 붙은 자유 텍스트만 보내고 화면이 문자열로 종류를 되짚었다 —
+        # 화면이 모르는 라벨은 조용히 사라졌다(실측 7종 전량 증발). 게시 지점에서 한 번 도출해 싣는다.
+        from .msgkind import kind_of as _kind_of       # noqa: PLC0415  (guide 패키지 leaf)
+        _body = strip_server_paths(content)
+        _pl = dict(_pipe_payload() or {})
+        _mk = _kind_of(_body)
+        if _mk:
+            _pl["mk"] = _mk
+        if isinstance(meta, dict) and meta:
+            _pl.update(meta)          # 구조 필드(meet 제목·결론 등) — 화면이 본문을 파싱하지 않게
+
         res = await self._post("/api/guide/ingest/", {
             "op": "post", "channel_id": int(ch), "thread_id": int(channel_id),
             "sender_id": int(sender_id or 0), "msg_type": "plain",
-            "body": strip_server_paths(content),
-            "reply_to": (int(reply_to) if reply_to else None), "payload": _pipe_payload()})
+            "body": _body,
+            "reply_to": (int(reply_to) if reply_to else None), "payload": _pl})
         if int(sender_id or 0) != 0:
             self._track_last(ch, channel_id, res.get("msg_id"))   # 앵커=마지막 '봇' 발화 — SYS 게시([배포 결과] 등)에 의견이 달리는 어색함 방지(사용자)
         return str(res.get("msg_id"))
@@ -257,18 +269,6 @@ class MurmurGuide:
             return await self._post("/api/guide/ingest/", {
                 "op": "economy",
                 "channel_id": int(channel_id) if channel_id else 0})
-        except Exception:
-            return None
-
-    async def report_turn_window(self, channel_id, bot_id, started_ts, ended_ts):
-        """[파일에 이름을 붙인다(2026-08-06, 사용자: '모두 해')] 이 턴이 언제부터 언제까지 돌았는지
-        웹에 남긴다. 작업공간은 여럿이 함께 쓰므로 파일 시각만으로는 '누가'를 알 수 없다 —
-        구간을 남겨 두면 그 안에 바뀐 파일의 임자를 웹이 안다(구간이 겹치면 웹이 단정하지 않는다).
-        실패는 무해하다(이름이 안 붙을 뿐, 파일도 흐름도 그대로다)."""
-        try:
-            return await self._post("/api/guide/turn_window/", {
-                "channel": int(channel_id), "bot_id": int(bot_id),
-                "started_ts": float(started_ts), "ended_ts": float(ended_ts)})
         except Exception:
             return None
 

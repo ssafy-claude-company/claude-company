@@ -413,6 +413,22 @@ def _restore_e2e_state(flow, proj) -> bool:
 
 
 async def restore_open_task(sys, flow, proj) -> Optional[dict]:
+    """(아래 원 문서 참조) — 앞에 '이 판이 아직 사는 판인가'를 먼저 본다.
+
+    [닫은 판은 다시 열지 않는다(2026-08-07, 사용자: '왜 굳이 3개를 돌리는 중이지? 최신만 돌리면
+    되지 않나?')] 판을 화면에서 닫아도(status=closed) 러너는 자기 체크포인트에서 열린 Task를
+    복원해 계속 돌렸다 — 실측: 닫아 둔 U-531이 8분에 55턴을 태우는 동안 최신 판은 3턴이었다.
+    중지 신호(StopSignal)도 '흐름취소=False'로 끝났다(도는 흐름이 아니라 복원이 문제였다).
+    매체가 닫았다고 말한 판은 복원하지 않는다."""
+    try:
+        _ch = int((proj or {}).get("channel") or (proj or {}).get("channel_id") or 0)
+        _closed = set(getattr(sys, "closed_channels", None) or ())
+        if _ch and _ch in _closed:
+            sys._log("restore_skipped_closed_board", project=(proj or {}).get("id"), ch=_ch)
+            return None
+    except Exception:
+        pass
+
     """프로젝트에 저장된 미완 Task가 있으면 이번 흐름에 그대로 되살린다 — 같은 상태블록·스레드·담당자
     (owner)·팀을 재부착해 '이어가기'가 사용자가 Task명을 부르지 않아도 그 Task를 잇게 한다(담당자가
     판단해 이어감). 검증 누계는 0에서 시작(verified=False 등) → 완료 전 run 재검증을 강제. 되살린

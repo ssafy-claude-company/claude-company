@@ -517,7 +517,9 @@ def test_B12_meet_채널발언이_매체조건부로_게시(tmp_path):
                                    "my_opinion": "소집자 의견 " + "근거 " * 300}))
     posts = [c[3] for c in g.calls if c[0] == "post" and "[회의 1R]" in str(c[3])]
     assert posts and all("전문:" not in p and "잘림" not in p for p in posts)   # 인라인 — 더보기 마커 없음
-    assert len([c for c in g.calls if c[0] == "doc"]) == 3      # 발언자별 전문 문서(기록 보존) — 멤버2 + 소집자 리더
+    # [닫는 기록도 문서로 남는다(2026-08-06 계약)] 모든 회의는 마무리로 닫힌다 — 착지하지 못한
+    # 회의도 '여기까지 정한 것 · 남은 쟁점 · 막은 것'을 남긴다. 그래서 발언 3건 + 마무리 1건.
+    assert len([c for c in g.calls if c[0] == "doc"]) == 4      # 발언 3(멤버2+소집자) + 회의 마무리 1
     assert all(len(p) > 900 for p in posts)                     # 전문이 실제로 인라인(clip 아님)
 
 
@@ -534,7 +536,10 @@ def test_DRAFT_공동편집_완성_안정_최종표결로_회의가_닫힌다(tm
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13"}))
     seen = {"edit": 0, "ratify": 0}
-    FILLED = ("# DRAFT [stage:goal] — x\n목표: 방명록 앱 1주기\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n\n완수조건:\n"
+    # [골격이 낡으면 재는 것도 낡는다(2026-08-07)] 이 픽스처는 형식 관문(내용 폭의 깊이 축)이
+    # 생기기 전에 쓰였다 — 그대로 두면 표결이 열리지 않아, 이 테스트가 재려던 '안정→표결' 계약이
+    # 아니라 관문 미달을 재게 된다. 지금 계약을 만족하는 최소 문서로 갱신한다.
+    FILLED = ("# DRAFT [stage:goal] — x\n목표: 방명록 앱 1주기\n내용 폭: 기능 3종 · 깊이 축 — 글 누적 100개마다 표시 밀도가 3단계로 해금\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n\n완수조건:\n"
               "- 등록 API 동작 | 실증: curl POST 후 GET 확인\n- 목록 표시 | 실증: playwright 로드 확인\n")
 
     async def wake(to, b, k):

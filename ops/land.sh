@@ -12,25 +12,8 @@ W="/root/wt/$S"
 REPOS="claude-company:$MS:$W  murmur:$MS/murmur:$W/murmur"
 
 exec 9>"$MS/ops/.land.lock"
-# [큐 가시성·중복 방지 2026-08-06] 대기가 불투명해 세션들이 "멈췄나?" 하고 같은 착지를
-# 두 번 큐잉했다(실측: 현준-2 중복 대기, 꼬리 30분+). 보유자를 파일로 공개하고,
-# 같은 세션의 중복 진입은 거부한다.
-HOLDER_F="$MS/ops/.land.holder"
-# 같은 세션의 land.sh가 이미 떠 있으면(보유 중이든 대기 중이든) 중복 진입 거부.
-# [08-06 수선] pgrep 카운트는 sudo/래퍼 프로세스도 세어 정상 1건을 중복으로 오판했다 —
-# 세션별 flock(-n)으로 교체: 커널이 정확히 판정하고 프로세스 종료 시 자동 해제된다.
-exec 8>"$MS/ops/.land.$S.lock"
-if ! flock -n 8; then
-  echo "⛔ '$S' 착지가 이미 진행/대기 중 — 중복 실행 안 함. 기존 것을 기다리세요."; exit 1
-fi
-if ! flock -n 9; then
-  h="$(cat "$HOLDER_F" 2>/dev/null || echo '?')"
-  echo "착지 큐 대기 — 현재 착지 중: ${h:-?}"
-  echo "  (착지 1건 ≈ 8분. 재실행하지 말 것 — 이 프로세스가 순서대로 진행됩니다)"
-  flock 9
-fi
-printf '%s (since %s)\n' "$S" "$(date '+%H:%M:%S')" > "$HOLDER_F"
-trap 'rm -f "$HOLDER_F"' EXIT
+echo "착지 큐 대기(다른 세션 착지 중이면 기다림)…"
+flock 9
 echo "════ '$S' 착지 시작 ════"
 
 # 0) 정본 브랜치 고정 가드 (2026-07-29 추가)
@@ -85,34 +68,15 @@ for spec in $REPOS; do
     #   STATE.md는 착지 기록 자체라 커밋이 정상 귀결이다 - 남의 '작업 중 코드'가 아니다.
     if [ -n "$dirty" ] && [ -z "$(echo "$dirty" | sed -E 's/^.{3}//' | grep -v '^ops/STATE\.md$')" ]; then
       echo "  $name 정본에 STATE.md 기록만 미커밋 - 착지 기록으로 함께 커밋합니다."
-      # [-- 경로 지정: 남의 스테이징을 쓸어 담지 않는다(2026-08-06 감사, 현준-4)]
       git -C "$main" add ops/STATE.md 2>/dev/null \
         && LAND_OK=1 git -C "$main" -c user.email=o@l -c user.name="$S" \
-           commit -q -m "state: 착지 기록 미커밋분 커밋(land.sh, $S 착지 중)" \
-           -- ops/STATE.md 2>/dev/null || true
+           commit -q -m "state: 착지 기록 미커밋분 커밋(land.sh, $S 착지 중)" 2>/dev/null || true
       dirty="$(git -C "$main" status --porcelain 2>/dev/null)"
     fi
     if [ -n "$dirty" ]; then
-      # [겹칠 때만 막는다(2026-08-06 감사, 현준-4)] 가드의 취지는 "남의 미커밋 위에서 checkout/
-      # merge 하지 않는다"이다. 그런데 판정이 '트리가 조금이라도 더러운가'라, **내 병합이 건드리지도
-      # 않는 파일** 하나 때문에 착지 전체가 멈췄다. 실측: 정본 두 곳이 각각 다른 세션 작업으로
-      # 85분·75분 더러웠고 겹치는 파일은 0이었는데 19건이 밀렸다. 게다가 레포 목록의 앞쪽이 막히면
-      # 뒤쪽(murmur)까지 함께 멈춘다 — 무관한 레포가 서로를 붙잡는다.
-      #
-      # 취지를 그대로 지키면서 자만 정확히 한다: 내 병합이 바꿀 파일과 남이 손대고 있는 파일이
-      # **겹칠 때만** 막는다. 겹치지 않으면 merge는 남의 작업을 건드리지 않는다(겹치면 git 자신이
-      # 거부한다 — 이 검사는 그 앞에서 이유를 사람 말로 밝히는 자리다).
-      _mine="$(git -C "$main" diff --name-only "$base...$br" 2>/dev/null | LC_ALL=C sort -u)"
-      _theirs="$(git -C "$main" -c core.quotepath=false status --porcelain 2>/dev/null \
-                 | sed -E 's/^.{3}//' | sed -E 's/^"(.*)"$/\1/' | LC_ALL=C sort -u)"
-      _clash="$(LC_ALL=C comm -12 <(printf '%s\n' "$_mine") <(printf '%s\n' "$_theirs") | grep -v '^$' || true)"
-      if [ -n "$_clash" ]; then
-        echo "  ⚠ $name 정본($main)에 **내가 병합할 파일과 같은 파일**의 미커밋 변경이 있다 — 병합 보류."
-        echo "$_clash" | sed 's/^/     겹침: /'
-        echo "     그 트리가 정리된 뒤 다시 land.sh 하거나, 통합 담당에게 브랜치($br)를 맡기세요."
-        exit 1
-      fi
-      echo "  ℹ $name 정본에 남의 미커밋 변경이 있으나 내 병합과 겹치지 않는다 — 그대로 두고 진행."
+      echo "  ⚠ $name 정본 체크아웃($main)에 미커밋 변경(타 세션 작업 중일 수 있음) — 병합 보류."
+      echo "     그 트리가 정리된 뒤 다시 land.sh 하거나, 통합 담당에게 브랜치($br)를 맡기세요."
+      exit 1
     fi
     echo "  $name: $br → $base 병합 ($ahead 커밋)"
     git -C "$main" checkout -q "$base"
@@ -132,13 +96,7 @@ done
 #    과거 착지 기록의 해시가 매번 최신으로 밀렸다(현준-4 실측, 9e3b108 diff).
 m=$(git -C "$MS/murmur" rev-parse --short HEAD)
 sed -i -E "0,/^(murmur[[:space:]]+)[0-9a-f]+/s//\1$m/" "$MS/ops/STATE.md"
-# [남의 스테이징이 내 스탬프에 딸려 들어갔다(2026-08-06 감사, 현준-4)] git commit은 경로를
-# 안 주면 **인덱스에 올라온 것을 전부** 커밋한다. 정본 체크아웃은 여러 세션이 함께 쓰는
-# 트리라, 누가 `git add`만 해 두고 커밋하지 않았으면 그것이 남의 착지 스탬프에 통째로
-# 실린다. 실측: 이 줄이 STATE.md 한 줄 대신 9파일 515줄(남의 진행 중 회의 리팩터)을
-# 커밋했고, 코드만 커밋되고 짝이 되는 시험은 남아 정본 브레인 시험 26건이 깨졌다.
-# 경로를 지정하면 인덱스에 무엇이 있든 이 파일만 커밋된다.
-git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" -- ops/STATE.md 2>/dev/null || true
+git -C "$MS" add ops/STATE.md 2>/dev/null && LAND_OK=1 git -C "$MS" -c user.email=o@l -c user.name="$S" commit -q -m "state: $S 착지 스탬프" 2>/dev/null || true
 
 # 4) 정본 전체 검증 — 실패 시 자동 롤백. 단 ①이번에 병합한 레포만 ②HEAD가 아직 우리
 #    결과(post_*)일 때만 되돌린다. 검증 중 끼어든 남의 커밋은 절대 리셋하지 않는다.
@@ -173,46 +131,15 @@ _snap_drop() {
   rm -rf "$(dirname "$snap")" 2>/dev/null
   git -C "$MS" worktree prune 2>/dev/null; git -C "$MS/murmur" worktree prune 2>/dev/null
 }
-trap '_snap_drop; rm -f "$HOLDER_F"' EXIT   # holder 정리 유지(trap 덮어쓰기 주의 — 08-06 수선)
+trap _snap_drop EXIT
 if _snap_make; then
   snap_ok=1; VR="$snap"
   echo "════ 검증(스냅샷 — 남의 동시 편집에 흔들리지 않게) ════"
 else
   _snap_drop; snap=""; VR="$MS"
-  echo "════ 검증 (⚠ 스냅샷 실패 — 동시 편집에 흔들릴 수 있음) ════"
+  echo "════ 정본 전체 검증 (⚠ 스냅샷 실패 — 동시 편집에 흔들릴 수 있음) ════"
 fi
-# [처리량 A안 2026-08-06, 사용자 승인] 착지 검증은 **변경 영역 슬라이스**만 돈다.
-#   전체 검증(1368+ 브레인 ≈8분)이 flock 직렬과 겹쳐 대기열 30분+를 만들었다(실측 4건 적체).
-#   전체 게이트는 시간당 타이머(murmur-verify-full.timer)가 캐치넷으로 돌고, red면
-#   ops/.FULL_VERIFY_RED 마커로 다음 착지들에 경고한다. 전체를 원하면 LAND_FULL=1.
-_changed() { git -C "$1" diff --name-only "$2..HEAD" 2>/dev/null; }
-slices=""
-if [ "${LAND_FULL:-}" = "1" ]; then
-  slices="FULL"
-else
-  ch_cc="$(_changed "$MS" "$pre_cc")"; ch_mm="$(_changed "$MS/murmur" "$pre_mm")"
-  # murmur: .md 뿐이면 스킵, 아니면 murmur 슬라이스
-  if echo "$ch_mm" | grep -qvE '(^$|\.md$)'; then slices="$slices murmur"; fi
-  # 루트 레포: 디렉터리별 매핑(.md 뿐이면 스킵). ops/기타 → system(가장 넓은 브레인 슬라이스)
-  if echo "$ch_cc" | grep -qvE '(^$|\.md$)'; then
-    echo "$ch_cc" | grep -qE '^guide/'  && slices="$slices guide"
-    echo "$ch_cc" | grep -qE '^organt/' && slices="$slices organt"
-    echo "$ch_cc" | grep -qvE '(^$|\.md$|^guide/|^organt/)' && slices="$slices system"
-  fi
-  [ -z "$slices" ] && echo "  문서만 변경 — 테스트 슬라이스 생략(전체 게이트는 시간당 타이머가 커버)"
-fi
-_verify_run() {
-  if [ "$slices" = "FULL" ]; then MURMUR_ROOT="$VR" bash "$VR/ops/verify.sh"; return; fi
-  for sl in $slices; do
-    echo "── 슬라이스: $sl ──"
-    MURMUR_ROOT="$VR" bash "$VR/ops/verify.sh" --only "$sl" || return 1
-  done
-}
-if [ -f "$MS/ops/.FULL_VERIFY_RED" ]; then
-  echo "⚠⚠ 전체 검증(시간당)이 현재 RED 상태다 — $(head -1 "$MS/ops/.FULL_VERIFY_RED" 2>/dev/null)"
-  echo "    이 착지의 슬라이스와 무관할 수 있으나, 원인 미상이면 LAND_FULL=1로 재확인 권장."
-fi
-if ! _verify_run; then
+if ! MURMUR_ROOT="$VR" bash "$VR/ops/verify.sh"; then
   echo "❌ 검증 실패 — 자동 롤백 판단(브랜치 s/$S 는 그대로 남음)."
   rollback_one() { # <이름> <경로> <merged?> <pre> <post>
     [ "$3" = 1 ] || { echo "   $1: 이번 착지에서 병합 없음 — 손대지 않음"; return; }
@@ -250,22 +177,6 @@ if ( cd "$MS/murmur/frontend" && npm run build >/tmp/land-build.log 2>&1 ); then
 else
   echo "  ⚠ 프론트 빌드 실패 — 화면이 낡은 채 남는다. /tmp/land-build.log 확인 후 수동 빌드:"
   echo "     cd $MS/murmur/frontend && npm run build"
-fi
-# [스키마도 함께 간다(2026-08-07, 현준-4 실사고)] 종전 이 절차엔 migrate가 아예 없었다 —
-# 코드만 정본에 가고 표는 안 가서, 새 모델을 쓰는 문이 전부 500이었다(실측: 계정 되찾기 4개 문).
-# 시험은 제 DB를 새로 만들어 돌기 때문에 초록이고, 라이브만 깨진다 — 검증이 못 보는 구멍이다.
-# 재시작 **앞**에 둔다: 표가 없는 채로 새 코드가 뜨면 그 사이 요청이 죽는다.
-# 안 미룬 마이그레이션이 없으면 아무 일도 하지 않는다(멱등).
-if [ -f "$MS/murmur/backend/manage.py" ]; then
-  _mig=$( set -a; . /etc/murmur-web.env 2>/dev/null; set +a
-          cd "$MS/murmur/backend" && DJANGO_SETTINGS_MODULE=config.settings           PYTHONPATH=/root/ClaudeCompany ORGANT_PJT=/root/ClaudeCompany           /root/ClaudeCompany/.venv/bin/python manage.py migrate --noinput 2>&1 )
-  if [ $? -eq 0 ]; then
-    _n=$(printf '%s\n' "$_mig" | grep -c '  Applying ')
-    [ "${_n:-0}" -gt 0 ] && echo "  DB 마이그레이션 ${_n}건 적용" || echo "  DB 마이그레이션 — 적용할 것 없음"
-  else
-    echo "  ⚠ DB 마이그레이션 실패 — 새 표를 쓰는 문이 500이 된다. 아래 확인 후 수동 실행:"
-    printf '%s\n' "$_mig" | tail -5 | sed 's/^/     /'
-  fi
 fi
 # 2026-07-28 SSE 도입으로 웹은 2프로세스(murmur-web :8000 + murmur-sse :8002) — 둘 다 재시작.
 for svc in murmur-web murmur-sse; do

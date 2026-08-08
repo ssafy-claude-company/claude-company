@@ -1007,8 +1007,24 @@ def fold_blocked_on_proven_cycle(flow, ms) -> list:
                 pass
             b.note = (f"주기 실증 후 이월: {_why}")[:200]
             folded.append(f"{getattr(st, 'st_id', '')}::{b.backlog_id}")
-    if folded and getattr(flow, "log", None):
-        flow.log("blocked_folded_on_proven_cycle", n=len(folded), backlogs=folded[:8])
+    if folded:
+        if getattr(flow, "log", None):
+            flow.log("blocked_folded_on_proven_cycle", n=len(folded), backlogs=folded[:8])
+        # [접은 것은 보이게 접는다(2026-08-07, 실측 U-536)] 이월 보존은 로그에만 남았다 — 판에는
+        # 아무 줄도 서지 않는다. U-536에서 배포 일감(ST-11::B1)이 여섯 번 막힌 뒤 여기서 조용히
+        # 접혔고, 화면에는 그 영역이 '완료'로만 보였다. 실제로는 공개 URL이 만들어지지 않았다.
+        # 끝나도록 유도하는 08-03 정본은 그대로 두되, 무엇을 두고 끝냈는지는 사람이 볼 수 있어야
+        # 한다 — 그래야 다음 주기에 다시 세울지 사람이 정한다.
+        try:
+            from .milestone import _pnote
+            _why0 = "; ".join(str(getattr(b, "note", "") or "")[:60]
+                              for st in (getattr(ms, "subtasks", None) or [])
+                              for b in (getattr(store.get(getattr(st, "st_id", "")), "backlogs", None) or [])
+                              if getattr(b, "status", "") == DROPPED and getattr(b, "note", ""))[:300]
+            _pnote(flow, f"[이월] 이번 주기 조건이 실증돼 막힌 일감 {len(folded)}건을 다음으로 넘깁니다"
+                         + (f" — {_why0}" if _why0 else ""))
+        except Exception:
+            pass
     return folded
 
 

@@ -491,6 +491,21 @@ def _copy_workspace(ws: Path, dst: Path) -> None:
         print(f"[deploy] 복사 건너뜀(권한·읽기 불가): {', '.join(skipped[:6])}", flush=True)
 
 
+def _npm_env():
+    """[npm 캐시는 쓸 수 있는 자리에(2026-08-07, 실측 U-536)] 러너는 organt(uid 999)로 도는데
+    HOME=/root다 — 07-30 비특권 강등이 봇 세션 기억(HOME 슬러그 저장) 때문에 HOME을 유지했고,
+    쓰기 ACL은 ~/.claude·~/.codex·logs·ops/var에만 얹혔다. npm은 $HOME/.npm을 캐시로 쓰므로
+    그 하나가 빠져 EACCES로 죽는다: 실측 U-536에서 배포가 4연속 '배포 실패(npm install): npm ERR!'
+    로 끝났고, 그때마다 SYS 자동 이어가기가 같은 배포를 다시 시켰다(턴만 태우는 되풀이).
+
+    러너 유닛 env에도 npm_config_cache를 넣었지만, 그 파일이 없는 설치에서도 배포가 되어야 하므로
+    여기서 한 번 더 못 박는다(이미 설정돼 있으면 그대로 둔다)."""
+    env = dict(os.environ)
+    if not env.get("npm_config_cache"):
+        env["npm_config_cache"] = "/var/lib/organt/npm-cache"
+    return env
+
+
 def _app_unit(appdir: Path) -> str:
     import re as _re
     return "organt-app-" + _re.sub(r"[^a-zA-Z0-9-]", "-", appdir.name)[:50]
@@ -652,7 +667,8 @@ def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
         if not static_only:
             if pkg.exists():
                 r = subprocess.run(["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
-                                   cwd=str(appdir), capture_output=True, text=True, timeout=300)
+                                   cwd=str(appdir), capture_output=True, text=True, timeout=300,
+                                   env=_npm_env())
                 if r.returncode != 0:
                     return f"배포 실패(npm install): {(r.stdout + r.stderr)[-300:]}"
             port = _alloc_port(reg, name)
@@ -678,7 +694,8 @@ def deploy_vps_sync(workspace, name, gh_pat=None, gh_user=None):
                 _tail0 = ""
             if pkg.exists() and "not found" in _tail0:
                 r2 = subprocess.run(["npm", "install", "--no-audit", "--no-fund"],
-                                    cwd=str(appdir), capture_output=True, text=True, timeout=600)
+                                    cwd=str(appdir), capture_output=True, text=True, timeout=600,
+                                    env=_npm_env())
                 if r2.returncode == 0:
                     with _RegistryLock():
                         reg2 = _load_registry()
