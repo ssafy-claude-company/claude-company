@@ -117,6 +117,18 @@ def _is_spare(flow, oid) -> bool:
     U-496에서도 등재 61·완료 45·발언 응찰 62. 회의·표결·팀 구성·기여 관문 전부에서 예비와 같은
     자격(비참여)으로 뺀다 — 채용 공고·온보딩은 팀 밖 SYS 경로라 이 배제와 무관하게 돈다."""
     _info = (flow._info(oid) or "").strip()
+    if not _info:
+        # [라벨이 비면 관문이 열린다(2026-08-07, 실측 U-535)] flow.bot_info는 이 채널로 좁힌
+        # 로스터라, 시스템 존재인 채용 봇이 거기 없으면 라벨이 ''가 되고 이 판정이 False가 된다 —
+        # 그러면 '채용은 회의를 열 수 없다' 관문이 통과돼 채용이 goal 회의를 열었다(13956).
+        # 좁힌 목록에 없을 때는 전역 로스터에서 직군을 찾는다(판정 근거는 사람의 직군이지
+        # 그 사람이 이 목록에 실렸는지가 아니다).
+        try:
+            _g = getattr(flow, "_roster_labels", None) or getattr(flow, "pool_info", None)
+            if _g:
+                _info = str(_g.get(int(oid), "") or "").strip()
+        except Exception:
+            _info = ""
     return _info.startswith(_SPARE_LABEL) or _norm_job(_info) == "채용"
 
 
@@ -438,19 +450,25 @@ async def _add_members(g, thread_id, member_ids):
         await fn(thread_id, member_ids)
 
 
-async def _say(flow, who, text):
+async def _say(flow, who, text, meta=None):
     """[Communication] 회의·표결 발언을 '그 봇 본인 명의'로 스레드에 남긴다 — 독립 의견이 리더 명의
     묶음으로 게시돼 '중앙 공지'처럼 보이던 착시 제거(협업 가시성=실체). 실패는 조용히(best-effort).
     flow는 duck-typed(current·guide)."""
     g = flow.guide
     try:
         if flow.current:
-            await g.post(int(flow.current.thread_id), who, text)
+            # [제목·결론은 데이터로 받는다(2026-08-07, 사용자: '첫 글을 제목으로 마지막 글을
+            # 결론으로가 아니라 정확히 데이터 적으로 관리해서 결론 따로 받고 제목 따로 받아야지')]
+            # meta = {"meet": {...}} 같은 구조 필드 — 화면이 본문을 파싱하지 않게 한다.
+            if meta:
+                await g.post(int(flow.current.thread_id), who, text, meta=meta)
+            else:
+                await g.post(int(flow.current.thread_id), who, text)
     except Exception:
         pass
 
 
-async def _say_speech(flow, who, prefix, full):
+async def _say_speech(flow, who, prefix, full, meta=None):
     """[B-12 — 매체 조건부 clip(BOT_ARCH_REDESIGN 2026-07-03)] 회의 발언의 채널 게시:
     Guide가 선택 메서드 `post_document`를 실구현한 매체(murmur)면 발언 *전문*을 문서로 남기고
     채널엔 500자 clip + `…[전문: <ref>]`(전문 접근 경로 실존 — §17). 미구현/실패 매체(디스코드 등)는
@@ -458,6 +476,22 @@ async def _say_speech(flow, who, prefix, full):
     (2026-07-03: 채널 clip 200→500 — 쇼케이스 발언 legibility 보존, 전문 접근 불가 상태의 정보손실 완화.)
     getattr-optional 관례(add_thread_members·edit_message 동형): Guide 계약은 post() 폴백 1건."""
     from .._util import _speech_clip
+    # [한도 소진은 발언이 아니다(2026-08-06, 실측 U-526)] 크레딧이 떨어지면 봇 턴이 '[크레딧 한도] …'
+    # 문자열만 돌려준다. 그것이 그대로 회의 발언으로 게시돼(실측 6줄 연속) 회의는 진전이 없었고,
+    # stage_stall이 올라 '[사람 조치 필요] 회의가 진전 없이 맴돌아'로 파킹됐다 — 원인은 지불인데
+    # 사용자에게는 '안건을 구체화해 주세요'라고 말한다. 게시하지 않는다(마감 기록이 사유를 싣는다).
+    if str(full or "").lstrip().startswith("[크레딧 한도]"):
+        return
+    # [발언은 제 회의에 속한다(2026-08-06, 사용자: '회의에 종료라는건 존재하면 안되는거 아니야?')]
+    # 화면은 회의 발언을 '직전 항목에 이어 붙여' 묶는다. 사이에 다른 종류(SYS 상태 줄·채용 기록)가
+    # 끼면 체인이 끊겨, 그 발언이 제목 없는 새 회의 블록을 열고 자기 문장을 제목으로 삼는다.
+    # 그러면 앞 블록은 결론이 없는 채 뒤에 남아 '종료'로 그려진다 — 실측 U-525 criteria: 한 단계가
+    # 종료 1 + 진행 중 1로 갈렸다. 단계 마커를 모든 회의 발언에 찍어 소속으로 병합하게 한다
+    # (순서가 아니라 소속이 정본 — 표시층이 마커를 벗기고 필드로 승격한다).
+    _pfx = str(prefix or "")
+    _stg_now = str(getattr(flow, "_meet_stage_now", "") or "")
+    if _stg_now and ("[단계:" not in _pfx) and (_pfx.startswith("[회의") or _pfx.startswith("[독립 의견")):
+        prefix = f"{_pfx}[단계:{_stg_now}]"
     ref = None
     fn = getattr(flow.guide, "post_document", None)   # 선택 메서드 — 없으면 폴백
     if fn is not None and flow.current is not None:
@@ -469,6 +503,6 @@ async def _say_speech(flow, who, prefix, full):
         # [회의 더보기 잔재 제거(2026-07-09, 사용자)] murmur 피드는 긴 글을 담게 재설계됐다 —
         # 500자 clip + 모달 '더보기'는 디스코드(평채널) 시절 잔재. 전문을 인라인으로 게시하고
         # (문서 ref는 기록 보존용으로 남되 채널엔 마커 안 붙임). 아주 긴 발언만 안전 상한.
-        await _say(flow, who, f"{prefix} {_speech_clip(full, 8000)}")
+        await _say(flow, who, f"{prefix} {_speech_clip(full, 8000)}", meta=meta)
     else:
-        await _say(flow, who, f"{prefix} {_speech_clip(full, 500)}")   # 폴백 매체(디스코드)는 종전 clip
+        await _say(flow, who, f"{prefix} {_speech_clip(full, 500)}", meta=meta)   # 폴백 매체는 종전 clip

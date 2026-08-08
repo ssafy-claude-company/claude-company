@@ -390,7 +390,7 @@ def test_meet_게이트_Task회의는_GOAL만_전원찬성_채택후_등록(monk
     f.floor_mode = "turn-taking"
     seen = {"gate": 0, "ratify": 0}
     # [통일 수렴안(가안)] 모든 회의 산출물 = [수렴안]. goal 단계는 이 수렴안을 가공해 GOAL 세팅·GOAL.md 작성.
-    CONS = ("[종료]\n[수렴안]\n목표: 방명록 1주기\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    CONS = ("[종료]\n[수렴안]\n목표: 방명록 1주기\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
             "등록 API 동작 | curl POST 후 GET 확인\n목록 표시 | playwright 로드 확인\n[/수렴안]")
 
     async def wake(to, b, k):
@@ -423,7 +423,7 @@ def test_meet_수렴안_반대_있으면_회의_계속된다(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
-    CONS = ("[종료]\n[수렴안]\n목표: x\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n동작 | curl 확인\n[/수렴안]")
+    CONS = ("[종료]\n[수렴안]\n목표: x\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n동작 | curl 확인\n[/수렴안]")
 
     async def wake(to, b, k):
         if "결론 확정 표결" in b:
@@ -448,8 +448,8 @@ def test_meet_반대사유_병합후_재비준_통과(monkeypatch):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow({11: "L", 12: "백엔드", 13: "QA"})
     f.floor_mode = "turn-taking"
-    CONS1 = "[종료]\n[수렴안]\n목표: 방명록 1주기\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n등록 동작 | curl 확인\n[/수렴안]"
-    CONS2 = "[수렴안]\n목표: 방명록 1주기\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n등록 동작 | curl 확인\nQA 검증 | playwright 확인\n[/수렴안]"
+    CONS1 = "[종료]\n[수렴안]\n목표: 방명록 1주기\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n등록 동작 | curl 확인\n[/수렴안]"
+    CONS2 = "[수렴안]\n목표: 방명록 1주기\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n등록 동작 | curl 확인\nQA 검증 | playwright 확인\n[/수렴안]"
     state = {"merged": 0}
 
     async def wake(to, b, k):

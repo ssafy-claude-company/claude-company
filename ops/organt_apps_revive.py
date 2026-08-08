@@ -47,10 +47,12 @@ def spawn(name: str, entry: dict) -> int:
     unit = unit_of(name)
     subprocess.run(["systemctl", "reset-failed", unit], capture_output=True)
     subprocess.run(["systemctl", "stop", unit], capture_output=True)
-    # [봇이 쓴 코드가 root로 돌고 있었다(2026-08-05 감사, 현준-4 — 사용자 지시 '해결해')] 이 소생
-    # 경로는 deploy._spawn_app을 베껴 왔는데 그쪽 결함까지 같이 왔다 — 사용자 지정이 없어 앱이
-    # UID 0으로 떴고, 그러면 /etc/murmur-web.env(금고 열쇠·서명 키·결제 키)를 그냥 읽는다.
-    # 두 곳이 같은 것을 띄우므로 같은 자를 쓴다 — 한쪽만 고치면 소생될 때 다시 root가 된다.
+    # [같은 구멍이 5분마다 다시 열리고 있었다(2026-08-07)] 2026-08-05 감사로 러너의 앱 기동
+    # (system/deploy.py)은 organt로 낮췄는데, **죽은 앱을 되살리는 이 자리**는 그대로였다.
+    # 타이머가 5분마다 도니 앱이 한 번 죽었다 돌아오면 UID 0으로 부활한다 — 그 앱은
+    # /etc/murmur-web.env(600 root:root)를 그냥 읽는다(금고 열쇠·서명 키·결제/DB 열쇠).
+    # 계약 테스트(test_app_not_root)가 이걸 재고 있었지만, 스위트가 수집 단계에서 죽어 있어
+    # 아무도 못 봤다. 기동하는 모든 자리가 같은 낮춤을 쓴다.
     r = subprocess.run(["systemd-run", "--unit", unit, "--collect",
                         "--uid=organt", "--gid=organt",
                         "-p", "NoNewPrivileges=yes",

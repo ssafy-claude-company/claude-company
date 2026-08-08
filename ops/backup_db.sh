@@ -13,13 +13,7 @@ set -euo pipefail
 DBURL=$(cat /root/ClaudeCompany/.dburl)
 DEST=/root/backups/murmur
 KEEP_DAYS=14
-# [덤프는 서비스 전체다(2026-08-06 감사, 현준-4)] 이 파일 하나에 사람 계정·세션 토큰·금고·판별
-# 자격증명이 통째로 들어 있다. 그런데 여태 0644로 떨어져, /root를 지날 수 있는 사용자(러너 organt·
-# 웹 murmurweb — 서비스를 비특권으로 내리며 통과 권한을 준 사람들)가 그대로 읽었다(실측).
-# 만드는 자리에서 좁힌다 — 나중에 고치는 것으로는 그 사이에 떨어진 파일이 남는다.
-umask 077
 mkdir -p "$DEST"
-chmod 700 "$DEST"
 STAMP=$(date +%Y%m%d-%H%M)
 OUT="$DEST/murmur-$STAMP.sql.gz"
 pg_dump "$DBURL" | gzip > "$OUT"

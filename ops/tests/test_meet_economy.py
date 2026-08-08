@@ -46,6 +46,8 @@ def _fill_draft(tmp_path):
         hint = m.group(0)
         if "구성요소" in hint or "최대판" in hint:          # 최대 표준 — 부품 목록이어야 한다
             return "실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭"
+        if "깊이 축" in hint or "알차다" in hint:            # 내용 폭 — 수치 + 깊이 축(2026-08-06)
+            return "기능 6종 · 강화 3택1 · 웨이브 10단 · 해금 12종"
         if "절차" in hint or "exact command" in hint:
             return f"python3 verify_draft_{n['i']}.py"
         return f"등록 항목 {n['i']} 동작을 curl로 확인"
@@ -280,7 +282,7 @@ def test_초안_빈칸표식은_이중대괄호만_봇의_꺾쇠는_자유():
     ⟦ ⟧로 바꿔, 봇이 정상 문서에 쓴 < >(<500ms·<마일스톤 정의> 등)가 '미완 빈칸'으로 오집계돼 회의가
     정체하던 것(목표 회의 25분 맴돔의 원인)을 뿌리 차단. ⟦ ⟧만 빈칸으로 집계."""
     from system.rule.milestone import draft_status
-    filled = ("## 결정\n목표: 2인 턴제 카드게임 (응답 <500ms, 세부는 다음 회의<마일스톤 정의>에서)\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    filled = ("## 결정\n목표: 2인 턴제 카드게임 (응답 <500ms, 세부는 다음 회의<마일스톤 정의>에서)\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
               "완수조건:\n- 규칙 명시 | 실증: run으로 확인\n\n## 참고\n메모\n")
     assert draft_status(filled)[0] == 0        # 봇의 < >(참조·값·비교)는 빈칸 아님 → 표결 가능
     empty = "## 결정\n목표: ⟦이 Task로 무엇을 만들지⟧\n## 참고\n"
@@ -335,6 +337,9 @@ def test_심의단_도메인커버리지_1석_구제(monkeypatch, tmp_path):
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
                                       15: "PM", 16: "게임 기획자", 17: "데이터 엔지니어"})
+    # [적합도 원천 이동(2026-08-07)] 단계 제목이 상수가 되면서 도메인 신호는 안건 본문과 **사용자
+    # 원문**에서 온다. 실판에는 원문('게임 만들어줘')이 항상 있다 — 픽스처도 실판과 같게 세운다.
+    f.origin_request = "가위바위보 웹게임 만들어줘"
     f.floor_mode = "turn-taking"
     events = []
     f.log = lambda ev, **kw: events.append((ev, kw))
@@ -415,7 +420,9 @@ def test_SYS개설_회의는_개설자도_평참여자_지명이_작동(monkeypa
     증발했다(안건의 주인이 침묵한 채 '제시 대기'가 목표로 가결). SYS가 여는 단계 회의는 개설자 세션이
     유휴(흐름 태스크에서 돎) — 개설자도 평참여자: 동료의 [지명]이 실제로 그에게 발언권을 넘긴다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
-    g, f = _meet_flow(tmp_path, bots={11: "게임 기획자", 12: "PM"})
+    # [정족수 관문(2026-08-06)] goal 회의는 실무 3인이 모인 뒤에 열린다 — 이 테스트가 보는 것은
+    # 발언권·지명이지 정족수가 아니므로 인원만 채운다(13은 패스만 한다).
+    g, f = _meet_flow(tmp_path, bots={11: "게임 기획자", 12: "PM", 13: "QA"})
     f.floor_mode = "turn-taking"
     spoke = []
 
@@ -432,7 +439,7 @@ def test_SYS개설_회의는_개설자도_평참여자_지명이_작동(monkeypa
         return "[패스]"
     f.wake = wake
     t = _tools(f, 11, "leader")
-    asyncio.run(t["create_task"].handler({"members": "12"}))
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
     from system.rule.communication import meet as _meet
     asyncio.run(_meet(f, 11, {"topic": "목표", "my_opinion": "여는 의견", "_sys_open": True}))
     assert 11 in spoke and 12 in spoke                 # 개설자가 발언권 루프의 실참여자
@@ -444,7 +451,9 @@ def test_봇개설_회의는_개설자_배제유지_지명증발_안내(monkeypa
     종전 배제 유지(무회귀). 대신 참여자 밖 지명은 이제 무신호 증발이 아니라 [안내]로 다음 발언들의
     '못 본 발언'에 서빙된다(봇이 답 없는 지명을 헛기다리지 않게)."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
-    g, f = _meet_flow(tmp_path, bots={11: "게임 기획자", 12: "PM"})
+    # [정족수 관문(2026-08-06)] goal 회의는 실무 3인이 모인 뒤에 열린다 — 이 테스트가 보는 것은
+    # 발언권·지명이지 정족수가 아니므로 인원만 채운다(13은 패스만 한다).
+    g, f = _meet_flow(tmp_path, bots={11: "게임 기획자", 12: "PM", 13: "QA"})
     f.floor_mode = "turn-taking"
     spoke, bodies = [], []
 
@@ -460,7 +469,7 @@ def test_봇개설_회의는_개설자_배제유지_지명증발_안내(monkeypa
         return "[패스]"
     f.wake = wake
     t = _tools(f, 11, "leader")
-    asyncio.run(t["create_task"].handler({"members": "12"}))
+    asyncio.run(t["create_task"].handler({"members": "12,13"}))
     asyncio.run(t["meet"].handler({"topic": "목표", "my_opinion": "여는 의견"}))
     assert 11 not in spoke                             # 봇 개설 = 개설자 배제 유지(세션 안전)
     # [지명 구조 강제(2026-07-21, 사용자: '평문 이름 말고 구조화 — 안 맞으면 다시 보내라')] 해석
@@ -644,7 +653,7 @@ def test_하위회의_R1과_실질편집턴에_GOAL_비준계약전문_무절단
     )
     ok, note = register_stage(
         f, "goal",
-        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
         + contract + "\n"
         "- 금지 전이는 Error와 상태 불변 | 실증: node test_state_machine.js",
         "U-052",
@@ -780,14 +789,14 @@ def test_DRAFT쓰기실패_표결중_사람개입은_등록전_실질슬롯_대�
             return (
                 "[답변] 사용자 교정을 반영했습니다.\n"
                 "[수렴안]\n"
-                "목표: 사용자 교정 방명록\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+                "목표: 사용자 교정 방명록\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                 "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
                 "[/수렴안]"
             )
         if "발언권 획득" in body or "차례입니다" in body:
             return (
                 "[수렴안]\n"
-                "목표: 최초 방명록\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+                "목표: 최초 방명록\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                 "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
                 "[/수렴안]"
             )
@@ -876,7 +885,7 @@ def test_DRAFT쓰기실패_wakecap경계_사람개입은_등록보류하고_큐�
         if "차례입니다" in body:
             return (
                 "[수렴안]\n"
-                "목표: 경계 방명록\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+                "목표: 경계 방명록\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                 "- 글 작성과 조회가 된다 | 실증: pytest -q\n"
                 "[/수렴안]"
             )
@@ -906,10 +915,17 @@ def test_확정표결은_응찰한_사람들끼리(monkeypatch, tmp_path):
     종전엔 발언=심의단, 찬반=팀 전원이었다. 실측(U-079 GOAL 회의): 응찰 5명이 심의했는데 게임
     기획자가 「별빛 회피」를 먼저 써 넣자 나머지는 조건만 덧붙였고, 도메인이 안 걸린 사람들은
     판단 근거 없이 찬성했다 — 한 사람의 첫 안이 사실상 독식했다. 말하는 사람과 정하는 사람을
-    일치시킨다: 응찰한 사람들끼리 정하고, 혼자 응찰했으면 그 한 명이 정한다."""
+    일치시킨다: 응찰한 사람들끼리 정하고, 혼자 응찰했으면 그 한 명이 정한다.
+
+    [2026-08-06 범위 명시] 이 계약은 **딛을 결론이 있는 단계**(마일스톤·작업영역·백로그)의 것이다.
+    백지 단계(goal·criteria)는 전원 독립 라운드를 먼저 돌므로 그 발언자도 유권자다 — 그때는 모두가
+    자기 설계를 낸 뒤라 '판단 근거 없는 찬성'이라는 이 테스트의 전제가 성립하지 않는다
+    (test_meet_decide_by_bidders.test_유권자는_말한_사람이다). 그래서 여기선 목표·완수조건이 이미
+    선 상태로 세운다."""
     monkeypatch.setenv("ORGANT_PIPELINE", "milestone")
     g, f = _meet_flow(tmp_path, bots={11: "L", 12: "백엔드", 13: "QA", 14: "디자이너",
                                       15: "PM", 16: "데이터"})
+
     f.floor_mode = "turn-taking"
     voters = set()
 
@@ -931,6 +947,8 @@ def test_확정표결은_응찰한_사람들끼리(monkeypatch, tmp_path):
     f.wake = wake
     t = _tools(f, 11, "leader")
     asyncio.run(t["create_task"].handler({"members": "12,13,14,15,16"}))
+    f.current.status.goal = "방명록 앱"                       # 백지 단계 벗어남 — 이 계약의 적용 범위
+    f.current.acceptance = "- 등록 동작 | 실증: curl 확인"
     asyncio.run(t["meet"].handler({"topic": "방명록", "members": "", "rounds": "2",
                                    "my_opinion": "여는 의견"}))
     assert voters == {12, 13}, "응찰한 사람들끼리 정한다 — 심의단 밖은 표결에 안 들어온다"
@@ -1077,37 +1095,37 @@ def test_결정칸_후속미룸만이면_빈칸과_동형_등록거부(monkeypat
     assert deferred_only("(후속: 기획·설계 단계에서 게임 정체성 확정 — 담당: 게임 기획자, 기획 마감: 2026-07-23 정오)")
     assert not deferred_only("2인 턴제 카드 대전 웹게임 (후속: 세부 밸런스)")   # 결정+세부 미룸은 정상
     f = Flow(FakeGuide(), channel_id=500, guild_id=1, leader_id=11, bot_info={11: "L"})
-    ok, note = register_stage(f, "goal", "목표: (후속: 기획 단계에서 확정 — 담당: 게임 기획자)\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭", "게임")
+    ok, note = register_stage(f, "goal", "목표: (후속: 기획 단계에서 확정 — 담당: 게임 기획자)\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭", "게임")
     assert not ok and "후속 미룸" in note and "recruit" in note
-    ok2, _n2 = register_stage(f, "goal", "목표: 2인 턴제 카드 대전 웹게임\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    ok2, _n2 = register_stage(f, "goal", "목표: 2인 턴제 카드 대전 웹게임\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                                          "- 30턴 완주 | 실증: run으로 30턴 재현", "게임")
     assert ok2, _n2                                            # 실결정은 종전대로 등록(무회귀)
     # [목표=절차 금지(2026-07-21, U-040 실측: '①정의→②검증→③정량 정의'가 목표로 확정 — 봇들이
     # 2:2로 두 번 막았는데 소진 확정이 밀었다)] ①②③ 나열·'→' 연쇄는 형태 신호로 반려.
-    ok3, note3 = register_stage(f, "goal", "목표: ① 컨셉 정의 → ② 페이퍼 검증 → ③ 호흡 정량 정의\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    ok3, note3 = register_stage(f, "goal", "목표: ① 컨셉 정의 → ② 페이퍼 검증 → ③ 호흡 정량 정의\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                                            "- 검증 로그 | 실증: run 재현", "게임")
     assert not ok3 and "절차 나열" in note3
-    ok4, _n4 = register_stage(f, "goal", "목표: 카드 대전 → 온라인 확장 가능한 웹게임\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    ok4, _n4 = register_stage(f, "goal", "목표: 카드 대전 → 온라인 확장 가능한 웹게임\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                                          "- 30턴 완주 | 실증: run 재현", "게임")
     assert ok4                                                 # 단일 화살표(표현)는 허용 — 연쇄만 반려
     # [U-051 라이브 2026-07-25] 인라인 코드의 상태 전이를 화살표 수로 세어, 9명 전원 찬성한 정상
     # GOAL을 두 번 거부한 뒤 meet_gate_exhausted로 공전했다. 코드 계약은 절차 나열이 아니다.
-    code_goal = ("목표: JS 상태 전이 검사기 1세트로 `idle→working`, `working→done`, \n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭"
+    code_goal = ("목표: JS 상태 전이 검사기 1세트로 `idle→working`, `working→done`, \n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭"
                  "`working→stopped` 계약을 확인한다\n"
                  "- 전이 테스트 통과 | 실증: node test.js")
     ok5, note5 = register_stage(f, "goal", code_goal, "상태 전이")
     assert ok5, note5
-    circled_code_goal = ("목표: JS 상태 전이 검사기 1세트로 `①idle→②working→③done` 계약을 확인한다\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    circled_code_goal = ("목표: JS 상태 전이 검사기 1세트로 `①idle→②working→③done` 계약을 확인한다\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                          "- 전이 테스트 통과 | 실증: node test.js")
     ok6, note6 = register_stage(f, "goal", circled_code_goal, "상태 전이")
     assert ok6, note6
     draft = "## 결정\n" + code_goal + "\n\n## 참고 (자유 — 판정 대상 아님)\n"
     assert stage_preflight("goal", draft) == []                 # 비싼 찬성 표결 전 검사도 같은 판정
-    prose_draft = ("## 결정\n목표: 컨셉 정의 → 페이퍼 검증 → 호흡 정량 정의\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    prose_draft = ("## 결정\n목표: 컨셉 정의 → 페이퍼 검증 → 호흡 정량 정의\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                    "- 검증 로그 | 실증: run 재현\n\n## 참고\n")
     assert any("절차 나열" in e for e in stage_preflight("goal", prose_draft))
-    assert draft_missing_key("goal", "## 결정\n목표: (후속: 나중에)\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n\n## 참고") == "목표"
-    assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n\n## 참고") is None
+    assert draft_missing_key("goal", "## 결정\n목표: (후속: 나중에)\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n\n## 참고") == "목표"
+    assert draft_missing_key("goal", "## 결정\n목표: 카드 대전 웹게임\n내용 폭: 기능 3종 · 강화 3택1 · 해금 12종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n\n## 참고") is None
 
 
 def test_백로그_발제귀속_R1_원저자_전사자아님(monkeypatch, tmp_path):
@@ -2769,8 +2787,13 @@ def test_같은_단계_반복_개설도_상한에_걸린다():
     src = inspect.getsource(Sys)
     assert "_stage_reopen_cap" in src, "같은 단계 재개설 횟수를 안 센다"
     i = src.index("_seen_st = getattr(flow, \"_stage_open_n\"")
-    seg = src[i:i + 900]
+    seg = src[i:i + 2400]
     assert "stage_stall_break" in seg, "반복 개설이 상한에 안 걸린다"
+    # [맴도는 것과 고쳐 가는 것은 다르다(2026-08-07, 실측 U-527)] 부결 두 번 만에 파킹됐는데 반대
+    # 사유가 서로 달랐고, 그 사이 팀은 프론트엔드를 채용하고 DRAFT에 영역을 추가했다. 결정 구획이
+    # 자랐으면 진전이다 — 그때는 계수를 턴다. 맴돌이(같은 구획으로 다시 열기)만 센다.
+    assert "_progressed" in seg, "진전과 맴돌이를 구분하지 않는다"
+    assert "draft_decision_region" in seg, "진전 판정의 근거가 결정 구획이 아니다"
     # [진척이 있으면 계수를 턴다(2026-07-29, U-079 실측)] 상한이 판 수명 전체에 누적되면 오래 도는
     # 판은 어떤 단계 회의도 못 열고 재개할 때마다 즉시 파킹된다 — 막을 것은 헛도는 재개설뿐이다.
     j = src.index("if status == \"done\":")

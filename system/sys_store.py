@@ -660,7 +660,15 @@ def valid_leader(sys, proj):
         return lead   # 유효(연결돼 있음) — 그대로
     # 무효(해고/예비환원/미연결) → 재배정해 프로젝트를 살린다
     old_role = str(sys.bot_info.get(lead, "") or "") if lead else ""
-    avail = [b for b in sys.bot_info if not str(sys.bot_info.get(b, "")).startswith("예비")]
+    # [리크루터는 판을 이끌지 않는다(2026-08-06, 사용자: '정하준 작업 중 · 게임 만들어줘 … 채용은
+    # 왜 보이지도 않아')] 발제자 응찰(_elect_proposer)은 이미 채용을 후보에서 뺀다. 그런데 리더가
+    # 비었을 때의 이 폴백은 '예비'만 걸러 **채용봇이 avail[0]로 뽑혀 판의 담당이 됐다**(실측 U-518:
+    # owner=0·team=[정하준(채용)] 하나, 그 봇이 '채용 역할로 복원된 Task를 이어가겠습니다'로 회의·
+    # 위임·백로그를 혼자 몰았다). 시스템 존재는 어느 입구로도 판의 자리를 갖지 않는다.
+    from .rule.comm_helpers import _is_system_role_label as _sysrole
+    avail = [b for b in sys.bot_info
+             if not str(sys.bot_info.get(b, "")).startswith("예비")
+             and not _sysrole(sys.bot_info.get(b, ""))]
     pick = next((b for b in avail if old_role and sys.bot_info.get(b) == old_role), None)
     if pick is None:
         pick = avail[0] if avail else lead   # 같은 직군 없으면 아무 가용 봇(특정 직군 선호 하드코딩 제거)

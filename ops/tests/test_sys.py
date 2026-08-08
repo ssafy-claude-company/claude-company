@@ -500,7 +500,7 @@ def test_GOAL_Error계약이_하위_false계약을_이기고_실제run전엔_최
     asyncio.run(tools["create_task"].handler({"members": "12"}))
 
     parent = (
-        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+        "목표: 호출자가 상태 전이를 통제하는 StateMachine\n내용 폭: 기능 3종 · 깊이 축 — 강화 선택 3택1이 5웨이브에 걸쳐 누적\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
         "공개 계약: transition(nextState)는 금지 전이에 Error를 던지고 현재 상태를 보존한다.\n"
         "- 금지 전이는 Error를 던지고 상태를 보존 | 실증: python3 test_parent_contract.py"
     )
@@ -616,7 +616,7 @@ def test_GOAL잠금은_SubTask와_백로그0개거나_미종결이면_검증자�
     f = _flow(FakeGuide())
     f.workspace = str(tmp_path)
     asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
-    goal = ("목표: 경계 검증\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    goal = ("목표: 경계 검증\n내용 폭: 기능 3종 · 깊이 축 — 강화 선택 3택1이 5웨이브에 걸쳐 누적\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
             "- 최종 파일 OK | 실증: python3 verify_release.py")
     assert register_stage(f, "goal", goal, "boundary")[0]
     assert register_stage(
@@ -662,7 +662,7 @@ def test_자연어GOAL잠금은_worker도구없이_SYS가_비준exact를_실행�
     (tmp_path / "browser_check.py").write_text(
         "print('title=Home console_errors=0')\n", encoding="utf-8")
     asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
-    decision = ("목표: 브라우저 인수\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+    decision = ("목표: 브라우저 인수\n내용 폭: 기능 3종 · 깊이 축 — 강화 선택 3택1이 5웨이브에 걸쳐 누적\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
                 "- 홈 화면이 실제로 열린다 | 실증: 브라우저에서 홈을 열어 제목과 콘솔 오류 0건 확인")
     assert register_stage(f, "goal", decision, "natural")[0]
     preflight_missing = stage_preflight(
@@ -758,7 +758,7 @@ def test_SYS자동검증은_동일비준command의_자연어GOAL둘을_각각_fi
     asyncio.run(_tools(f, 11, "leader")["create_task"].handler({"members": "12"}))
     assert register_stage(
         f, "goal",
-        "목표: 두 계약을 함께 인수\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
+        "목표: 두 계약을 함께 인수\n내용 폭: 기능 3종 · 깊이 축 — 강화 선택 3택1이 5웨이브에 걸쳐 누적\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n"
         "- 공개 API가 요구 형태다 | 실증: 산출물에서 공개 API 계약을 확인한다\n"
         "- 상태 전이가 요구 규칙이다 | 실증: 상태 4개·허용 전이 3개·금지 전이 13개를 대조한다",
         "two-natural",
@@ -957,7 +957,7 @@ def test_마일스톤0개인_GOAL_Task는_complete와_e2e를_우회하지못함(
     asyncio.run(tools["create_task"].handler({"members": "12"}))
     assert register_stage(
         f, "goal",
-        "목표: 잠금 있는 결과물\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n- 결과물 계약 | 실증: python3 verify.py",
+        "목표: 잠금 있는 결과물\n내용 폭: 기능 3종 · 깊이 축 — 강화 선택 3택1이 5웨이브에 걸쳐 누적\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n- 결과물 계약 | 실증: python3 verify.py",
         "zero-ms",
     )[0]
     out = asyncio.run(tools["complete_task"].handler({"result": "완료 주장"}))["content"][0]["text"]
@@ -1116,8 +1116,11 @@ def test_complete는_구e2e판정의_artifact_stamp불일치를_fresh검증으�
     tools = _tools(f, 11, "leader")
     asyncio.run(tools["create_task"].handler({"members": "12"}))
     ms = open_milestone(f, "완성", [{"desc": "기동", "verify": "python3 verify.py"}])
-    ms.criteria[0].passed, ms.criteria[0].evidence, ms.status = True, "old", "done"
+    # [과녁이 고정된 주기엔 새 영역을 열지 않는다(2026-08-07 계약)] 종전 픽스처는 주기를 done으로
+    # 만든 **뒤** 영역을 열었다 — 지금은 그 자리에서 등록이 거부된다(정리 단계 진입 후 새 영역 금지).
+    # 재는 것은 e2e stamp 불일치이지 영역 개설 순서가 아니므로, 영역을 먼저 열고 주기를 닫는다.
     st = open_subtask(f, ms, "구현", [])
+    ms.criteria[0].passed, ms.criteria[0].evidence, ms.status = True, "old", "done"
     relay_for(f, st)._pool["B1"] = Backlog(
         "B1", "구현", 12, status="done", assignee=12)
     st.status = "done"
@@ -1214,7 +1217,10 @@ def test_leader는_project_task_도구():
     names = {t.name for t in make_guide_tools(f, 11, "leader")}
     # 보고/답변 툴 없음(반환=Response). 흐름 도구(request·recruit·run)+리더 셋업·배포 도구.
     # [W3 B-18③] list_projects: 회사 이력 pull 보강(push 캡 16건 유지 — pull 전환 아님).
-    assert names == {"request", "recruit", "run", "atelier", "economy",
+    # [주입이 아니라 직접 꺼내 쓴다(2026-08-07, 사용자: '주입이 아니라 직접 찾아볼 때 쓰도록 해야지')]
+    # state: 팀·목표·완수조건·주기·영역·내 몫을 봇이 필요할 때 직접 조회하는 자리. 프롬프트로 계속
+    # 밀어 넣던 장부를 걷어내고 이 도구를 놓았다 — 목록에도 함께 선다.
+    assert names == {"request", "recruit", "run", "atelier", "economy", "state",
                      "create_project", "create_task", "set_goal", "complete_task", "deploy", "send_file",
                      "vote", "vote_stop", "meet", "parallel_work", "list_projects"}   # Discord 심화 대화: 표결·회의(1R 동시 수집). 경쟁 구현은
                                        # 사용자 판단으로 제거(같은 모델 중복 비교 — 효과는 협업에서)

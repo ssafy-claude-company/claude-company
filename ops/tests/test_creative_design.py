@@ -15,7 +15,7 @@ import sys, types
 sys.path.insert(0, __file__.rsplit("/ops/", 1)[0])
 from system.rule.milestone import register_stage, stage_draft_template
 
-_FLOOR = "내용 폭: 카드 12종 · 보스 3종"
+_FLOOR = "내용 폭: 카드 12종 · 보스 3종 · 해금 20종"
 
 
 class _Cur:

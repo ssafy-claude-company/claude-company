@@ -595,9 +595,11 @@ def open_milestone(flow, goal: str, criteria_entries, origin: str = ""):
     return ms
 
 
-def _pnote(flow, text):
+def _pnote(flow, text, meta=None):
     """[파이프라인 생애주기 → 피드(2026-07-09, 사용자)] 마일스톤·SubTask·완수 등 과정 마커를 누적.
-    async 도구 래퍼가 flush_pipeline_notes로 채널에 게시(sync 함수는 await 못 하므로 누적만)."""
+    async 도구 래퍼가 flush_pipeline_notes로 채널에 게시(sync 함수는 await 못 하므로 누적만).
+
+    meta를 주면 게시할 때 payload로 함께 실린다 — 화면이 문장을 되짚지 않고 값을 읽게 하는 자리다."""
     notes = getattr(flow, "_pipeline_notes", None)
     if notes is None:
         notes = flow._pipeline_notes = []
@@ -613,7 +615,7 @@ def _pnote(flow, text):
         if key in seen:
             return
         seen.add(key)
-    notes.append(t)
+    notes.append((t, meta) if meta else t)
 
 
 def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
@@ -628,6 +630,16 @@ def open_subtask(flow, ms: Milestone, goal: str, criteria_entries):
         _ce = []
     if not str(goal or "").strip():
         return "등록 거부: 작업 영역 이름(goal)이 비었습니다."
+    # [닫히는 주기의 과녁은 고정된다(2026-08-06, 실측 U-478·U-496)] 주기가 정리(wrapup)에 들어간
+    # 뒤에도 새 작업 영역을 계속 열 수 있었다. 실측 U-478에는 사람이 직접 넣은 지시가 남아 있다:
+    # "ST-10·ST-11 같은 추가 분해는 **과녁을 계속 옮겨 28시간째 주기가 닫히지 않고 있습니다**".
+    # 마감 보류가 판마다 21회·8회 반복된 것도 같은 뿌리다 — 닫으려는 순간 새 일이 생기니 조건이
+    # 영원히 미충족이다. 사용자 계약 '실증된 주기는 끝난다'는 과녁 고정을 전제로 한다.
+    # 새 일을 막는 것이 아니라 **이번 주기에 넣는 것**을 막는다 — 다음 주기의 몫이다.
+    if str(getattr(ms, "status", "") or "") in ("wrapup", "done"):
+        return ("등록 거부: 이 주기는 정리 단계에 들어가 과녁이 고정됐습니다 — 새 작업 영역은 "
+                "**다음 주기**에 엽니다. 지금 남은 일은 이미 열린 단위 안에서 끝내고, 새로 필요한 "
+                "것은 마일스톤 회의에서 다음 주기로 잡으세요(주기가 닫혀야 실증이 성립합니다).")
     st = SubTask(st_id=f"{ms.ms_id}/ST-{len(ms.subtasks) + 1}",
                  goal=str(goal or "").strip(), criteria=_mk_criteria(_ce))
     ms.subtasks.append(st)
@@ -2662,7 +2674,7 @@ _MILESTONE_COUNT_COACHING = (
 _STAGE_META = {
     "goal": ("이 Task로 **무엇을 만들지**를 정한다",
              "[수렴안]\n목표: ⟦이 Task로 정확히 무엇을 만드는지 — '게임'이 아니라 '2인 턴제 카드 대전'처럼 구체적으로⟧\n"
-             "내용 폭: ⟦이 산출물이 '알차다'의 하한을 수치로 — 예: 적 유형 4종 · 성장 축 2개 · 스테이지 변화 3단 / "
+             "내용 폭: ⟦'알차다'의 하한을 수치로 + **한 판 안에서 달라지는 축 1개 이상**(성장·강화·조합·난이도 곡선) + **세션을 넘어 남는 축 1개 이상**(해금·누적·기록·저장·도전 과제 — 사용자가 다시 올 이유) — 예: 게임이면 '요소 4종 · 강화 3택1 · 해금 12종', 도구면 '기능 6종 · 자동화 4단 · 저장 프로필', 문서면 '章 8개 · 심화 3단 · 개정 이력' — 형태는 당신들이 정합니다. 정말 한 번 쓰고 버리면 '[지속 N/A: 사유]' / "
              "todo앱이면 기능 6종 · 화면 3개. 항목마다 숫자⟧\n"
              "창의 설계: ⟦요구에 없지만 이 산출물을 낫게 만드는 기여 1건 이상 — 무엇이 어떻게 달라지는지 동작으로(예: '방패병 — 앞 열이 받는 피해 40% 감소' · '결과 화면에 판정 근거 표시')⟧\n"
              "최대 표준: ⟦이 종류의 **실제 훌륭한 예**를 WebSearch로 찾아 대조하고, 그 최대판이 당연히 갖춘 **구성요소를 분해**해 체크 가능한 항목 목록으로 — 기능 나열만이 아니라 **주 사용 흐름(진짜 사용자가 핵심 목표를 어떻게 달성하나)**까지. 최대화할 차원이 정말 없으면 '[최대화 N/A: 사유]'⟧\n[/수렴안]\n"
@@ -2700,7 +2712,8 @@ _STAGE_META = {
              "등록이 거부됩니다)."),
     "criteria": ("**무엇이 되면 이 Task가 끝인가**를 정한다(만들 것은 이미 정해짐)",
              "[수렴안]\n조건: ⟦완수조건⟧ | 실증: ⟦실행할 exact command 또는 측정 가능한 검사⟧\n"
-             "조건: ⟦완수조건⟧ | 실증: ⟦…⟧\n[/수렴안]\n"
+             "조건: ⟦완수조건⟧ | 실증: ⟦…⟧\n"
+             "조건: [존재이유] ⟦이 산출물이 *진짜 그것*임을 증명하는 전체·부정형 검증 — 실패하면 핵심 목적이 깨지는 것(예: 협동이 핵심이면 '솔로로는 클리어 불가')⟧ | 실증: ⟦…⟧\n[/수렴안]\n"
              "★이 회의가 답할 질문 하나: **'무엇이 되면 끝인가?'** — 만들 것을 다시 정하거나 작업을 "
              "나누지 마세요. 각 조건은 마지막에 **실행하면 통과/실패가 갈리는 명령 한 줄**로 증명해야 "
              "합니다 — 그 명령이 그려지지 않는 조건이면 지금 다시 쓰세요.\n"
@@ -2820,8 +2833,16 @@ def _product_part_hints(flow) -> str:
         parts = []
     if not parts:
         return ""
-    return ("(goal이 정한 제품 부품 — 이 중 필요한 것을 영역으로 세우고, 검증·배포 영역은 그 위에 "
-            "더하세요)\n" + "".join(f"단위: {p}\n" for p in parts[:8]) + "\n")
+    # [후보를 결정문으로 적어 두면 그게 결정이 된다(2026-08-07, 실측 U-536)] 종전엔 부품을 그대로
+    # `단위:` 줄로 깔았다. '이 중 필요한 것을 세우세요'라고 적었지만, 형식이 이미 선택을 끝낸
+    # 상태다 — 파서는 `단위:` 줄을 전부 영역으로 등재한다. 그 결과 작업 영역 12개 중 7개가
+    # 범위 항목('1개 게임 모드'·'수집물 2종'·'로컬 최고점 1개')이 됐고, 그것들은 백로그 0으로
+    # 영원히 대기한다(단위 완수 = 백로그 소진). 후보는 후보 모양으로 — 파서가 읽지 않는 한 줄로
+    # 적고, 영역은 팀이 직접 쓴다.
+    return ("(goal이 정한 제품 부품 — 이 중 필요한 것을 골라 **직접** `단위:` 줄로 세우고, 검증·배포 "
+            "영역은 그 위에 더하세요. 아래는 후보 목록일 뿐 영역이 아닙니다 — 그대로 옮겨 적지 마세요. "
+            "여러 부품이 한 영역에 묶이는 것이 보통입니다)\n"
+            "· 부품 후보: " + " · ".join(str(p) for p in parts[:8]) + "\n\n")
 
 
 def stage_draft_template(stage, agenda="", flow=None):
@@ -2847,6 +2868,7 @@ def stage_draft_template(stage, agenda="", flow=None):
         _floor_lines = ""
     body = {
         "criteria": ("완수조건:\n" + _floor_lines
+                     + "- [존재이유] ⟦이 산출물이 진짜 그것임을 증명하는 전체·부정형 검증(실패하면 핵심 목적이 깨지는 것)⟧ | 실증: ⟦…⟧\n"
                      + "- ⟦조건⟧ | 실증: ⟦실행할 exact command 또는 측정 가능한 검사⟧\n"
                      "- ⟦조건⟧ | 실증: ⟦…⟧\n"),
         "goal": ("목표: ⟦이 Task로 정확히 무엇을 만드는지 — 구체적으로⟧\n"
@@ -3041,19 +3063,44 @@ def draft_missing_key(stage, text):
         return None
     region = draft_decision_region(text)
     for l in region.splitlines():
-        ls = l.strip().lstrip("*")
+        # [관문은 등록기와 같은 눈으로 본다(2026-08-07, 실측 U-536)] 이 검사는 앞머리 목록 기호를
+        # 벗기지 않았다. 봇들은 결정 구획을 마크다운 목록으로 쓴다 — `- 조건 — … | 실증: …`.
+        # 그러면 여기서는 '조건' 줄이 **없는 것으로** 보여 매 패스마다 '조건 줄이 필요합니다'
+        # 형식 이의가 다시 붙었다. 정작 등록기(draft_to_proposal→draft_norm_line)는 `- `를 벗겨
+        # 같은 줄을 조건으로 읽는다 — 관문이 등록기보다 엄해 통과할 수 있는 문서를 막았다.
+        # criteria 회의 12발언·표결 0으로 소진된 경로가 이것이다. 같은 정규화를 쓴다.
+        ls = re.sub(r"^[-*\u2022]\s*", "", l.strip()).lstrip("*")
         if ls.startswith(k):
             v = ls.split(":", 1)[1].strip() if ":" in ls else ""
             return k if deferred_only(v) else None
     return k
 
 
+FORM_OBJ_RE = r"(?m)^\s*>\s*\[이의 @형식\][^\n]*\n?"
+
+
+def strip_form_objections(text):
+    """기계 형식 이의(`> [이의 @형식] …`)를 전부 걷어낸다 — 매 패스 새로 쓰기 위한 청소."""
+    import re as _re
+    return _re.sub(FORM_OBJ_RE, "", str(text or ""))
+
+
 def draft_status(text):
-    """DRAFT 상태 → (자리표시 수, 미해소 이의 수). '## 결정' 구획만 심사."""
+    """DRAFT 상태 → (자리표시 수, 미해소 이의 수). '## 결정' 구획만 심사.
+
+    [기계 이의는 지워서 해소되지 않는다(2026-08-07, 실측 U-536 criteria)] 이의는 '해소한 사람이
+    그 줄을 삭제한다'가 규칙인데, 그 규칙이 **기계가 쓴 형식 이의**에까지 적용됐다. 결과는 무한
+    핑퐁이었다: 관문이 `> [이의 @형식]`을 쓰면 이의 수가 1이 되어 표결이 안 열리고, 봇은 줄을
+    지워 0으로 만들고, 다음 패스에서 관문이 같은 이의를 다시 쓴다. 회의 하나가 발언 12건·표결 0으로
+    소진됐고 판은 '진전 없이 맴돌아' 파킹됐다(14036~14047).
+
+    기계 이의는 사람의 이견이 아니라 **검사 결과의 표시**다 — 표결을 막는 것은 그 줄이 아니라
+    검사 자체(stage_preflight)여야 한다. 사람 이견(`@직군`·`@표결`·`@등록`)만 센다."""
     import re as _re
     t = draft_decision_region(text)
     ph = len(_re.findall(r"⟦[^⟧\n]{1,150}⟧", t))
-    obj = len(_re.findall(r"^\s*>", t, _re.M))   # 구획 내 인용(>) 줄 = 미해소(해소=삭제)
+    obj = len([l for l in _re.findall(r"^\s*>[^\n]*", t, _re.M)
+               if "[이의 @형식]" not in l])   # 구획 내 인용(>) 줄 = 미해소(해소=삭제)
     return ph, obj
 
 
@@ -3136,10 +3183,17 @@ _PROCESS_WORDS = ("구현", "개발", "설계", "검증", "테스트", "QA", "�
 # [축소는 '없음'으로만 오지 않는다(2026-07-30, ch263 실측)] 제외어 목록만 막았더니 다음 판이
 # "1인용 별 수집 **미니게임**, 한 세션 60초"로 통과했다 — 빼는 말 없이 규모를 줄이는 축소어다.
 # 두 갈래를 함께 본다: ①빼는 말(없음·제외) ②줄이는 말(미니·데모·단일 화면).
+# [축소는 '한 판의 길이'로도 온다(2026-08-06, 사용자: '또 60초 60초 거리고')] 실측: 열린 요청
+# '게임 만들어줘'가 판마다 60초·3분 한 판, 단일 경기장으로 수렴했다(U-478 60초 · U-496 · U-505
+# 60초 · U-506 60초 · U-516 60초 · U-517 3분). 빼는 말도 줄이는 말도 없이 **세션 길이와 무대 수**로
+# 규모를 접는 축소다. 원문이 그 길이를 말하지 않았으면 목적지가 아니라 첫 주기의 크기다.
 _NARROW_RE = re.compile(r"(없음|없이|제외|미포함|하지\s*않는다|안\s*한다|최소한의|MVP|최소\s*버전|"
                         r"1차\s*범위|범위\s*축소|간단한\s*수준|"
                         r"미니게임|미니\s|초소형|초간단|데모|프로토타입|시제품|맛보기|샘플|습작|연습용|"
-                        r"단일\s*화면|화면\s*1개|한\s*화면짜리|가벼운\s*수준)", re.I)
+                        r"단일\s*화면|화면\s*1개|한\s*화면짜리|가벼운\s*수준|"
+                        r"\d+\s*초\s*(?:동안|안에|짜리|한\s*판|세션|생존|플레이)|"
+                        r"한\s*판\s*\d+\s*(?:초|분)|\d+\s*분\s*(?:안에|짜리|한\s*판|세션)|"
+                        r"단일\s*경기장|경기장\s*1개|무대\s*1개|스테이지\s*1개|레벨\s*1개)", re.I)
 
 
 def goal_narrowing_error(goal, origin="") -> str:
@@ -3156,6 +3210,11 @@ def goal_narrowing_error(goal, origin="") -> str:
     tok = m.group(1)
     if tok and tok in o:
         return ""                       # 사용자가 직접 그렇게 말했다면 그대로 따른다
+    # [원문이 그 수치를 말했으면 축소가 아니다(2026-08-06)] 세션 길이·무대 수는 표현이 조금씩
+    # 달라진다('60초 동안' vs '60초 게임') — 매칭 문자열이 아니라 그 안의 **수치+단위**로 대조한다.
+    _num = re.search(r"(\d+)\s*(초|분)", tok or "")
+    if _num and re.search(rf"{_num.group(1)}\s*{_num.group(2)}", o):
+        return ""
     return (f"목표에 축소·제외 표현('{tok}')이 있습니다 — 원문에는 그런 제한이 없습니다. "
             f"**Task는 이 요청으로 갈 수 있는 곳까지** 잡고, 작게 시작하는 것은 다음 회의의 "
             f"주기가 맡습니다(달구지 → 자동차 → 스포츠카). 지금 못 만들 것 같아도 목적지로 "
@@ -3585,6 +3644,122 @@ def _milestone_verifier_errors(flow, entries, proposed_phases=None):
     return errors
 
 
+def goal_form_errors(goal, _val):
+    """[표결 전에 형태를 본다(2026-08-06, 사용자: '표결을 열고 모두 동의했는데 결론이 잘못된 방식으로
+    만들어져서 반려되거나 그런건 아니지? 서순도 중요하고')] goal 수렴안의 형태 관문 단일 정본.
+
+    종전엔 이 검사들이 register_stage에만 있었다 — 전원이 찬성한 **뒤에** 등록에서 반려됐고, 팀은
+    같은 회의에서 표결을 다시 열었다(실측 U-520: 찬성 1 → '내용 폭이 가짓수만 셉니다' 보류 → 수정 →
+    다시 표결). 화면에는 같은 회의 안에 '확정 표결' 카드가 여러 장 쌓여 무엇이 결론인지 흐려졌다.
+    stage_preflight(표결 전)와 register_stage(등록)가 같은 함수를 쓰게 해서, 형태 불량은 표결이
+    열리기 전에 걸린다. 내용의 좋고 나쁨은 여전히 판단하지 않는다 — 결정이 있었는지만 본다.
+
+    반환: 에러 문구 목록(비면 통과).
+    """
+    import re
+    errs = []
+    _floor_raw = strip_internal_citation(_val("내용 폭"))
+    if not _floor_raw:
+        errs.append(("수렴안에 '내용 폭:' 줄이 필요합니다 — 이 산출물이 '알차다'의 하한을 "
+                       "항목마다 수치로(예: '적 유형 4종 · 성장 축 2개 · 스테이지 변화 3단'). "
+                       "넓이를 결정하지 않으면 완수조건이 가장 좁은 실증 가능 범위로 수렴합니다."))
+    if deferred_only(_floor_raw):
+        errs.append("'내용 폭:'이 후속 미룸 문구뿐입니다 — 하한 수치는 이 회의가 정합니다.")
+    _floor_items = [x.strip() for x in re.split(r"[·,;]", _floor_raw) if x.strip()]
+    _numbered = [x for x in _floor_items if re.search(r"\d", x)]
+    if not _numbered:
+        errs.append(("'내용 폭:'의 항목에 숫자가 없습니다 — 하한은 수치여야 다음 회의가 "
+                       "조건으로 잠급니다(예: '적 유형 4종', '기능 6종')."))
+    # [넓이만으로는 두꺼워지지 않는다(2026-08-06, 사용자: '로그라이크에 성장형 증강등 여러 요소가
+    # 있던 그러한 화려한거나 그런게 없어')] 수치 하한만 요구하니 '레인 3 · 장애물 4종'처럼
+    # **가짓수만 센 최소 루프**가 통과했다(실측 U-516). 작품을 두껍게 만드는 것은 가짓수가 아니라
+    # **판이 진행되며 달라지는 축**이다 — 성장·해금·조합·메타 재화·난이도 곡선. p-012(디코 시절
+    # 명작)의 GOAL이 그 축들로 14개 절을 채웠다. 어휘가 아니라 '그런 결정이 있었는가'만 본다.
+    _DEPTH_RE = re.compile(r"(성장|레벨업|레벨 업|업그레이드|강화|증강|해금|언락|"
+                            r"스킬|특성|퍽|시너지|조합|빌드|덱|장비|아이템 획득|"
+                            r"메타|영구|누적|진척|진행도|난이도 곡선|웨이브|스테이지 진행|"
+                            r"보스|엔딩|스토리|맵 확장|모드 해금)", re.I)
+    # [한 판 안의 축과 판을 넘는 축은 다르다(2026-08-06, 사용자: '깊이도 최대 작업을 할 수 있도록')]
+    # 깊이 관문을 세운 뒤에도 결과는 '30초 웨이브 6개 · 3단계 난이도'였다(실측 U-525) — 전부
+    # **한 번 쓰고 끝나는 축**이다. 앞서 사용자가 짚은 '보스에 도전하고 즉시 재시작이라는게
+    # 실제 사용자를 고려하지도 않은 단발성'이 이것이고, '60초 60초 거린다'도 같은 뿌리다.
+    # 두께는 한 세션 안의 변화만으로는 안 생긴다 — **세션을 넘어 남는 것**이 있어야 다시 온다.
+    # 형태만 본다: 판을 넘는 축의 결정이 있는가. 무엇으로 할지는 팀이 정한다.
+    _PERSIST_RE = re.compile(r"(해금|언락|영구|누적|메타|기록\s*갱신|최고\s*기록|도전\s*과제|"
+                              r"업적|수집(?!품\s*없)|도감|프로필|세이브|저장된|이어\s*하기|"
+                              r"진척도|컬렉션|템플릿|히스토리|개정|색인|장기|시즌|랭킹|리더보드)", re.I)
+    _persist_na = bool(re.search(r"\[\s*지속\s*(?:N\s*/?\s*A|면제|불필요)\s*[:：]\s*\S",
+                                  goal + "\n" + _floor_raw))
+    if _DEPTH_RE.search(_floor_raw) and not _persist_na and not _PERSIST_RE.search(_floor_raw):
+        errs.append(("'내용 폭:'의 축이 전부 **한 번 쓰고 끝나는 것**입니다 — 한 세션 안에서만 "
+                       "달라지고, 그 세션이 끝나면 남는 것이 없습니다. 사용자가 **다시 올 이유**가 "
+                       "되는 축을 최소 하나 수치와 함께 넣으세요(세션을 넘어 남거나 쌓이는 것 — "
+                       "게임이면 '해금 12종'·'최고 기록 갱신 보상 5단' · 도구면 '저장 프로필 무제한'"
+                       "·'템플릿 누적' · 문서면 '개정 이력'·'색인' — 형태는 당신들이 정합니다). "
+                       "정말 한 번 쓰고 버리는 산출물이면 '[지속 N/A: 사유]'로 명시하세요."))
+    if not _DEPTH_RE.search(_floor_raw):
+        errs.append(("'내용 폭:'이 **가짓수**만 셉니다 — 판이 진행되며 달라지는 **깊이 축**이 "
+                       "하나도 없습니다(성장·해금·조합·강화·메타 재화·난이도 곡선·웨이브/스테이지 "
+                       "진행 등). 가짓수만 늘리면 한 판이 두꺼워지지 않습니다. 이 산출물이 "
+                       "'계속 하게 되는' 이유가 되는 축을 최소 하나 수치와 함께 넣으세요"
+                       "(예: 게임이면 '강화 선택 3택1' · 도구면 '자동화 단계 4단' · 문서면 '심화 장 3개' "
+                       "— 장르·형태는 당신들이 정합니다)."))
+    # [요구 밖은 아무도 결정하지 않으면 아무도 얹지 않는다(2026-08-05, 사용자: '몹을 추가하라는
+    # 명령에 방패병 … 고도화 된 봇의 창의적 설계')] 내용 폭이 '얼마나'를 잠그듯 창의 설계는
+    # '요구 밖 하나'를 잠근다. 시스템은 기여의 좋고 나쁨을 판단하지 않는다 — 결정이 있었는지만.
+    _creative_raw = strip_internal_citation(_val("창의 설계"))
+    if not _creative_raw:
+        errs.append(("수렴안에 '창의 설계:' 줄이 필요합니다 — 요구에 없지만 이 산출물을 "
+                       "낫게 만드는 기여를 1건 이상, 무엇이 어떻게 달라지는지 동작으로 "
+                       "(예: '방패병 — 앞 열이 받는 피해 40% 감소'). 요구 명세만 채우면 "
+                       "요구만큼만 나옵니다."))
+    # 미룸 어휘를 걷어내고 남는 것이 없으면 결정이 아니다 — 내용의 좋고 나쁨이 아니라 형태만 본다.
+    _cv_rest = re.sub(r"(후속|추후|차후|미정|TBD|tbd|협의|논의|결정|확정|예정|에서|으로|한다)", "", _creative_raw)
+    _cv_rest = re.sub(r"[\s·,;:—\-()]+", "", _cv_rest)
+    if deferred_only(_creative_raw) or len(_cv_rest) < 4:
+        errs.append(("'창의 설계:'가 후속 미룸 문구뿐입니다 — 무엇을 얹을지는 이 회의가 "
+                       "정합니다(세부 구현은 미뤄도 됩니다)."))
+    _creative_items = [x.strip() for x in re.split(r"[·;]", _creative_raw) if x.strip()]
+    # [최대 표준이 빠지면 판은 '문자 그대로 최소'로 간다(2026-08-06, 사용자: '너무 Task가 최소로
+    # 잡히는걸로 바뀐 느낌')] 디스코드 시절 Task GOAL은 set_goal의 최대화 관문을 통과해야 섰다 —
+    # '실제 훌륭한 예를 WebSearch로 찾아 최대판 구성요소를 분해해 standard에 항목 목록으로'.
+    # 그 관문은 rule/task.py:set_goal에 있고, 지금 파이프라인의 GOAL은 goal 회의(register_stage)가
+    # 낳는다 — 즉 **최대화 관문을 한 번도 지나지 않는다**. 그래서 GOAL.md의 `## Standard`가 늘
+    # 비었다(실측: 현행 판 전부 빈칸). 대조 실측 — 디코 p-012 GOAL은 14개 절·Acceptance 15항목·
+    # Standard('상용 캐주얼 웹게임 완성도, placeholder 금지')였고, 지금 U-496 GOAL은 두 문장에
+    # Acceptance 0줄이다. 관문을 이 회의로 옮겨 온다(형태 검사 — 기록이 있는지만 본다).
+    _std_raw = strip_internal_citation(_val("최대 표준"))
+    _max_na = bool(re.search(r"\[\s*최대화\s*(?:N\s*/?\s*A|면제|불필요)\s*[:：]\s*\S",
+                              goal + "\n" + _std_raw))
+    if not _max_na:
+        if not _std_raw:
+            errs.append(("수렴안에 '최대 표준:' 줄이 필요합니다 — 이 시스템의 전제는 '요청을 문자 "
+                           "그대로 최소로'가 아니라 **가용 자원으로 만들 수 있는 최대 품질**입니다. "
+                           "이 종류의 **실제 훌륭한 예를 WebSearch로 찾아**(상상 금지 — 자기 산출을 "
+                           "기준 삼으면 '평범=충분'으로 수렴합니다) 그 최대판의 **구성요소를 분해**해 "
+                           "체크 가능한 항목 목록으로 쓰세요(기능 나열 + 주 사용 흐름). 최대화할 "
+                           "차원이 정말 없으면 '[최대화 N/A: 사유]'."))
+        if deferred_only(_std_raw):
+            errs.append("'최대 표준:'이 후속 미룸 문구뿐입니다 — 최대판 분해는 이 회의가 합니다.")
+        _std_items = [x for x in re.split(r"[·,;\n]", _std_raw) if x.strip()]
+        if len(_std_items) < 3:
+            errs.append(("'최대 표준:'이 한 문장입니다 — 최대판이 당연히 갖춘 **구성요소를 분해**해 "
+                           "**항목 목록**(3개 이상, `·`로 구분)으로 쓰세요. 모호한 한 문장은 마감에서 "
+                           "대조할 수 없습니다(마감은 '좋은가?'가 아니라 '최대판 부품이 다 있나'를 "
+                           "항목별로 봅니다)."))
+        # [부품 목록은 흐름이 아니다(2026-08-06)] 골격 문구는 '주 사용 흐름까지'를 요구했는데
+        # 관문은 항목 수만 셌다 — 그래서 표준이 기능 나열로만 채워졌다(실측 U-525). 진짜 사용자가
+        # 핵심 목표를 처음부터 끝까지 어떻게 달성하는지가 있어야 마감에서 '부품은 다 있는데 쓸 수
+        # 없다'를 잡는다(존재이유 테스트와 같은 뿌리).
+        _FLOW_RE = re.compile(r"(→|->|흐름|여정|루프|처음부터|끝까지|시작부터)")
+        if not _FLOW_RE.search(_std_raw):
+            errs.append(("'최대 표준:'이 부품 나열뿐입니다 — 최대판이 갖춘 **주 사용 흐름**(진짜 "
+                           "사용자가 핵심 목표를 처음부터 끝까지 어떻게 달성하나)을 한 항목으로 "
+                           "적으세요(화살표나 '흐름'으로 단계를 이어서). 부품만 모으면 다 있는데 "
+                           "쓸 수 없는 산출물이 나옵니다."))
+    return errs
+
+
 def stage_preflight(stage, text, flow=None):
     """[등록 사전 검사(2026-07-17, ch78 실측: 표결 가결 후 등록 거부 사이클 6~9분×N — 봇 비용 낭비)]
     register_stage와 **같은 파싱**으로 표결 전에 불량을 전부 찾는다(봇 비용 0, 상태 변경 없음).
@@ -3611,6 +3786,9 @@ def stage_preflight(stage, text, flow=None):
                 _goal, str(getattr(flow, "origin_request", "") or "") if flow is not None else "")
             if _narrow:
                 errs.append(_narrow)
+            # 형태 관문(내용 폭·깊이 축·지속 축·창의 설계·최대 표준·주 사용 흐름)은 등록과 같은
+            # 함수다 — 표결 뒤가 아니라 표결 전에 걸린다(2026-08-06 서순 수리).
+            errs.extend(goal_form_errors(_goal, _val))
     if stage == "milestone" and not (_val("이번 주기") or _val("목표")):
         errs.append("'이번 주기: ⟦이번에 보여줄 딱 하나⟧' 줄이 필요합니다(줄 시작, 장식 없이).")
     # [회의 하나에 결론 하나(2026-07-30, 사용자 지시) — 전수 정합] goal 회의는 '무엇을 만들지'만
@@ -3890,12 +4068,51 @@ def register_stage(flow, stage, prop, origin=""):
         _err = gate_criteria(_crits)
         if _err:
             return False, _err
+        # [부품 체크만 통과하면 전체가 목적 미달인 산출물이 마감된다(2026-08-06 복원, 디코 시절 규칙)]
+        # 옛 set_goal에는 '존재이유 테스트' 관문이 있었다 — 이 산출물이 *진짜 그것*임을 증명하는
+        # 전체·부정형 검증(실패하면 핵심 목적이 깨지는 것). p-012 GOAL은 그 항목을 둘 갖고 있었다
+        # ('메타 재화 0계정과 최대계정의 도달시간 차 15% 미만이면 성장루프가 깨진 것' 등).
+        # 지금 파이프라인은 set_goal을 안 거쳐 그 관문이 통째로 빠졌고, 완수조건은 '버튼이 있나·
+        # 이벤트가 발화하나' 같은 부품 체크로 채워졌다(실측: 현행 전 판 Acceptance에 존재이유 0건).
+        # 표기는 조건 줄에 '[존재이유]'를 달거나 별도 '존재이유:' 줄 — 형태만 본다.
+        _exi = bool(_re.search(r"\[\s*존재\s*이유\s*[\]:：]|^\s*존재\s*이유\s*[:：]",
+                               _crit_txt + "\n" + prop, _re.M))
+        if not _exi:
+            return False, ("완수조건에 **존재이유 테스트**가 없습니다 — 이 산출물이 *진짜 그것*임을 "
+                           "증명하는 **전체·부정형 검증 1개 이상**을 넣으세요(실패하면 핵심 목적이 "
+                           "깨지는 것). 예: 2인 협동이면 → '솔로로는 클리어 불가' · 성장이 핵심이면 → "
+                           "'강화 없이는 5웨이브 생존 불가' · 추천 → '무관 질의엔 상위가 달라짐' · "
+                           "인증 → '틀린 토큰은 거부'. 부품 체크(버튼 있나·이벤트 발화하나)만 적으면 "
+                           "**부품은 통과인데 전체는 목적 미달**인 산출물이 마감됩니다. 조건 줄 앞에 "
+                           "`[존재이유]`를 달아 표시하세요.")
         try:
             _cur.acceptance = "\n".join(f"- {c['desc']} | 실증: {c['verify']}" for c in _crits)
         except Exception:
             return False, "완수조건을 장부에 기록하지 못했습니다."
+        # [산출물 문서가 결정을 담아야 한다(2026-08-07, 사용자: '품질이나 협업 대화나 내용은 얼마나
+        # 고도화 됐는지 봐봐')] GOAL.md는 **goal 단계에서 딱 한 번** 쓰였다. 그때 완수조건은 아직
+        # 없으므로 `## Acceptance`는 빈칸으로 굳고, 뒤이어 criteria 회의가 조건을 19개 등록해도
+        # 파일은 그대로였다(실측 U-520: 채널엔 '완수조건 19개 등록', GOAL.md의 Acceptance는 빈 줄).
+        # 대조 실측 — 디스코드 시절 p-032 GOAL.md는 완수조건 55항목을 문서 안에 담았다. 지금은
+        # 결정이 장부에만 살고 문서에는 없다. 조건이 정해진 자리에서 문서를 다시 쓴다.
+        try:
+            _write_goal_md(flow, _cur, str(getattr(_cur.status, "goal", "") or ""),
+                           decision=str(getattr(_cur, "goal_decision", "") or ""))
+        except Exception:
+            pass
         try:
             _goal_doc(flow)
+        except Exception:
+            pass
+        # [정한 것을 화면이 값으로 받는다(2026-08-07, 사용자: '결론 따로 받고 제목 따로 받아야지')]
+        # criteria 회의가 정하는 것이 이 Task의 인수조건인데, 채널에는 '완수조건 17개 등록'이라는
+        # **개수만** 나갔다. 조건 본문은 장부와 GOAL.md에만 살아, 판 화면 어디에서도 볼 수 없었다
+        # (실측 U-536: Task 카드의 '완수조건'은 마일스톤 조건의 합집합이라 1개로 떴다).
+        # 목록을 구조 값으로 함께 실어 화면이 문장을 되짚지 않게 한다.
+        try:
+            _pnote(flow, f"[완수조건] 이 Task가 끝나는 조건 {len(_crits)}개 확정",
+                   {"crit": [{"d": str(c.get("desc") or "")[:300],
+                              "v": str(c.get("verify") or "")[:300]} for c in _crits[:40]]})
         except Exception:
             pass
         return True, f"완수조건 {len(_crits)}개 등록 — 이제 이번 주기(마일스톤)를 정합니다."
@@ -3924,61 +4141,15 @@ def register_stage(flow, stage, prop, origin=""):
         # [넓이를 아무도 결정하지 않으면 판은 가장 좁게 흐른다(2026-08-04, 실측 U-478: 완주작
         # 콘텐츠 어휘 0회·노동의 14%만 제품)] '내용 폭'은 goal의 필수 결정 — 수치가 든 항목이어야
         # 완수 기준 회의가 조건으로 잠글 수 있다. 시스템은 숫자의 크기를 판단하지 않는다.
+        _form_errs = goal_form_errors(goal, _val)
+        if _form_errs:
+            return False, _form_errs[0]
         _floor_raw = strip_internal_citation(_val("내용 폭"))
-        if not _floor_raw:
-            return False, ("수렴안에 '내용 폭:' 줄이 필요합니다 — 이 산출물이 '알차다'의 하한을 "
-                           "항목마다 수치로(예: '적 유형 4종 · 성장 축 2개 · 스테이지 변화 3단'). "
-                           "넓이를 결정하지 않으면 완수조건이 가장 좁은 실증 가능 범위로 수렴합니다.")
-        if deferred_only(_floor_raw):
-            return False, "'내용 폭:'이 후속 미룸 문구뿐입니다 — 하한 수치는 이 회의가 정합니다."
         _floor_items = [x.strip() for x in _re.split(r"[·,;]", _floor_raw) if x.strip()]
         _numbered = [x for x in _floor_items if _re.search(r"\d", x)]
-        if not _numbered:
-            return False, ("'내용 폭:'의 항목에 숫자가 없습니다 — 하한은 수치여야 다음 회의가 "
-                           "조건으로 잠급니다(예: '적 유형 4종', '기능 6종').")
-        # [요구 밖은 아무도 결정하지 않으면 아무도 얹지 않는다(2026-08-05, 사용자: '몹을 추가하라는
-        # 명령에 방패병 … 고도화 된 봇의 창의적 설계')] 내용 폭이 '얼마나'를 잠그듯 창의 설계는
-        # '요구 밖 하나'를 잠근다. 시스템은 기여의 좋고 나쁨을 판단하지 않는다 — 결정이 있었는지만.
         _creative_raw = strip_internal_citation(_val("창의 설계"))
-        if not _creative_raw:
-            return False, ("수렴안에 '창의 설계:' 줄이 필요합니다 — 요구에 없지만 이 산출물을 "
-                           "낫게 만드는 기여를 1건 이상, 무엇이 어떻게 달라지는지 동작으로 "
-                           "(예: '방패병 — 앞 열이 받는 피해 40% 감소'). 요구 명세만 채우면 "
-                           "요구만큼만 나옵니다.")
-        # 미룸 어휘를 걷어내고 남는 것이 없으면 결정이 아니다 — 내용의 좋고 나쁨이 아니라 형태만 본다.
-        _cv_rest = _re.sub(r"(후속|추후|차후|미정|TBD|tbd|협의|논의|결정|확정|예정|에서|으로|한다)", "", _creative_raw)
-        _cv_rest = _re.sub(r"[\s·,;:—\-()]+", "", _cv_rest)
-        if deferred_only(_creative_raw) or len(_cv_rest) < 4:
-            return False, ("'창의 설계:'가 후속 미룸 문구뿐입니다 — 무엇을 얹을지는 이 회의가 "
-                           "정합니다(세부 구현은 미뤄도 됩니다).")
         _creative_items = [x.strip() for x in _re.split(r"[·;]", _creative_raw) if x.strip()]
-        # [최대 표준이 빠지면 판은 '문자 그대로 최소'로 간다(2026-08-06, 사용자: '너무 Task가 최소로
-        # 잡히는걸로 바뀐 느낌')] 디스코드 시절 Task GOAL은 set_goal의 최대화 관문을 통과해야 섰다 —
-        # '실제 훌륭한 예를 WebSearch로 찾아 최대판 구성요소를 분해해 standard에 항목 목록으로'.
-        # 그 관문은 rule/task.py:set_goal에 있고, 지금 파이프라인의 GOAL은 goal 회의(register_stage)가
-        # 낳는다 — 즉 **최대화 관문을 한 번도 지나지 않는다**. 그래서 GOAL.md의 `## Standard`가 늘
-        # 비었다(실측: 현행 판 전부 빈칸). 대조 실측 — 디코 p-012 GOAL은 14개 절·Acceptance 15항목·
-        # Standard('상용 캐주얼 웹게임 완성도, placeholder 금지')였고, 지금 U-496 GOAL은 두 문장에
-        # Acceptance 0줄이다. 관문을 이 회의로 옮겨 온다(형태 검사 — 기록이 있는지만 본다).
         _std_raw = strip_internal_citation(_val("최대 표준"))
-        _max_na = bool(_re.search(r"\[\s*최대화\s*(?:N\s*/?\s*A|면제|불필요)\s*[:：]\s*\S",
-                                  goal + "\n" + _std_raw))
-        if not _max_na:
-            if not _std_raw:
-                return False, ("수렴안에 '최대 표준:' 줄이 필요합니다 — 이 시스템의 전제는 '요청을 문자 "
-                               "그대로 최소로'가 아니라 **가용 자원으로 만들 수 있는 최대 품질**입니다. "
-                               "이 종류의 **실제 훌륭한 예를 WebSearch로 찾아**(상상 금지 — 자기 산출을 "
-                               "기준 삼으면 '평범=충분'으로 수렴합니다) 그 최대판의 **구성요소를 분해**해 "
-                               "체크 가능한 항목 목록으로 쓰세요(기능 나열 + 주 사용 흐름). 최대화할 "
-                               "차원이 정말 없으면 '[최대화 N/A: 사유]'.")
-            if deferred_only(_std_raw):
-                return False, "'최대 표준:'이 후속 미룸 문구뿐입니다 — 최대판 분해는 이 회의가 합니다."
-            _std_items = [x for x in _re.split(r"[·,;\n]", _std_raw) if x.strip()]
-            if len(_std_items) < 3:
-                return False, ("'최대 표준:'이 한 문장입니다 — 최대판이 당연히 갖춘 **구성요소를 분해**해 "
-                               "**항목 목록**(3개 이상, `·`로 구분)으로 쓰세요. 모호한 한 문장은 마감에서 "
-                               "대조할 수 없습니다(마감은 '좋은가?'가 아니라 '최대판 부품이 다 있나'를 "
-                               "항목별로 봅니다).")
         if _cur is not None:
             _cur.content_floor = _numbered   # 넓이의 결정 — criteria 골격이 조건 초안으로 승계
             _cur.creative = _creative_items  # 요구 밖의 결정 — 같은 통로로 조건이 된다
@@ -4013,6 +4184,10 @@ def register_stage(flow, stage, prop, origin=""):
                     if _line not in _prev:
                         _prev.append(_line)
                 _cur.interfaces = "\n".join(_prev)
+            try:
+                _cur.goal_decision = str(prop or "")   # 뒤 단계가 GOAL.md를 갱신할 때 쓸 원문
+            except Exception:
+                pass
             _write_goal_md(flow, _cur, goal, decision=prop)  # 비준안 전문 + 복구 파서 계약 헤더
             _ckpt(flow)   # GOAL 확정도 다른 파이프라인 전이처럼 즉시 크래시-세이프
         if flow.log:
@@ -4255,6 +4430,12 @@ def register_stage(flow, stage, prop, origin=""):
         # 없는 사람이 주인이 되거나 늘 같은 사람이 뽑혔다(같은 함수 근처 _team_o는 이미 팀으로 좁혀져
         # 있어 내부 비일관이었다). 게다가 적합도가 전원 동점(시소러스 미스로 전부 0)이면 max가 늘
         # **사전 첫 키**를 줘서 한 명에게 깔때기가 됐다 — 동점은 '이번 회의에서 덜 가져간 쪽'으로 깬다.
+        # [채용은 일감을 받지 않는다(2026-08-06, 사용자: '심지어 채용이 백로그 잡음')] 08-04 계약은
+        # 채용을 팀·회의·표결에서 뺐는데, 이 폴백은 팀이 비면 **전사 로스터**로 떨어지고 거기엔
+        # 채용이 있다 — 실측 U-504: 채용 봇이 백로그 75건 전부를 혼자 등재·수행했다. 무주 출생을
+        # 막는 자리이지 시스템 봇에게 일을 미는 자리가 아니다. 후보에서 뺀다(비면 0 = 무주 반려).
+        from .comm_helpers import _norm_job as _nj_fb
+        _bots_o = {k: v for k, v in _bots_o.items() if _nj_fb(v) != "채용"}
         _fb_pool = {int(x): _bots_o[int(x)] for x in (
             getattr(getattr(flow, "current", None), "team", None)
             or getattr(flow, "project_team", None) or _bots_o.keys())
@@ -4981,6 +5162,19 @@ def rule_report_iter(flow, me_id, args) -> str:
             flow.log("subtask_left_open", st=tgt.st_id, left=len(_left),
                      ids=",".join(b.backlog_id for b in _left[:8]),
                      states=",".join(f"{b.backlog_id}:{b.status}" for b in _left[:8]))
+        # [남은 게 내 손에 있으면 보고가 아니라 그 일을 끝내야 한다(2026-08-07, 실측 U-536)]
+        # ST-5가 닫히지 않는 동안 같은 봇이 report_iter를 반복했다 — 잔여는 늘 `B1:in_progress`
+        # 하나였고, 그 B1은 **보고하는 본인이 들고 있던 일감**이었다. 안내는 '다음 수행자를
+        # pick_backlog로 선정하세요'였는데 그건 주인 없는 일감에게 하는 말이라, 봇은 무엇을 해야
+        # 할지 못 찾고 보고만 되풀이했다(30분 동안 iter_backlog_registered 24회 · 진전 0).
+        # 잔여가 전부 '내가 진행 중'이면 그 사실을 그대로 말한다.
+        _mine_left = [b for b in _left
+                      if b.status == "in_progress" and int(getattr(b, "assignee", 0) or 0) == int(me_id)]
+        if len(_mine_left) == len(_left):
+            _ids = ", ".join(b.backlog_id for b in _mine_left[:4])
+            return (f"이 단계는 아직 닫히지 않습니다 — 잔여 {len(_left)}건이 **당신이 진행 중인 "
+                    f"일감**입니다({_ids}). 보고를 다시 하는 것으로는 닫히지 않습니다. "
+                    f"그 일감을 끝내고 그 결과를 보고하세요.")
         return (f"백로그 완료 기록 — SubTask {tgt.st_id} 잔여 {len(_left)}건. 다음 수행자를 "
                 f"pick_backlog(id)로 선정하세요(검증 게이트는 마일스톤에서).")
     # 대상 없음 = 마일스톤 완수조건 검증(유일한 실증 게이트)
@@ -5074,7 +5268,13 @@ async def flush_pipeline_notes(flow):
     ch = getattr(flow, "current", None)
     tid = getattr(ch, "thread_id", None) or getattr(flow, "user_channel", None)
     for t in notes:
+        _meta = None
+        if isinstance(t, tuple):
+            t, _meta = t
         try:
-            await flow.guide.post(int(tid), 0, t)
+            if _meta:
+                await flow.guide.post(int(tid), 0, t, meta=_meta)
+            else:
+                await flow.guide.post(int(tid), 0, t)
         except Exception:
             pass

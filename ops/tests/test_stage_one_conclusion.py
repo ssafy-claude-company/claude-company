@@ -51,7 +51,7 @@ def test_완수조건_회의가_장부에_등록한다(tmp_path):
     f = _flow(goal="2인 턴제 카드 대전")
     f.workspace = str(tmp_path)
     ok, note = register_stage(f, "criteria",
-                              "[수렴안]\n조건: 두 명이 한 판을 끝낸다 | 실증: node test/play.js\n[/수렴안]")
+                              "[수렴안]\n조건: 두 명이 한 판을 끝낸다 | 실증: node test/play.js\n[존재이유] 솔로로는 클리어 불가 | 실증: node test/play.js --solo\n[/수렴안]")
     assert ok, note
     assert "실증: node test/play.js" in f.current.acceptance
     assert meeting_stage(f) == "milestone", "완수조건이 서면 다음은 주기 회의"
@@ -63,6 +63,6 @@ def test_목표회의는_완수조건_없이도_등록된다(tmp_path):
 
     f = _flow()
     f.workspace = str(tmp_path)
-    ok, note = register_stage(f, "goal", "[수렴안]\n목표: 2인 턴제 카드 대전\n내용 폭: 기능 3종\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n[/수렴안]")
+    ok, note = register_stage(f, "goal", "[수렴안]\n목표: 2인 턴제 카드 대전\n내용 폭: 기능 3종 · 깊이 축 — 강화 선택 3택1이 5웨이브에 걸쳐 누적\n창의 설계: 방패병 — 앞 열이 받는 피해 40% 감소\n최대 표준: 실제 예 대조 · 핵심 기능 3종 · 주 사용 흐름 원탭\n[/수렴안]")
     assert ok, note
     assert f.current.status.goal.startswith("2인 턴제")
